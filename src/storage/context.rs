@@ -20,9 +20,10 @@ use crate::storage::{
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrantPage,
-    AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPolicySnapshotRow,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
+    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
+    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
     ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
@@ -34,18 +35,19 @@ use crate::storage::{
     HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage, ImportStorage,
     InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage,
-    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage, StorageAuditEvent,
-    StorageAuditEventListQuery, StorageBackend, StorageBackendDescriptor, StorageBackupOutput,
-    StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite, StorageClass,
-    StorageClassComputationState, StorageClassGraphRow, StorageClassRelation, StorageCollection,
-    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
-    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageError, StorageEventDelivery,
-    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
+    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
+    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageError, StorageEventDelivery, StorageEventDeliveryListQuery,
+    StorageEventPage, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
+    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
     StorageExportOutput, StorageExportOutputSummary, StorageExternalPrincipalState,
     StorageExternalUserSync, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
@@ -800,6 +802,25 @@ impl AuthorizationStorage for StorageHandle {
         .await
     }
 
+    async fn load_local_collection_permission_set(
+        &self,
+        query: AuthorizationPermissionSetQuery,
+    ) -> Result<AuthorizationPermissionSet, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "load_local_collection_permission_set",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_local_collection_permission_set(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
     async fn apply_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
@@ -840,7 +861,7 @@ impl AuthorizationStorage for StorageHandle {
 
     async fn revoke_all_local_collection_grants(
         &self,
-        key: AuthorizationGrantKey,
+        request: AuthorizationGrantDelete,
     ) -> Result<(), StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -849,7 +870,7 @@ impl AuthorizationStorage for StorageHandle {
             async {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
-                        backend.revoke_all_local_collection_grants(key).await
+                        backend.revoke_all_local_collection_grants(request).await
                     }
                 }
             },
@@ -2511,6 +2532,36 @@ impl OperationalStateStorage for StorageHandle {
             async {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => backend.maintenance_state().await,
+                }
+            },
+        )
+        .await
+    }
+
+    async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "operational_state",
+            "storage_snapshot",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => backend.storage_snapshot().await,
+                }
+            },
+        )
+        .await
+    }
+
+    async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "operational_state",
+            "task_queue_snapshot",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.task_queue_snapshot().await
+                    }
                 }
             },
         )

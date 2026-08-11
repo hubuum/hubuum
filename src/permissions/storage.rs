@@ -110,7 +110,7 @@ pub(super) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, Api
     })
 }
 
-pub(super) fn grant_from_storage(grant: AuthorizationGrant) -> Permission {
+pub(crate) fn grant_from_storage(grant: AuthorizationGrant) -> Permission {
     let has = |permission| grant.permissions().contains(&permission);
     Permission {
         id: grant.id(),

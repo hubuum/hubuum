@@ -1,18 +1,10 @@
-use crate::models::token_scope::TokenScope;
 use crate::storage::postgres::prelude::*;
-use serde::Serialize;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::{
-    GroupID, NewPermission, Permission, PermissionFilter, Permissions, PermissionsList,
-    UpdatePermission,
-};
-use crate::storage::postgres::{with_connection, with_transaction};
-use crate::traits::CollectionAccessors;
-
-use super::authz::{AuthzSubject, scope_allows};
+use crate::models::{NewPermission, Permission, Permissions, PermissionsList, UpdatePermission};
+use crate::storage::postgres::with_transaction;
 
 async fn permission_owner_revision(
     conn: &mut crate::storage::postgres::PostgresConnection,
@@ -349,656 +341,594 @@ pub(crate) fn new_permission_from_list(
     }
 }
 
-pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
-    async fn user_can_all_from_backend<S: AuthzSubject>(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        subject: S,
-        permissions_requested: Vec<Permissions>,
-        scopes: Option<&TokenScope>,
-    ) -> Result<bool, ApiError> {
-        let lookup_table = crate::schema::permissions::dsl::permissions;
-        let group_id_field = crate::schema::permissions::dsl::group_id;
-        let collection_id_field = crate::schema::permissions::dsl::collection_id;
+pub(crate) async fn apply_permission_grant_without_event(
+    pool: &impl crate::storage::StorageContext,
+    target_collection_id: i32,
+    group_id_for_grant: i32,
+    permission_list: PermissionsList,
+    replace_existing: bool,
+) -> Result<Permission, ApiError> {
+    use crate::schema::permissions::dsl::*;
 
-        // Fail-closed token-scope pre-filter, applied BEFORE the admin bypass so
-        // a scoped admin token can never exceed its scopes.
-        if !scope_allows(scopes, &permissions_requested) {
-            return Ok(false);
-        }
+    with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+        lock_permission_owner(conn, target_collection_id).await?;
+        let existing_entry = permissions
+            .filter(collection_id.eq(target_collection_id))
+            .filter(group_id.eq(group_id_for_grant))
+            .for_update()
+            .first::<Permission>(conn)
+            .await
+            .optional()?;
 
-        if subject.is_admin(pool).await? {
-            return Ok(true);
-        }
-
-        let group_id_subquery = subject.group_ids_subquery();
-        let mut base_query = lookup_table
-            .into_boxed()
-            .filter(collection_id_field.eq(self.collection_id(pool).await?.id()))
-            .filter(group_id_field.eq_any(group_id_subquery));
-
-        for permission in permissions_requested {
-            base_query = permission.create_boxed_filter(base_query, true);
-        }
-
-        let result: Option<Permission> = with_connection(pool, async |conn| {
-            base_query.first::<Permission>(conn).await.optional()
-        })
-        .await?;
-
-        Ok(result.is_some())
-    }
-
-    async fn apply_permissions_from_backend_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        group_id_for_grant: GroupID,
-        permission_list: PermissionsList,
-        replace_existing: bool,
-    ) -> Result<Permission, ApiError> {
-        use crate::schema::permissions::dsl::*;
-
-        let target_collection_id = self.collection_id(pool).await?.id();
-        let group_id_for_grant = group_id_for_grant.id();
-
-        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
-            lock_permission_owner(conn, target_collection_id).await?;
-            let existing_entry = permissions
-                .filter(collection_id.eq(target_collection_id))
-                .filter(group_id.eq(group_id_for_grant))
-                .for_update()
-                .first::<Permission>(conn)
-                .await
-                .optional()?;
-
-            match existing_entry {
-                Some(existing) => {
-                    if !grant_changes_permission(&existing, &permission_list, replace_existing) {
-                        return Ok(existing);
+        match existing_entry {
+            Some(existing) => {
+                if !grant_changes_permission(&existing, &permission_list, replace_existing) {
+                    return Ok(existing);
+                }
+                let mut update_perm = if replace_existing {
+                    UpdatePermission {
+                        has_read_collection: Some(false),
+                        has_update_collection: Some(false),
+                        has_delete_collection: Some(false),
+                        has_delegate_collection: Some(false),
+                        has_create_class: Some(false),
+                        has_read_class: Some(false),
+                        has_update_class: Some(false),
+                        has_delete_class: Some(false),
+                        has_create_object: Some(false),
+                        has_read_object: Some(false),
+                        has_update_object: Some(false),
+                        has_delete_object: Some(false),
+                        has_create_class_relation: Some(false),
+                        has_read_class_relation: Some(false),
+                        has_update_class_relation: Some(false),
+                        has_delete_class_relation: Some(false),
+                        has_create_object_relation: Some(false),
+                        has_read_object_relation: Some(false),
+                        has_update_object_relation: Some(false),
+                        has_delete_object_relation: Some(false),
+                        has_read_template: Some(false),
+                        has_create_template: Some(false),
+                        has_update_template: Some(false),
+                        has_delete_template: Some(false),
+                        has_read_remote_target: Some(false),
+                        has_create_remote_target: Some(false),
+                        has_update_remote_target: Some(false),
+                        has_delete_remote_target: Some(false),
+                        has_execute_remote_target: Some(false),
+                        has_read_audit: Some(false),
+                        has_manage_event_subscription: Some(false),
                     }
-                    let mut update_perm = if replace_existing {
-                        UpdatePermission {
-                            has_read_collection: Some(false),
-                            has_update_collection: Some(false),
-                            has_delete_collection: Some(false),
-                            has_delegate_collection: Some(false),
-                            has_create_class: Some(false),
-                            has_read_class: Some(false),
-                            has_update_class: Some(false),
-                            has_delete_class: Some(false),
-                            has_create_object: Some(false),
-                            has_read_object: Some(false),
-                            has_update_object: Some(false),
-                            has_delete_object: Some(false),
-                            has_create_class_relation: Some(false),
-                            has_read_class_relation: Some(false),
-                            has_update_class_relation: Some(false),
-                            has_delete_class_relation: Some(false),
-                            has_create_object_relation: Some(false),
-                            has_read_object_relation: Some(false),
-                            has_update_object_relation: Some(false),
-                            has_delete_object_relation: Some(false),
-                            has_read_template: Some(false),
-                            has_create_template: Some(false),
-                            has_update_template: Some(false),
-                            has_delete_template: Some(false),
-                            has_read_remote_target: Some(false),
-                            has_create_remote_target: Some(false),
-                            has_update_remote_target: Some(false),
-                            has_delete_remote_target: Some(false),
-                            has_execute_remote_target: Some(false),
-                            has_read_audit: Some(false),
-                            has_manage_event_subscription: Some(false),
-                        }
-                    } else {
-                        UpdatePermission::default()
-                    };
+                } else {
+                    UpdatePermission::default()
+                };
 
-                    for permission in permission_list.into_iter() {
-                        match permission {
-                            Permissions::ReadCollection => {
-                                update_perm.has_read_collection = Some(true);
-                            }
-                            Permissions::UpdateCollection => {
-                                update_perm.has_update_collection = Some(true);
-                            }
-                            Permissions::DeleteCollection => {
-                                update_perm.has_delete_collection = Some(true);
-                            }
-                            Permissions::DelegateCollection => {
-                                update_perm.has_delegate_collection = Some(true);
-                            }
-                            Permissions::CreateClass => {
-                                update_perm.has_create_class = Some(true);
-                            }
-                            Permissions::ReadClass => {
-                                update_perm.has_read_class = Some(true);
-                            }
-                            Permissions::UpdateClass => {
-                                update_perm.has_update_class = Some(true);
-                            }
-                            Permissions::DeleteClass => {
-                                update_perm.has_delete_class = Some(true);
-                            }
-                            Permissions::CreateObject => {
-                                update_perm.has_create_object = Some(true);
-                            }
-                            Permissions::ReadObject => {
-                                update_perm.has_read_object = Some(true);
-                            }
-                            Permissions::UpdateObject => {
-                                update_perm.has_update_object = Some(true);
-                            }
-                            Permissions::DeleteObject => {
-                                update_perm.has_delete_object = Some(true);
-                            }
-                            Permissions::CreateClassRelation => {
-                                update_perm.has_create_class_relation = Some(true);
-                            }
-                            Permissions::ReadClassRelation => {
-                                update_perm.has_read_class_relation = Some(true);
-                            }
-                            Permissions::UpdateClassRelation => {
-                                update_perm.has_update_class_relation = Some(true);
-                            }
-                            Permissions::DeleteClassRelation => {
-                                update_perm.has_delete_class_relation = Some(true);
-                            }
-                            Permissions::CreateObjectRelation => {
-                                update_perm.has_create_object_relation = Some(true);
-                            }
-                            Permissions::ReadObjectRelation => {
-                                update_perm.has_read_object_relation = Some(true);
-                            }
-                            Permissions::UpdateObjectRelation => {
-                                update_perm.has_update_object_relation = Some(true);
-                            }
-                            Permissions::DeleteObjectRelation => {
-                                update_perm.has_delete_object_relation = Some(true);
-                            }
-                            Permissions::ReadTemplate => {
-                                update_perm.has_read_template = Some(true);
-                            }
-                            Permissions::CreateTemplate => {
-                                update_perm.has_create_template = Some(true);
-                            }
-                            Permissions::UpdateTemplate => {
-                                update_perm.has_update_template = Some(true);
-                            }
-                            Permissions::DeleteTemplate => {
-                                update_perm.has_delete_template = Some(true);
-                            }
-                            Permissions::ReadRemoteTarget => {
-                                update_perm.has_read_remote_target = Some(true);
-                            }
-                            Permissions::CreateRemoteTarget => {
-                                update_perm.has_create_remote_target = Some(true);
-                            }
-                            Permissions::UpdateRemoteTarget => {
-                                update_perm.has_update_remote_target = Some(true);
-                            }
-                            Permissions::DeleteRemoteTarget => {
-                                update_perm.has_delete_remote_target = Some(true);
-                            }
-                            Permissions::ExecuteRemoteTarget => {
-                                update_perm.has_execute_remote_target = Some(true);
-                            }
-                            Permissions::ReadAudit => {
-                                update_perm.has_read_audit = Some(true);
-                            }
-                            Permissions::ManageEventSubscription => {
-                                update_perm.has_manage_event_subscription = Some(true);
-                            }
+                for permission in permission_list.into_iter() {
+                    match permission {
+                        Permissions::ReadCollection => {
+                            update_perm.has_read_collection = Some(true);
+                        }
+                        Permissions::UpdateCollection => {
+                            update_perm.has_update_collection = Some(true);
+                        }
+                        Permissions::DeleteCollection => {
+                            update_perm.has_delete_collection = Some(true);
+                        }
+                        Permissions::DelegateCollection => {
+                            update_perm.has_delegate_collection = Some(true);
+                        }
+                        Permissions::CreateClass => {
+                            update_perm.has_create_class = Some(true);
+                        }
+                        Permissions::ReadClass => {
+                            update_perm.has_read_class = Some(true);
+                        }
+                        Permissions::UpdateClass => {
+                            update_perm.has_update_class = Some(true);
+                        }
+                        Permissions::DeleteClass => {
+                            update_perm.has_delete_class = Some(true);
+                        }
+                        Permissions::CreateObject => {
+                            update_perm.has_create_object = Some(true);
+                        }
+                        Permissions::ReadObject => {
+                            update_perm.has_read_object = Some(true);
+                        }
+                        Permissions::UpdateObject => {
+                            update_perm.has_update_object = Some(true);
+                        }
+                        Permissions::DeleteObject => {
+                            update_perm.has_delete_object = Some(true);
+                        }
+                        Permissions::CreateClassRelation => {
+                            update_perm.has_create_class_relation = Some(true);
+                        }
+                        Permissions::ReadClassRelation => {
+                            update_perm.has_read_class_relation = Some(true);
+                        }
+                        Permissions::UpdateClassRelation => {
+                            update_perm.has_update_class_relation = Some(true);
+                        }
+                        Permissions::DeleteClassRelation => {
+                            update_perm.has_delete_class_relation = Some(true);
+                        }
+                        Permissions::CreateObjectRelation => {
+                            update_perm.has_create_object_relation = Some(true);
+                        }
+                        Permissions::ReadObjectRelation => {
+                            update_perm.has_read_object_relation = Some(true);
+                        }
+                        Permissions::UpdateObjectRelation => {
+                            update_perm.has_update_object_relation = Some(true);
+                        }
+                        Permissions::DeleteObjectRelation => {
+                            update_perm.has_delete_object_relation = Some(true);
+                        }
+                        Permissions::ReadTemplate => {
+                            update_perm.has_read_template = Some(true);
+                        }
+                        Permissions::CreateTemplate => {
+                            update_perm.has_create_template = Some(true);
+                        }
+                        Permissions::UpdateTemplate => {
+                            update_perm.has_update_template = Some(true);
+                        }
+                        Permissions::DeleteTemplate => {
+                            update_perm.has_delete_template = Some(true);
+                        }
+                        Permissions::ReadRemoteTarget => {
+                            update_perm.has_read_remote_target = Some(true);
+                        }
+                        Permissions::CreateRemoteTarget => {
+                            update_perm.has_create_remote_target = Some(true);
+                        }
+                        Permissions::UpdateRemoteTarget => {
+                            update_perm.has_update_remote_target = Some(true);
+                        }
+                        Permissions::DeleteRemoteTarget => {
+                            update_perm.has_delete_remote_target = Some(true);
+                        }
+                        Permissions::ExecuteRemoteTarget => {
+                            update_perm.has_execute_remote_target = Some(true);
+                        }
+                        Permissions::ReadAudit => {
+                            update_perm.has_read_audit = Some(true);
+                        }
+                        Permissions::ManageEventSubscription => {
+                            update_perm.has_manage_event_subscription = Some(true);
                         }
                     }
-
-                    Ok(diesel::update(permissions)
-                        .filter(collection_id.eq(target_collection_id))
-                        .filter(group_id.eq(group_id_for_grant))
-                        .set(&update_perm)
-                        .get_result(conn)
-                        .await?)
                 }
-                None => {
-                    let new_entry = NewPermission {
-                        collection_id: target_collection_id,
-                        group_id: group_id_for_grant,
-                        has_read_collection: permission_list.contains(&Permissions::ReadCollection),
-                        has_update_collection: permission_list
-                            .contains(&Permissions::UpdateCollection),
-                        has_delete_collection: permission_list
-                            .contains(&Permissions::DeleteCollection),
-                        has_delegate_collection: permission_list
-                            .contains(&Permissions::DelegateCollection),
-                        has_create_class: permission_list.contains(&Permissions::CreateClass),
-                        has_read_class: permission_list.contains(&Permissions::ReadClass),
-                        has_update_class: permission_list.contains(&Permissions::UpdateClass),
-                        has_delete_class: permission_list.contains(&Permissions::DeleteClass),
-                        has_create_object: permission_list.contains(&Permissions::CreateObject),
-                        has_read_object: permission_list.contains(&Permissions::ReadObject),
-                        has_update_object: permission_list.contains(&Permissions::UpdateObject),
-                        has_delete_object: permission_list.contains(&Permissions::DeleteObject),
-                        has_create_class_relation: permission_list
-                            .contains(&Permissions::CreateClassRelation),
-                        has_read_class_relation: permission_list
-                            .contains(&Permissions::ReadClassRelation),
-                        has_update_class_relation: permission_list
-                            .contains(&Permissions::UpdateClassRelation),
-                        has_delete_class_relation: permission_list
-                            .contains(&Permissions::DeleteClassRelation),
-                        has_create_object_relation: permission_list
-                            .contains(&Permissions::CreateObjectRelation),
-                        has_read_object_relation: permission_list
-                            .contains(&Permissions::ReadObjectRelation),
-                        has_update_object_relation: permission_list
-                            .contains(&Permissions::UpdateObjectRelation),
-                        has_delete_object_relation: permission_list
-                            .contains(&Permissions::DeleteObjectRelation),
-                        has_read_template: permission_list.contains(&Permissions::ReadTemplate),
-                        has_create_template: permission_list.contains(&Permissions::CreateTemplate),
-                        has_update_template: permission_list.contains(&Permissions::UpdateTemplate),
-                        has_delete_template: permission_list.contains(&Permissions::DeleteTemplate),
-                        has_read_remote_target: permission_list
-                            .contains(&Permissions::ReadRemoteTarget),
-                        has_create_remote_target: permission_list
-                            .contains(&Permissions::CreateRemoteTarget),
-                        has_update_remote_target: permission_list
-                            .contains(&Permissions::UpdateRemoteTarget),
-                        has_delete_remote_target: permission_list
-                            .contains(&Permissions::DeleteRemoteTarget),
-                        has_execute_remote_target: permission_list
-                            .contains(&Permissions::ExecuteRemoteTarget),
-                        has_read_audit: permission_list.contains(&Permissions::ReadAudit),
-                        has_manage_event_subscription: permission_list
-                            .contains(&Permissions::ManageEventSubscription),
-                    };
 
-                    Ok(diesel::insert_into(permissions)
-                        .values(&new_entry)
-                        .get_result(conn)
-                        .await?)
-                }
+                Ok(diesel::update(permissions)
+                    .filter(collection_id.eq(target_collection_id))
+                    .filter(group_id.eq(group_id_for_grant))
+                    .set(&update_perm)
+                    .get_result(conn)
+                    .await?)
             }
-        })
-        .await
-    }
+            None => {
+                let new_entry = NewPermission {
+                    collection_id: target_collection_id,
+                    group_id: group_id_for_grant,
+                    has_read_collection: permission_list.contains(&Permissions::ReadCollection),
+                    has_update_collection: permission_list.contains(&Permissions::UpdateCollection),
+                    has_delete_collection: permission_list.contains(&Permissions::DeleteCollection),
+                    has_delegate_collection: permission_list
+                        .contains(&Permissions::DelegateCollection),
+                    has_create_class: permission_list.contains(&Permissions::CreateClass),
+                    has_read_class: permission_list.contains(&Permissions::ReadClass),
+                    has_update_class: permission_list.contains(&Permissions::UpdateClass),
+                    has_delete_class: permission_list.contains(&Permissions::DeleteClass),
+                    has_create_object: permission_list.contains(&Permissions::CreateObject),
+                    has_read_object: permission_list.contains(&Permissions::ReadObject),
+                    has_update_object: permission_list.contains(&Permissions::UpdateObject),
+                    has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                    has_create_class_relation: permission_list
+                        .contains(&Permissions::CreateClassRelation),
+                    has_read_class_relation: permission_list
+                        .contains(&Permissions::ReadClassRelation),
+                    has_update_class_relation: permission_list
+                        .contains(&Permissions::UpdateClassRelation),
+                    has_delete_class_relation: permission_list
+                        .contains(&Permissions::DeleteClassRelation),
+                    has_create_object_relation: permission_list
+                        .contains(&Permissions::CreateObjectRelation),
+                    has_read_object_relation: permission_list
+                        .contains(&Permissions::ReadObjectRelation),
+                    has_update_object_relation: permission_list
+                        .contains(&Permissions::UpdateObjectRelation),
+                    has_delete_object_relation: permission_list
+                        .contains(&Permissions::DeleteObjectRelation),
+                    has_read_template: permission_list.contains(&Permissions::ReadTemplate),
+                    has_create_template: permission_list.contains(&Permissions::CreateTemplate),
+                    has_update_template: permission_list.contains(&Permissions::UpdateTemplate),
+                    has_delete_template: permission_list.contains(&Permissions::DeleteTemplate),
+                    has_read_remote_target: permission_list
+                        .contains(&Permissions::ReadRemoteTarget),
+                    has_create_remote_target: permission_list
+                        .contains(&Permissions::CreateRemoteTarget),
+                    has_update_remote_target: permission_list
+                        .contains(&Permissions::UpdateRemoteTarget),
+                    has_delete_remote_target: permission_list
+                        .contains(&Permissions::DeleteRemoteTarget),
+                    has_execute_remote_target: permission_list
+                        .contains(&Permissions::ExecuteRemoteTarget),
+                    has_read_audit: permission_list.contains(&Permissions::ReadAudit),
+                    has_manage_event_subscription: permission_list
+                        .contains(&Permissions::ManageEventSubscription),
+                };
 
-    async fn apply_permissions_from_backend(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        group_id_for_grant: GroupID,
-        permission_list: PermissionsList,
-        replace_existing: bool,
-        context: Option<&EventContext>,
-    ) -> Result<Permission, ApiError> {
-        let Some(context) = context else {
-            return self
-                .apply_permissions_from_backend_without_events(
-                    pool,
-                    group_id_for_grant,
-                    permission_list,
-                    replace_existing,
-                )
-                .await;
-        };
-
-        use crate::schema::permissions::dsl::*;
-
-        let target_collection_id = self.collection_id(pool).await?.id();
-        let group_id_for_grant = group_id_for_grant.id();
-        let requested = permission_list.iter().copied().collect::<Vec<_>>();
-
-        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
-            let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
-            let before = permissions
-                .filter(collection_id.eq(target_collection_id))
-                .filter(group_id.eq(group_id_for_grant))
-                .for_update()
-                .first::<Permission>(conn)
-                .await
-                .optional()?;
-
-            if let Some(current) = before
-                && !grant_changes_permission(&current, &permission_list, replace_existing)
-            {
-                return Ok(current);
+                Ok(diesel::insert_into(permissions)
+                    .values(&new_entry)
+                    .get_result(conn)
+                    .await?)
             }
+        }
+    })
+    .await
+}
 
-            let after = match before {
-                Some(_) => {
-                    let update_perm =
-                        update_permission_for_grant(&permission_list, replace_existing);
-                    diesel::update(permissions)
-                        .filter(collection_id.eq(target_collection_id))
-                        .filter(group_id.eq(group_id_for_grant))
-                        .set(&update_perm)
-                        .get_result::<Permission>(conn)
-                        .await?
-                }
-                None => {
-                    let new_entry = new_permission_from_list(
-                        target_collection_id,
-                        group_id_for_grant,
-                        &permission_list,
-                    );
-                    diesel::insert_into(permissions)
-                        .values(&new_entry)
-                        .get_result::<Permission>(conn)
-                        .await?
-                }
-            };
-            let after_owner_revision =
-                permission_owner_revision(conn, target_collection_id).await?;
+pub(crate) async fn apply_permission_grant(
+    pool: &impl crate::storage::StorageContext,
+    target_collection_id: i32,
+    group_id_for_grant: i32,
+    permission_list: PermissionsList,
+    replace_existing: bool,
+    context: Option<&EventContext>,
+) -> Result<Permission, ApiError> {
+    let Some(context) = context else {
+        return apply_permission_grant_without_event(
+            pool,
+            target_collection_id,
+            group_id_for_grant,
+            permission_list,
+            replace_existing,
+        )
+        .await;
+    };
 
-            let event = permission_event(
-                &after,
-                Action::Granted,
-                context,
-                format!(
-                    "Permissions granted to group {} on collection {}",
-                    group_id_for_grant, target_collection_id
-                ),
-                &requested,
-                Some(replace_existing),
-            )?
-            .with_after(permission_snapshot(&after, after_owner_revision));
+    use crate::schema::permissions::dsl::*;
 
-            let event = event.with_before(match before {
-                Some(before) => permission_snapshot(&before, before_owner_revision),
-                None => empty_permission_snapshot(
+    let requested = permission_list.iter().copied().collect::<Vec<_>>();
+
+    with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+        let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
+        let before = permissions
+            .filter(collection_id.eq(target_collection_id))
+            .filter(group_id.eq(group_id_for_grant))
+            .for_update()
+            .first::<Permission>(conn)
+            .await
+            .optional()?;
+
+        if let Some(current) = before
+            && !grant_changes_permission(&current, &permission_list, replace_existing)
+        {
+            return Ok(current);
+        }
+
+        let after = match before {
+            Some(_) => {
+                let update_perm = update_permission_for_grant(&permission_list, replace_existing);
+                diesel::update(permissions)
+                    .filter(collection_id.eq(target_collection_id))
+                    .filter(group_id.eq(group_id_for_grant))
+                    .set(&update_perm)
+                    .get_result::<Permission>(conn)
+                    .await?
+            }
+            None => {
+                let new_entry = new_permission_from_list(
                     target_collection_id,
                     group_id_for_grant,
-                    before_owner_revision,
-                ),
-            });
-            emit_event(conn, &event).await?;
-            Ok(after)
-        })
-        .await
-    }
-
-    async fn revoke_permissions_from_backend_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        group_id_for_revoke: GroupID,
-        permission_list: PermissionsList,
-    ) -> Result<Permission, ApiError> {
-        use crate::schema::permissions::dsl::*;
-
-        let target_collection_id = self.collection_id(pool).await?.id();
-        let group_id_for_revoke = group_id_for_revoke.id();
-
-        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
-            lock_permission_owner(conn, target_collection_id).await?;
-            let before = permissions
-                .filter(collection_id.eq(target_collection_id))
-                .filter(group_id.eq(group_id_for_revoke))
-                .for_update()
-                .first::<Permission>(conn)
-                .await?;
-
-            if !revoke_changes_permission(&before, &permission_list) {
-                return Ok(before);
+                    &permission_list,
+                );
+                diesel::insert_into(permissions)
+                    .values(&new_entry)
+                    .get_result::<Permission>(conn)
+                    .await?
             }
+        };
+        let after_owner_revision = permission_owner_revision(conn, target_collection_id).await?;
 
-            let mut update_perm = UpdatePermission::default();
-            for permission in permission_list.into_iter() {
-                match permission {
-                    Permissions::ReadCollection => {
-                        update_perm.has_read_collection = Some(false);
-                    }
-                    Permissions::UpdateCollection => {
-                        update_perm.has_update_collection = Some(false);
-                    }
-                    Permissions::DeleteCollection => {
-                        update_perm.has_delete_collection = Some(false);
-                    }
-                    Permissions::DelegateCollection => {
-                        update_perm.has_delegate_collection = Some(false);
-                    }
-                    Permissions::CreateClass => {
-                        update_perm.has_create_class = Some(false);
-                    }
-                    Permissions::ReadClass => {
-                        update_perm.has_read_class = Some(false);
-                    }
-                    Permissions::UpdateClass => {
-                        update_perm.has_update_class = Some(false);
-                    }
-                    Permissions::DeleteClass => {
-                        update_perm.has_delete_class = Some(false);
-                    }
-                    Permissions::CreateObject => {
-                        update_perm.has_create_object = Some(false);
-                    }
-                    Permissions::ReadObject => {
-                        update_perm.has_read_object = Some(false);
-                    }
-                    Permissions::UpdateObject => {
-                        update_perm.has_update_object = Some(false);
-                    }
-                    Permissions::DeleteObject => {
-                        update_perm.has_delete_object = Some(false);
-                    }
-                    Permissions::CreateClassRelation => {
-                        update_perm.has_create_class_relation = Some(false);
-                    }
-                    Permissions::ReadClassRelation => {
-                        update_perm.has_read_class_relation = Some(false);
-                    }
-                    Permissions::UpdateClassRelation => {
-                        update_perm.has_update_class_relation = Some(false);
-                    }
-                    Permissions::DeleteClassRelation => {
-                        update_perm.has_delete_class_relation = Some(false);
-                    }
-                    Permissions::CreateObjectRelation => {
-                        update_perm.has_create_object_relation = Some(false);
-                    }
-                    Permissions::ReadObjectRelation => {
-                        update_perm.has_read_object_relation = Some(false);
-                    }
-                    Permissions::UpdateObjectRelation => {
-                        update_perm.has_update_object_relation = Some(false);
-                    }
-                    Permissions::DeleteObjectRelation => {
-                        update_perm.has_delete_object_relation = Some(false);
-                    }
-                    Permissions::ReadTemplate => {
-                        update_perm.has_read_template = Some(false);
-                    }
-                    Permissions::CreateTemplate => {
-                        update_perm.has_create_template = Some(false);
-                    }
-                    Permissions::UpdateTemplate => {
-                        update_perm.has_update_template = Some(false);
-                    }
-                    Permissions::DeleteTemplate => {
-                        update_perm.has_delete_template = Some(false);
-                    }
-                    Permissions::ReadRemoteTarget => {
-                        update_perm.has_read_remote_target = Some(false);
-                    }
-                    Permissions::CreateRemoteTarget => {
-                        update_perm.has_create_remote_target = Some(false);
-                    }
-                    Permissions::UpdateRemoteTarget => {
-                        update_perm.has_update_remote_target = Some(false);
-                    }
-                    Permissions::DeleteRemoteTarget => {
-                        update_perm.has_delete_remote_target = Some(false);
-                    }
-                    Permissions::ExecuteRemoteTarget => {
-                        update_perm.has_execute_remote_target = Some(false);
-                    }
-                    Permissions::ReadAudit => {
-                        update_perm.has_read_audit = Some(false);
-                    }
-                    Permissions::ManageEventSubscription => {
-                        update_perm.has_manage_event_subscription = Some(false);
-                    }
+        let event = permission_event(
+            &after,
+            Action::Granted,
+            context,
+            format!(
+                "Permissions granted to group {} on collection {}",
+                group_id_for_grant, target_collection_id
+            ),
+            &requested,
+            Some(replace_existing),
+        )?
+        .with_after(permission_snapshot(&after, after_owner_revision));
+
+        let event = event.with_before(match before {
+            Some(before) => permission_snapshot(&before, before_owner_revision),
+            None => empty_permission_snapshot(
+                target_collection_id,
+                group_id_for_grant,
+                before_owner_revision,
+            ),
+        });
+        emit_event(conn, &event).await?;
+        Ok(after)
+    })
+    .await
+}
+
+pub(crate) async fn revoke_permission_grant_without_event(
+    pool: &impl crate::storage::StorageContext,
+    target_collection_id: i32,
+    group_id_for_revoke: i32,
+    permission_list: PermissionsList,
+) -> Result<Permission, ApiError> {
+    use crate::schema::permissions::dsl::*;
+
+    with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+        lock_permission_owner(conn, target_collection_id).await?;
+        let before = permissions
+            .filter(collection_id.eq(target_collection_id))
+            .filter(group_id.eq(group_id_for_revoke))
+            .for_update()
+            .first::<Permission>(conn)
+            .await?;
+
+        if !revoke_changes_permission(&before, &permission_list) {
+            return Ok(before);
+        }
+
+        let mut update_perm = UpdatePermission::default();
+        for permission in permission_list.into_iter() {
+            match permission {
+                Permissions::ReadCollection => {
+                    update_perm.has_read_collection = Some(false);
+                }
+                Permissions::UpdateCollection => {
+                    update_perm.has_update_collection = Some(false);
+                }
+                Permissions::DeleteCollection => {
+                    update_perm.has_delete_collection = Some(false);
+                }
+                Permissions::DelegateCollection => {
+                    update_perm.has_delegate_collection = Some(false);
+                }
+                Permissions::CreateClass => {
+                    update_perm.has_create_class = Some(false);
+                }
+                Permissions::ReadClass => {
+                    update_perm.has_read_class = Some(false);
+                }
+                Permissions::UpdateClass => {
+                    update_perm.has_update_class = Some(false);
+                }
+                Permissions::DeleteClass => {
+                    update_perm.has_delete_class = Some(false);
+                }
+                Permissions::CreateObject => {
+                    update_perm.has_create_object = Some(false);
+                }
+                Permissions::ReadObject => {
+                    update_perm.has_read_object = Some(false);
+                }
+                Permissions::UpdateObject => {
+                    update_perm.has_update_object = Some(false);
+                }
+                Permissions::DeleteObject => {
+                    update_perm.has_delete_object = Some(false);
+                }
+                Permissions::CreateClassRelation => {
+                    update_perm.has_create_class_relation = Some(false);
+                }
+                Permissions::ReadClassRelation => {
+                    update_perm.has_read_class_relation = Some(false);
+                }
+                Permissions::UpdateClassRelation => {
+                    update_perm.has_update_class_relation = Some(false);
+                }
+                Permissions::DeleteClassRelation => {
+                    update_perm.has_delete_class_relation = Some(false);
+                }
+                Permissions::CreateObjectRelation => {
+                    update_perm.has_create_object_relation = Some(false);
+                }
+                Permissions::ReadObjectRelation => {
+                    update_perm.has_read_object_relation = Some(false);
+                }
+                Permissions::UpdateObjectRelation => {
+                    update_perm.has_update_object_relation = Some(false);
+                }
+                Permissions::DeleteObjectRelation => {
+                    update_perm.has_delete_object_relation = Some(false);
+                }
+                Permissions::ReadTemplate => {
+                    update_perm.has_read_template = Some(false);
+                }
+                Permissions::CreateTemplate => {
+                    update_perm.has_create_template = Some(false);
+                }
+                Permissions::UpdateTemplate => {
+                    update_perm.has_update_template = Some(false);
+                }
+                Permissions::DeleteTemplate => {
+                    update_perm.has_delete_template = Some(false);
+                }
+                Permissions::ReadRemoteTarget => {
+                    update_perm.has_read_remote_target = Some(false);
+                }
+                Permissions::CreateRemoteTarget => {
+                    update_perm.has_create_remote_target = Some(false);
+                }
+                Permissions::UpdateRemoteTarget => {
+                    update_perm.has_update_remote_target = Some(false);
+                }
+                Permissions::DeleteRemoteTarget => {
+                    update_perm.has_delete_remote_target = Some(false);
+                }
+                Permissions::ExecuteRemoteTarget => {
+                    update_perm.has_execute_remote_target = Some(false);
+                }
+                Permissions::ReadAudit => {
+                    update_perm.has_read_audit = Some(false);
+                }
+                Permissions::ManageEventSubscription => {
+                    update_perm.has_manage_event_subscription = Some(false);
                 }
             }
+        }
 
-            Ok(diesel::update(permissions)
-                .filter(collection_id.eq(target_collection_id))
-                .filter(group_id.eq(group_id_for_revoke))
-                .set(&update_perm)
-                .get_result(conn)
-                .await?)
-        })
-        .await
-    }
+        Ok(diesel::update(permissions)
+            .filter(collection_id.eq(target_collection_id))
+            .filter(group_id.eq(group_id_for_revoke))
+            .set(&update_perm)
+            .get_result(conn)
+            .await?)
+    })
+    .await
+}
 
-    async fn revoke_permissions_from_backend(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        group_id_for_revoke: GroupID,
-        permission_list: PermissionsList,
-        context: Option<&EventContext>,
-    ) -> Result<Permission, ApiError> {
-        let Some(context) = context else {
-            return self
-                .revoke_permissions_from_backend_without_events(
-                    pool,
-                    group_id_for_revoke,
-                    permission_list,
-                )
-                .await;
-        };
+pub(crate) async fn revoke_permission_grant(
+    pool: &impl crate::storage::StorageContext,
+    target_collection_id: i32,
+    group_id_for_revoke: i32,
+    permission_list: PermissionsList,
+    context: Option<&EventContext>,
+) -> Result<Permission, ApiError> {
+    let Some(context) = context else {
+        return revoke_permission_grant_without_event(
+            pool,
+            target_collection_id,
+            group_id_for_revoke,
+            permission_list,
+        )
+        .await;
+    };
 
-        use crate::schema::permissions::dsl::*;
+    use crate::schema::permissions::dsl::*;
 
-        let target_collection_id = self.collection_id(pool).await?.id();
-        let group_id_for_revoke = group_id_for_revoke.id();
-        let requested = permission_list.iter().copied().collect::<Vec<_>>();
+    let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
-        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
-            let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
-            let before = permissions
-                .filter(collection_id.eq(target_collection_id))
-                .filter(group_id.eq(group_id_for_revoke))
-                .for_update()
-                .first::<Permission>(conn)
-                .await?;
+    with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+        let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
+        let before = permissions
+            .filter(collection_id.eq(target_collection_id))
+            .filter(group_id.eq(group_id_for_revoke))
+            .for_update()
+            .first::<Permission>(conn)
+            .await?;
 
-            if !revoke_changes_permission(&before, &permission_list) {
-                return Ok(before);
-            }
+        if !revoke_changes_permission(&before, &permission_list) {
+            return Ok(before);
+        }
 
-            let update_perm = update_permission_for_revoke(&permission_list);
-            let after = diesel::update(permissions)
-                .filter(collection_id.eq(target_collection_id))
-                .filter(group_id.eq(group_id_for_revoke))
-                .set(&update_perm)
-                .get_result::<Permission>(conn)
-                .await?;
+        let update_perm = update_permission_for_revoke(&permission_list);
+        let after = diesel::update(permissions)
+            .filter(collection_id.eq(target_collection_id))
+            .filter(group_id.eq(group_id_for_revoke))
+            .set(&update_perm)
+            .get_result::<Permission>(conn)
+            .await?;
+        let after_owner_revision = permission_owner_revision(conn, target_collection_id).await?;
+
+        let event = permission_event(
+            &after,
+            Action::Revoked,
+            context,
+            format!(
+                "Permissions revoked from group {} on collection {}",
+                group_id_for_revoke, target_collection_id
+            ),
+            &requested,
+            None,
+        )?
+        .with_before(permission_snapshot(&before, before_owner_revision))
+        .with_after(permission_snapshot(&after, after_owner_revision));
+        emit_event(conn, &event).await?;
+        Ok(after)
+    })
+    .await
+}
+
+pub(crate) async fn revoke_all_permission_grants_without_event(
+    pool: &impl crate::storage::StorageContext,
+    collection_id_for_revoke: i32,
+    group_id_for_revoke: i32,
+) -> Result<(), ApiError> {
+    use crate::schema::permissions::dsl::*;
+    with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        lock_permission_owner(conn, collection_id_for_revoke).await?;
+        diesel::delete(permissions)
+            .filter(collection_id.eq(collection_id_for_revoke))
+            .filter(group_id.eq(group_id_for_revoke))
+            .execute(conn)
+            .await
+            .map_err(ApiError::from)
+    })
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn revoke_all_permission_grants(
+    pool: &impl crate::storage::StorageContext,
+    collection_id_for_revoke: i32,
+    group_id_for_revoke: i32,
+    context: Option<&EventContext>,
+) -> Result<(), ApiError> {
+    let Some(context) = context else {
+        return revoke_all_permission_grants_without_event(
+            pool,
+            collection_id_for_revoke,
+            group_id_for_revoke,
+        )
+        .await;
+    };
+
+    use crate::schema::permissions::dsl::*;
+    with_transaction(pool, async |conn| -> Result<(), ApiError> {
+        let before_owner_revision = lock_permission_owner(conn, collection_id_for_revoke).await?;
+        let before = permissions
+            .filter(collection_id.eq(collection_id_for_revoke))
+            .filter(group_id.eq(group_id_for_revoke))
+            .for_update()
+            .first::<Permission>(conn)
+            .await
+            .optional()?;
+
+        diesel::delete(permissions)
+            .filter(collection_id.eq(collection_id_for_revoke))
+            .filter(group_id.eq(group_id_for_revoke))
+            .execute(conn)
+            .await?;
+
+        if let Some(before) = before {
             let after_owner_revision =
-                permission_owner_revision(conn, target_collection_id).await?;
-
+                permission_owner_revision(conn, collection_id_for_revoke).await?;
+            let requested = before.granted();
             let event = permission_event(
-                &after,
+                &before,
                 Action::Revoked,
                 context,
                 format!(
-                    "Permissions revoked from group {} on collection {}",
-                    group_id_for_revoke, target_collection_id
+                    "All permissions revoked from group {} on collection {}",
+                    group_id_for_revoke, collection_id_for_revoke
                 ),
                 &requested,
                 None,
             )?
             .with_before(permission_snapshot(&before, before_owner_revision))
-            .with_after(permission_snapshot(&after, after_owner_revision));
+            .with_after(empty_permission_snapshot(
+                collection_id_for_revoke,
+                group_id_for_revoke,
+                after_owner_revision,
+            ));
             emit_event(conn, &event).await?;
-            Ok(after)
-        })
-        .await
-    }
-
-    async fn revoke_all_from_backend_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        group_id_for_revoke: GroupID,
-    ) -> Result<(), ApiError> {
-        use crate::schema::permissions::dsl::*;
-
-        let collection_id_for_revoke = self.collection_id(pool).await?.id();
-        let group_id_for_revoke = group_id_for_revoke.id();
-        with_transaction(pool, async |conn| -> Result<_, ApiError> {
-            lock_permission_owner(conn, collection_id_for_revoke).await?;
-            diesel::delete(permissions)
-                .filter(collection_id.eq(collection_id_for_revoke))
-                .filter(group_id.eq(group_id_for_revoke))
-                .execute(conn)
-                .await
-                .map_err(ApiError::from)
-        })
-        .await?;
+        }
 
         Ok(())
-    }
-
-    async fn revoke_all_from_backend(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        group_id_for_revoke: GroupID,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        let Some(context) = context else {
-            return self
-                .revoke_all_from_backend_without_events(pool, group_id_for_revoke)
-                .await;
-        };
-
-        use crate::schema::permissions::dsl::*;
-
-        let collection_id_for_revoke = self.collection_id(pool).await?.id();
-        let group_id_for_revoke = group_id_for_revoke.id();
-        with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let before_owner_revision =
-                lock_permission_owner(conn, collection_id_for_revoke).await?;
-            let before = permissions
-                .filter(collection_id.eq(collection_id_for_revoke))
-                .filter(group_id.eq(group_id_for_revoke))
-                .for_update()
-                .first::<Permission>(conn)
-                .await
-                .optional()?;
-
-            diesel::delete(permissions)
-                .filter(collection_id.eq(collection_id_for_revoke))
-                .filter(group_id.eq(group_id_for_revoke))
-                .execute(conn)
-                .await?;
-
-            if let Some(before) = before {
-                let after_owner_revision =
-                    permission_owner_revision(conn, collection_id_for_revoke).await?;
-                let requested = before.granted();
-                let event = permission_event(
-                    &before,
-                    Action::Revoked,
-                    context,
-                    format!(
-                        "All permissions revoked from group {} on collection {}",
-                        group_id_for_revoke, collection_id_for_revoke
-                    ),
-                    &requested,
-                    None,
-                )?
-                .with_before(permission_snapshot(&before, before_owner_revision))
-                .with_after(empty_permission_snapshot(
-                    collection_id_for_revoke,
-                    group_id_for_revoke,
-                    after_owner_revision,
-                ));
-                emit_event(conn, &event).await?;
-            }
-
-            Ok(())
-        })
-        .await
-    }
+    })
+    .await
 }
-
-impl<T: ?Sized> PermissionControllerBackend for T where T: Serialize + CollectionAccessors {}

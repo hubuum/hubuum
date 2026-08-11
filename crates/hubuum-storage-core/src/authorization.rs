@@ -2,6 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
 use crate::StorageError;
@@ -779,6 +780,7 @@ pub struct AuthorizationGrantMutation {
     key: AuthorizationGrantKey,
     permissions: Vec<AuthorizationPermission>,
     replace_existing: bool,
+    event_context: Option<EventContext>,
 }
 
 impl fmt::Debug for AuthorizationGrantMutation {
@@ -788,6 +790,7 @@ impl fmt::Debug for AuthorizationGrantMutation {
             .field("key", &self.key)
             .field("permission_count", &self.permissions.len())
             .field("replace_existing", &self.replace_existing)
+            .field("has_event_context", &self.event_context.is_some())
             .finish()
     }
 }
@@ -803,6 +806,7 @@ impl AuthorizationGrantMutation {
             key,
             permissions: normalized_permissions(permissions),
             replace_existing,
+            event_context: None,
         }
     }
     #[must_use]
@@ -816,6 +820,136 @@ impl AuthorizationGrantMutation {
     #[must_use]
     pub const fn replace_existing(&self) -> bool {
         self.replace_existing
+    }
+
+    #[must_use]
+    pub fn event_context(mut self, event_context: EventContext) -> Self {
+        self.event_context = Some(event_context);
+        self
+    }
+
+    #[must_use]
+    pub const fn event_context_value(&self) -> Option<&EventContext> {
+        self.event_context.as_ref()
+    }
+}
+
+/// One collection permission-set snapshot query.
+///
+/// A group filter narrows the returned grants without changing the owner
+/// revision, so conditional requests still describe the complete permission
+/// set for the collection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AuthorizationPermissionSetQuery {
+    collection_id: i32,
+    group_id: Option<i32>,
+}
+
+impl AuthorizationPermissionSetQuery {
+    #[must_use]
+    pub const fn new(collection_id: i32, group_id: Option<i32>) -> Self {
+        Self {
+            collection_id,
+            group_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn collection_id(self) -> i32 {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub const fn group_id(self) -> Option<i32> {
+        self.group_id
+    }
+}
+
+impl fmt::Debug for AuthorizationPermissionSetQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationPermissionSetQuery")
+            .field("collection_id", &"[redacted]")
+            .field("has_group_filter", &self.group_id.is_some())
+            .finish()
+    }
+}
+
+/// Revisioned local permission set returned without database row types.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizationPermissionSet {
+    collection_id: i32,
+    revision: i64,
+    grants: Vec<AuthorizationGrant>,
+}
+
+impl AuthorizationPermissionSet {
+    #[must_use]
+    pub const fn new(collection_id: i32, revision: i64, grants: Vec<AuthorizationGrant>) -> Self {
+        Self {
+            collection_id,
+            revision,
+            grants,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, i64, Vec<AuthorizationGrant>) {
+        (self.collection_id, self.revision, self.grants)
+    }
+}
+
+impl fmt::Debug for AuthorizationPermissionSet {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationPermissionSet")
+            .field("collection_id", &"[redacted]")
+            .field("revision", &self.revision)
+            .field("grant_count", &self.grants.len())
+            .finish()
+    }
+}
+
+/// Delete-all request with optional atomic event provenance.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizationGrantDelete {
+    key: AuthorizationGrantKey,
+    event_context: Option<EventContext>,
+}
+
+impl AuthorizationGrantDelete {
+    #[must_use]
+    pub const fn new(key: AuthorizationGrantKey) -> Self {
+        Self {
+            key,
+            event_context: None,
+        }
+    }
+
+    #[must_use]
+    pub fn event_context(mut self, event_context: EventContext) -> Self {
+        self.event_context = Some(event_context);
+        self
+    }
+
+    #[must_use]
+    pub const fn key(&self) -> AuthorizationGrantKey {
+        self.key
+    }
+
+    #[must_use]
+    pub const fn event_context_value(&self) -> Option<&EventContext> {
+        self.event_context.as_ref()
+    }
+}
+
+impl fmt::Debug for AuthorizationGrantDelete {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationGrantDelete")
+            .field("key", &self.key)
+            .field("has_event_context", &self.event_context.is_some())
+            .finish()
     }
 }
 
@@ -1011,6 +1145,11 @@ pub trait AuthorizationStorage: Send + Sync {
         key: AuthorizationGrantKey,
     ) -> Result<Option<AuthorizationGrant>, StorageError>;
 
+    async fn load_local_collection_permission_set(
+        &self,
+        query: AuthorizationPermissionSetQuery,
+    ) -> Result<AuthorizationPermissionSet, StorageError>;
+
     async fn apply_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
@@ -1023,7 +1162,7 @@ pub trait AuthorizationStorage: Send + Sync {
 
     async fn revoke_all_local_collection_grants(
         &self,
-        key: AuthorizationGrantKey,
+        request: AuthorizationGrantDelete,
     ) -> Result<(), StorageError>;
 }
 
@@ -1160,5 +1299,22 @@ mod tests {
             assert!(!debug.contains(sensitive));
         }
         assert!(debug.contains("resource_count"));
+    }
+
+    #[test]
+    fn permission_set_and_mutation_debug_redact_identifiers() {
+        let key = AuthorizationGrantKey::new(987_654, 876_543);
+        let query = AuthorizationPermissionSetQuery::new(987_654, Some(876_543));
+        let mutation =
+            AuthorizationGrantMutation::new(key, [AuthorizationPermission::ReadCollection], false)
+                .event_context(EventContext::system());
+        let delete = AuthorizationGrantDelete::new(key).event_context(EventContext::system());
+        let debug = format!("{query:?} {mutation:?} {delete:?}");
+
+        for sensitive in ["987654", "876543"] {
+            assert!(!debug.contains(sensitive));
+        }
+        assert!(debug.contains("has_event_context"));
+        assert!(debug.contains("has_group_filter"));
     }
 }

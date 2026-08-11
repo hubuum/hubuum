@@ -459,6 +459,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "policy_snapshot",
         "list_local_collection_grants",
         "get_local_collection_grant",
+        "load_local_collection_permission_set",
         "apply_local_collection_grant",
         "revoke_local_collection_grant",
         "revoke_all_local_collection_grants",
@@ -466,6 +467,17 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         assert!(
             compact_context.contains(&format!("\"authorization\",\"{operation}\"")),
             "authorization operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "readiness_snapshot",
+        "maintenance_state",
+        "storage_snapshot",
+        "task_queue_snapshot",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"operational_state\",\"{operation}\"")),
+            "operational-state operation {operation} must use the common storage observer"
         );
     }
     for operation in [
@@ -547,6 +559,36 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
             assert!(
                 !source.contains(forbidden),
                 "{} still uses event adapter detail {forbidden}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn remaining_administration_consumers_do_not_use_postgres_facades() {
+    let root = repository_root();
+    for file in [
+        "src/api/handlers/meta.rs",
+        "src/api/v1/handlers/collections.rs",
+        "src/traits/permissions.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "storage::capabilities",
+            "PermissionControllerBackend",
+            "collection_permission_set_from_backend",
+            "load_database_state",
+            "load_task_queue_state",
+            "apply_permissions_from_backend",
+            "revoke_permissions_from_backend",
+            "revoke_all_from_backend",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} still uses backend facade detail {forbidden}",
                 path.display()
             );
         }

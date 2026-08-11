@@ -3,23 +3,23 @@ use diesel::dsl::{exists, select};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
-    Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
-    PermissionsList, PrincipalID,
+    Collection, CollectionID, Group, GroupPermission, Permission, Permissions, PermissionsList,
+    PrincipalID,
 };
 use crate::storage::postgres::operations::collection as collection_backend;
+use crate::storage::postgres::operations::permissions as permission_backend;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
 use crate::storage::{
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationObjectResource,
-    AuthorizationPermission, AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
-    AuthorizationResourceIds,
+    AuthorizationPermission, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
 };
-use crate::traits::PermissionController;
 
 pub(crate) const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
     match permission {
@@ -492,6 +492,61 @@ pub(crate) async fn get_local_collection_grant(
     Ok(row.map(grant_to_storage))
 }
 
+pub(crate) async fn load_local_collection_permission_set(
+    pool: &PostgresPool,
+    query: AuthorizationPermissionSetQuery,
+) -> Result<AuthorizationPermissionSet, ApiError> {
+    use crate::schema::{collection_authorization_state, permissions};
+
+    let rows = with_connection(pool, async |conn| {
+        if let Some(group_id) = query.group_id() {
+            collection_authorization_state::table
+                .left_join(
+                    permissions::table.on(permissions::collection_id
+                        .eq(collection_authorization_state::collection_id)
+                        .and(permissions::group_id.eq(group_id))),
+                )
+                .filter(collection_authorization_state::collection_id.eq(query.collection_id()))
+                .select((
+                    collection_authorization_state::revision,
+                    Option::<Permission>::as_select(),
+                ))
+                .load::<(crate::models::ResourceRevision, Option<Permission>)>(conn)
+                .await
+        } else {
+            collection_authorization_state::table
+                .left_join(permissions::table.on(
+                    permissions::collection_id.eq(collection_authorization_state::collection_id),
+                ))
+                .filter(collection_authorization_state::collection_id.eq(query.collection_id()))
+                .select((
+                    collection_authorization_state::revision,
+                    Option::<Permission>::as_select(),
+                ))
+                .load::<(crate::models::ResourceRevision, Option<Permission>)>(conn)
+                .await
+        }
+    })
+    .await?;
+
+    let revision = rows
+        .as_slice()
+        .first()
+        .map(|(revision, _)| revision.get())
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("Collection {} not found", query.collection_id()))
+        })?;
+    let grants = rows
+        .into_iter()
+        .filter_map(|(_, grant)| grant.map(grant_to_storage))
+        .collect();
+    Ok(AuthorizationPermissionSet::new(
+        query.collection_id(),
+        revision,
+        grants,
+    ))
+}
+
 pub(crate) async fn apply_local_collection_grant(
     pool: &PostgresPool,
     mutation: AuthorizationGrantMutation,
@@ -504,15 +559,15 @@ pub(crate) async fn apply_local_collection_grant(
             .copied()
             .map(permission_from_storage),
     );
-    let grant = CollectionID::new(key.collection_id())?
-        .apply_permissions(
-            pool,
-            GroupID::new(key.group_id())?,
-            permissions,
-            mutation.replace_existing(),
-            None,
-        )
-        .await?;
+    let grant = permission_backend::apply_permission_grant(
+        pool,
+        key.collection_id(),
+        key.group_id(),
+        permissions,
+        mutation.replace_existing(),
+        mutation.event_context_value(),
+    )
+    .await?;
     Ok(grant_to_storage(grant))
 }
 
@@ -528,17 +583,27 @@ pub(crate) async fn revoke_local_collection_grant(
             .copied()
             .map(permission_from_storage),
     );
-    let grant = CollectionID::new(key.collection_id())?
-        .revoke(pool, GroupID::new(key.group_id())?, permissions, None)
-        .await?;
+    let grant = permission_backend::revoke_permission_grant(
+        pool,
+        key.collection_id(),
+        key.group_id(),
+        permissions,
+        mutation.event_context_value(),
+    )
+    .await?;
     Ok(grant_to_storage(grant))
 }
 
 pub(crate) async fn revoke_all_local_collection_grants(
     pool: &PostgresPool,
-    key: AuthorizationGrantKey,
+    request: AuthorizationGrantDelete,
 ) -> Result<(), ApiError> {
-    CollectionID::new(key.collection_id())?
-        .revoke_all(pool, GroupID::new(key.group_id())?, None)
-        .await
+    let key = request.key();
+    permission_backend::revoke_all_permission_grants(
+        pool,
+        key.collection_id(),
+        key.group_id(),
+        request.event_context_value(),
+    )
+    .await
 }

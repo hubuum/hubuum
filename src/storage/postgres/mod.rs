@@ -56,9 +56,10 @@ use super::{
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrantPage,
-    AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPolicySnapshotRow,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
+    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
+    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage,
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
     ClassRelationStore, ClassStore, CollectionStore, ComputedObjectEnrichmentQuery,
@@ -71,8 +72,9 @@ use super::{
     InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
-    OperationalStateStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    OperationalStateStorage, OperationalStorageSnapshot, OperationalTaskQueueSnapshot,
+    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
     RemoteTargetHistoryRecord, StorageAuditEvent, StorageAuditEventListQuery, StorageCallSite,
     StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
     StorageComputedObject, StorageError, StorageEventDelivery, StorageEventDeliveryListQuery,
@@ -474,6 +476,15 @@ impl AuthorizationStorage for PostgresStorage {
             .map_err(map_postgres_error)
     }
 
+    async fn load_local_collection_permission_set(
+        &self,
+        query: AuthorizationPermissionSetQuery,
+    ) -> Result<AuthorizationPermissionSet, StorageError> {
+        operations::authorization::load_local_collection_permission_set(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
     async fn apply_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
@@ -494,9 +505,9 @@ impl AuthorizationStorage for PostgresStorage {
 
     async fn revoke_all_local_collection_grants(
         &self,
-        key: AuthorizationGrantKey,
+        request: AuthorizationGrantDelete,
     ) -> Result<(), StorageError> {
-        operations::authorization::revoke_all_local_collection_grants(&self.pool, key)
+        operations::authorization::revoke_all_local_collection_grants(&self.pool, request)
             .await
             .map_err(map_postgres_error)
     }
@@ -962,6 +973,18 @@ impl OperationalStateStorage for PostgresStorage {
 
     async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
         operations::maintenance::load_maintenance_state(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError> {
+        operations::meta::load_storage_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+        operations::meta::load_task_queue_snapshot(&self.pool)
             .await
             .map_err(map_postgres_error)
     }

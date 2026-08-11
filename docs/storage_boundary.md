@@ -122,8 +122,9 @@ contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 18 requires the complete event-administration operation set described
-below and adds the `event_administration` capability label.
+Version 19 additionally requires revisioned permission-set snapshots, atomic
+event-aware local grant mutations, persisted storage diagnostics, and task-queue
+diagnostics. The required capability labels are unchanged from version 18.
 
 ## Export Query Semantics
 
@@ -167,6 +168,14 @@ logging, resource construction, and conversion to `ApiError`. The storage
 backend supplies identity facts, local grant mutations and decisions, and the
 minimal class/object projections required to construct policy resources.
 
+Permission-set point reads return a backend-neutral owner revision and grant
+DTOs from one snapshot. An optional group filter narrows returned grants without
+changing that complete-set revision. Local grant apply, revoke, and delete-all
+requests may carry event provenance; when present, the backend must mutate the
+grant, advance the owner revision, enforce any revision precondition, and emit
+the audit event atomically. Application permission traits never inherit or
+select a PostgreSQL extension trait.
+
 Multi-collection decisions are one mandatory operation: the backend returns
 `true` only when every normalized permission is available on every normalized
 collection, including inherited collection grants. This preserves the
@@ -177,9 +186,10 @@ reports bounded counts while redacting identifiers and object names.
 
 `StorageHandle` observes every authorization entry point under bounded
 `authorization/*` labels. The shared available-backend suite exercises identity,
-membership, resource projections, single and batch decisions, grant lifecycle,
-candidate listing, and policy snapshots. Adapter tests remain responsible for
-native query and inheritance mechanics.
+membership, resource projections, single and batch decisions, revisioned
+permission sets, event-aware grant lifecycle, candidate listing, and policy
+snapshots. Adapter tests remain responsible for native query, transaction, and
+inheritance mechanics.
 
 ## Import Semantics
 
@@ -289,7 +299,9 @@ adapter keeps its persistence rows private and explicitly converts them into
 the contract DTOs. Metrics use this pattern today: `MetricsStorage` returns
 neutral inventory, task, event, and pool snapshots while PostgreSQL keeps its
 queryable row structs inside the adapter. `OperationalStateStorage` does the
-same for readiness and maintenance state, and `TokenRetentionStorage` accepts
+same for readiness, maintenance, persisted storage diagnostics, and task-queue
+diagnostics; backend-specific activity and maintenance queries are mapped into
+neutral snapshots before dispatch returns. `TokenRetentionStorage` accepts
 validated retention settings without exposing the transaction, advisory lock,
 or SQL cutoffs. `EventHealthStorage` returns only persisted queue and claim
 state. The application adds worker configuration and in-process wake-up
