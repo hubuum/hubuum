@@ -22,15 +22,16 @@ use crate::models::search::{
 use crate::models::{
     CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, GroupID,
     HubuumClassHistory, HubuumObjectHistory, ImportAtomicity, ImportClassInput,
-    ImportCollectionInput, ImportMode, NewCollectionWithAssignee, NewComputedFieldDefinition,
-    NewGroup, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    Permissions, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument,
-    RemoteTargetHistory, UpdateCollection, UpdateGroup,
+    ImportCollectionInput, ImportMode, NewCollectionWithAssignee, NewGroup, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, RemoteTargetHistory,
+    UpdateCollection, UpdateGroup,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
+use crate::storage::postgres::operations::computed_field_rows::NewComputedFieldDefinitionRow as NewComputedFieldDefinition;
 use crate::storage::{
     AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
     AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
@@ -88,7 +89,7 @@ use crate::storage::{
     StorageTokenRevoke, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
     StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
     TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage,
+    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -3807,6 +3808,8 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
             StorageBackendKind::Postgresql => {
                 let backend = StorageHandle::postgres(pool().get_ref().clone());
                 fn accepts_event_delivery_contract(_backend: &impl EventDeliveryStorage) {}
+                fn accepts_worker_notification_contract(_backend: &impl WorkerNotificationStorage) {
+                }
                 fn accepts_event_administration_contract(
                     _backend: &(
                          impl AuditEventStorage
@@ -3816,6 +3819,7 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
                 ) {
                 }
                 accepts_event_delivery_contract(&backend);
+                accepts_worker_notification_contract(&backend);
                 accepts_event_administration_contract(&backend);
                 let descriptor = backend.descriptor();
                 assert_eq!(descriptor.kind(), kind);

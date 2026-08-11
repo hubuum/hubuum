@@ -137,7 +137,7 @@ pub async fn fanout_events(
             .execute(conn)
             .await?;
         if inserted > 0 {
-            crate::events::notify_event_delivery(conn).await?;
+            crate::storage::postgres::notifications::notify_event_delivery(conn).await?;
         }
 
         Ok(inserted)

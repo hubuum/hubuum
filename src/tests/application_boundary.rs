@@ -114,6 +114,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/events/delivery.rs",
         "src/events/fanout.rs",
         "src/events/retention.rs",
+        "src/errors.rs",
         "src/exports/mod.rs",
         "src/restores/mod.rs",
         "src/tasks/helpers.rs",
@@ -121,6 +122,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/tasks/planning.rs",
         "src/tasks/preload.rs",
         "src/tasks/resolution.rs",
+        "src/tasks/worker.rs",
         "src/tasks/remote_call.rs",
         "src/token_retention.rs",
         "src/traits/mod.rs",
@@ -145,6 +147,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
             "crate::storage::postgres",
             "PostgresPool",
             "postgres_pool",
+            "spawn_postgres_notification_listener",
             "diesel::",
             "diesel_async",
             "pool: AppContext",
@@ -254,7 +257,6 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
             "PostgreSQL group adapter is missing {required}"
         );
     }
-
     assert!(
         violations.is_empty(),
         "group domain types crossed into persistence details:\n{}",
@@ -677,6 +679,100 @@ fn relation_domain_types_are_free_of_persistence_implementation_details() {
 }
 
 #[test]
+fn workflow_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in [
+        "src/models/task.rs",
+        "src/models/backup.rs",
+        "src/models/computed_field.rs",
+        "src/models/revision.rs",
+        "src/models/search.rs",
+    ] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+            "ParsedQueryParamSqlExt",
+            "SQLComponent",
+            "SQLValue",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    for (relative_path, required) in [
+        (
+            "src/storage/postgres/operations/task_rows.rs",
+            &[
+                "struct TaskRow",
+                "struct NewTaskRow",
+                "struct ImportTaskResultRow",
+                "struct ExportTaskOutputRow",
+                "struct BackupTaskOutputRow",
+                "impl From<TaskRow> for crate::models::TaskRecord",
+                "impl CursorSqlMapping for TaskRow",
+            ][..],
+        ),
+        (
+            "src/storage/postgres/operations/computed_field_rows.rs",
+            &[
+                "struct ComputedFieldDefinitionRow",
+                "struct NewComputedFieldDefinitionRow",
+                "struct ClassComputationStateRow",
+                "struct ObjectComputedDataRow",
+                "impl From<ComputedFieldDefinitionRow> for ComputedFieldDefinition",
+                "impl CursorSqlMapping for ComputedFieldDefinitionRow",
+            ][..],
+        ),
+        (
+            "src/storage/postgres/revision.rs",
+            &[
+                "Queryable<ST, DB> for ResourceRevision",
+                "ToSql<BigInt, Pg> for ResourceRevision",
+                "FromSql<BigInt, DB> for ResourceRevision",
+            ][..],
+        ),
+        (
+            "src/storage/postgres/operations/search.rs",
+            &[
+                "struct SQLComponent",
+                "enum SQLValue",
+                "trait ParsedQueryParamSqlExt",
+                "impl ParsedQueryParamSqlExt for ParsedQueryParam",
+            ][..],
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for item in required {
+            assert!(
+                source.contains(item),
+                "PostgreSQL workflow adapter is missing {item}"
+            );
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "workflow domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable() {
     let root = repository_root();
     let contract_path = root.join("src/storage/contract.rs");
@@ -685,6 +781,14 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     let context_path = root.join("src/storage/context.rs");
     let context_source = fs::read_to_string(&context_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
+    let notification_adapter_path = root.join("src/storage/postgres/notifications.rs");
+    let notification_adapter_source = fs::read_to_string(&notification_adapter_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "could not read {}: {error}",
+                notification_adapter_path.display()
+            )
+        });
 
     let contract_body = contract_source
         .split_once("pub(crate) trait StorageBackend:")
@@ -728,6 +832,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "ImportStorage",
         "ExportQueryStorage",
         "ExportTemplateStorage",
+        "WorkerNotificationStorage",
         "StorageExecution",
         "sealed::CertifiedStorageBackend",
     ] {
@@ -753,6 +858,14 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     assert!(
         context_source.contains("assert_complete_storage_backend(&backend)"),
         "application composition must enforce the complete storage contract"
+    );
+    let notification_adapter_production = notification_adapter_source
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or(&notification_adapter_source);
+    assert!(
+        !notification_adapter_production.contains("get_config"),
+        "the PostgreSQL notification adapter must receive settings through composition"
     );
     for operation in ["collections", "classes", "objects"] {
         assert!(
@@ -1101,6 +1214,12 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "event-delivery administration operation {operation} must use the common storage observer"
         );
     }
+    assert!(
+        compact_context.contains(
+            "observe_infallible_storage_call(backend_name,\"worker_notifications\",\"spawn_listener\""
+        ),
+        "worker notification registration must use the common synchronous storage observer"
+    );
 }
 
 #[test]
@@ -1476,6 +1595,20 @@ fn storage_error_translation_has_one_way_dependency_direction() {
         postgres_error_source.contains("impl From<PostgresStorageError> for StorageError"),
         "the PostgreSQL adapter error must translate at the storage boundary"
     );
+    assert!(
+        !postgres_error_source.contains("source: ApiError"),
+        "the PostgreSQL adapter error must classify, not retain, an application error"
+    );
+    for required in [
+        "kind: StorageErrorKind",
+        "message: String",
+        "current_etag: Option<String>",
+    ] {
+        assert!(
+            postgres_error_source.contains(required),
+            "the PostgreSQL adapter error is missing classified field {required}"
+        );
+    }
 }
 
 #[test]

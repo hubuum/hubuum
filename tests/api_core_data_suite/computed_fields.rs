@@ -142,7 +142,7 @@ mod tests {
                 }
             };
             if let Ok(task) = claim_task_for_backend_test(&context.pool, task_id).await {
-                return task;
+                return task.into();
             }
             tokio::task::yield_now().await;
         }

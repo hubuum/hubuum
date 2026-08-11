@@ -42,6 +42,18 @@ pub(crate) fn services_for_postgres(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn background_worker_app_context() -> crate::permissions::AppContext {
+    let config = integration_test_config().expect("test worker requires database configuration");
+    let pool =
+        crate::storage::postgres::init_postgres_pool(&config.database_url, config.db_pool_size);
+    let permissions = std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
+        crate::storage::StorageHandle::postgres(pool.clone()),
+        config.admin_groupname,
+    ));
+    app_context_with_permission_backend(pool, permissions)
+}
+
 #[cfg(all(not(test), feature = "integration-test-support"))]
 pub fn integration_test_config() -> Result<crate::config::AppConfig, crate::errors::ApiError> {
     crate::test_support::integration_test_config().cloned()

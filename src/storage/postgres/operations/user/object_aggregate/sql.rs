@@ -18,7 +18,7 @@ use crate::models::object_aggregate::{
     ObjectAggregateMeasureOperation, ObjectAggregateScalarField, ObjectAggregateSort,
     ObjectAggregateSpec,
 };
-use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SQLValue};
+use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_sql_component,
@@ -27,6 +27,7 @@ use crate::storage::postgres::operations::resource_scope::{
     object_scope_predicate, resource_scope_ids,
 };
 use crate::storage::postgres::operations::search::JsonPredicateExt;
+use crate::storage::postgres::operations::search::SQLValue;
 use crate::storage::postgres::{PostgresConnection, with_connection};
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -60,21 +61,21 @@ macro_rules! bind_object_aggregate_query {
             query = match bind {
                 ObjectAggregateBindValue::Json(value) => query.bind::<Jsonb, _>(value),
                 ObjectAggregateBindValue::BigInt(value) => query.bind::<BigInt, _>(value),
-                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::String(value)) => {
-                    query.bind::<diesel::sql_types::Text, _>(value)
-                }
-                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Integer(
-                    value,
-                )) => query.bind::<diesel::sql_types::Integer, _>(value),
-                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::BigInteger(
-                    value,
-                )) => query.bind::<diesel::sql_types::BigInt, _>(value),
-                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Date(value)) => {
-                    query.bind::<diesel::sql_types::Timestamp, _>(value)
-                }
-                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Boolean(
-                    value,
-                )) => query.bind::<diesel::sql_types::Bool, _>(value),
+                ObjectAggregateBindValue::Query(
+                    $crate::storage::postgres::operations::search::SQLValue::String(value),
+                ) => query.bind::<diesel::sql_types::Text, _>(value),
+                ObjectAggregateBindValue::Query(
+                    $crate::storage::postgres::operations::search::SQLValue::Integer(value),
+                ) => query.bind::<diesel::sql_types::Integer, _>(value),
+                ObjectAggregateBindValue::Query(
+                    $crate::storage::postgres::operations::search::SQLValue::BigInteger(value),
+                ) => query.bind::<diesel::sql_types::BigInt, _>(value),
+                ObjectAggregateBindValue::Query(
+                    $crate::storage::postgres::operations::search::SQLValue::Date(value),
+                ) => query.bind::<diesel::sql_types::Timestamp, _>(value),
+                ObjectAggregateBindValue::Query(
+                    $crate::storage::postgres::operations::search::SQLValue::Boolean(value),
+                ) => query.bind::<diesel::sql_types::Bool, _>(value),
             };
         }
         query

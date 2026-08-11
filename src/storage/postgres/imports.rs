@@ -9,8 +9,9 @@ use crate::models::{
     IdentityScopeKey, ImportAtomicity, ImportClassRelationInput, ImportCollectionInput,
     ImportCollisionPolicy, ImportComputedFieldVisibility, ImportExportTemplateInput, ImportMode,
     ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    NewHubuumClassRelation, NewImportTaskResultRecord, ObjectKey, PrincipalKey,
+    NewHubuumClassRelation, ObjectKey, PrincipalKey,
 };
+use crate::storage::postgres::operations::task_rows::NewImportTaskResultRow as NewImportTaskResultRecord;
 use crate::storage::{
     ImportStorage, StorageError, StorageImportApply, StorageImportApplyItem,
     StorageImportOperation, StorageImportPlanItem, StorageImportPreflight,

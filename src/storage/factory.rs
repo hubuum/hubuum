@@ -114,7 +114,17 @@ pub(crate) fn initialize_storage(
                 statement_timeout_ms = settings.statement_timeout_ms(),
             );
             let pool = build_postgres_pool(settings).map_err(storage_initialization_error)?;
-            Ok(StorageHandle::postgres(pool))
+            let notification_pool_settings =
+                PostgresPoolSettings::builder(settings.connection_url().to_string())
+                    .max_size(1)
+                    .statement_timeout_ms(settings.statement_timeout_ms())
+                    .acquire_timeout_ms(settings.acquire_timeout_ms())
+                    .build()
+                    .map_err(storage_initialization_error)?;
+            Ok(StorageHandle::postgres_with_notification_pool_settings(
+                pool,
+                notification_pool_settings,
+            ))
         }
     }
 }

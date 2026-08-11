@@ -53,6 +53,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `29`.
+  Durable-worker wake-up listeners are a mandatory backend-neutral
+  `WorkerNotificationStorage` contract; event fan-out, event delivery, and
+  task workers no longer select PostgreSQL LISTEN/NOTIFY themselves. Task,
+  import-result, export-output, backup-output, computed-field, materialization,
+  and computation-state persistence rows, SQL cursor mappings, and revision
+  serialization are owned by the PostgreSQL adapter. Application domain types
+  and `ApiError` contain no Diesel or schema bindings. Worker listener pools
+  receive validated adapter settings from the storage factory instead of
+  reading global application configuration. Required capability
+  labels and public HTTP request and response shapes are unchanged.
+  Administration and monitoring clients matching contract version `28` must
+  accept version `29`.
 - **Breaking (administrator API):** the storage contract version is now `28`.
   Human-user point/list/lifecycle behavior, effective principal-group pages,
   and complete bearer-token issuance, metadata, renewal, and revocation now

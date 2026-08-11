@@ -9,8 +9,10 @@ use crate::events::{EntityType, EventContext};
 use crate::models::traits::{PatchObjectData, ResolveObjectTarget};
 use crate::models::{
     HubuumClassID, HubuumObject, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES, NewHubuumClass,
-    NewHubuumObject, NewObjectComputedData, ObjectComputedData, ObjectDataPatchDocument,
-    ObjectSelector,
+    NewHubuumObject, ObjectDataPatchDocument, ObjectSelector,
+};
+use crate::storage::postgres::operations::computed_field_rows::{
+    NewObjectComputedDataRow as NewObjectComputedData, ObjectComputedDataRow as ObjectComputedData,
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};

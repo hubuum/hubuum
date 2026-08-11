@@ -201,6 +201,7 @@ async fn finish_active_rebuild(context: &TestContext, class_id: i32) {
         let task = claim_task_for_backend_test(&context.pool, state.active_task_id.unwrap())
             .await
             .unwrap();
+        let task = task.into();
         let _ = execute_computed_reindex_task(&context.pool, &task).await;
         tokio::task::yield_now().await;
     }

@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
@@ -18,9 +19,7 @@ use crate::storage::postgres::operations::authz::{
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Queryable, Selectable, Clone)]
 #[diesel(table_name = crate::schema::tokens)]

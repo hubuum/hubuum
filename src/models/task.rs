@@ -1,6 +1,5 @@
 use std::fmt;
 
-use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -8,18 +7,14 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
-use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
 use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -214,8 +209,7 @@ crate::int_id_newtype! {
     noun = "task id";
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = tasks)]
+#[derive(Clone)]
 pub struct TaskRecord {
     pub id: i32,
     pub kind: String,
@@ -291,39 +285,6 @@ impl TaskRecord {
     pub(crate) fn worker_provenance(&self) -> MutationProvenance {
         MutationProvenance::worker(self.initiator_user_id, self.id)
     }
-
-    pub(crate) fn system_provenance(&self) -> MutationProvenance {
-        MutationProvenance::system_for_task(self.initiator_user_id, self.id)
-    }
-
-    pub(crate) fn user_provenance(&self, actor: PrincipalID) -> MutationProvenance {
-        MutationProvenance::user_for_task(actor.id(), self.initiator_user_id, self.id)
-    }
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = tasks)]
-pub struct NewTaskRecord {
-    pub kind: String,
-    pub status: String,
-    pub submitted_by: Option<i32>,
-    pub idempotency_key: Option<String>,
-    pub request_hash: Option<String>,
-    pub request_payload: Option<serde_json::Value>,
-    pub summary: Option<String>,
-    pub total_items: i32,
-    pub processed_items: i32,
-    pub success_items: i32,
-    pub failed_items: i32,
-    #[diesel(column_name = submitted_token_id)]
-    pub submitted_token_id: Option<i32>,
-    #[diesel(column_name = submitted_token_scoped)]
-    pub submitted_token_scoped: bool,
-    #[diesel(column_name = submitted_token_scopes)]
-    pub submitted_token_scopes: serde_json::Value,
-    pub request_redacted_at: Option<NaiveDateTime>,
-    pub started_at: Option<NaiveDateTime>,
-    pub finished_at: Option<NaiveDateTime>,
 }
 
 #[derive(Clone)]
@@ -347,8 +308,8 @@ pub struct NewTaskEventRecord {
     pub data: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = import_task_results)]
+/// Backend-neutral application projection of one persisted import result.
+#[derive(Clone)]
 pub struct ImportTaskResultRecord {
     pub id: i32,
     pub task_id: i32,
@@ -360,19 +321,6 @@ pub struct ImportTaskResultRecord {
     pub error: Option<String>,
     pub details: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
-}
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = import_task_results)]
-pub struct NewImportTaskResultRecord {
-    pub task_id: i32,
-    pub item_ref: Option<String>,
-    pub entity_kind: String,
-    pub action: String,
-    pub identifier: Option<String>,
-    pub outcome: String,
-    pub error: Option<String>,
-    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -478,27 +426,6 @@ pub struct ImportTaskResultResponse {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = export_task_outputs)]
-pub struct ExportTaskOutputRecord {
-    pub id: i32,
-    pub task_id: i32,
-    pub template_name: Option<String>,
-    pub content_type: String,
-    pub json_output: Option<serde_json::Value>,
-    pub text_output: Option<String>,
-    pub meta_json: serde_json::Value,
-    pub warnings_json: serde_json::Value,
-    pub warning_count: i32,
-    pub truncated: bool,
-    pub output_expires_at: NaiveDateTime,
-    pub total_duration_ms: i32,
-    pub query_duration_ms: i32,
-    pub hydration_duration_ms: i32,
-    pub render_duration_ms: i32,
-    pub created_at: NaiveDateTime,
-}
-
 /// Backend-neutral application projection of a retained export output.
 pub struct ExportTaskOutput {
     pub content_type: String,
@@ -507,25 +434,6 @@ pub struct ExportTaskOutput {
     pub meta_json: serde_json::Value,
     pub warnings_json: serde_json::Value,
     pub truncated: bool,
-}
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = export_task_outputs)]
-pub struct NewExportTaskOutputRecord {
-    pub task_id: i32,
-    pub template_name: Option<String>,
-    pub content_type: String,
-    pub json_output: Option<serde_json::Value>,
-    pub text_output: Option<String>,
-    pub meta_json: serde_json::Value,
-    pub warnings_json: serde_json::Value,
-    pub warning_count: i32,
-    pub truncated: bool,
-    pub output_expires_at: NaiveDateTime,
-    pub total_duration_ms: i32,
-    pub query_duration_ms: i32,
-    pub hydration_duration_ms: i32,
-    pub render_duration_ms: i32,
 }
 
 /// Outcome of looking up an export task's stored output.
@@ -553,23 +461,6 @@ impl<T> ExportOutputLookup<T> {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = export_task_outputs)]
-pub struct ExportTaskOutputSummaryRecord {
-    pub id: i32,
-    pub task_id: i32,
-    pub template_name: Option<String>,
-    pub content_type: String,
-    pub warning_count: i32,
-    pub truncated: bool,
-    pub output_expires_at: NaiveDateTime,
-    pub total_duration_ms: i32,
-    pub query_duration_ms: i32,
-    pub hydration_duration_ms: i32,
-    pub render_duration_ms: i32,
-    pub created_at: NaiveDateTime,
-}
-
 #[derive(Debug, Clone)]
 pub struct ExportTaskOutputSummary {
     pub task_id: i32,
@@ -582,15 +473,6 @@ pub struct ExportTaskOutputSummary {
     pub query_duration_ms: i32,
     pub hydration_duration_ms: i32,
     pub render_duration_ms: i32,
-}
-
-#[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = backup_task_outputs)]
-pub struct BackupTaskOutputSummaryRecord {
-    pub task_id: i32,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub output_expires_at: NaiveDateTime,
 }
 
 #[derive(Debug, Clone)]
@@ -910,54 +792,6 @@ impl CursorPaginated for TaskRecord {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         TaskResponse::tie_breaker_sort()
-    }
-}
-
-impl CursorSqlMapping for TaskResponse {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "tasks.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Kind => CursorSqlField {
-                column: "tasks.kind",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Status => CursorSqlField {
-                column: "tasks.status",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::SubmittedBy => CursorSqlField {
-                column: "tasks.submitted_by",
-                sql_type: CursorSqlType::Integer,
-                nullable: true,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "tasks.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::StartedAt => CursorSqlField {
-                column: "tasks.started_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            FilterField::FinishedAt => CursorSqlField {
-                column: "tasks.finished_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for tasks",
-                    field
-                )));
-            }
-        })
     }
 }
 

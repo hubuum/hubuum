@@ -28,6 +28,7 @@ mod restore;
 mod task_execution;
 mod task_queue;
 mod unified_search;
+mod worker_notifications;
 
 pub use authorization::{
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
@@ -178,6 +179,7 @@ pub use unified_search::{
     UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
     UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage, UnifiedSearchVisibility,
 };
+pub use worker_notifications::{StorageNotification, WorkerNotificationStorage};
 
 /// Shared backend-neutral resource projections used by read capabilities.
 pub type StorageCollection = UnifiedSearchCollection;
@@ -192,7 +194,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 28;
+pub const STORAGE_CONTRACT_VERSION: u16 = 29;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

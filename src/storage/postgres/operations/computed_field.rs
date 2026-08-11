@@ -14,26 +14,35 @@ use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::search::{
     ComputedFieldScope, ComputedQueryValueType, FilterField, Operator, ParsedQueryParam,
-    ParsedQueryParamExt, QueryOptions, SQLComponent, SQLValue, SortParam,
+    ParsedQueryParamExt, QueryOptions, SortParam,
 };
 use crate::models::{
-    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
-    ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
-    ComputedFieldErrorResponse, ComputedFieldMutationResponse, ComputedObjectScopesResponse,
-    ComputedResultType, ComputedScopeResponse, HubuumClass, HubuumObject,
-    HubuumObjectComputedResponse, NewObjectComputedData, NewTaskEventRecord, ObjectComputedData,
-    PrincipalID, SharedComputedScopeResponse, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
+    ComputedFieldDefinition as DomainComputedFieldDefinition, ComputedFieldDefinitionPatch,
+    ComputedFieldDefinitionRequest, ComputedFieldErrorResponse, ComputedFieldMutationResponse,
+    ComputedObjectScopesResponse, ComputedResultType, ComputedScopeResponse, HubuumClass,
+    HubuumObject, HubuumObjectComputedResponse, NewTaskEventRecord, PrincipalID,
+    SharedComputedScopeResponse, TaskKind, TaskResultCounts, TaskStatus,
     ValidatedComputedFieldPatch,
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::class::HubuumClassRow;
+use crate::storage::postgres::operations::computed_field_rows::{
+    ClassComputationStateRow as ClassComputationState,
+    ComputedFieldDefinitionRow as ComputedFieldDefinition,
+    NewComputedFieldDefinitionRow as NewComputedFieldDefinition,
+    NewObjectComputedDataRow as NewObjectComputedData, ObjectComputedDataRow as ObjectComputedData,
+};
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
-use crate::storage::postgres::operations::search::{JsonSqlPredicate, dynamic_sql_predicate};
+use crate::storage::postgres::operations::search::{
+    JsonSqlPredicate, SQLComponent, SQLValue, dynamic_sql_predicate,
+};
 use crate::storage::postgres::operations::task::{
     QueuedTaskCancellation, TaskBackend, TaskStateUpdate, cancel_queued_tasks_conn,
     insert_internal_queued_task,
 };
+use crate::storage::postgres::operations::task_rows::TaskRow as TaskRecord;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 
@@ -53,8 +62,8 @@ pub(crate) use query::{
 #[cfg(test)]
 use query::{validate_computed_filter_count, validate_computed_query_count};
 pub(crate) use rebuild::{
-    enqueue_restored_computed_rebuilds, mark_computed_reindex_failed_conn,
-    mark_recovered_computed_reindex_failed,
+    enqueue_restored_computed_rebuilds, execute_computed_reindex_task_row,
+    mark_computed_reindex_failed_conn, mark_recovered_computed_reindex_failed,
 };
 pub use rebuild::{execute_computed_reindex_task, request_class_rebuild};
 
@@ -297,6 +306,14 @@ fn computed_field_event(
     .with_metadata(serde_json::json!({ "class_id": class.id })))
 }
 
+fn definition_snapshot(
+    definition: &ComputedFieldDefinition,
+) -> Result<serde_json::Value, ApiError> {
+    Ok(serde_json::to_value(DomainComputedFieldDefinition::from(
+        definition.clone(),
+    ))?)
+}
+
 async fn class_record(
     conn: &mut PostgresConnection,
     target_class_id: i32,
@@ -434,7 +451,8 @@ pub async fn create_shared_definition(
     request: ComputedFieldDefinitionRequest,
     context: &EventContext,
 ) -> Result<ComputedFieldMutationResponse, ApiError> {
-    let input = request.into_new_shared(target_class_id, actor_id)?;
+    let input: NewComputedFieldDefinition =
+        request.into_new_shared(target_class_id, actor_id)?.into();
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
         let class =
@@ -467,9 +485,12 @@ pub async fn create_shared_definition(
             context,
             format!("Shared computed field '{}' created", definition.key),
         )?
-        .with_after(serde_json::to_value(&definition)?);
+        .with_after(definition_snapshot(&definition)?);
         emit_event(conn, &event).await?;
-        Ok(ComputedFieldMutationResponse { definition, state })
+        Ok(ComputedFieldMutationResponse {
+            definition: definition.into(),
+            state: state.into(),
+        })
     })
     .await
 }
@@ -542,7 +563,8 @@ pub async fn update_shared_definition(
                 "Shared computed field {definition_id} was not found in class {target_class_id}"
             )));
         }
-        let validated = patch.validate_against(&current)?;
+        let current_domain = DomainComputedFieldDefinition::from(current.clone());
+        let validated = patch.validate_against(&current_domain)?;
         let changed = validated.key != current.key
             || validated.label != current.label
             || validated.description != current.description
@@ -551,8 +573,10 @@ pub async fn update_shared_definition(
             || validated.enabled != current.enabled;
         if !changed {
             return Ok(ComputedFieldMutationResponse {
-                definition: current,
-                state: ensure_computation_state(conn, target_class_id).await?,
+                definition: current.into(),
+                state: ensure_computation_state(conn, target_class_id)
+                    .await?
+                    .into(),
             });
         }
         let definition = apply_definition_patch(conn, &current, &validated, actor_id).await?;
@@ -568,10 +592,13 @@ pub async fn update_shared_definition(
             context,
             format!("Shared computed field '{}' updated", definition.key),
         )?
-        .with_before(serde_json::to_value(&current)?)
-        .with_after(serde_json::to_value(&definition)?);
+        .with_before(definition_snapshot(&current)?)
+        .with_after(definition_snapshot(&definition)?);
         emit_event(conn, &event).await?;
-        Ok(ComputedFieldMutationResponse { definition, state })
+        Ok(ComputedFieldMutationResponse {
+            definition: definition.into(),
+            state: state.into(),
+        })
     })
     .await
 }
@@ -607,7 +634,7 @@ pub async fn delete_shared_definition(
             context,
             format!("Shared computed field '{}' deleted", current.key),
         )?
-        .with_before(serde_json::to_value(&current)?);
+        .with_before(definition_snapshot(&current)?);
         emit_event(conn, &event).await?;
         Ok(state)
     })
@@ -620,7 +647,8 @@ pub async fn create_personal_definition(
     owner_id: i32,
     request: ComputedFieldDefinitionRequest,
 ) -> Result<ComputedFieldDefinition, ApiError> {
-    let input = request.into_new_personal(target_class_id, owner_id)?;
+    let input: NewComputedFieldDefinition =
+        request.into_new_personal(target_class_id, owner_id)?.into();
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_personal_definition_scope_lock(conn, target_class_id, owner_id).await?;
         let _ = class_record(conn, target_class_id).await?;
@@ -667,7 +695,8 @@ pub async fn update_personal_definition(
                 "Personal computed field {definition_id} was not found"
             )));
         }
-        let validated = patch.validate_against(&current)?;
+        let current_domain = DomainComputedFieldDefinition::from(current.clone());
+        let validated = patch.validate_against(&current_domain)?;
         let changed = validated.key != current.key
             || validated.label != current.label
             || validated.description != current.description

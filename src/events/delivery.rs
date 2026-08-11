@@ -27,7 +27,7 @@ use crate::storage::capabilities::event_delivery::{
 };
 use crate::storage::{
     EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
-    StorageHandle, storage_handle,
+    StorageHandle, StorageNotification, WorkerNotificationStorage, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
@@ -52,7 +52,7 @@ fn get_event_delivery_notify() -> &'static Notify {
     EVENT_DELIVERY_NOTIFY.get_or_init(Notify::new)
 }
 
-fn wake_event_delivery_worker_from_postgres() {
+fn wake_event_delivery_worker_from_storage() {
     get_event_delivery_notify().notify_one();
 }
 
@@ -309,10 +309,10 @@ where
     };
 
     EVENT_DELIVERY_LISTENER.call_once(|| {
-        super::pg_notify::spawn_postgres_notification_listener(
-            super::pg_notify::EVENT_DELIVERY_CHANNEL,
-            "event-delivery-pg-listener",
-            wake_event_delivery_worker_from_postgres,
+        pool.spawn_worker_notification_listener(
+            StorageNotification::EventDelivery,
+            "event-delivery-storage-listener",
+            wake_event_delivery_worker_from_storage,
         );
     });
 

@@ -13,17 +13,15 @@ use uuid::Uuid;
 use crate::apply_query_options;
 use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, Event, MutationProvenance, NewEvent, notify_task_queue};
+use crate::events::{Action, EntityType, Event, MutationProvenance, NewEvent};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
-    ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
-    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord,
-    TaskResponse, TaskResultCounts, TaskStatus, TokenID,
+    BackupOutputLookup, ExportOutputLookup, NewTaskEventRecord, PrincipalID, TaskEventRecord,
+    TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
+use crate::storage::postgres::notifications::notify_task_queue;
 use crate::storage::postgres::operations::event_record::EventRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 #[cfg(test)]
@@ -33,6 +31,17 @@ use crate::storage::postgres::{with_connection, with_transaction};
 use crate::tasks::TaskLeaseDuration;
 
 use super::remote_target::NewRemoteCallResultRow;
+use super::task_rows::{
+    BackupTaskOutputRow as BackupTaskOutputRecord,
+    BackupTaskOutputSummaryRow as BackupTaskOutputSummaryRecord,
+    ExportTaskOutputRow as ExportTaskOutputRecord,
+    ExportTaskOutputSummaryRow as ExportTaskOutputSummaryRecord,
+    ImportTaskResultRow as ImportTaskResultRecord,
+    NewBackupTaskOutputRow as NewBackupTaskOutputRecord,
+    NewExportTaskOutputRow as NewExportTaskOutputRecord,
+    NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
+    TaskRow as TaskRecord,
+};
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
@@ -531,6 +540,7 @@ pub trait TaskBackend: TaskIdentifier {
         let record = with_connection(pool, async |conn| {
             export_task_outputs
                 .filter(task_id.eq(task_id_value))
+                .select(ExportTaskOutputRecord::as_select())
                 .first::<ExportTaskOutputRecord>(conn)
                 .await
                 .optional()
@@ -584,6 +594,7 @@ pub trait TaskBackend: TaskIdentifier {
         let record = with_connection(pool, async |conn| {
             backup_task_outputs
                 .filter(task_id.eq(task_id_value))
+                .select(BackupTaskOutputRecord::as_select())
                 .first::<BackupTaskOutputRecord>(conn)
                 .await
                 .optional()
@@ -970,7 +981,7 @@ fn build_task_query<'a>(
     query
 }
 
-pub async fn list_tasks_with_total_count(
+pub(crate) async fn list_tasks_with_total_count(
     pool: &impl crate::storage::StorageContext,
     submitted_by_filter: Option<i32>,
     kind_filter: Option<&str>,
@@ -990,7 +1001,7 @@ pub async fn list_tasks_with_total_count(
 
     let items = with_connection(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
         let mut query = build_task_query(submitted_by_filter, kind_filter, status_filter);
-        apply_query_options!(query, query_options, TaskResponse);
+        apply_query_options!(query, query_options, TaskRecord);
         Ok(query.load::<TaskRecord>(conn).await?)
     })
     .await?;
@@ -1064,7 +1075,7 @@ pub(crate) async fn enrich_legacy_task_event_initiators(
     Ok(records)
 }
 
-pub async fn list_export_task_output_summaries(
+pub(crate) async fn list_export_task_output_summaries(
     pool: &impl crate::storage::StorageContext,
     task_ids: &[i32],
 ) -> Result<Vec<ExportTaskOutputSummaryRecord>, ApiError> {
@@ -1087,7 +1098,7 @@ pub async fn list_export_task_output_summaries(
     .await
 }
 
-pub async fn list_backup_task_output_summaries(
+pub(crate) async fn list_backup_task_output_summaries(
     pool: &impl crate::storage::StorageContext,
     task_ids: &[i32],
 ) -> Result<Vec<BackupTaskOutputSummaryRecord>, ApiError> {
@@ -1163,7 +1174,7 @@ pub async fn purge_expired_export_outputs(
     Ok(expired_task_ids)
 }
 
-pub async fn purge_expired_backup_outputs(
+pub(crate) async fn purge_expired_backup_outputs(
     pool: &impl crate::storage::StorageContext,
 ) -> Result<Vec<i32>, ApiError> {
     use crate::schema::backup_task_outputs::dsl::{
@@ -1326,7 +1337,7 @@ pub(crate) async fn append_task_event_while_claimed(
     .await
 }
 
-pub async fn insert_import_results(
+pub(crate) async fn insert_import_results(
     pool: &impl crate::storage::StorageContext,
     entries: &[NewImportTaskResultRecord],
 ) -> Result<usize, ApiError> {
@@ -1956,14 +1967,18 @@ mod tests {
     use crate::events::{Action, ActorKind, EntityType, NewEvent};
     use crate::models::search::QueryOptions;
     use crate::models::{
-        CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
-        NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
+        CollectionID, NewTaskEventRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
         RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
         StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
         TokenScope,
     };
     use crate::storage::postgres::operations::event_record::emit_event;
     use crate::storage::postgres::operations::remote_target::NewRemoteCallResultRow;
+    use crate::storage::postgres::operations::task_rows::{
+        NewBackupTaskOutputRow as NewBackupTaskOutputRecord,
+        NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
+        TaskRow as TaskRecord,
+    };
     use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
     use crate::tasks::TaskLeaseDuration;
     use crate::tests::{TestContext, create_test_user};
@@ -2177,7 +2192,7 @@ mod tests {
         context: &TestContext,
         name: &str,
         lease_expires_at_value: chrono::NaiveDateTime,
-    ) -> crate::models::TaskRecord {
+    ) -> TaskRecord {
         create_leased_task_of_kind(context, name, TaskKind::Import, lease_expires_at_value).await
     }
 
@@ -2186,7 +2201,7 @@ mod tests {
         name: &str,
         kind: TaskKind,
         lease_expires_at_value: chrono::NaiveDateTime,
-    ) -> crate::models::TaskRecord {
+    ) -> TaskRecord {
         let task = NewTaskRecord {
             kind: kind.as_str().to_string(),
             status: TaskStatus::Validating.as_str().to_string(),
@@ -2222,7 +2237,7 @@ mod tests {
                     attempt_count.eq(1),
                     initiator_user_id.eq(Some(context.admin_user.id)),
                 ))
-                .get_result::<crate::models::TaskRecord>(conn)
+                .get_result::<TaskRecord>(conn)
                 .await
         })
         .await

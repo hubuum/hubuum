@@ -4,8 +4,9 @@ mod tests {
     use chrono::Utc;
     use rstest::rstest;
 
-    use crate::models::{NewTaskRecord, TaskKind, TaskResponse, TaskStatus};
+    use crate::models::{TaskKind, TaskResponse, TaskStatus};
     use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{
         assert_paginated_collection_total_count, assert_response_status, header_value,

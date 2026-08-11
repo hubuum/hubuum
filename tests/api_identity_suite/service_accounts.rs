@@ -33,10 +33,10 @@ mod tests {
         CollectionID, GroupID, GroupResponse, HubuumClassID, HubuumClassRelation, HubuumObject,
         HubuumObjectID, HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
-        NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
-        PrincipalTokenCreateRequest, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
-        ServiceAccountPointResponse, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
-        TaskStatus, TokenResourceScope, TokenScope,
+        Permissions, PrincipalID, PrincipalMemberResponse, PrincipalTokenCreateRequest,
+        PrincipalTokenMetadata, ServiceAccount, ServiceAccountID, ServiceAccountPointResponse,
+        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
+        TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::storage::postgres::operations::authz::scope_allows;
@@ -44,6 +44,7 @@ mod tests {
         DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
     };
     use crate::storage::postgres::operations::task::scope_snapshot_json;
+    use crate::storage::postgres::operations::task_rows::{NewTaskRow as NewTaskRecord, TaskRow};
     use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
     use crate::test_support::{
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
@@ -2486,6 +2487,7 @@ mod tests {
         .create(pool)
         .await
         .unwrap()
+        .into()
     }
 
     /// #17: a service account can own a task (`submitted_by` = SA principal id).
@@ -2521,7 +2523,7 @@ mod tests {
         synthetic_task(pool, sa.id, TaskStatus::Queued, Some(key.clone()), None).await;
 
         let lookup = if same_principal { sa.id } else { other.id };
-        let found = TaskRecord::find_by_idempotency(pool, PrincipalID::new(lookup).unwrap(), &key)
+        let found = TaskRow::find_by_idempotency(pool, PrincipalID::new(lookup).unwrap(), &key)
             .await
             .unwrap();
 

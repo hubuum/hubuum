@@ -121,24 +121,21 @@ surface.
 `StorageExecution` owns diagnostic call-site attribution, mutation provenance,
 and revision-precondition scopes used across requests and workers.
 `OperationalStateStorage`, `MetricsStorage`, `EventHealthStorage`,
-`TokenRetentionStorage`, `EventDeliveryStorage`, `EventFanoutStorage`, and
-`EventRetentionStorage` jointly enforce the operations family. No family is
-considered complete merely because a marker exists.
+`TokenRetentionStorage`, `EventDeliveryStorage`, `EventFanoutStorage`,
+`EventRetentionStorage`, and `WorkerNotificationStorage` jointly enforce the
+operations family. Worker consumers request backend-neutral wake-up topics;
+the adapter owns the native listener mechanism. No family is considered
+complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Export-template, remote-target, event,
-event-sink, event-subscription, and event-delivery lifecycle rows are
-adapter-owned, as are permission query, insert, update, group, membership, collection,
-class, and object lifecycle and history rows, class- and object-relation rows, relation
-graph query rows, remote-target history, and remote-call result persistence
-rows. Domain permission, group, collection, class, object, and relation values
-contain no Diesel derives, schema bindings, or SQL cursor mappings. Those mappings and
-explicit conversions live in the PostgreSQL adapter. Principal and
-principal-membership query rows are also adapter-owned, and the principal
-domain model contains no Diesel derives, schema bindings, or SQL cursor
-mappings. Remaining mixed
-persistence rows move there as their backend-neutral DTOs are extracted. Their
-current locations are implementation details, not partial backend support.
+event-sink, event-subscription, event-delivery, permission, identity, principal,
+group, membership, collection, class, object, relation, task, output,
+computed-field, materialization, and computation-state persistence rows are
+adapter-owned. The adapter also owns history and graph query rows, SQL cursor
+mappings, revision serialization, native notifications, and explicit
+conversions. Application domain values contain no Diesel derives, schema
+bindings, or SQL cursor mappings.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
@@ -148,7 +145,10 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 28 additionally requires complete human-user and bearer-token lifecycle
+Version 29 additionally requires backend-neutral durable-worker notification
+listeners and adapter ownership of task, output, computed-field,
+materialization, computation-state, and revision persistence mappings. Version
+28 additionally requires complete human-user and bearer-token lifecycle
 traits, effective principal-group pages, secret-free token issuance, and
 identity-subtype persistence rows owned entirely by adapters. Version 27
 required principal point reads and the complete audited settings lifecycle to
@@ -654,7 +654,11 @@ Each adapter owns its implementation error and converts it to the bounded
 `StorageErrorKind` taxonomy at the adapter edge. Backend-neutral storage code
 does not import `ApiError`. The application error layer alone converts
 `StorageError` into the public `ApiError` response surface. There is no reverse
-application-error-to-storage-error conversion.
+application-error-to-storage-error conversion in the application or contract
+layers. During the migration, legacy query helpers inside the PostgreSQL
+adapter may still produce `ApiError`; the adapter immediately classifies those
+values into `PostgresStorageError` and does not retain or expose the application
+error across its boundary.
 
 Expected domain outcomes such as not found, conflict, validation, and stale
 preconditions retain their useful public classification. Database, unavailable,
@@ -666,7 +670,9 @@ responses use the existing safe generic messages.
 Every migrated storage call is wrapped outside the implementation, so backends
 cannot silently omit common diagnostics. Lifecycle services use the observed
 storage wrapper; opaque-handle metrics and operational calls use the same
-observation function. It provides:
+observation function. Infallible synchronous registration calls, including
+worker-notification listeners, use the matching synchronous observer. It
+provides:
 
 - a `storage_operation` tracing span with bounded `backend`, `capability`, and
   `operation` fields;
@@ -692,6 +698,10 @@ Server, administration, and bootstrap entry points construct validated
 `StorageSettings` and receive an opaque `StorageHandle`. Only the internal
 storage factory selects an adapter, maps its initialization error into
 `StorageError`, and logs its non-sensitive effective endpoint and pool settings.
+The factory also derives the adapter-private worker-listener pool settings and
+passes them into the adapter; notification entry points never read global
+application configuration. Test-only pool constructors may reuse their supplied
+pool because they do not represent production composition.
 The embedded-migration command dispatches through the same factory boundary
 without exposing a connection, Diesel migration harness, or credential-bearing
 URL to the administration workflow.
@@ -737,10 +747,10 @@ There are two complementary test layers:
 
 PostgreSQL-specific tests remain responsible for behavior a logical model
 cannot reproduce: transactions, rollbacks, isolation, row locks, trigger
-serialization, migrations, temporal trigger semantics, recovery, concurrency,
-query budgets, and production feature combinations. The complete repository test
-suite is therefore part of PostgreSQL backend certification, not a substitute
-for the shared logical contracts.
+serialization, migrations, temporal trigger semantics, native notifications,
+recovery, concurrency, query budgets, and production feature combinations. The
+complete repository test suite is therefore part of PostgreSQL backend
+certification, not a substitute for the shared logical contracts.
 
 Adding another selectable backend requires all of the following in one change:
 
@@ -775,9 +785,9 @@ The first workspace boundaries are now in place:
   inventory-query, unified-search, operational state, computed-object,
   computed-field lifecycle, object-aggregate, task-queue,
   task-execution, backup-snapshot, remote-target, export-template lifecycle,
-  relation-query, identity, user, token, event-health, event-administration, event-fan-out,
-  event-retention, and token-retention traits without application, transport,
-  or driver dependencies.
+  relation-query, identity, user, token, event-health, event-administration,
+  event-fan-out, event-retention, token-retention, and worker-notification
+  traits without application, transport, or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
@@ -867,6 +877,10 @@ Architecture tests enforce that:
 - backend-neutral services and storage contracts do not import PostgreSQL or
   application API errors;
 - storage contract DTOs do not derive Diesel traits or expose adapter types;
+- domain task, backup, computed-field, and revision types do not own
+  persistence rows or SQL mappings;
+- workers select notification topics through a mandatory storage trait rather
+  than a backend-native listener;
 - only adapter modules translate implementation errors to `StorageError`;
 - the application error layer owns `StorageError` to `ApiError` conversion;
 - `AppContext` owns an opaque `StorageHandle` and composes services from a

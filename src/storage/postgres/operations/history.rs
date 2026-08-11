@@ -11,6 +11,78 @@ use crate::storage::{
 use chrono::{DateTime, Utc};
 use std::num::NonZeroI64;
 
+macro_rules! impl_history_pagination {
+    ($ty:ty, $table:literal) => {
+        impl crate::traits::CursorPaginated for $ty {
+            fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+                matches!(
+                    field,
+                    crate::models::search::FilterField::HistoryId
+                        | crate::models::search::FilterField::Revision
+                )
+            }
+
+            fn cursor_value(
+                &self,
+                field: &crate::models::search::FilterField,
+            ) -> Result<crate::traits::CursorValue, ApiError> {
+                Ok(match field {
+                    crate::models::search::FilterField::HistoryId => {
+                        crate::traits::CursorValue::Integer(self.history_id)
+                    }
+                    crate::models::search::FilterField::Revision => {
+                        crate::traits::CursorValue::Integer(self.revision.get())
+                    }
+                    other => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{other}' is not orderable for history"
+                        )));
+                    }
+                })
+            }
+
+            fn default_sort() -> Vec<crate::models::search::SortParam> {
+                vec![crate::models::search::SortParam {
+                    field: crate::models::search::FilterField::HistoryId,
+                    descending: true,
+                }]
+            }
+
+            fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+                Self::default_sort()
+            }
+        }
+
+        impl crate::pagination::CursorSqlMapping for $ty {
+            fn sql_field(
+                field: &crate::models::search::FilterField,
+            ) -> Result<crate::pagination::CursorSqlField, ApiError> {
+                Ok(match field {
+                    crate::models::search::FilterField::HistoryId => {
+                        crate::pagination::CursorSqlField {
+                            column: concat!($table, ".history_id"),
+                            sql_type: crate::pagination::CursorSqlType::BigInt,
+                            nullable: false,
+                        }
+                    }
+                    crate::models::search::FilterField::Revision => {
+                        crate::pagination::CursorSqlField {
+                            column: concat!($table, ".revision"),
+                            sql_type: crate::pagination::CursorSqlType::BigInt,
+                            nullable: false,
+                        }
+                    }
+                    other => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{other}' is not orderable for history"
+                        )));
+                    }
+                })
+            }
+        }
+    };
+}
+
 /// Collection visibility to apply before history rows are counted or paginated.
 #[derive(Clone, Copy)]
 pub enum HistoryCollectionFilter<'a> {
@@ -38,7 +110,7 @@ pub(crate) struct CollectionHistoryRow {
     revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(CollectionHistoryRow, "collections_history");
+impl_history_pagination!(CollectionHistoryRow, "collections_history");
 
 #[cfg(test)]
 impl CollectionHistoryRow {
@@ -77,7 +149,7 @@ pub(crate) struct ExportTemplateHistoryRow {
     revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(ExportTemplateHistoryRow, "export_templates_history");
+impl_history_pagination!(ExportTemplateHistoryRow, "export_templates_history");
 
 #[derive(Queryable)]
 #[diesel(table_name = crate::schema::remote_targets_history)]
@@ -108,7 +180,7 @@ pub(crate) struct RemoteTargetHistoryRow {
     revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(RemoteTargetHistoryRow, "remote_targets_history");
+impl_history_pagination!(RemoteTargetHistoryRow, "remote_targets_history");
 
 #[derive(Queryable)]
 #[diesel(table_name = crate::schema::hubuumobject_history)]
@@ -132,7 +204,7 @@ pub(crate) struct HubuumObjectHistoryRow {
     revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(HubuumObjectHistoryRow, "hubuumobject_history");
+impl_history_pagination!(HubuumObjectHistoryRow, "hubuumobject_history");
 
 #[derive(Queryable)]
 #[diesel(table_name = crate::schema::hubuumclass_history)]
@@ -156,7 +228,7 @@ pub(crate) struct HubuumClassHistoryRow {
     revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(HubuumClassHistoryRow, "hubuumclass_history");
+impl_history_pagination!(HubuumClassHistoryRow, "hubuumclass_history");
 
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).

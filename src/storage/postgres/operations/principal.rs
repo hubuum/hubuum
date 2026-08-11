@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use hubuum_events_core::EventContext;
 use serde_json::{Value, json};
 
@@ -17,9 +18,7 @@ use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{
     PostgresConnection, assert_locked_revision_precondition, with_connection, with_transaction,
 };
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Debug, Queryable, Selectable, Clone)]
 #[diesel(table_name = crate::schema::principals)]

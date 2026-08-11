@@ -1,10 +1,9 @@
 use super::*;
 use crate::models::search::SortParam;
 use crate::models::token_scope::TokenScope;
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::authz::AuthzSubject;
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 use diesel_async::RunQueryDsl;
 use std::collections::HashMap;
 

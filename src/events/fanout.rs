@@ -17,7 +17,10 @@ use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::{EventFanoutStorage, StorageError, StorageHandle, storage_handle};
+use crate::storage::{
+    EventFanoutStorage, StorageError, StorageHandle, StorageNotification,
+    WorkerNotificationStorage, storage_handle,
+};
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
@@ -31,7 +34,7 @@ fn get_event_fanout_notify() -> &'static Notify {
     EVENT_FANOUT_NOTIFY.get_or_init(Notify::new)
 }
 
-fn wake_event_fanout_worker_from_postgres() {
+fn wake_event_fanout_worker_from_storage() {
     get_event_fanout_notify().notify_one();
 }
 
@@ -164,10 +167,10 @@ where
     };
 
     EVENT_FANOUT_LISTENER.call_once(|| {
-        super::pg_notify::spawn_postgres_notification_listener(
-            super::pg_notify::EVENT_FANOUT_CHANNEL,
-            "event-fanout-pg-listener",
-            wake_event_fanout_worker_from_postgres,
+        pool.spawn_worker_notification_listener(
+            StorageNotification::EventFanout,
+            "event-fanout-storage-listener",
+            wake_event_fanout_worker_from_storage,
         );
     });
 

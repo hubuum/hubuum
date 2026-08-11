@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use serde_json::json;
 
 use crate::errors::ApiError;
@@ -7,7 +8,7 @@ use crate::models::principal::{NewPrincipal, Principal, PrincipalID, PrincipalKi
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{
     NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TaskKind,
-    TaskRecord, TaskStatus, UpdateServiceAccount,
+    TaskStatus, UpdateServiceAccount,
 };
 use crate::schema::service_accounts;
 use crate::storage::StorageContext;
@@ -20,14 +21,13 @@ use crate::storage::postgres::operations::principal::{
 use crate::storage::postgres::operations::task::{
     QueuedTaskCancellation, cancel_queued_tasks_conn,
 };
+use crate::storage::postgres::operations::task_rows::TaskRow as TaskRecord;
 use crate::storage::postgres::operations::token::revoke_all_tokens_for_principal_conn;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::traits::accessors::InstanceAdapter;
 use crate::traits::crud::{DeleteAdapter, UpdateAdapter};
-use crate::traits::{
-    AuthzSubject, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{AuthzSubject, CursorPaginated, CursorValue};
 
 #[derive(Debug, Queryable, Selectable, Clone)]
 #[diesel(table_name = crate::schema::service_accounts)]
@@ -807,8 +807,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{NewTaskRecord, TaskRecord};
     use crate::schema::{tasks, tokens};
+    use crate::storage::postgres::operations::task_rows::{
+        NewTaskRow as NewTaskRecord, TaskRow as TaskRecord,
+    };
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, create_test_user,
         service_account_token,

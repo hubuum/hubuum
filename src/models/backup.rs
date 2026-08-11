@@ -3,13 +3,11 @@ use std::fmt;
 use std::str::FromStr;
 
 use chrono::NaiveDateTime;
-use diesel::{Insertable, Queryable, Selectable};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
-use crate::schema::backup_task_outputs;
 
 use super::principal::Principal;
 
@@ -295,28 +293,6 @@ mod tests {
         assert!(serde_json::from_str::<RestoreJobID>("0").is_err());
         assert!(serde_json::from_str::<RestoreJobID>("-1").is_err());
     }
-}
-
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = backup_task_outputs)]
-pub struct BackupTaskOutputRecord {
-    pub id: i32,
-    pub task_id: i32,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub output_expires_at: NaiveDateTime,
-    pub created_at: NaiveDateTime,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = backup_task_outputs)]
-pub struct NewBackupTaskOutputRecord {
-    pub task_id: i32,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub output_expires_at: NaiveDateTime,
 }
 
 /// Identifier wrapper for a staged restore job.

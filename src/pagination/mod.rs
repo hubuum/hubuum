@@ -7,9 +7,39 @@ use serde::{Deserialize, Serialize};
 use crate::config::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, get_config};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-pub use crate::traits::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+pub use crate::traits::pagination::{CursorPaginated, CursorValue};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorSqlType {
+    Integer,
+    BigInt,
+    Numeric,
+    Boolean,
+    String,
+    DateTime,
+    IntegerArray,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorSqlField<T = &'static str> {
+    pub column: T,
+    pub sql_type: CursorSqlType,
+    pub nullable: bool,
+}
+
+impl<T> CursorSqlField<T>
+where
+    T: AsRef<str>,
+{
+    pub fn expression(&self) -> &str {
+        self.column.as_ref()
+    }
+}
+
+pub trait CursorSqlMapping: CursorPaginated {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError>;
+}
 
 pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
 pub const PAGE_LIMIT_HEADER: &str = "X-Page-Limit";

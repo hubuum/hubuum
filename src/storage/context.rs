@@ -2,6 +2,7 @@ use actix_web::web::Data;
 use chrono::NaiveDateTime;
 use std::future::Future;
 use std::pin::Pin;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::events::{
@@ -18,8 +19,8 @@ use crate::models::{
 };
 use crate::models::{Group, Permission};
 use crate::permissions::{AppContext, PermissionBackend};
-use crate::storage::observed::observe_storage_call;
-use crate::storage::postgres::PostgresPool;
+use crate::storage::observed::{observe_infallible_storage_call, observe_storage_call};
+use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use crate::storage::{
     AuditEventStorage, AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity,
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
@@ -65,29 +66,30 @@ use crate::storage::{
     StorageExternalUserSync, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageImportApply, StorageImportPlanItem, StorageImportPreflight,
     StorageImportResult, StorageImportTaskResultPage, StorageInventoryCounts,
-    StorageLocalPasswordReset, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
-    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StorageQueryBudget,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
-    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
-    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageRevisionPrecondition, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageSyncedHuman, StorageTask, StorageTaskAccess,
-    StorageTaskClaim, StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventPage, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery,
-    StorageTaskStateUpdate, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
-    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    StorageLocalPasswordReset, StorageNotification, StorageObject, StorageObjectAggregatePage,
+    StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePoolState, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StorageQueryBudget, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPage, StorageRemoteTargetUpdate, StorageRestoreApply,
+    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
+    StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
+    StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate,
+    StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata, StorageTokenRenew,
+    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
+    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
+    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -116,7 +118,20 @@ enum BackendImplementation {
 
 impl StorageHandle {
     pub(crate) fn postgres(pool: PostgresPool) -> Self {
-        let backend = PostgresStorage::new(pool);
+        Self::from_postgres_backend(PostgresStorage::new(pool))
+    }
+
+    pub(crate) fn postgres_with_notification_pool_settings(
+        pool: PostgresPool,
+        notification_pool_settings: PostgresPoolSettings,
+    ) -> Self {
+        Self::from_postgres_backend(PostgresStorage::with_notification_pool_settings(
+            pool,
+            notification_pool_settings,
+        ))
+    }
+
+    fn from_postgres_backend(backend: PostgresStorage) -> Self {
         assert_complete_storage_backend(&backend);
         Self {
             implementation: BackendImplementation::Postgresql(backend),
@@ -229,6 +244,33 @@ impl StorageExecution for StorageHandle {
                 backend.run_with_revision_precondition(precondition, future)
             }
         }
+    }
+}
+
+impl WorkerNotificationStorage for StorageHandle {
+    fn spawn_worker_notification_listener(
+        &self,
+        topic: StorageNotification,
+        worker_name: &'static str,
+        on_notification: fn(),
+    ) {
+        let backend_name = self.backend_name();
+        observe_infallible_storage_call(
+            backend_name,
+            "worker_notifications",
+            "spawn_listener",
+            || {
+                debug!(
+                    message = "registering storage worker notification listener",
+                    topic = topic.as_str(),
+                    worker_name,
+                );
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => backend
+                        .spawn_worker_notification_listener(topic, worker_name, on_notification),
+                }
+            },
+        )
     }
 }
 

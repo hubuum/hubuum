@@ -17,8 +17,8 @@ mod tests {
         ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
         ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
         ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
-        ImportWriteCondition, NewHubuumClass, NewTaskRecord, ObjectRelationLimit, Permissions,
-        ResourceRevision, RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
+        ImportWriteCondition, NewHubuumClass, ObjectRelationLimit, Permissions, ResourceRevision,
+        RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -36,6 +36,7 @@ mod tests {
     use crate::schema::tasks::dsl::{
         id as task_id_field, request_payload, request_redacted_at, tasks,
     };
+    use crate::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
     use crate::storage::postgres::{PostgresPool, with_connection};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -254,7 +255,7 @@ mod tests {
         task_id: i32,
         expected_terminal_statuses: &[TaskStatus],
     ) -> TaskResponse {
-        for _ in 0..50 {
+        for _ in 0..200 {
             let resp = get_request(pool, token, &format!("/api/v1/tasks/{task_id}")).await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
             let task: TaskResponse = test::read_body_json(resp).await;

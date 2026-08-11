@@ -12,9 +12,10 @@ use tokio::sync::Mutex;
 
 use crate::config::RuntimeRole;
 use crate::middlewares::TracingMiddleware;
-use crate::models::{ExportTemplateID, NewTaskRecord, TaskKind, TaskStatus};
+use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
 use crate::observability::metrics;
 use crate::schema::tasks;
+use crate::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
 use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
 use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
@@ -133,7 +134,7 @@ async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() 
 
     assert!(
         body.contains(
-            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"28\"} 1"
+            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"29\"} 1"
         )
     );
     assert!(body.contains(

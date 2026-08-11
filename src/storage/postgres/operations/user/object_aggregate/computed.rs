@@ -5,8 +5,7 @@ use hubuum_computed_fields::{EvaluationResult, MAX_PERSONAL_DEFINITIONS, MAX_SHA
 use super::candidate::ObjectAggregateCandidate;
 use crate::errors::ApiError;
 use crate::models::computed_field::{
-    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ComputedFieldDefinition,
-    ComputedResultType,
+    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ComputedResultType,
 };
 use crate::models::object_aggregate::{ComputedFieldSelector, ObjectAggregateSpec};
 use crate::models::search::ComputedFieldScope;
@@ -14,6 +13,7 @@ use crate::storage::postgres::PostgresConnection;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, evaluate_definitions,
 };
+use crate::storage::postgres::operations::computed_field_rows::ComputedFieldDefinitionRow as ComputedFieldDefinition;
 
 #[derive(Default)]
 pub(super) struct ComputedAggregateDefinitions {

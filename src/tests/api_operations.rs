@@ -9,7 +9,7 @@ use crate::middlewares::tracing::TracingMiddleware;
 use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
 use crate::storage::StorageHandle;
-use crate::storage::postgres::PostgresPool;
+use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ pub fn app_context(pool: &PostgresPool) -> Data<AppContext> {
     let config = crate::tests::integration_test_config()
         .expect("integration test configuration must be valid");
     let permissions = LocalPermissionBackend::new(
-        StorageHandle::postgres(pool.clone()),
+        test_storage_handle(pool.clone()),
         config.admin_groupname.clone(),
     );
     Data::new(app_context_with_permission_backend(
@@ -31,7 +31,19 @@ pub fn app_context_with_permission_backend(
     pool: PostgresPool,
     permissions: Arc<dyn PermissionBackend>,
 ) -> AppContext {
-    AppContext::new(StorageHandle::postgres(pool), permissions)
+    AppContext::new(test_storage_handle(pool), permissions)
+}
+
+fn test_storage_handle(pool: PostgresPool) -> StorageHandle {
+    let config = crate::tests::integration_test_config()
+        .expect("integration test configuration must be valid");
+    let notification_pool_settings = PostgresPoolSettings::builder(config.database_url.clone())
+        .max_size(1)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .expect("test notification listener settings must be valid");
+    StorageHandle::postgres_with_notification_pool_settings(pool, notification_pool_settings)
 }
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {

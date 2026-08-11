@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
@@ -14,9 +15,7 @@ use crate::storage::postgres::operations::identity::{
 };
 use crate::storage::postgres::operations::principal::{PrincipalMemberQueryRow, PrincipalRow};
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 use crate::{date_search, numeric_search, string_search};
 
 const OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT: i64 = 10;

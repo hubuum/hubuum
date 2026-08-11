@@ -21,6 +21,7 @@ use crate::storage::postgres::operations::class::{
 use crate::storage::postgres::operations::collection::{
     CollectionRow, CollectionRowInsert, UpdateCollectionRow,
 };
+use crate::storage::postgres::operations::computed_field_rows::ComputedFieldDefinitionRow;
 use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::identity::IdentityScopeRow;
 use crate::storage::postgres::operations::object::{
@@ -1348,7 +1349,7 @@ pub async fn upsert_computed_field_db(
         .filter(d::key.eq(&input.key))
         .filter(d::owner_user_id.is_not_distinct_from(owner_id_value))
         .for_update()
-        .select(crate::models::ComputedFieldDefinition::as_select())
+        .select(ComputedFieldDefinitionRow::as_select())
         .first(conn)
         .await
         .optional()?;
@@ -1378,7 +1379,7 @@ pub async fn upsert_computed_field_db(
                         d::created_at.eq(created),
                         d::updated_at.eq(updated),
                     ))
-                    .returning(crate::models::ComputedFieldDefinition::as_returning())
+                    .returning(ComputedFieldDefinitionRow::as_returning())
                     .get_result(conn)
                     .await
                     .optional()?;
@@ -1387,7 +1388,7 @@ pub async fn upsert_computed_field_db(
                 None => Ok((
                     d::computed_field_definitions
                         .find(existing.id)
-                        .select(crate::models::ComputedFieldDefinition::as_select())
+                        .select(ComputedFieldDefinitionRow::as_select())
                         .first(conn)
                         .await?,
                     false,
@@ -1425,8 +1426,8 @@ pub async fn upsert_computed_field_db(
             d::created_at.eq(created),
             d::updated_at.eq(updated),
         ))
-        .returning(crate::models::ComputedFieldDefinition::as_returning())
-        .get_result::<crate::models::ComputedFieldDefinition>(conn)
+        .returning(ComputedFieldDefinitionRow::as_returning())
+        .get_result::<ComputedFieldDefinitionRow>(conn)
         .await?;
     if matches!(input.visibility, ImportComputedFieldVisibility::Shared) {
         crate::storage::postgres::operations::computed_field::advance_revision_and_enqueue(

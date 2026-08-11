@@ -4,7 +4,7 @@ use hubuum::backups::create_backup_document;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent};
 use hubuum::models::{
-    BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord, ObjectRelationLimit,
+    BackupRequest, NewHubuumClass, NewHubuumClassRelation, ObjectRelationLimit,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobID,
     RestoreJobStatus, RestoreStageRequest, TaskKind, TaskStatus,
 };
@@ -16,6 +16,7 @@ use hubuum::schema::{
     collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
     restore_jobs, system_maintenance, tasks,
 };
+use hubuum::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
 use hubuum::storage::postgres::prelude::*;
 use hubuum::storage::postgres::{
     init_postgres_pool_with_statement_timeout, with_connection, with_transaction,

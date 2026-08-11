@@ -2,9 +2,10 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::{
-    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
-    ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
-    ComputedFieldMutationResponse, ComputedResultType,
+    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
+    ClassComputationState as DomainClassComputationState,
+    ComputedFieldDefinition as DomainComputedFieldDefinition, ComputedFieldDefinitionPatch,
+    ComputedFieldDefinitionRequest, ComputedFieldMutationResponse, ComputedResultType,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
@@ -20,6 +21,7 @@ use crate::storage::{
 };
 
 use super::error::map_postgres_error;
+use super::operations::computed_field_rows::ComputedFieldDefinitionRow as ComputedFieldDefinition;
 use super::operations::task::TaskBackend;
 use super::task_execution::claimed_identifier;
 use super::task_queue::task_to_storage;
@@ -201,7 +203,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
             .find_claimed_record(self.pool())
             .await
             .map_err(map_postgres_error)?;
-        operations::computed_field::execute_computed_reindex_task(self.pool(), &record)
+        operations::computed_field::execute_computed_reindex_task_row(self.pool(), &record)
             .await
             .map_err(map_postgres_error)?;
         task.find_record(self.pool())
@@ -249,8 +251,9 @@ fn definitions_to_storage(
 }
 
 fn definition_to_storage(
-    definition: ComputedFieldDefinition,
+    definition: impl Into<DomainComputedFieldDefinition>,
 ) -> Result<StorageComputedFieldDefinition, ApiError> {
+    let definition = definition.into();
     let visibility = match (definition.visibility.as_str(), definition.owner_user_id) {
         (COMPUTED_FIELD_VISIBILITY_SHARED, None) => StorageComputedFieldVisibility::Shared,
         (COMPUTED_FIELD_VISIBILITY_PERSONAL, Some(owner_id)) => {
@@ -287,7 +290,8 @@ fn definition_to_storage(
     ))
 }
 
-fn state_to_storage(state: ClassComputationState) -> StorageClassComputationState {
+fn state_to_storage(state: impl Into<DomainClassComputationState>) -> StorageClassComputationState {
+    let state = state.into();
     StorageClassComputationState::new(
         state.class_id,
         state.evaluation_revision,

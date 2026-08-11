@@ -1,14 +1,12 @@
 use actix_web::{
     HttpRequest, HttpResponse, ResponseError, error::JsonPayloadError, http::StatusCode,
 };
-use diesel::result::{DatabaseErrorKind, Error as DieselError};
-use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
 use std::num::ParseIntError;
 
-use tracing::{debug, error};
+use tracing::error;
 
 use hubuum_domain::EventPolicyError;
 
@@ -19,7 +17,6 @@ use crate::storage::{StorageError, StorageErrorKind};
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
 const PUBLIC_PERMISSION_BACKEND_UNAVAILABLE: &str = "Permission backend temporarily unavailable";
-const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
 
 // Exit codes for startup/initialization failures.
 // These help shell scripts and orchestration systems determine the failure mode.
@@ -343,75 +340,10 @@ impl From<argon2::Error> for ApiError {
     }
 }
 
-impl From<PoolError> for ApiError {
-    fn from(e: PoolError) -> Self {
-        error!(message = "Unable to get a connection from the pool", error = ?e);
-        ApiError::DbConnectionError(e.to_string())
-    }
-}
-
 impl From<ParseIntError> for ApiError {
     fn from(e: ParseIntError) -> Self {
         error!(message = "Error parsing integer", error = ?e);
         ApiError::BadRequest(e.to_string())
-    }
-}
-
-impl From<DieselError> for ApiError {
-    fn from(e: DieselError) -> Self {
-        match e {
-            DieselError::NotFound => {
-                let message = "Entity not found".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::NotFound(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-                let message = "Unique constraint not met".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::Conflict(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
-                let message = "Attempt to associate to a non-existent entity".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::NotFound(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
-                if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
-                    let message = info.message().to_string();
-                    debug!(message = message, error = ?e);
-                    return ApiError::Conflict(message);
-                }
-                let message = "Check constraint not met".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::BadRequest(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
-                let message = info.message();
-                if message == "hubuum_stale_resource" {
-                    debug!(message = "Conditional mutation rejected as stale");
-                    return ApiError::PreconditionFailed(
-                        "The resource changed since the supplied validator was issued".to_string(),
-                        None,
-                    );
-                }
-                if message.contains("resource revision")
-                    || message.contains("revision advancement")
-                    || message.contains("caller-supplied resource revision")
-                {
-                    metrics::revision_condition("invariant_failure");
-                }
-                if message.starts_with("Invalid object relation:") {
-                    debug!(message = message, error = ?e);
-                    return ApiError::BadRequest(message.to_string());
-                }
-                error!(message = "Database error", error = ?e);
-                ApiError::DatabaseError(e.to_string())
-            }
-            _ => {
-                error!(message = "Database error", error = ?e);
-                ApiError::DatabaseError(e.to_string())
-            }
-        }
     }
 }
 
@@ -543,34 +475,6 @@ mod tests {
         }
 
         // We don't actually call it (would exit), just verify it compiles
-    }
-
-    #[tokio::test]
-    async fn test_api_error_from_pool_error() {
-        let pool =
-            crate::storage::postgres::init_postgres_pool("postgres://invalid:5432/nonexistent", 1);
-        let result =
-            crate::storage::postgres::with_connection(&pool, async |_conn| Ok::<(), ApiError>(()))
-                .await;
-        match result {
-            Err(ApiError::DbConnectionError(_)) => {}
-            Err(other) => panic!("Expected DbConnectionError from pool error, got: {other:?}"),
-            Ok(_) => panic!("Expected pool connection to fail"),
-        }
-    }
-
-    #[test]
-    fn test_api_error_from_diesel_not_found() {
-        // Test that Diesel NotFound error converts correctly
-        let diesel_error = DieselError::NotFound;
-        let api_error = ApiError::from(diesel_error);
-
-        match api_error {
-            ApiError::NotFound(_) => {
-                // Expected
-            }
-            _ => panic!("Expected NotFound error, got: {:?}", api_error),
-        }
     }
 
     #[test]

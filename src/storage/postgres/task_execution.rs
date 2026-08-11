@@ -7,10 +7,7 @@ use uuid::Uuid;
 
 use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::models::{
-    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewTaskEventRecord, TaskKind,
-    TaskResultCounts, TaskStatus,
-};
+use crate::models::{NewTaskEventRecord, TaskKind, TaskResultCounts, TaskStatus};
 use crate::storage::{
     StorageBackupTaskArtifact, StorageError, StorageExportTaskArtifact,
     StorageRemoteCallTaskArtifact, StorageTask, StorageTaskClaim, StorageTaskClaimToken,
@@ -29,6 +26,10 @@ use super::operations::task::{
     append_task_event_while_claimed, claim_next_queued_task, finalize_terminal_conn,
     live_claimed_task_conn, purge_expired_backup_outputs, purge_expired_export_outputs,
     record_task_terminal, recover_expired_task_leases, renew_task_lease,
+};
+use super::operations::task_rows::{
+    NewBackupTaskOutputRow as NewBackupTaskOutputRecord,
+    NewExportTaskOutputRow as NewExportTaskOutputRecord,
 };
 use super::task_queue::task_to_storage;
 use super::{

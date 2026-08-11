@@ -842,7 +842,7 @@ pub(crate) async fn release_event_delivery_for_retry(
             ))
             .get_result::<EventDeliveryRow>(conn)
             .await?;
-            crate::events::notify_event_delivery(conn).await?;
+            crate::storage::postgres::notifications::notify_event_delivery(conn).await?;
             Ok(delivery)
         },
     )

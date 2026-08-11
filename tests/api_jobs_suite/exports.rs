@@ -11,14 +11,16 @@ mod tests {
     use crate::models::{
         CollectionID, ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest,
         ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateID, ExportTemplateKind,
-        HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewExportTaskOutputRecord,
-        NewExportTemplate, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-        NewHubuumObjectRelation, NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventResponse,
-        TaskID, TaskKind, TaskResponse, TaskResultCounts, TaskStatus, TokenResourceScope,
-        UpdateExportTemplate,
+        HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewExportTemplate, NewHubuumClass,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewTaskEventRecord,
+        Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskResultCounts,
+        TaskStatus, TokenResourceScope, UpdateExportTemplate,
     };
     use crate::storage::postgres::operations::task::{
         TaskBackend, TaskStateUpdate, purge_expired_export_outputs,
+    };
+    use crate::storage::postgres::operations::task_rows::{
+        NewExportTaskOutputRow as NewExportTaskOutputRecord, NewTaskRow as NewTaskRecord,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -230,7 +232,7 @@ mod tests {
         expected_terminal_statuses: &[TaskStatus],
     ) -> TaskResponse {
         let mut last_task = None;
-        for _ in 0..50 {
+        for _ in 0..200 {
             let resp = get_request(pool, token, &format!("/api/v1/tasks/{task_id}")).await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
             let task: TaskResponse = test::read_body_json(resp).await;

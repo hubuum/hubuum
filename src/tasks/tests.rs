@@ -32,9 +32,8 @@ use crate::models::{
     ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
     ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, ImportWriteCondition,
     NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, NewImportTaskResultRecord, NewTaskRecord, ObjectKey, Permissions,
-    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision,
-    RestoreTimestamps, TaskKind, TaskStatus,
+    NewHubuumObjectRelation, ObjectKey, Permissions, RemoteAuthConfig, RemoteHttpMethod,
+    RemoteTargetSubjectType, ResourceRevision, RestoreTimestamps, TaskKind, TaskStatus,
 };
 use crate::permissions::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
@@ -51,6 +50,9 @@ use crate::storage::postgres::operations::task_import::{
     update_collection_db, update_object_db, update_object_relation_timestamps_db,
     upsert_export_template_db, upsert_group_membership_db, upsert_identity_scope_db,
     upsert_remote_target_db,
+};
+use crate::storage::postgres::operations::task_rows::{
+    NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
 };
 use crate::storage::postgres::{RuntimeState, execute_planned_item, resolve_object_runtime};
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
@@ -2932,7 +2934,8 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     })
     .await
     .unwrap();
-    let claimed = ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap()).unwrap();
+    let claimed =
+        ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap().into()).unwrap();
 
     (insert_import_results(
         &context.pool,
@@ -3019,7 +3022,8 @@ async fn test_reindex_failure_finalization_reloads_persisted_progress() {
     })
     .await
     .unwrap();
-    let claimed = ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap()).unwrap();
+    let claimed =
+        ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap().into()).unwrap();
 
     with_connection(&context.pool, async |conn| {
         use crate::schema::tasks::dsl::{id, processed_items, success_items, tasks};

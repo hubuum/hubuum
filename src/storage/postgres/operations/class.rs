@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
@@ -13,9 +14,7 @@ use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::relation_rows::HubuumClassRelationRow;
 use crate::storage::postgres::{with_connection, with_transaction};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 /// PostgreSQL representation of a class row.
 ///

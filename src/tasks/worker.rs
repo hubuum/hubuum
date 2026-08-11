@@ -15,7 +15,6 @@ use crate::config::{
     DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS, get_config,
 };
 use crate::errors::ApiError;
-use crate::events::{TASK_QUEUE_CHANNEL, spawn_postgres_notification_listener};
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
@@ -31,7 +30,8 @@ use crate::services::tasks::{
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::storage::{
-    StorageCallSite, with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
+    StorageCallSite, StorageNotification, WorkerNotificationStorage, with_mutation_provenance,
+    with_storage_call_site, with_storage_call_site_send,
 };
 
 use super::TaskWorkerSettings;
@@ -67,7 +67,7 @@ fn get_task_worker_notify() -> &'static Notify {
     TASK_WORKER_NOTIFY.get_or_init(Notify::new)
 }
 
-fn wake_task_worker_from_postgres() {
+fn wake_task_worker_from_storage() {
     get_task_worker_notify().notify_one();
 }
 
@@ -188,14 +188,7 @@ fn task_worker_context(context: AppContext) -> AppContext {
 #[cfg(test)]
 fn task_worker_context(context: AppContext) -> AppContext {
     drop(context);
-    let config = get_config().expect("test task worker requires database configuration");
-    let pool =
-        crate::storage::postgres::init_postgres_pool(&config.database_url, config.db_pool_size);
-    let permissions = std::sync::Arc::new(LocalPermissionBackend::new(
-        crate::storage::StorageHandle::postgres(pool.clone()),
-        config.admin_groupname.clone(),
-    ));
-    crate::tests::app_context_with_permission_backend(pool, permissions)
+    crate::tests::background_worker_app_context()
 }
 
 fn configured_backup_settings() -> BackupSettings {
@@ -227,10 +220,10 @@ pub fn ensure_task_worker_running_with_settings(
     }
     let poll_interval = configured_task_poll_interval();
     TASK_WORKER_LISTENER.call_once(|| {
-        spawn_postgres_notification_listener(
-            TASK_QUEUE_CHANNEL,
-            "task-worker-pg-listener",
-            wake_task_worker_from_postgres,
+        context.backend().spawn_worker_notification_listener(
+            StorageNotification::TaskQueue,
+            "task-worker-storage-listener",
+            wake_task_worker_from_storage,
         );
     });
     TASK_WORKER.call_once(move || {

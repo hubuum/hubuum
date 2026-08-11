@@ -12,7 +12,7 @@ use super::{
     OperationalStateStorage, PostgresStorage, PrincipalStorage, RelationQueryStorage,
     RemoteTargetStorage, RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
     TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
-    observed::ObservedLifecycleStorage,
+    WorkerNotificationStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -95,6 +95,7 @@ pub(crate) trait StorageBackend:
     + ImportStorage
     + ExportQueryStorage
     + ExportTemplateStorage
+    + WorkerNotificationStorage
     + StorageExecution
     + sealed::CertifiedStorageBackend
 {

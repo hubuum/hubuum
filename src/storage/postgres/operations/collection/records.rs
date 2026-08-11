@@ -1,10 +1,9 @@
 use super::*;
 use crate::api::etag::RevisionOwner;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::event_record::emit_event;
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 use chrono::NaiveDateTime;
 use diesel_async::RunQueryDsl;
 

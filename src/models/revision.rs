@@ -1,10 +1,5 @@
 use std::fmt;
 
-use diesel::backend::Backend;
-use diesel::deserialize::{FromSql, Result as DeserializeResult};
-use diesel::pg::Pg;
-use diesel::serialize::{Output, Result as SerializeResult, ToSql};
-use diesel::sql_types::BigInt;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa::openapi::schema::{Schema, Type};
@@ -17,22 +12,8 @@ use crate::errors::ApiError;
 /// The representation is intentionally a JSON integer. It is suitable for
 /// imports, exports, queries, and event identity, but HTTP clients should use
 /// the opaque ETag returned by canonical point responses for `If-Match`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    diesel::AsExpression,
-    diesel::FromSqlRow,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "i64", into = "i64")]
-#[diesel(sql_type = BigInt)]
 pub struct ResourceRevision(i64);
 
 impl ResourceRevision {
@@ -101,26 +82,6 @@ impl utoipa::PartialSchema for ResourceRevision {
 }
 
 impl ToSchema for ResourceRevision {}
-
-impl ToSql<BigInt, Pg> for ResourceRevision {
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> SerializeResult {
-        <i64 as ToSql<BigInt, Pg>>::to_sql(&self.0, out)
-    }
-}
-
-impl<DB> FromSql<BigInt, DB> for ResourceRevision
-where
-    DB: Backend,
-    i64: FromSql<BigInt, DB>,
-{
-    fn from_sql(bytes: DB::RawValue<'_>) -> DeserializeResult<Self> {
-        let value = i64::from_sql(bytes)?;
-        if value <= 0 {
-            return Err("resource revision must be greater than zero".into());
-        }
-        Ok(Self(value))
-    }
-}
 
 #[cfg(test)]
 mod tests {

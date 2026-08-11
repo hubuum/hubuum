@@ -93,6 +93,28 @@ pub(super) async fn observe_storage_call<T>(
     .await
 }
 
+/// Apply the common diagnostics to an infallible synchronous storage entrypoint.
+pub(super) fn observe_infallible_storage_call<T>(
+    backend: &'static str,
+    capability: &'static str,
+    operation: &'static str,
+    call: impl FnOnce() -> T,
+) -> T {
+    let span = debug_span!("storage_operation", backend, capability, operation,);
+    let _entered = span.enter();
+    let started_at = Instant::now();
+    let result = call();
+    let duration = started_at.elapsed();
+    crate::observability::metrics::storage_operation_finished(
+        backend, capability, operation, "ok", duration,
+    );
+    debug!(
+        message = "storage operation complete",
+        elapsed_ms = duration.as_millis(),
+    );
+    result
+}
+
 impl StorageIdentity for ObservedLifecycleStorage {
     fn storage_name(&self) -> &'static str {
         self.backend

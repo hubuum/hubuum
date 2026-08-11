@@ -2,9 +2,7 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::{
-    BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
-    ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord, PrincipalID,
-    TaskEventRecord, TaskID, TaskKind, TaskRecord,
+    BackupOutputLookup, ExportOutputLookup, PrincipalID, TaskEventRecord, TaskID, TaskKind,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
@@ -23,6 +21,13 @@ use super::operations::task::{
     TaskBackend, TaskCreateRequest, TaskScopeSnapshot, enrich_legacy_task_event_initiators,
     list_backup_task_output_summaries, list_export_task_output_summaries,
     list_tasks_with_total_count,
+};
+use super::operations::task_rows::{
+    BackupTaskOutputRow as BackupTaskOutputRecord,
+    BackupTaskOutputSummaryRow as BackupTaskOutputSummaryRecord,
+    ExportTaskOutputRow as ExportTaskOutputRecord,
+    ExportTaskOutputSummaryRow as ExportTaskOutputSummaryRecord,
+    ImportTaskResultRow as ImportTaskResultRecord, TaskRow as TaskRecord,
 };
 
 #[async_trait]

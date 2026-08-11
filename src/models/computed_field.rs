@@ -10,11 +10,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::search::{ComputedQueryValueType, FilterField, SortParam};
 use crate::models::{HubuumObject, ResourceRevision};
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
-use crate::schema::{class_computation_state, computed_field_definitions, object_computed_data};
-use crate::storage::postgres::prelude::*;
+use crate::pagination::{CursorPaginated, CursorValue};
 
 pub const COMPUTED_FIELD_VISIBILITY_SHARED: &str = "shared";
 pub const COMPUTED_FIELD_VISIBILITY_PERSONAL: &str = "personal";
@@ -89,8 +85,7 @@ impl From<ComputedResultType> for ComputedQueryValueType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, ToSchema)]
-#[diesel(table_name = computed_field_definitions)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ComputedFieldDefinition {
     pub id: i32,
     pub class_id: i32,
@@ -180,50 +175,7 @@ impl CursorPaginated for ComputedFieldDefinition {
     }
 }
 
-impl CursorSqlMapping for ComputedFieldDefinition {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "computed_field_definitions.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "computed_field_definitions.key",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::ClassId => CursorSqlField {
-                column: "computed_field_definitions.class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "computed_field_definitions.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "computed_field_definitions.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "computed_field_definitions.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{field}' is not orderable for computed fields"
-                )));
-            }
-        })
-    }
-}
-
-#[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = computed_field_definitions)]
+#[derive(Debug, Clone)]
 pub struct NewComputedFieldDefinition {
     pub class_id: i32,
     pub visibility: String,
@@ -398,8 +350,7 @@ fn validated_definition(
     )?)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, ToSchema)]
-#[diesel(table_name = class_computation_state)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ClassComputationState {
     pub class_id: i32,
     pub evaluation_revision: i64,
@@ -425,8 +376,7 @@ impl ClassComputationState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
-#[diesel(table_name = object_computed_data)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectComputedData {
     pub object_id: i32,
     pub class_id: i32,
@@ -437,8 +387,7 @@ pub struct ObjectComputedData {
     pub computed_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = object_computed_data)]
+#[derive(Debug, Clone)]
 pub struct NewObjectComputedData {
     pub object_id: i32,
     pub class_id: i32,

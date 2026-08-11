@@ -5,9 +5,12 @@ use chrono::{Duration, Utc};
 use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
-use hubuum::models::{NewExportTaskOutputRecord, NewTaskRecord, NewUser, TaskKind, TaskStatus};
+use hubuum::models::{NewUser, TaskKind, TaskStatus};
 use hubuum::schema::{collections, export_task_outputs, export_templates, tasks};
 use hubuum::storage::postgres::operations::identity::ensure_identity_scope;
+use hubuum::storage::postgres::operations::task_rows::{
+    NewExportTaskOutputRow as NewExportTaskOutputRecord, NewTaskRow as NewTaskRecord,
+};
 use hubuum::storage::postgres::prelude::*;
 use hubuum::storage::postgres::{
     PostgresPool, init_postgres_pool_with_statement_timeout, with_connection, with_transaction,

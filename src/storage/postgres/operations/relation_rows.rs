@@ -5,15 +5,14 @@ use crate::models::{
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation,
     ObjectRelationLimit, RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow,
 };
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 use crate::storage::{
     StorageClassGraphRow, StorageClassRelation, StorageGraphClass, StorageGraphObject,
     StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation, StorageRecordMetadata,
     StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
 };
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Clone, Queryable, QueryableByName, Selectable)]
 #[diesel(table_name = crate::schema::hubuumclass_relation)]

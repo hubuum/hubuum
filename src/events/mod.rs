@@ -1,4 +1,4 @@
-//! Unified event & audit stream — Diesel/Postgres layer (issue #70/#71).
+//! Unified event, audit, and delivery application layer (issue #70/#71).
 //!
 //! The canonical `events` table is the single source of truth for both the
 //! internal audit log and external event delivery. A change is recorded iff
@@ -14,7 +14,6 @@ mod context;
 mod delivery;
 mod fanout;
 mod model;
-mod pg_notify;
 mod retention;
 mod settings;
 mod sink;
@@ -34,11 +33,6 @@ pub use retention::ensure_event_retention_worker_running;
 pub(crate) use settings::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 pub use sink::{
     DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
-};
-
-pub(crate) use pg_notify::{
-    TASK_QUEUE_CHANNEL, notify_event_delivery, notify_task_queue,
-    spawn_postgres_notification_listener,
 };
 
 pub use hubuum_events_core::{

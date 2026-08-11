@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 use serde_json;
 
@@ -18,10 +19,7 @@ use crate::storage::postgres::operations::computed_field::{
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::{
-    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    SelfAccessors,
-};
+use crate::traits::{ClassAccessors, CursorPaginated, CursorValue, SelfAccessors};
 
 /// PostgreSQL representation of an object row.
 ///

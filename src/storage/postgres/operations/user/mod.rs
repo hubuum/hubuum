@@ -1,3 +1,4 @@
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use diesel::{AsChangeset, ExpressionMethods, JoinOnDsl, QueryDsl, Queryable, Selectable, Table};
 use std::iter::IntoIterator;
 
@@ -18,10 +19,7 @@ use crate::models::{
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};
-use crate::traits::{
-    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    GroupAccessors, SelfAccessors,
-};
+use crate::traits::{ClassAccessors, CursorPaginated, CursorValue, GroupAccessors, SelfAccessors};
 
 use crate::{date_search, numeric_search, revision_search, string_search, trace_query};
 

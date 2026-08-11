@@ -1107,25 +1107,42 @@ mod tests {
         for subnet in 0..4 {
             for host in 1..=150 {
                 let name = format!("large_network_object_{subnet}_{host}");
-                let address = format!("10.42.{subnet}.{host}");
                 if subnet == 1 {
                     expected_names.push(name.clone());
                 }
-
-                NewHubuumObject {
-                    collection_id: collection.collection.id,
-                    hubuum_class_id: class.id,
-                    data: serde_json::json!({
-                        "network": { "address": address }
-                    }),
-                    name: name.clone(),
-                    description: name,
-                }
-                .save_without_events(&context.pool)
-                .await
-                .unwrap();
             }
         }
+
+        // This fixture deliberately needs enough rows for PostgreSQL to prefer
+        // the expression index. Insert them in one database operation so the
+        // full parallel suite does not perform 600 separate pool acquisitions
+        // against the shared test database.
+        with_connection(&context.pool, async |conn| {
+            diesel::sql_query(
+                "INSERT INTO hubuumobject \
+                 (name, collection_id, hubuum_class_id, data, description) \
+                 SELECT \
+                   format('large_network_object_%s_%s', subnet, host), \
+                   $1, \
+                   $2, \
+                   jsonb_build_object( \
+                     'network', \
+                     jsonb_build_object( \
+                       'address', \
+                       format('10.42.%s.%s', subnet, host) \
+                     ) \
+                   ), \
+                   format('large_network_object_%s_%s', subnet, host) \
+                 FROM generate_series(0, 3) AS subnet \
+                 CROSS JOIN generate_series(1, 150) AS host",
+            )
+            .bind::<Integer, _>(collection.collection.id)
+            .bind::<Integer, _>(class.id)
+            .execute(conn)
+            .await
+        })
+        .await
+        .unwrap();
 
         for suffix in ["invalid", "missing", "ipv6"] {
             let (name, data) = match suffix {
@@ -1157,12 +1174,6 @@ mod tests {
 
         let plan_rows = with_connection(&context.pool, async |conn| {
             conn.transaction::<_, diesel::result::Error, _>(async |conn| {
-                diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_hubuum_class_id")
-                    .execute(conn)
-                    .await?;
-                diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_collection_id")
-                    .execute(conn)
-                    .await?;
                 let create_index_sql = format!(
                     "CREATE INDEX IF NOT EXISTS idx_test_json_ip_expression \
                  ON hubuumobject USING GIST ((try_inet(data #>> '{{network,address}}')) inet_ops) \
@@ -1190,19 +1201,6 @@ mod tests {
                 let plan_rows = diesel::sql_query(explain_sql)
                     .load::<ExplainRow>(conn)
                     .await?;
-
-                diesel::sql_query(
-                    "CREATE INDEX IF NOT EXISTS idx_hubuumobject_hubuum_class_id \
-                 ON hubuumobject (hubuum_class_id)",
-                )
-                .execute(conn)
-                .await?;
-                diesel::sql_query(
-                    "CREATE INDEX IF NOT EXISTS idx_hubuumobject_collection_id \
-                 ON hubuumobject (collection_id)",
-                )
-                .execute(conn)
-                .await?;
                 Ok(plan_rows)
             })
             .await

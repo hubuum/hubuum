@@ -122,7 +122,7 @@ async fn process_reindex_batch(
     .await
 }
 
-pub async fn execute_computed_reindex_task(
+pub(crate) async fn execute_computed_reindex_task_row(
     pool: &impl crate::storage::StorageContext,
     task: &TaskRecord,
 ) -> Result<(), ApiError> {
@@ -248,6 +248,13 @@ pub async fn execute_computed_reindex_task(
         processed
     );
     Ok(())
+}
+
+pub async fn execute_computed_reindex_task(
+    pool: &impl crate::storage::StorageContext,
+    task: &crate::models::TaskRecord,
+) -> Result<(), ApiError> {
+    execute_computed_reindex_task_row(pool, &task.clone().into()).await
 }
 
 pub(crate) async fn mark_computed_reindex_failed_conn(

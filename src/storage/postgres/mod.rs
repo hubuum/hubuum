@@ -5,12 +5,14 @@ mod export_templates;
 mod imports;
 #[cfg(feature = "embedded-migrations")]
 mod migrations;
+mod notifications;
 #[cfg(test)]
 pub(crate) use imports::{RuntimeState, execute_planned_item, resolve_object_runtime};
 #[doc(hidden)]
 pub mod operations;
 mod remote_targets;
 mod restores;
+mod revision;
 mod runtime;
 mod task_execution;
 mod task_queue;
@@ -20,6 +22,7 @@ pub use runtime::*;
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::events::{
     EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
@@ -129,6 +132,7 @@ use error::map_postgres_error;
 #[derive(Clone)]
 pub(crate) struct PostgresStorage {
     pool: PostgresPool,
+    notification_pool_settings: Option<Arc<PostgresPoolSettings>>,
 }
 
 #[cfg(feature = "embedded-migrations")]
@@ -136,11 +140,31 @@ pub(in crate::storage) use migrations::run_embedded_migrations;
 
 impl PostgresStorage {
     pub(crate) fn new(pool: PostgresPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            notification_pool_settings: None,
+        }
+    }
+
+    pub(crate) fn with_notification_pool_settings(
+        pool: PostgresPool,
+        notification_pool_settings: PostgresPoolSettings,
+    ) -> Self {
+        Self {
+            pool,
+            notification_pool_settings: Some(Arc::new(notification_pool_settings)),
+        }
     }
 
     pub(crate) fn pool(&self) -> &PostgresPool {
         &self.pool
+    }
+
+    fn notification_listener_pool(&self) -> PostgresPool {
+        self.notification_pool_settings
+            .as_deref()
+            .map(runtime::init_postgres_pool_with_settings)
+            .unwrap_or_else(|| self.pool.clone())
     }
 }
 
