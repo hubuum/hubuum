@@ -18,9 +18,9 @@ use hubuum::schema::{
 };
 use hubuum::storage::postgres::prelude::*;
 use hubuum::storage::postgres::{
-    init_postgres_pool_with_statement_timeout, with_connection, with_mutation_provenance_scope,
-    with_transaction,
+    init_postgres_pool_with_statement_timeout, with_connection, with_transaction,
 };
+use hubuum::storage::with_mutation_provenance;
 use hubuum::traits::CanSave;
 
 fn database_url() -> String {
@@ -46,7 +46,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .expect("root collection");
     let provenance_initiator_id = 12_345;
     let provenance_task_id = 54_321;
-    let first_class = with_mutation_provenance_scope(
+    let first_class = with_mutation_provenance(
+        &pool,
         Some(MutationProvenance::worker(
             Some(provenance_initiator_id),
             provenance_task_id,

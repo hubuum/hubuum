@@ -18,7 +18,7 @@ use crate::services::authorization_resources::{
     class_relation_authorization_resources, object_relation_authorization_resources,
 };
 use crate::services::relation_queries;
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::scope_allows;
 use actix_web::delete;
 use tracing::debug;
@@ -258,7 +258,8 @@ async fn delete_class_relation(
     let etag = target.relation().entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .class_relation_service()
@@ -500,7 +501,8 @@ async fn delete_object_relation(
     let etag = target.relation().entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .object_relation_service()

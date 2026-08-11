@@ -10,7 +10,7 @@ mod tests {
         PrincipalTokenPointResponse, Token, TokenResourceScope,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
-    use crate::storage::postgres::operations::{ActiveTokens, Status};
+    use crate::storage::postgres::operations::ActiveTokens;
     use crate::storage::postgres::prelude::*;
     use crate::storage::postgres::with_connection;
     use crate::test_support::sync_external_user;
@@ -866,7 +866,7 @@ mod tests {
         assert_ne!(renewed_raw, source_raw);
         assert!(
             Token(renewed_raw.to_string())
-                .is_valid(&context.pool)
+                .authenticate(&context.pool)
                 .await
                 .is_ok()
         );

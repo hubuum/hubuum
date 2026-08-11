@@ -36,53 +36,13 @@ use std::time::Duration;
 
 use tracing::{debug, warn};
 
-use crate::api::etag::RevisionPrecondition;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::events::MutationProvenance;
 use crate::observability::metrics::{self, ResultKind};
 use crate::storage::context::postgres_pool;
-use crate::storage::{StorageContext, StorageQueryBudget};
-
-/// Bounded attribution for database pool checkouts and helper operations.
-///
-/// The value is carried through an async task-local scope so subsystem
-/// boundaries can add useful low-cardinality metrics without threading a
-/// label through every storage capability method.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum StorageCallSite {
-    EventDelivery,
-    EventFanout,
-    EventRetention,
-    HttpRequest,
-    MetricsRefresh,
-    Readiness,
-    RequestMaintenance,
-    RestoreCoordinator,
-    TaskLease,
-    TaskWorker,
-    TokenRetention,
-    #[default]
-    Unattributed,
-}
-
-impl StorageCallSite {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::EventDelivery => "event_delivery",
-            Self::EventFanout => "event_fanout",
-            Self::EventRetention => "event_retention",
-            Self::HttpRequest => "http_request",
-            Self::MetricsRefresh => "metrics_refresh",
-            Self::Readiness => "readiness",
-            Self::RequestMaintenance => "request_maintenance",
-            Self::RestoreCoordinator => "restore_coordinator",
-            Self::TaskLease => "task_lease",
-            Self::TaskWorker => "task_worker",
-            Self::TokenRetention => "token_retention",
-            Self::Unattributed => "unattributed",
-        }
-    }
-}
+use crate::storage::{
+    StorageCallSite, StorageContext, StorageQueryBudget, StorageRevisionPrecondition,
+};
 
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
@@ -255,7 +215,7 @@ tokio::task_local! {
 tokio::task_local! {
     /// An HTTP or queued-work revision assertion. Database revision triggers
     /// evaluate it at the first authoritative row lock in the transaction.
-    static AMBIENT_REVISION_PRECONDITION: Option<RevisionPrecondition>;
+    static AMBIENT_REVISION_PRECONDITION: Option<StorageRevisionPrecondition>;
 }
 
 fn ambient_db_call_site() -> StorageCallSite {
@@ -265,7 +225,10 @@ fn ambient_db_call_site() -> StorageCallSite {
 }
 
 /// Run `future` with bounded database metrics attribution.
-pub(crate) async fn with_storage_call_site<F>(call_site: StorageCallSite, future: F) -> F::Output
+pub(super) async fn with_storage_call_site_scope<F>(
+    call_site: StorageCallSite,
+    future: F,
+) -> F::Output
 where
     F: Future,
 {
@@ -302,7 +265,7 @@ fn ambient_statement_timeout() -> Option<StorageQueryBudget> {
 }
 
 /// Run `future` with typed mutation provenance in effect.
-pub async fn with_mutation_provenance_scope<F, R>(
+pub(super) async fn with_mutation_provenance_scope<F, R>(
     provenance: Option<MutationProvenance>,
     future: F,
 ) -> R
@@ -310,14 +273,6 @@ where
     F: std::future::Future<Output = R>,
 {
     AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
-}
-
-/// Compatibility helper for callers that only have a direct user actor.
-pub async fn with_actor_scope<F, R>(actor: Option<i32>, future: F) -> R
-where
-    F: std::future::Future<Output = R>,
-{
-    with_mutation_provenance_scope(actor.map(MutationProvenance::user), future).await
 }
 
 /// The ambient mutation provenance, or `None` outside any scope.
@@ -330,8 +285,8 @@ fn ambient_mutation_provenance() -> Option<MutationProvenance> {
 /// Run `future` with a conditional-mutation assertion in effect. The
 /// condition is applied transaction-locally by every database helper used
 /// inside the scope and therefore cannot leak through the connection pool.
-pub async fn with_revision_precondition_scope<F, R>(
-    precondition: Option<RevisionPrecondition>,
+pub(super) async fn with_revision_precondition_scope<F, R>(
+    precondition: Option<StorageRevisionPrecondition>,
     future: F,
 ) -> R
 where
@@ -342,7 +297,7 @@ where
         .await
 }
 
-fn ambient_revision_precondition() -> Option<RevisionPrecondition> {
+fn ambient_revision_precondition() -> Option<StorageRevisionPrecondition> {
     AMBIENT_REVISION_PRECONDITION
         .try_with(Clone::clone)
         .unwrap_or(None)
@@ -350,7 +305,7 @@ fn ambient_revision_precondition() -> Option<RevisionPrecondition> {
 
 async fn set_local_revision_precondition(
     conn: &mut PostgresConnection,
-    precondition: &RevisionPrecondition,
+    precondition: &StorageRevisionPrecondition,
 ) -> Result<(), diesel::result::Error> {
     diesel::sql_query(
         "SELECT \
@@ -359,7 +314,14 @@ async fn set_local_revision_precondition(
          set_config('hubuum.if_match_checked', '', true)",
     )
     .bind::<diesel::sql_types::Text, _>(precondition.owner_key())
-    .bind::<diesel::sql_types::Text, _>(precondition.revisions_csv())
+    .bind::<diesel::sql_types::Text, _>(
+        precondition
+            .revisions()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+    )
     .execute(conn)
     .await?;
     Ok(())
@@ -473,7 +435,7 @@ async fn set_local_statement_timeout(
 struct TransactionLocalContext {
     statement_timeout: Option<StorageQueryBudget>,
     provenance: Option<MutationProvenance>,
-    revision_precondition: Option<RevisionPrecondition>,
+    revision_precondition: Option<StorageRevisionPrecondition>,
 }
 
 impl TransactionLocalContext {

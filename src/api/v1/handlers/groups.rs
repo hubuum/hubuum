@@ -13,7 +13,7 @@ use crate::models::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -173,7 +173,8 @@ pub async fn update_group(
     let current = group_id.group(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let updated = with_revision_precondition_scope(
+    let updated = with_revision_precondition(
+        &context,
         precondition,
         updated_group
             .into_inner()
@@ -216,7 +217,8 @@ pub async fn delete_group(
     let etag = group.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         group_id.delete(&context, Some(&event_context)),
     )
@@ -364,7 +366,8 @@ pub async fn add_group_member(
     };
 
     let event_context = requestor.event_context(&req);
-    let membership = with_revision_precondition_scope(
+    let membership = with_revision_precondition(
+        &context,
         precondition,
         group.add_member(&context, &principal, Some(&event_context)),
     )
@@ -414,7 +417,8 @@ pub async fn delete_group_member(
     .await?;
     let precondition = revision_precondition(&req, &membership)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         group.remove_member(&principal, &context, Some(&event_context)),
     )

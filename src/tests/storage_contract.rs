@@ -9,7 +9,9 @@ use diesel_async::RunQueryDsl;
 use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
+use crate::events::{
+    EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
+};
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::{
@@ -27,26 +29,26 @@ use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrantKey, AuthorizationGrantMutation,
-    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationResourceIds,
-    AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
-    ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
-    ComputedObjectVisibility, EventArchive, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, ExportQueryStorage, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryStorage, ImportStorage, MetricsStorage,
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetStorage, RestoreStorage, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    AuthenticationCredential, AuthenticationStorage, AuthenticationTokenScopeQuery,
+    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
+    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
+    AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
+    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
+    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
+    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
+    ExportQueryStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage,
+    ImportStorage, MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
+    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
+    StorageCallSite, StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
-    StorageExportTaskArtifact, StorageImportOperation, StorageImportPlanItem, StorageImportResult,
-    StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageExecution, StorageExportTaskArtifact, StorageImportOperation, StorageImportPlanItem,
+    StorageImportResult, StorageObject, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
     StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
@@ -57,14 +59,14 @@ use crate::storage::{
     StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
     StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
     StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -133,11 +135,22 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         "testpassword",
     )
     .await;
+    let token = user
+        .create_token(pool.get_ref())
+        .await
+        .expect("authentication compatibility token should be created");
 
     for kind in StorageBackendKind::ALL {
         match kind {
             StorageBackendKind::Postgresql => {
                 let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let authenticated = backend
+                    .authenticate_bearer_token(AuthenticationCredential::new(token.storage_hash()))
+                    .await
+                    .expect("certified backend should validate active bearer credentials");
+                assert_eq!(authenticated.principal_id(), user.id);
+                assert!(!authenticated.is_scoped());
+
                 let identity = backend
                     .load_authentication_identity(user.id)
                     .await
@@ -167,6 +180,56 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("authentication compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_execution_context() {
+    let pool = pool();
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let evaluations = Arc::new(AtomicUsize::new(0));
+
+                let evaluated = Arc::clone(&evaluations);
+                backend
+                    .run_with_call_site(StorageCallSite::Readiness, async move {
+                        evaluated.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .await;
+
+                let evaluated = Arc::clone(&evaluations);
+                backend
+                    .run_with_call_site_send(StorageCallSite::TaskLease, async move {
+                        evaluated.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .await;
+
+                let evaluated = Arc::clone(&evaluations);
+                backend
+                    .run_with_mutation_provenance(Some(MutationProvenance::system()), async move {
+                        evaluated.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .await;
+
+                let evaluated = Arc::clone(&evaluations);
+                backend
+                    .run_with_revision_precondition(
+                        Some(
+                            StorageRevisionPrecondition::new("collection:1", vec![1])
+                                .expect("compatibility precondition should be valid"),
+                        ),
+                        async move {
+                            evaluated.fetch_add(1, Ordering::SeqCst);
+                        },
+                    )
+                    .await;
+
+                assert_eq!(AtomicUsize::load(evaluations.as_ref(), Ordering::SeqCst), 4);
+            }
+        }
+    }
 }
 
 #[actix_web::test]

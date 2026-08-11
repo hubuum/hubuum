@@ -3,6 +3,234 @@ use chrono::NaiveDateTime;
 
 use crate::StorageError;
 
+/// Opaque, redacted lookup material for one presented bearer credential.
+///
+/// The application authentication service derives this value from the raw
+/// bearer token. Adapters may compare it with their persisted credential
+/// representation, but neither the raw token nor a backend row crosses the
+/// storage boundary.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticationCredential {
+    lookup_value: String,
+}
+
+impl std::fmt::Debug for AuthenticationCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticationCredential")
+            .field("lookup_value", &"<redacted>")
+            .finish()
+    }
+}
+
+impl AuthenticationCredential {
+    #[must_use]
+    pub fn new(lookup_value: impl Into<String>) -> Self {
+        Self {
+            lookup_value: lookup_value.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn lookup_value(&self) -> &str {
+        &self.lookup_value
+    }
+}
+
+/// Hash-free successful bearer-token authentication result.
+///
+/// The persisted credential representation and backend-only lifecycle columns
+/// remain private to the adapter. Request handling receives the identity,
+/// public descriptive metadata, revision, and scope flags needed by the
+/// authenticated-principal and current-token APIs.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticatedToken {
+    id: i32,
+    principal_id: i32,
+    name: Option<String>,
+    description: Option<String>,
+    issued: NaiveDateTime,
+    expires_at: Option<NaiveDateTime>,
+    last_used_at: Option<NaiveDateTime>,
+    permission_scoped: bool,
+    resource_scoped: bool,
+    revision: i64,
+}
+
+impl std::fmt::Debug for AuthenticatedToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedToken")
+            .field("id", &"<redacted>")
+            .field("principal_id", &"<redacted>")
+            .field("name", &self.name.as_ref().map(|_| "<redacted>"))
+            .field(
+                "description",
+                &self.description.as_ref().map(|_| "<redacted>"),
+            )
+            .field("issued", &"<redacted>")
+            .field(
+                "expires_at",
+                &self.expires_at.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "last_used_at",
+                &self.last_used_at.as_ref().map(|_| "<redacted>"),
+            )
+            .field("permission_scoped", &self.permission_scoped)
+            .field("resource_scoped", &self.resource_scoped)
+            .field("revision", &"<redacted>")
+            .finish()
+    }
+}
+
+impl AuthenticatedToken {
+    #[must_use]
+    pub const fn builder(
+        id: i32,
+        principal_id: i32,
+        issued: NaiveDateTime,
+        revision: i64,
+    ) -> AuthenticatedTokenBuilder {
+        AuthenticatedTokenBuilder {
+            id,
+            principal_id,
+            name: None,
+            description: None,
+            issued,
+            expires_at: None,
+            last_used_at: None,
+            permission_scoped: false,
+            resource_scoped: false,
+            revision,
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn principal_id(&self) -> i32 {
+        self.principal_id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    #[must_use]
+    pub const fn issued(&self) -> NaiveDateTime {
+        self.issued
+    }
+
+    #[must_use]
+    pub const fn expires_at(&self) -> Option<NaiveDateTime> {
+        self.expires_at
+    }
+
+    #[must_use]
+    pub const fn last_used_at(&self) -> Option<NaiveDateTime> {
+        self.last_used_at
+    }
+
+    #[must_use]
+    pub const fn is_permission_scoped(&self) -> bool {
+        self.permission_scoped
+    }
+
+    #[must_use]
+    pub const fn is_resource_scoped(&self) -> bool {
+        self.resource_scoped
+    }
+
+    #[must_use]
+    pub const fn is_scoped(&self) -> bool {
+        self.permission_scoped || self.resource_scoped
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> i64 {
+        self.revision
+    }
+}
+
+/// Builder for the hash-free token projection returned after successful
+/// authentication.
+pub struct AuthenticatedTokenBuilder {
+    id: i32,
+    principal_id: i32,
+    name: Option<String>,
+    description: Option<String>,
+    issued: NaiveDateTime,
+    expires_at: Option<NaiveDateTime>,
+    last_used_at: Option<NaiveDateTime>,
+    permission_scoped: bool,
+    resource_scoped: bool,
+    revision: i64,
+}
+
+impl AuthenticatedTokenBuilder {
+    #[must_use]
+    pub fn name(mut self, name: Option<String>) -> Self {
+        self.name = name;
+        self
+    }
+
+    #[must_use]
+    pub fn description(mut self, description: Option<String>) -> Self {
+        self.description = description;
+        self
+    }
+
+    #[must_use]
+    pub const fn expires_at(mut self, expires_at: Option<NaiveDateTime>) -> Self {
+        self.expires_at = expires_at;
+        self
+    }
+
+    #[must_use]
+    pub const fn last_used_at(mut self, last_used_at: Option<NaiveDateTime>) -> Self {
+        self.last_used_at = last_used_at;
+        self
+    }
+
+    #[must_use]
+    pub const fn permission_scoped(mut self, permission_scoped: bool) -> Self {
+        self.permission_scoped = permission_scoped;
+        self
+    }
+
+    #[must_use]
+    pub const fn resource_scoped(mut self, resource_scoped: bool) -> Self {
+        self.resource_scoped = resource_scoped;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> AuthenticatedToken {
+        AuthenticatedToken {
+            id: self.id,
+            principal_id: self.principal_id,
+            name: self.name,
+            description: self.description,
+            issued: self.issued,
+            expires_at: self.expires_at,
+            last_used_at: self.last_used_at,
+            permission_scoped: self.permission_scoped,
+            resource_scoped: self.resource_scoped,
+            revision: self.revision,
+        }
+    }
+}
+
 /// Principal kinds understood by authentication and authorization storage.
 ///
 /// This enum belongs to the backend-neutral contract. Adapters must reject an
@@ -334,6 +562,17 @@ impl AuthenticationTokenScope {
 /// only the projections required to build application authentication state.
 #[async_trait]
 pub trait AuthenticationStorage: Send + Sync {
+    /// Validate one presented bearer credential and return its minimal
+    /// authentication projection.
+    ///
+    /// Implementations must reject revoked and expired credentials, reject
+    /// credentials owned by disabled principals, and may update non-security
+    /// usage telemetry without failing an otherwise successful validation.
+    async fn authenticate_bearer_token(
+        &self,
+        credential: AuthenticationCredential,
+    ) -> Result<AuthenticatedToken, StorageError>;
+
     async fn load_authentication_identity(
         &self,
         principal_id: i32,
@@ -386,5 +625,22 @@ mod tests {
         assert!(!debug.contains("sensitive-name"));
         assert!(!debug.contains("42"));
         assert!(!debug.contains("17"));
+    }
+
+    #[test]
+    fn authentication_credentials_and_results_redact_identifiers() {
+        let credential = AuthenticationCredential::new("sensitive-lookup-value");
+        let token = AuthenticatedToken::builder(42, 17, NaiveDateTime::default(), 3)
+            .name(Some("sensitive-name".to_string()))
+            .permission_scoped(true)
+            .build();
+
+        let credential_debug = format!("{credential:?}");
+        assert!(!credential_debug.contains("sensitive-lookup-value"));
+        let token_debug = format!("{token:?}");
+        assert!(!token_debug.contains("42"));
+        assert!(!token_debug.contains("17"));
+        assert!(!token_debug.contains("sensitive-name"));
+        assert!(token.is_scoped());
     }
 }

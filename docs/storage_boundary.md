@@ -77,7 +77,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Restores | Durable artifact staging, lifecycle transitions, global drain coordination, rollback-safe snapshot replacement, provenance, and recovery |
 | Imports | Planning lookups, rollback-only preflight, strict and best-effort application, and durable item results |
 | Export queries | Backend-enforced per-read budgets around export selection, includes, and relation hydration |
-| Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
+| Operations | Probes, metrics snapshots, retention, event delivery, locking, worker coordination, and backend execution context |
 
 The families are not feature flags and the admin configuration does not report
 optional support. Every selectable backend implements the entire list. The
@@ -98,6 +98,8 @@ owns target reads, lifecycle mutations, and invocation provenance.
 `RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
 `ImportStorage` owns the complete import workflow. `ExportQueryStorage` owns the
 backend read-budget scope used by selection, includes, and hydration.
+`StorageExecution` owns diagnostic call-site attribution, mutation provenance,
+and revision-precondition scopes used across requests and workers.
 `OperationalStateStorage`, `MetricsStorage`, `EventHealthStorage`,
 `TokenRetentionStorage`, `EventDeliveryStorage`, `EventFanoutStorage`, and
 `EventRetentionStorage` jointly enforce the operations family. No family is
@@ -130,6 +132,25 @@ transaction-local `statement_timeout` to every connection or transaction opened
 by the stage. That detail is private to the adapter and cannot leak back through
 the pool. The shared backend suite verifies the mandatory scope behavior, while
 PostgreSQL unit tests verify cancellation and timeout reset on connection reuse.
+
+## Execution Context Semantics
+
+Every selectable backend implements `StorageExecution`. Application entry
+points provide a bounded `StorageCallSite`, typed `MutationProvenance`, or a
+validated `StorageRevisionPrecondition` around work that can reach storage.
+The backend evaluates the wrapped future exactly once and interprets the
+context using its native mechanism. The contract includes local and `Send`
+call-site forms so request middleware and spawned worker heartbeats retain the
+same attribution without erasing their distinct async guarantees. Consumers do
+not select task-local state, database session variables, transaction settings,
+or tracing labels.
+
+PostgreSQL implements the contract with adapter-private task locals. Connection
+and transaction helpers translate those values into bounded metric labels and
+transaction-local settings for history provenance and authoritative revision
+checks. The settings cannot leak through the pool. Shared compatibility tests
+exercise all three mandatory scopes; PostgreSQL integration tests retain the
+native trigger, transaction, and provenance assertions.
 
 ## Authorization Data Semantics
 
@@ -279,14 +300,18 @@ purge transaction. It passes redacted-debug, serialized `RetainedEvent` DTOs to
 an application-owned `EventArchive`; an archive failure rolls back deletion.
 Neither side sees the PostgreSQL event row, connection, or claim state.
 
-`AuthenticationStorage` owns the consistent principal/human join and token
-scope reads used by bearer-token extractors. It returns a minimal
-`AuthenticationPrincipal`, an optional password-free `AuthenticationHuman`,
-and scope DTOs that distinguish a disabled dimension from an enabled empty
-deny-all dimension. PostgreSQL kind strings, credential hashes, Diesel rows,
-and scope-table layouts never cross into request handling. The opaque
-`StorageHandle` applies the common `authentication` tracing and metric labels
-before dispatching to the selected adapter.
+`AuthenticationStorage` owns complete bearer-token validation, the consistent
+principal/human join, and token-scope reads used by bearer-token extractors. It
+receives a redacted opaque credential lookup value and returns a hash-free
+`AuthenticatedToken`, a minimal `AuthenticationPrincipal`, an optional
+password-free `AuthenticationHuman`, and scope DTOs that distinguish a disabled
+dimension from an enabled empty deny-all dimension. Every backend must reject
+expired and revoked credentials and credentials owned by disabled service
+accounts; best-effort usage telemetry cannot reject an otherwise valid token.
+PostgreSQL kind strings, credential hashes, Diesel rows, and scope-table layouts
+never cross into request handling. The opaque `StorageHandle` applies the
+common `authentication` tracing and metric labels before dispatching to the
+selected adapter.
 
 `AuthorizationStorage` supplies neutral principal membership facts and the
 complete local-policy-store surface: collection decisions, reverse collection
@@ -550,7 +575,8 @@ The first workspace boundaries are now in place:
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
-  authorization, catalog-query, temporal-history, unified-search, operational
+  authorization, storage-execution, catalog-query, temporal-history,
+  unified-search, operational
   state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
   task-execution, backup-snapshot, remote-target, relation-query, event-health,
   event-fan-out, event-retention, and token-retention traits without application,

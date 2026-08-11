@@ -16,7 +16,7 @@ use crate::permissions::AppContext;
 use crate::storage::capabilities::event_subscription::{
     DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::UserPermissions;
 
 #[utoipa::path(
@@ -189,7 +189,8 @@ pub async fn patch_event_subscription(
     ensure_subscription_collection(&existing, collection_id)?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
-    let updated: EventSubscription = with_revision_precondition_scope(
+    let updated: EventSubscription = with_revision_precondition(
+        &context,
         precondition,
         update
             .into_row(&existing)?
@@ -236,7 +237,8 @@ pub async fn delete_event_subscription(
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         subscription_id.delete_event_subscription_record(&context, &event_context),
     )

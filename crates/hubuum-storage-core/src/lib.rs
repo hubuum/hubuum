@@ -10,6 +10,7 @@ mod catalog;
 mod computed_field_lifecycle;
 mod computed_objects;
 mod events;
+mod execution;
 mod export_query;
 mod history;
 mod identity;
@@ -55,6 +56,10 @@ pub use events::{
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
     EventRetentionSummary, RetainedEvent,
 };
+pub use execution::{
+    StorageCallSite, StorageExecution, StorageRevisionPrecondition,
+    StorageRevisionPreconditionError,
+};
 pub use export_query::{ExportQueryStorage, StorageQueryBudget};
 pub use history::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
@@ -63,9 +68,10 @@ pub use history::{
     RemoteTargetHistoryRecord,
 };
 pub use identity::{
-    AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
-    AuthenticationPrincipalKind, AuthenticationResourceScope, AuthenticationStorage,
-    AuthenticationTokenScope, AuthenticationTokenScopeQuery,
+    AuthenticatedToken, AuthenticatedTokenBuilder, AuthenticationCredential, AuthenticationHuman,
+    AuthenticationIdentity, AuthenticationPrincipal, AuthenticationPrincipalKind,
+    AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
+    AuthenticationTokenScopeQuery,
 };
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
@@ -141,7 +147,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 15;
+pub const STORAGE_CONTRACT_VERSION: u16 = 16;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

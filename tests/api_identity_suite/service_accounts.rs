@@ -39,7 +39,6 @@ mod tests {
         TaskStatus, TokenResourceScope, TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
-    use crate::storage::postgres::operations::Status;
     use crate::storage::postgres::operations::authz::scope_allows;
     use crate::storage::postgres::operations::service_account::{
         DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
@@ -488,7 +487,7 @@ mod tests {
             }
         };
 
-        assert_eq!(token.is_valid(pool).await.is_ok(), expected_valid);
+        assert_eq!(token.authenticate(pool).await.is_ok(), expected_valid);
     }
 
     #[actix_web::test]
@@ -612,7 +611,7 @@ mod tests {
         let raw = user.create_token(pool).await.unwrap();
         raw.delete(pool).await.unwrap();
 
-        assert!(raw.is_valid(pool).await.is_err());
+        assert!(raw.authenticate(pool).await.is_err());
     }
 
     /// #4 (cont.): ...but the row remains, with `revoked_at` set (not deleted).
@@ -650,8 +649,8 @@ mod tests {
         let user = create_test_user(pool).await;
         let raw = user.create_token(pool).await.unwrap();
 
-        let first = raw.is_valid(pool).await.unwrap().last_used_at;
-        let second = raw.is_valid(pool).await.unwrap().last_used_at;
+        let first = raw.authenticate(pool).await.unwrap().last_used_at();
+        let second = raw.authenticate(pool).await.unwrap().last_used_at();
 
         assert!(matches!((first, second), (Some(a), Some(b)) if b >= a));
     }
@@ -670,7 +669,7 @@ mod tests {
         let user = create_test_user(pool).await;
         let raw = user.create_token(pool).await.unwrap();
 
-        let returned = raw.is_valid(pool).await.unwrap().last_used_at;
+        let returned = raw.authenticate(pool).await.unwrap().last_used_at();
 
         let hash = raw.storage_hash();
         let persisted: Option<chrono::NaiveDateTime> = with_connection(pool, async |conn| {
@@ -696,7 +695,7 @@ mod tests {
         let sa = create_test_service_account(pool, &group, None).await;
         let token = Token(service_account_token(pool, &sa, None, None).await);
         assert!(
-            token.is_valid(pool).await.is_ok(),
+            token.authenticate(pool).await.is_ok(),
             "precondition: active SA token validates"
         );
 
@@ -706,7 +705,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(token.is_valid(pool).await.is_err());
+        assert!(token.authenticate(pool).await.is_err());
     }
 
     /// #24: a disabled service account cannot mint new tokens — 409.
@@ -2279,7 +2278,15 @@ mod tests {
             &[Permissions::ReadCollection],
         )
         .await;
-        let token = Token(raw).is_valid(&context.pool).await.unwrap();
+        let lookup = Token(raw).storage_hash();
+        let token = with_connection(&context.pool, async |conn| {
+            crate::schema::tokens::table
+                .filter(crate::schema::tokens::token.eq(lookup))
+                .first::<crate::models::PrincipalToken>(conn)
+                .await
+        })
+        .await
+        .unwrap();
         let duplicate_tokens = [token.clone(), token];
 
         let metadata = PrincipalTokenMetadata::load_for_tokens(&context.pool, &duplicate_tokens)

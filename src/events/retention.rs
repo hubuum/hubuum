@@ -20,11 +20,11 @@ use crate::events::EventRetentionSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{
     EventArchive, EventRetentionStorage, EventRetentionSummary, RetainedEvent, StorageError,
     StorageHandle, storage_handle,
 };
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -128,6 +128,7 @@ async fn event_retention_worker_loop(
             biased;
             _ = shutdown.requested() => break,
             result = with_storage_call_site(
+                &pool,
                 StorageCallSite::EventRetention,
                 process_event_retention_batch(&pool, config.settings, archive_path),
             ) => result,

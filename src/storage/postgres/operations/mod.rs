@@ -20,7 +20,6 @@ pub mod external_identity;
 pub mod group;
 pub mod history;
 pub mod identity;
-pub mod is_active;
 pub(crate) mod maintenance;
 pub mod meta;
 pub mod metrics;
@@ -59,20 +58,6 @@ use crate::storage::postgres::operations::relations::{
     parse_transitive_filter_params,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
-
-/// Trait for checking if a structure is valid/active/etc in the database.
-///
-/// What the different traits imply may vary depending on the structure. For example, a user simply has to
-/// exist in the database to be valid, while a token has to be valid and not expired.
-pub trait Status<T> {
-    /// Check that a structure is active.
-    ///
-    /// Validity implies that the structure exists in the database and that it is not expired, disabled,
-    /// or otherwise inactive.
-    async fn is_valid<C>(&self, backend: &C) -> Result<T, ApiError>
-    where
-        C: crate::storage::StorageContext;
-}
 
 /// Trait for getting all active tokens for a given structure.
 ///

@@ -8,7 +8,7 @@ use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
 use crate::restores::MaintenanceActivityGuard;
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 use crate::storage::{StorageContext, StorageHandle, TokenRetentionStorage, storage_handle};
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
@@ -67,6 +67,7 @@ async fn token_retention_worker_loop(
             biased;
             _ = shutdown.requested() => break,
             result = with_storage_call_site(
+                &pool,
                 StorageCallSite::TokenRetention,
                 process_token_retention_batch(&pool, config.settings),
             ) => result,

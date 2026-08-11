@@ -4,6 +4,7 @@ mod classes;
 mod collections;
 mod context;
 mod contract;
+mod execution;
 mod imports;
 #[cfg(test)]
 mod memory;
@@ -18,15 +19,23 @@ pub mod postgres;
 pub(crate) use class_relations::ClassRelationStore;
 pub(crate) use classes::ClassStore;
 pub(crate) use collections::CollectionStore;
-pub(crate) use context::{StorageContext, StorageHandle, storage_handle};
+pub use context::StorageContext;
+pub(crate) use context::{StorageHandle, storage_handle};
 #[cfg(test)]
 pub(crate) use contract::STORAGE_CONTRACT_VERSION;
 pub(crate) use contract::{
     DynLifecycleStorage, LifecycleStorage, StorageBackend, StorageBackendDescriptor,
     StorageBackendKind, StorageIdentity,
 };
+pub use execution::{
+    with_mutation_provenance, with_revision_precondition, with_storage_call_site,
+    with_storage_call_site_send,
+};
+pub use hubuum_storage_core::{
+    AuthenticatedToken, StorageCallSite, StorageExecution, StorageRevisionPrecondition,
+};
 pub(crate) use hubuum_storage_core::{
-    AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
+    AuthenticationCredential, AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
     AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
     AuthenticationTokenScopeQuery, AuthorizationClassResource, AuthorizationCollection,
     AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,

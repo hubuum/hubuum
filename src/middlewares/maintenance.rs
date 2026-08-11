@@ -9,7 +9,7 @@ use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 fn allowed_during_maintenance(path: &str, metrics_path: Option<&str>) -> bool {
     matches!(path, "/healthz" | "/readyz")
@@ -26,7 +26,10 @@ pub async fn reject_during_maintenance(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
-    with_storage_call_site(StorageCallSite::HttpRequest, async move {
+    let storage = AppContext::from_http_request(req.request())?
+        .backend()
+        .clone();
+    with_storage_call_site(&storage, StorageCallSite::HttpRequest, async move {
         let metrics_path = req
             .app_data::<Data<RunningConfig>>()
             .map(|config| config.server.metrics_path.as_str());
@@ -40,6 +43,7 @@ pub async fn reject_during_maintenance(
             let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
             let backend = AppContext::from_http_request(req.request())?;
             let state = with_storage_call_site(
+                backend.backend(),
                 StorageCallSite::RequestMaintenance,
                 current_maintenance_state(backend.backend()),
             )

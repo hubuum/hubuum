@@ -6,7 +6,7 @@ use prometheus::{Encoder, TextEncoder};
 
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 use super::Metrics;
 use super::{db, event, get, inventory, login, task};
@@ -55,6 +55,7 @@ pub async fn scrape(context: AppContext) -> Result<impl Responder, ApiError> {
         process_refresh_outcome,
     );
     with_storage_call_site(
+        &context,
         StorageCallSite::MetricsRefresh,
         refresh_scrape_gauges(metrics, context.backend()),
     )

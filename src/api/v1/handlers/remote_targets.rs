@@ -27,7 +27,7 @@ use crate::services::history::{
 use crate::services::remote_targets as remote_target_service;
 use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
 use crate::storage::StorageTaskScopeSnapshot;
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
@@ -232,7 +232,8 @@ pub async fn patch_remote_target(
 
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
-    let updated: RemoteTarget = with_revision_precondition_scope(
+    let updated: RemoteTarget = with_revision_precondition(
+        &context,
         precondition,
         remote_target_service::update_remote_target(
             &context,
@@ -291,7 +292,8 @@ pub async fn delete_remote_target(
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         remote_target_service::delete_remote_target(&context, target_id.id(), event_context),
     )
@@ -341,7 +343,7 @@ pub async fn invoke_remote_target(
         body_override: invoke.body_override,
     })?;
     let snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id)?),
+        Some(TokenID::new(requestor.token_meta.id())?),
         requestor.scopes(),
     );
     let task = find_or_create_remote_call_task(

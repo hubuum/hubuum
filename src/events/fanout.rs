@@ -17,8 +17,8 @@ use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{EventFanoutStorage, StorageError, StorageHandle, storage_handle};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_LISTENER: Once = Once::new();
@@ -102,6 +102,7 @@ async fn event_fanout_worker_loop(
             biased;
             _ = shutdown.requested() => break,
             result = with_storage_call_site(
+                &pool,
                 StorageCallSite::EventFanout,
                 pool.process_event_fanout_batch(settings),
             ) => result,

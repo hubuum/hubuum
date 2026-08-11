@@ -6,7 +6,7 @@ mod tests {
         NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
         UpdateGroup,
     };
-    use crate::storage::postgres::with_revision_precondition_scope;
+    use crate::storage::with_revision_precondition;
 
     use crate::pagination::{
         NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits,
@@ -154,7 +154,8 @@ mod tests {
         .await
         .unwrap();
 
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             fixture.collection.delete_without_events(&context.pool),
         )
@@ -188,7 +189,8 @@ mod tests {
             .delete_without_events(&context.pool)
             .await
             .unwrap();
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             fixture.collection.delete_without_events(&context.pool),
         )

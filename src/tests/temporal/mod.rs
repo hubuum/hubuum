@@ -378,7 +378,7 @@ async fn cascade_delete_records_history() {
     );
 }
 
-use crate::storage::postgres::with_actor_scope;
+use crate::storage::with_mutation_provenance;
 
 #[actix_rt::test]
 async fn actor_scope_sets_actor_and_default_is_null() {
@@ -392,18 +392,22 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
     // Inside a scope -> actor recorded.
     let in_name = format!("actor_in_{}", scope.scope_id);
-    let in_class = with_actor_scope(Some(4242), async {
-        let event_context = hubuum_events_core::EventContext::system();
-        NewHubuumClass {
-            name: in_name.clone(),
-            collection_id,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "d".into(),
-        }
-        .save(&pool, &event_context)
-        .await
-    })
+    let in_class = with_mutation_provenance(
+        &pool,
+        Some(crate::events::MutationProvenance::user(4242)),
+        async {
+            let event_context = hubuum_events_core::EventContext::system();
+            NewHubuumClass {
+                name: in_name.clone(),
+                collection_id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: "d".into(),
+            }
+            .save(&pool, &event_context)
+            .await
+        },
+    )
     .await
     .unwrap();
 
@@ -451,7 +455,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 async fn worker_mutation_scope_records_root_task_provenance() {
     use crate::events::{EventContext, MutationProvenance};
     use crate::models::NewHubuumClass;
-    use crate::storage::postgres::{with_connection, with_mutation_provenance_scope};
+    use crate::storage::postgres::with_connection;
     use crate::traits::CanSave;
 
     let scope = TestScope::new();
@@ -459,7 +463,8 @@ async fn worker_mutation_scope_records_root_task_provenance() {
     let collection_fixture = scope.collection_fixture("worker_provenance").await;
     let initiator_user_id = 5151;
     let task_id = 6161;
-    let class = with_mutation_provenance_scope(
+    let class = with_mutation_provenance(
+        &pool,
         Some(MutationProvenance::worker(Some(initiator_user_id), task_id)),
         async {
             NewHubuumClass {
@@ -515,7 +520,7 @@ async fn worker_mutation_scope_records_root_task_provenance() {
 async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     use crate::models::{NewHubuumClass, NewUser, UserID};
     use crate::storage::postgres::prelude::*;
-    use crate::storage::postgres::{with_actor_scope, with_connection};
+    use crate::storage::postgres::with_connection;
     use crate::traits::CanSave;
 
     let scope = TestScope::new();
@@ -538,18 +543,22 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     let _ = token;
 
     let cname = format!("anon_class_{}", scope.scope_id);
-    let class = with_actor_scope(Some(user.id), async {
-        let event_context = hubuum_events_core::EventContext::system();
-        NewHubuumClass {
-            name: cname.clone(),
-            collection_id: collection_fixture.collection.id,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "d".into(),
-        }
-        .save(&pool, &event_context)
-        .await
-    })
+    let class = with_mutation_provenance(
+        &pool,
+        Some(crate::events::MutationProvenance::user(user.id)),
+        async {
+            let event_context = hubuum_events_core::EventContext::system();
+            NewHubuumClass {
+                name: cname.clone(),
+                collection_id: collection_fixture.collection.id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: "d".into(),
+            }
+            .save(&pool, &event_context)
+            .await
+        },
+    )
     .await
     .unwrap();
 

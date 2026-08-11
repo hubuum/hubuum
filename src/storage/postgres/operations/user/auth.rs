@@ -737,7 +737,7 @@ impl LoadUserRecord for UserID {
 mod tests {
     use super::*;
     use crate::models::user::UserID;
-    use crate::storage::postgres::operations::Status;
+    use crate::services::authentication::authenticate_bearer_token;
     use crate::tests::{TestScope, create_user_with_params};
 
     async fn user_with_tokens(scope: &TestScope, label: &str) -> (User, Vec<Token>) {
@@ -751,14 +751,16 @@ mod tests {
 
     async fn assert_tokens_active(pool: &impl crate::storage::StorageContext, tokens: &[Token]) {
         for token in tokens {
-            token.is_valid(pool).await.expect("token should be active");
+            authenticate_bearer_token(pool, token)
+                .await
+                .expect("token should be active");
         }
     }
 
     async fn assert_tokens_revoked(pool: &impl crate::storage::StorageContext, tokens: &[Token]) {
         for token in tokens {
             assert!(matches!(
-                token.is_valid(pool).await,
+                authenticate_bearer_token(pool, token).await,
                 Err(ApiError::Unauthorized(_))
             ));
         }

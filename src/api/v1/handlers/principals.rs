@@ -30,7 +30,7 @@ use crate::storage::capabilities::active_tokens::retained_token_metadata_by_prin
 use crate::storage::capabilities::service_account::{
     is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
 
@@ -408,7 +408,8 @@ pub async fn revoke_token(
     let precondition = revision_precondition(&req, &current)?;
 
     let event_context = requestor.event_context(&req);
-    let revoked = with_revision_precondition_scope(
+    let revoked = with_revision_precondition(
+        &context,
         precondition,
         revoke_token_by_id_for_principal(
             &context,
@@ -559,7 +560,8 @@ pub async fn put_principal_settings(
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let settings = with_revision_precondition_scope(
+    let settings = with_revision_precondition(
+        &context,
         precondition,
         principal_id.replace_settings(&context, settings.into_inner(), &event_context),
     )
@@ -616,7 +618,8 @@ pub async fn patch_principal_settings(
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let settings = with_revision_precondition_scope(
+    let settings = with_revision_precondition(
+        &context,
         precondition,
         principal_id.apply_settings_patch(&context, patch.into_inner(), &event_context),
     )
@@ -648,7 +651,8 @@ pub async fn delete_principal_settings(
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let reset = with_revision_precondition_scope(
+    let reset = with_revision_precondition(
+        &context,
         precondition,
         principal_id.reset_settings(&context, &event_context),
     )

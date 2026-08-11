@@ -14,7 +14,8 @@ mod tests {
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::storage::postgres::operations::identity::ensure_identity_scope;
-    use crate::storage::postgres::{with_connection, with_revision_precondition_scope};
+    use crate::storage::postgres::with_connection;
+    use crate::storage::with_revision_precondition;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
@@ -559,7 +560,8 @@ mod tests {
             .remove_member_without_events(&user, &context.pool)
             .await
             .unwrap();
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             group.add_member_without_events(&context.pool, &user),
         )
@@ -746,7 +748,8 @@ mod tests {
             .remove_member_without_events(&user, &context.pool)
             .await
             .unwrap();
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             group.remove_member_without_events(&user, &context.pool),
         )
