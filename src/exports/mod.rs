@@ -46,8 +46,9 @@ use crate::services::tasks::{
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{
-    ExportQueryStorage, StorageContext, StorageExportTaskArtifact, StorageQueryBudget,
-    StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
+    ClassRecordStorage, ExportQueryStorage, StorageContext, StorageExportTaskArtifact,
+    StorageQueryBudget, StorageTaskCompletionArtifact, StorageTaskDurations,
+    StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
 use crate::traits::{
@@ -2112,7 +2113,11 @@ async fn ensure_class_name_ids(
         return Ok(());
     }
 
-    for (class_id, class_name) in missing.load_names(pool).await? {
+    for (class_id, class_name) in storage_handle(pool)
+        .class_names(&missing)
+        .await
+        .map_err(ApiError::from)?
+    {
         class_names.insert(class_id, class_name);
     }
 

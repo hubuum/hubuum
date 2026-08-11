@@ -11,6 +11,7 @@ use crate::models::{
     UnifiedSearchCursorToken, UnifiedSearchSpec,
 };
 use crate::storage::postgres::operations::authz::scope_allows;
+use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::with_connection_async;
 
@@ -267,10 +268,13 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Text, _>(cursor_binds.name)
                 .bind::<Integer, _>(cursor_binds.id)
                 .bind::<BigInt, _>(limit)
-                .load::<HubuumClass>(conn)
+                .load::<HubuumClassRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<HubuumClass>>();
 
         if classes.is_empty() {
             return Ok(Vec::new());

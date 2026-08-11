@@ -19,7 +19,7 @@ mod operational;
 pub mod postgres;
 
 pub(crate) use class_relations::ClassRelationStore;
-pub(crate) use classes::ClassStore;
+pub(crate) use classes::{ClassRecordStorage, ClassStore};
 pub(crate) use collections::CollectionStore;
 pub use context::StorageContext;
 pub(crate) use context::{StorageHandle, storage_handle};

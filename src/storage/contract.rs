@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use super::{
     AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
-    ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage,
-    ExportQueryStorage, ExportTemplateStorage, HistoryStorage, IdentityStorage, ImportStorage,
-    InventoryStorage, MetricsStorage, ObjectAggregateStorage, ObjectRecordStorage,
-    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
-    RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
+    CatalogStorage, ClassRecordStorage, ClassRelationStore, ClassStore, CollectionStore,
+    ComputedFieldLifecycleStorage, ComputedObjectStorage, EventDeliveryAdministrationStorage,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
+    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, HistoryStorage,
+    IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage, ObjectAggregateStorage,
+    ObjectRecordStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
+    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
     TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
     observed::ObservedLifecycleStorage,
 };
@@ -77,6 +77,7 @@ pub(crate) trait StorageBackend:
     + OperationalStateStorage
     + TokenRetentionStorage
     + UnifiedSearchStorage
+    + ClassRecordStorage
     + ObjectRecordStorage
     + RemoteTargetStorage
     + TaskQueueStorage
