@@ -9,8 +9,8 @@ mod tests {
     use crate::models::group::{Group, GroupID, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
     use crate::models::{
-        IdentityScope, LDAP_PROVIDER_KIND, MembershipPrincipalResponse, NewIdentityScope,
-        PrincipalID, PrincipalKind, PrincipalMemberResponse,
+        LDAP_PROVIDER_KIND, MembershipPrincipalResponse, PrincipalID, PrincipalKind,
+        PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::storage::postgres::operations::identity::ensure_identity_scope;
@@ -40,22 +40,27 @@ mod tests {
 
         let returned = with_connection(&context.pool, async |conn| {
             diesel::insert_into(identity_scopes::table)
-                .values(NewIdentityScope {
-                    name: &scope_name,
-                    provider_kind: LDAP_PROVIDER_KIND,
-                })
+                .values((
+                    identity_scopes::name.eq(&scope_name),
+                    identity_scopes::provider_kind.eq(LDAP_PROVIDER_KIND),
+                ))
                 .on_conflict(identity_scopes::name)
                 .do_update()
                 .set(identity_scopes::provider_kind.eq(crate::models::LDAP_PROVIDER_KIND))
-                .get_result::<IdentityScope>(conn)
+                .returning((
+                    identity_scopes::id,
+                    identity_scopes::revision,
+                    identity_scopes::updated_at,
+                ))
+                .get_result::<(i32, crate::models::ResourceRevision, chrono::NaiveDateTime)>(conn)
                 .await
         })
         .await
         .unwrap();
 
-        assert_eq!(returned.id, created.id);
-        assert_eq!(returned.revision, created.revision);
-        assert_eq!(returned.updated_at, created.updated_at);
+        assert_eq!(returned.0, created.id);
+        assert_eq!(returned.1, created.revision);
+        assert_eq!(returned.2, created.updated_at);
     }
 
     async fn check_show_group(

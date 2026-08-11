@@ -27,6 +27,115 @@ use crate::traits::AuthzSubject;
 use crate::traits::accessors::InstanceAdapter;
 use crate::traits::crud::{DeleteAdapter, UpdateAdapter};
 
+#[derive(Debug, Queryable, Selectable, Clone)]
+#[diesel(table_name = crate::schema::service_accounts)]
+pub(crate) struct ServiceAccountRow {
+    pub(crate) id: i32,
+    pub(crate) kind: String,
+    pub(crate) description: String,
+    pub(crate) owner_group_id: i32,
+    pub(crate) created_by: Option<i32>,
+    pub(crate) disabled_at: Option<chrono::NaiveDateTime>,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+}
+
+impl From<ServiceAccountRow> for ServiceAccount {
+    fn from(row: ServiceAccountRow) -> Self {
+        Self {
+            id: row.id,
+            kind: row.kind,
+            description: row.description,
+            owner_group_id: row.owner_group_id,
+            created_by: row.created_by,
+            disabled_at: row.disabled_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = crate::schema::service_accounts)]
+struct UpdateServiceAccountRow<'a> {
+    description: Option<&'a String>,
+    owner_group_id: Option<i32>,
+}
+
+impl<'a> From<&'a UpdateServiceAccount> for UpdateServiceAccountRow<'a> {
+    fn from(update: &'a UpdateServiceAccount) -> Self {
+        Self {
+            description: update.description.as_ref(),
+            owner_group_id: update.owner_group_id,
+        }
+    }
+}
+
+struct ServiceAccountWithNameQueryRow(ServiceAccountWithName);
+
+impl crate::traits::CursorPaginated for ServiceAccountWithNameQueryRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        ServiceAccountWithName::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<crate::traits::CursorValue, ApiError> {
+        self.0.cursor_value(field)
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        ServiceAccountWithName::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        ServiceAccountWithName::tie_breaker_sort()
+    }
+}
+
+impl crate::traits::CursorSqlMapping for ServiceAccountWithNameQueryRow {
+    fn sql_field(field: &FilterField) -> Result<crate::traits::CursorSqlField, ApiError> {
+        use crate::traits::{CursorSqlField, CursorSqlType};
+
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "service_accounts.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "principals.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::IdentityScope => CursorSqlField {
+                column: "identity_scopes.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "service_accounts.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "service_accounts.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "principals.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for service accounts",
+                    field
+                )));
+            }
+        })
+    }
+}
+
 pub trait SaveServiceAccount {
     async fn save<C>(
         &self,
@@ -106,15 +215,16 @@ where
         .insert(conn)
         .await?;
 
-        let sa = diesel::insert_into(service_accounts::table)
+        let sa: ServiceAccount = diesel::insert_into(service_accounts::table)
             .values((
                 service_accounts::id.eq(principal.id),
                 service_accounts::description.eq(&description),
                 service_accounts::owner_group_id.eq(owner_group_id),
                 service_accounts::created_by.eq(created_by),
             ))
-            .get_result::<ServiceAccount>(conn)
-            .await?;
+            .get_result::<ServiceAccountRow>(conn)
+            .await?
+            .into();
         let revision = principal_revision_conn(conn, principal.id).await?;
         if let Some(event_context) = event_context {
             let event = NewEvent::new(
@@ -182,15 +292,17 @@ async fn update_service_account_record(
         let before_revision = lock_principal_revision_conn(conn, service_account_id).await?;
         let before = sa_table
             .filter(id.eq(service_account_id))
-            .first::<ServiceAccount>(conn)
-            .await?;
+            .first::<ServiceAccountRow>(conn)
+            .await?
+            .into();
         if !update.has_changes(&before) {
             return Ok(before);
         }
-        let updated = diesel::update(sa_table.filter(id.eq(service_account_id)))
-            .set(update)
-            .get_result::<ServiceAccount>(conn)
-            .await?;
+        let updated: ServiceAccount = diesel::update(sa_table.filter(id.eq(service_account_id)))
+            .set(UpdateServiceAccountRow::from(update))
+            .get_result::<ServiceAccountRow>(conn)
+            .await?
+            .into();
         let after_revision = principal_revision_conn(conn, service_account_id).await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, updated.id).await?;
@@ -303,17 +415,19 @@ async fn disable_service_account_conn(
     use crate::schema::service_accounts::dsl::{disabled_at, id, service_accounts as sa_table};
 
     let before_revision = lock_principal_revision_conn(conn, service_account_id).await?;
-    let before = sa_table
+    let before: ServiceAccount = sa_table
         .filter(id.eq(service_account_id))
-        .first::<ServiceAccount>(conn)
-        .await?;
+        .first::<ServiceAccountRow>(conn)
+        .await?
+        .into();
     let disabled = if before.disabled_at.is_some() {
         before
     } else {
-        let disabled = diesel::update(sa_table.filter(id.eq(service_account_id)))
+        let disabled: ServiceAccount = diesel::update(sa_table.filter(id.eq(service_account_id)))
             .set(disabled_at.eq(diesel::dsl::now))
-            .get_result::<ServiceAccount>(conn)
-            .await?;
+            .get_result::<ServiceAccountRow>(conn)
+            .await?
+            .into();
         let after_revision = principal_revision_conn(conn, service_account_id).await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, disabled.id).await?;
@@ -408,8 +522,9 @@ async fn load_service_account_by_id_conn(
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
     sa_table
         .filter(id.eq(service_account_id))
-        .first::<ServiceAccount>(conn)
+        .first::<ServiceAccountRow>(conn)
         .await
+        .map(Into::into)
         .map_err(ApiError::from)
 }
 
@@ -548,8 +663,9 @@ pub async fn load_service_account_by_id(
     with_connection(pool, async |conn| {
         sa_table
             .filter(id.eq(service_account_id))
-            .first::<ServiceAccount>(conn)
+            .first::<ServiceAccountRow>(conn)
             .await
+            .map(Into::into)
     })
     .await
 }
@@ -604,18 +720,18 @@ where
         }
     }
 
-    apply_query_options!(base_query, query_options, ServiceAccountWithName);
+    apply_query_options!(base_query, query_options, ServiceAccountWithNameQueryRow);
 
     let rows = with_connection(pool, async |conn| {
         base_query
             .select((
-                ServiceAccount::as_select(),
+                ServiceAccountRow::as_select(),
                 identity_scopes::name,
                 principals::name,
                 principals::revision,
             ))
             .load::<(
-                ServiceAccount,
+                ServiceAccountRow,
                 String,
                 String,
                 crate::models::ResourceRevision,
@@ -626,7 +742,9 @@ where
 
     Ok(rows
         .into_iter()
-        .map(ServiceAccountWithName::from_tuple)
+        .map(|(account, scope, name, revision)| {
+            ServiceAccountWithName::from_tuple((account.into(), scope, name, revision))
+        })
         .collect())
 }
 

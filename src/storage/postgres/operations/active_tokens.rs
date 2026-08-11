@@ -3,7 +3,9 @@ use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
     PrincipalToken, PrincipalTokenMetadata, TokenListState, configured_token_lifetime,
 };
-use crate::storage::postgres::operations::token::principal_token_metadata_conn;
+use crate::storage::postgres::operations::token::{
+    PrincipalTokenRow, principal_token_metadata_conn,
+};
 use crate::storage::postgres::operations::{ActiveTokens, RetainedTokens};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};
@@ -103,10 +105,11 @@ async fn active_tokens_by_principal_id(
         tokens
             .filter(principal_id.eq(principal))
             .filter(active_token_predicate(now, active_after))
-            .load::<PrincipalToken>(conn)
+            .load::<PrincipalTokenRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 fn build_tokens_by_principal_query<'a>(
@@ -178,11 +181,14 @@ async fn tokens_by_principal_id_paginated_with_total_count(
 
     let mut base_query =
         build_tokens_by_principal_query(principal, query_options, state, now, active_after)?;
-    crate::apply_query_options!(base_query, query_options, PrincipalToken);
+    crate::apply_query_options!(base_query, query_options, PrincipalTokenRow);
     let items = with_connection(pool, async |conn| {
-        base_query.load::<PrincipalToken>(conn).await
+        base_query.load::<PrincipalTokenRow>(conn).await
     })
-    .await?;
+    .await?
+    .into_iter()
+    .map(Into::into)
+    .collect();
 
     Ok((items, total_count))
 }
@@ -208,9 +214,9 @@ pub(crate) async fn retained_token_metadata_by_principal_id_paginated_with_total
 
     let mut base_query =
         build_tokens_by_principal_query(principal.id(), query_options, state, now, active_after)?;
-    crate::apply_query_options!(base_query, query_options, PrincipalToken);
+    crate::apply_query_options!(base_query, query_options, PrincipalTokenRow);
     let metadata = with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        let selected = base_query.load::<PrincipalToken>(conn).await?;
+        let selected = base_query.load::<PrincipalTokenRow>(conn).await?;
         let selected_ids = selected.iter().map(|token| token.id).collect::<Vec<_>>();
         let locked = if selected_ids.is_empty() {
             Vec::new()
@@ -218,12 +224,12 @@ pub(crate) async fn retained_token_metadata_by_principal_id_paginated_with_total
             crate::schema::tokens::table
                 .filter(crate::schema::tokens::id.eq_any(&selected_ids))
                 .for_update()
-                .load::<PrincipalToken>(conn)
+                .load::<PrincipalTokenRow>(conn)
                 .await?
         };
         let mut locked_by_id = locked
             .into_iter()
-            .map(|token| (token.id, token))
+            .map(|token| (token.id, PrincipalToken::from(token)))
             .collect::<std::collections::HashMap<_, _>>();
         let items = selected_ids
             .into_iter()

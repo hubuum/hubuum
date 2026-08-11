@@ -11,6 +11,7 @@ use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::identity::ensure_identity_scope;
 use crate::storage::postgres::operations::principal::PrincipalRow;
+use crate::storage::postgres::operations::user::UserRow;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};
 
@@ -198,12 +199,16 @@ pub async fn sync_external_user(
                 users::proper_name.eq(&profile.proper_name),
                 users::email.eq(&profile.email),
             ))
-            .get_result::<User>(conn)
+            .get_result::<UserRow>(conn)
             .await
             .optional()?;
-        let user = match user {
-            Some(user) => user,
-            None => users::table.find(principal.id).first::<User>(conn).await?,
+        let user: User = match user {
+            Some(user) => user.into(),
+            None => users::table
+                .find(principal.id)
+                .first::<UserRow>(conn)
+                .await?
+                .into(),
         };
 
         diesel::update(principals::table.filter(principals::id.eq(principal.id)))

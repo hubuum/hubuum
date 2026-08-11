@@ -4600,7 +4600,7 @@ impl User {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, crate::models::UserWithName);
+        crate::apply_query_options!(base_query, query_options, UserWithNameQueryRow);
 
         trace_query!(base_query, "Searching users");
 
@@ -4618,7 +4618,7 @@ impl User {
                 ))
                 .distinct() // TODO: Is it the joins that makes this required?
                 .load::<(
-                    User,
+                    UserRow,
                     String,
                     String,
                     String,
@@ -4633,7 +4633,20 @@ impl User {
 
         Ok(rows
             .into_iter()
-            .map(crate::models::UserWithName::from_tuple)
+            .map(
+                |(user, scope, provider, name, managed, attempted, succeeded, revision)| {
+                    crate::models::UserWithName::from_tuple((
+                        user.into(),
+                        scope,
+                        provider,
+                        name,
+                        managed,
+                        attempted,
+                        succeeded,
+                        revision,
+                    ))
+                },
+            )
             .collect())
     }
 

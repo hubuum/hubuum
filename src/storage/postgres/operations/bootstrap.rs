@@ -4,11 +4,12 @@ use crate::errors::ApiError;
 use crate::models::identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE,
 };
-use crate::models::{NewPrincipal, PrincipalKind, User};
+use crate::models::{NewPrincipal, PrincipalKind};
 use crate::storage::StorageDefaultAdminBootstrap;
 use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::identity::identity_scope_id_by_name_conn;
 use crate::storage::postgres::operations::principal::InsertPrincipalRecord;
+use crate::storage::postgres::operations::user::UserRow;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};
 
@@ -104,7 +105,7 @@ pub async fn bootstrap_default_admin(
                 crate::schema::users::password.eq(Some(&hashed_password)),
                 crate::schema::users::proper_name.eq(Some("Administrator")),
             ))
-            .get_result::<User>(conn)
+            .get_result::<UserRow>(conn)
             .await?;
 
         diesel::insert_into(crate::schema::group_memberships::table)

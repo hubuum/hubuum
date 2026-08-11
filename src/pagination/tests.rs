@@ -5,8 +5,9 @@ use chrono::NaiveDate;
 use rstest::rstest;
 
 use super::*;
-use crate::models::{Collection, UserWithName};
+use crate::models::Collection;
 use crate::storage::postgres::operations::collection::CollectionRow;
+use crate::storage::postgres::operations::user::UserWithNameQueryRow;
 
 #[derive(Clone, Debug)]
 struct JsonCursorItem {
@@ -317,7 +318,7 @@ fn cursor_decoding_rejects_an_oversized_token_before_parsing() {
 
 #[test]
 fn test_prepare_db_pagination_adds_limit_and_tie_breaker() {
-    let prepared = prepare_db_pagination::<UserWithName>(&QueryOptions {
+    let prepared = prepare_db_pagination::<UserWithNameQueryRow>(&QueryOptions {
         filters: vec![],
         sort: vec![SortParam {
             field: FilterField::Username,
@@ -358,7 +359,7 @@ async fn exact_total_count_can_be_skipped() {
 
 #[test]
 fn test_cursor_filter_sql_handles_nullable_descending_strings() {
-    let sql = cursor_filter_sql::<UserWithName>(
+    let sql = cursor_filter_sql::<UserWithNameQueryRow>(
         &[SortParam {
             field: FilterField::Email,
             descending: true,

@@ -2,7 +2,6 @@ use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
 
-use crate::storage::postgres::prelude::*;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -16,17 +15,13 @@ use crate::models::{
     PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
     TokenScope, TokenScopeDetails,
 };
-use crate::schema::tokens;
 use crate::storage::postgres::operations::user::DeleteTokenRecord;
 use crate::storage::{AuthenticatedToken, StorageContext};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
 /// `token` field stores the HMAC hash, never the raw value.
-#[derive(Queryable, Insertable, Selectable, Clone)]
-#[diesel(table_name = tokens)]
+#[derive(Clone)]
 pub struct PrincipalToken {
     pub id: i32,
     pub token: String,
@@ -686,49 +681,6 @@ impl CursorPaginated for PrincipalToken {
             field: FilterField::Id,
             descending: false,
         }]
-    }
-}
-
-impl CursorSqlMapping for PrincipalToken {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "tokens.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "tokens.name",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::IssuedAt => CursorSqlField {
-                column: "tokens.issued",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::ExpiresAt => CursorSqlField {
-                column: "tokens.expires_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            FilterField::LastUsedAt => CursorSqlField {
-                column: "tokens.last_used_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "tokens.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for tokens",
-                    field
-                )));
-            }
-        })
     }
 }
 

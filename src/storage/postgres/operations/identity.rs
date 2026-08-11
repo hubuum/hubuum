@@ -1,10 +1,41 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::errors::ApiError;
-use crate::models::{IdentityScope, NewIdentityScope};
+use crate::models::IdentityScope;
 use crate::schema::identity_scopes;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection};
+
+#[derive(Debug, Queryable, Selectable)]
+#[diesel(table_name = crate::schema::identity_scopes)]
+pub(crate) struct IdentityScopeRow {
+    pub(crate) id: i32,
+    pub(crate) name: String,
+    pub(crate) provider_kind: String,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) revision: crate::models::ResourceRevision,
+}
+
+impl From<IdentityScopeRow> for IdentityScope {
+    fn from(row: IdentityScopeRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            provider_kind: row.provider_kind,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            revision: row.revision,
+        }
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::identity_scopes)]
+struct NewIdentityScopeRow<'a> {
+    name: &'a str,
+    provider_kind: &'a str,
+}
 
 pub(crate) async fn identity_scope_id_by_name_conn(
     conn: &mut PostgresConnection,
@@ -27,8 +58,9 @@ pub async fn identity_scope_by_name(
     with_connection(pool, async |conn| {
         scopes
             .filter(name.eq(scope_name))
-            .first::<IdentityScope>(conn)
+            .first::<IdentityScopeRow>(conn)
             .await
+            .map(Into::into)
     })
     .await
 }
@@ -82,24 +114,23 @@ pub async fn ensure_identity_scope(
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
     with_connection(pool, async |conn| {
         let written = diesel::insert_into(scopes)
-            .values(NewIdentityScope {
+            .values(NewIdentityScopeRow {
                 name: scope_name,
                 provider_kind: provider,
             })
             .on_conflict(name)
             .do_update()
             .set(identity_scopes::provider_kind.eq(provider))
-            .get_result::<IdentityScope>(conn)
+            .get_result::<IdentityScopeRow>(conn)
             .await
             .optional()?;
         match written {
-            Some(scope) => Ok(scope),
-            None => {
-                scopes
-                    .filter(name.eq(scope_name))
-                    .first::<IdentityScope>(conn)
-                    .await
-            }
+            Some(scope) => Ok(scope.into()),
+            None => scopes
+                .filter(name.eq(scope_name))
+                .first::<IdentityScopeRow>(conn)
+                .await
+                .map(Into::into),
         }
     })
     .await

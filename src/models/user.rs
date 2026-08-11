@@ -5,21 +5,17 @@ use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::{IssuedToken, PrincipalToken, PrincipalTokenCreateRequest, Token};
 use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
-use crate::schema::users;
 use crate::storage::postgres::operations::user::{
     AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
     SetUserPasswordRecord, UpdateUserRecord,
 };
-use crate::storage::postgres::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::storage::StorageContext;
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 use tracing::{debug, error, warn};
 
@@ -29,8 +25,7 @@ pub const MAX_LOGIN_PASSWORD_CHARACTERS: usize = 4096;
 
 /// A human user. The id is the principal id; the login/display name lives on
 /// `principals.name`, not here.
-#[derive(Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Clone, ToSchema)]
-#[diesel(table_name = users)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, ToSchema)]
 pub struct User {
     pub id: i32,
     #[serde(skip_serializing)]
@@ -232,59 +227,6 @@ impl CursorPaginated for UserWithName {
     }
 }
 
-impl CursorSqlMapping for UserWithName {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "users.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::IdentityScope => CursorSqlField {
-                column: "identity_scopes.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::ProperName => CursorSqlField {
-                column: "users.proper_name",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::Email => CursorSqlField {
-                column: "users.email",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "users.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "users.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "principals.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for users",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl User {
     /// Resolve this user's name from the principals table.
     pub async fn name<C>(&self, backend: &C) -> Result<String, ApiError>
@@ -408,9 +350,8 @@ impl User {
 ///
 /// The password, if present, is expected to be plaintext. The name lives on the
 /// principal; renaming is handled via the principal, not here.
-#[derive(AsChangeset, Deserialize, Serialize, Clone, ToSchema)]
+#[derive(Deserialize, Serialize, Clone, ToSchema)]
 #[schema(example = update_user_example)]
-#[diesel(table_name = users)]
 pub struct UpdateUser {
     pub password: Option<String>,
     pub proper_name: Option<String>,

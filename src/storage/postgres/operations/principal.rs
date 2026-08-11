@@ -7,10 +7,12 @@ use crate::events::{Action, EntityType, NewEvent};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     NewPrincipal, Principal, PrincipalKind, PrincipalMemberResponse, PrincipalSettings,
-    PrincipalSettingsPatch, PrincipalSettingsResponse, ResourceRevision, ServiceAccount,
-    ServiceAccountPointResponse, User, UserPointResponse, UserResponse, UserWithName,
+    PrincipalSettingsPatch, PrincipalSettingsResponse, ResourceRevision,
+    ServiceAccountPointResponse, UserPointResponse, UserResponse, UserWithName,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::storage::postgres::operations::service_account::ServiceAccountRow;
+use crate::storage::postgres::operations::user::UserRow;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{
     PostgresConnection, assert_locked_revision_precondition, with_connection, with_transaction,
@@ -427,7 +429,7 @@ pub(crate) async fn load_user_response(
             )
             .filter(users::id.eq(user_id_value))
             .select((
-                User::as_select(),
+                UserRow::as_select(),
                 identity_scopes::name,
                 identity_scopes::provider_kind,
                 principals::name,
@@ -441,7 +443,26 @@ pub(crate) async fn load_user_response(
     })
     .await?;
 
-    Ok(UserResponse::from(UserWithName::from_tuple(row)))
+    let (
+        user,
+        identity_scope,
+        provider_kind,
+        name,
+        provider_managed,
+        attempted,
+        succeeded,
+        revision,
+    ) = row;
+    Ok(UserResponse::from(UserWithName::from_tuple((
+        user.into(),
+        identity_scope,
+        provider_kind,
+        name,
+        provider_managed,
+        attempted,
+        succeeded,
+        revision,
+    ))))
 }
 
 /// Load the user point body and its validator revision in one SQL statement.
@@ -457,7 +478,7 @@ pub(crate) async fn load_user_point_response(
                 .inner_join(principals::table.on(principals::id.eq(users::id)))
                 .filter(users::id.eq(user_id_value))
                 .select((
-                    User::as_select(),
+                    UserRow::as_select(),
                     principals::identity_scope_id,
                     principals::name,
                     principals::provider_managed,
@@ -469,7 +490,7 @@ pub(crate) async fn load_user_point_response(
         .await?;
 
     Ok(UserPointResponse::from_parts(
-        user,
+        user.into(),
         identity_scope_id,
         name,
         provider_managed,
@@ -490,7 +511,7 @@ pub(crate) async fn load_service_account_point_response(
                 .inner_join(principals::table.on(principals::id.eq(service_accounts::id)))
                 .filter(service_accounts::id.eq(service_account_id_value))
                 .select((
-                    ServiceAccount::as_select(),
+                    ServiceAccountRow::as_select(),
                     principals::identity_scope_id,
                     principals::name,
                     principals::revision,
@@ -501,7 +522,7 @@ pub(crate) async fn load_service_account_point_response(
         .await?;
 
     Ok(ServiceAccountPointResponse::from_parts(
-        service_account,
+        service_account.into(),
         identity_scope_id,
         name,
         revision,

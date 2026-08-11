@@ -140,23 +140,24 @@ mod tests {
             .to_string();
 
         // Verify the token hash in database and that it belongs to the user
-        use crate::models::token::{PrincipalToken, Token};
+        use crate::models::token::Token;
         use crate::schema::tokens::dsl::*;
         let token_hash = Token::storage_hash_from_raw(&token_value);
         let stored_token = with_connection(&pool, async |conn| {
             tokens
                 .filter(token.eq(&token_hash))
                 .filter(principal_id.eq(new_user.id))
-                .first::<PrincipalToken>(conn)
+                .select((issued, expires_at))
+                .first::<(chrono::NaiveDateTime, Option<chrono::NaiveDateTime>)>(conn)
                 .await
         })
         .await
         .expect("token should be stored");
 
-        assert_eq!(stored_token.expires_at, Some(returned_expiry));
+        assert_eq!(stored_token.1, Some(returned_expiry));
         assert_eq!(
             returned_expiry,
-            stored_token.issued + chrono::Duration::hours(config.token_lifetime_hours)
+            stored_token.0 + chrono::Duration::hours(config.token_lifetime_hours)
         );
 
         // Validate token via endpoint.

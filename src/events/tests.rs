@@ -55,6 +55,7 @@ use crate::storage::postgres::operations::remote_target::{
     DeleteRemoteTargetRecord, NewRemoteTargetRow, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     UpdateRemoteTargetRow, emit_remote_target_invoked_event,
 };
+use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::storage::{EventDeliverySink, EventDeliverySubscription};
 use crate::tests::{
@@ -2350,8 +2351,9 @@ async fn token_by_raw_value(scope: &TestScope, raw: &Token) -> PrincipalToken {
     with_connection(&scope.pool, async |conn| {
         tokens
             .filter(token.eq(raw.storage_hash()))
-            .first::<PrincipalToken>(conn)
+            .first::<PrincipalTokenRow>(conn)
             .await
+            .map(Into::into)
     })
     .await
     .unwrap()

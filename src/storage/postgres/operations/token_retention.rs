@@ -9,7 +9,7 @@ use crate::schema::tokens;
 use crate::storage::postgres::operations::authz::load_token_scopes_for_tokens_conn;
 use crate::storage::postgres::operations::event_record::emit_events;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
-use crate::storage::postgres::operations::token::token_snapshot;
+use crate::storage::postgres::operations::token::{PrincipalTokenRow, token_snapshot};
 use crate::storage::postgres::{PostgresConnection, with_transaction};
 
 const TOKEN_RETENTION_LOCK_KEY: i64 = 4_850_188_191_125_219;
@@ -221,8 +221,11 @@ async fn purge_selected_tokens(
     let retained = tokens::table
         .filter(tokens::id.eq_any(&token_ids))
         .order_by(tokens::id.asc())
-        .load::<PrincipalToken>(conn)
-        .await?;
+        .load::<PrincipalTokenRow>(conn)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<PrincipalToken>>();
     let scopes = load_token_scopes_for_tokens_conn(conn, &retained).await?;
     let events = retained
         .iter()
@@ -663,11 +666,12 @@ mod tests {
             .await
             .unwrap();
         let token_hash = raw.storage_hash();
-        let persisted_token = with_connection(&pool, async |conn| {
+        let persisted_token: PrincipalToken = with_connection(&pool, async |conn| {
             tokens::table
                 .filter(tokens::token.eq(token_hash))
-                .first::<PrincipalToken>(conn)
+                .first::<PrincipalTokenRow>(conn)
                 .await
+                .map(Into::into)
         })
         .await
         .unwrap();

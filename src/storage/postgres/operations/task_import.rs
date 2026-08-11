@@ -6,14 +6,14 @@ use crate::errors::ApiError;
 use crate::models::event_subscription::validate_subscription_parts;
 use crate::models::{
     CONDITIONAL_IMPORT_TARGET_MISSING, Collection, CollectionKey, Group, HubuumClass,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, IdentityScope, ImportClassInput,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, ImportClassInput,
     ImportCollectionInput, ImportComputedFieldInput, ImportComputedFieldVisibility,
     ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
     ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportWriteCondition,
     NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permission,
-    Permissions, PermissionsList, Principal, ResourceRevision, RestoreTimestamps, ServiceAccount,
-    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, User,
+    Permissions, PermissionsList, Principal, ResourceRevision, RestoreTimestamps, UpdateCollection,
+    UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::class::{
     HubuumClassRow, NewHubuumClassRow, UpdateHubuumClassRow,
@@ -22,6 +22,7 @@ use crate::storage::postgres::operations::collection::{
     CollectionRow, CollectionRowInsert, UpdateCollectionRow,
 };
 use crate::storage::postgres::operations::group::GroupRow;
+use crate::storage::postgres::operations::identity::IdentityScopeRow;
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
 };
@@ -33,6 +34,8 @@ use crate::storage::postgres::operations::relation_rows::{
     HubuumClassRelationRow, HubuumObjectRelationRow, NewHubuumClassRelationRow,
     NewHubuumObjectRelationRow,
 };
+use crate::storage::postgres::operations::service_account::ServiceAccountRow;
+use crate::storage::postgres::operations::user::UserRow;
 use crate::storage::postgres::{SendAsyncFn, with_connection};
 
 fn assert_import_revision(
@@ -844,7 +847,7 @@ pub async fn upsert_identity_scope_db(
     let existing = identity_scopes
         .filter(name.eq(&input.name))
         .for_update()
-        .first::<IdentityScope>(conn)
+        .first::<IdentityScopeRow>(conn)
         .await
         .optional()?;
     let row = match existing {
@@ -870,7 +873,7 @@ pub async fn upsert_identity_scope_db(
                             created_at.eq(created),
                             updated_at.eq(updated),
                         ))
-                        .get_result::<IdentityScope>(conn)
+                        .get_result::<IdentityScopeRow>(conn)
                         .await
                         .optional(),
                     async || identity_scopes.filter(id.eq(existing.id)).first(conn).await,
@@ -890,7 +893,7 @@ pub async fn upsert_identity_scope_db(
                     created_at.eq(created),
                     updated_at.eq(updated),
                 ))
-                .get_result::<IdentityScope>(conn)
+                .get_result::<IdentityScopeRow>(conn)
                 .await?
         }
     };
@@ -1095,7 +1098,7 @@ pub async fn upsert_principal_db(
             use crate::schema::users::dsl as u;
             let existing_user = u::users
                 .filter(u::id.eq(principal.id))
-                .first::<User>(conn)
+                .first::<UserRow>(conn)
                 .await
                 .optional()?;
             let (created, updated) = input
@@ -1151,7 +1154,7 @@ pub async fn upsert_principal_db(
             use crate::schema::service_accounts::dsl as s;
             let existing_account = s::service_accounts
                 .filter(s::id.eq(principal.id))
-                .first::<ServiceAccount>(conn)
+                .first::<ServiceAccountRow>(conn)
                 .await
                 .optional()?;
             let (created, updated) = input

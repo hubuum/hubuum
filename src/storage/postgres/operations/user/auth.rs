@@ -6,6 +6,7 @@ use crate::storage::postgres::operations::identity::identity_scope_by_name;
 use crate::storage::postgres::operations::principal::{
     InsertPrincipalRecord, lock_principal_revision_conn, principal_revision_conn,
 };
+use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::operations::token::revoke_all_tokens_for_principal_conn;
 use diesel_async::RunQueryDsl;
 
@@ -54,8 +55,9 @@ async fn load_user_with_name(
         .inner_join(principals::table.on(users::id.eq(principals::id)))
         .filter(users::id.eq(user_id_value))
         .select((users::all_columns, principals::name))
-        .first::<(User, String)>(conn)
+        .first::<(UserRow, String)>(conn)
         .await
+        .map(|(user, name)| (user.into(), name))
 }
 
 async fn ensure_user_allows_local_write_conn(
@@ -108,8 +110,9 @@ impl User {
                 .filter(principals::name.eq(name))
                 .filter(identity_scopes::name.eq(scope))
                 .select(users::all_columns)
-                .first::<User>(conn)
+                .first::<UserRow>(conn)
                 .await
+                .map(Into::into)
         })
         .await
     }
@@ -265,8 +268,9 @@ impl OwnedUserTokenRecord for User {
             tokens
                 .filter(principal_id.eq(self.id))
                 .filter(token.eq(token_hash))
-                .first::<PrincipalToken>(conn)
+                .first::<PrincipalTokenRow>(conn)
                 .await
+                .map(Into::into)
         })
         .await
     }
@@ -464,8 +468,9 @@ impl CreateUserRecord for NewUser {
                     users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
-                .get_result::<User>(conn)
-                .await?;
+                .get_result::<UserRow>(conn)
+                .await?
+                .into();
             Ok(user)
         })
         .await
@@ -515,8 +520,9 @@ impl CreateUserRecord for NewUser {
                     users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
-                .get_result::<User>(conn)
-                .await?;
+                .get_result::<UserRow>(conn)
+                .await?
+                .into();
             let revision = principal_revision_conn(conn, principal.id).await?;
 
             let event = user_event(
@@ -566,15 +572,17 @@ impl UpdateUserRecord for UpdateUser {
             ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
             let before = users
                 .filter(id.eq(principal_id.id()))
-                .first::<User>(conn)
-                .await?;
+                .first::<UserRow>(conn)
+                .await?
+                .into();
             if !self.has_changes(&before) {
                 return Ok(before);
             }
             let updated = diesel::update(users.filter(id.eq(principal_id.id())))
-                .set(self)
-                .get_result::<User>(conn)
-                .await?;
+                .set(UpdateUserRow::from(self))
+                .get_result::<UserRow>(conn)
+                .await?
+                .into();
             if self.password.is_some() {
                 revoke_all_tokens_for_principal_conn(conn, principal_id).await?;
             }
@@ -602,8 +610,9 @@ impl UpdateUserRecord for UpdateUser {
             let before_revision = lock_principal_revision_conn(conn, principal_id.id()).await?;
             let before = users
                 .filter(id.eq(principal_id.id()))
-                .first::<User>(conn)
-                .await?;
+                .first::<UserRow>(conn)
+                .await?
+                .into();
             let name = principals::table
                 .filter(principals::id.eq(principal_id.id()))
                 .select(principals::name)
@@ -614,9 +623,10 @@ impl UpdateUserRecord for UpdateUser {
                 return Ok(before);
             }
             let after = diesel::update(users.filter(id.eq(principal_id.id())))
-                .set(self)
-                .get_result::<User>(conn)
-                .await?;
+                .set(UpdateUserRow::from(self))
+                .get_result::<UserRow>(conn)
+                .await?
+                .into();
             let after_revision = principal_revision_conn(conn, principal_id.id()).await?;
             if self.password.is_some() {
                 revoke_all_tokens_for_principal_conn(conn, principal_id).await?;
@@ -762,7 +772,11 @@ impl LoadUserRecord for UserID {
         use crate::schema::users::dsl::{id, users};
 
         with_connection(pool, async |conn| {
-            users.filter(id.eq(self.id())).first::<User>(conn).await
+            users
+                .filter(id.eq(self.id()))
+                .first::<UserRow>(conn)
+                .await
+                .map(Into::into)
         })
         .await
     }

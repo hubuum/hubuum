@@ -1,24 +1,17 @@
-use crate::storage::postgres::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{GroupID, ResourceRevision};
-use crate::schema::service_accounts;
 use crate::storage::StorageContext;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 /// A non-human principal used by automation/integrations. Its id is the
 /// principal id and its name lives on `principals.name`; this row carries the
 /// service-account-specific lifecycle (owner group, disabled state).
-#[derive(
-    Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
-)]
-#[diesel(table_name = service_accounts)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct ServiceAccount {
     pub id: i32,
     pub kind: String,
@@ -215,49 +208,6 @@ impl CursorPaginated for ServiceAccountWithName {
     }
 }
 
-impl CursorSqlMapping for ServiceAccountWithName {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "service_accounts.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::IdentityScope => CursorSqlField {
-                column: "identity_scopes.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "service_accounts.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "service_accounts.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "principals.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for service accounts",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 /// Request body to create a service account.
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
 #[schema(example = new_service_account_example)]
@@ -271,8 +221,7 @@ pub struct NewServiceAccount {
 }
 
 /// Mutable fields on a service account.
-#[derive(Deserialize, Serialize, AsChangeset, Debug, ToSchema)]
-#[diesel(table_name = service_accounts)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct UpdateServiceAccount {
     pub description: Option<String>,
     pub owner_group_id: Option<i32>,

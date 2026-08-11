@@ -966,16 +966,19 @@ async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
     .unwrap();
 
     let row = with_connection(&context.pool, async |conn| {
-        use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};
+        use crate::schema::identity_scopes::dsl::{
+            created_at, id as scope_id, identity_scopes, updated_at,
+        };
         identity_scopes
             .filter(scope_id.eq(id))
-            .first::<crate::models::IdentityScope>(conn)
+            .select((created_at, updated_at))
+            .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
             .await
     })
     .await
     .unwrap();
-    assert_eq!(row.created_at, restored.created_at());
-    assert_eq!(row.updated_at, restored.updated_at());
+    assert_eq!(row.0, restored.created_at());
+    assert_eq!(row.1, restored.updated_at());
 
     with_connection(&context.pool, async |conn| {
         use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};

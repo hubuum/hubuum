@@ -59,10 +59,11 @@ use crate::models::group::{Group, NewGroup};
 use crate::models::user::{NewUser, User};
 use crate::models::{
     HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject, Permissions, PrincipalID,
-    PrincipalTokenCreateRequest, TokenResourceScope, TokenScope,
+    PrincipalToken, PrincipalTokenCreateRequest, Token, TokenResourceScope, TokenScope,
 };
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::group::GroupRow;
+use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{init_postgres_pool, with_connection};
 
 use crate::utilities::auth::{generate_random_password, hash_password};
@@ -645,6 +646,22 @@ async fn scoped_principal_token(
     .await
     .expect("failed to mint scoped token")
     .get_token()
+}
+
+/// Load the persisted row for a raw token inside the PostgreSQL test adapter.
+pub async fn persisted_test_token(pool: &PostgresPool, raw: &str) -> PrincipalToken {
+    use crate::schema::tokens;
+
+    let token_hash = Token::storage_hash_from_raw(raw);
+    with_connection(pool, async |conn| {
+        tokens::table
+            .filter(tokens::token.eq(token_hash))
+            .first::<PrincipalTokenRow>(conn)
+            .await
+    })
+    .await
+    .map(Into::into)
+    .expect("failed to load persisted test token")
 }
 
 /// Mint a token for a service account with optional permission narrowing and

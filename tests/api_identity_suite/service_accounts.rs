@@ -2278,15 +2278,7 @@ mod tests {
             &[Permissions::ReadCollection],
         )
         .await;
-        let lookup = Token(raw).storage_hash();
-        let token = with_connection(&context.pool, async |conn| {
-            crate::schema::tokens::table
-                .filter(crate::schema::tokens::token.eq(lookup))
-                .first::<crate::models::PrincipalToken>(conn)
-                .await
-        })
-        .await
-        .unwrap();
+        let token = crate::tests::persisted_test_token(&context.pool, &raw).await;
         let duplicate_tokens = [token.clone(), token];
 
         let metadata = PrincipalTokenMetadata::load_for_tokens(&context.pool, &duplicate_tokens)

@@ -18,6 +18,111 @@ use crate::storage::postgres::operations::authz::{
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 
+#[derive(Queryable, Selectable, Clone)]
+#[diesel(table_name = crate::schema::tokens)]
+pub(crate) struct PrincipalTokenRow {
+    pub(crate) id: i32,
+    pub(crate) token: String,
+    pub(crate) principal_id: i32,
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) issued: chrono::NaiveDateTime,
+    pub(crate) expires_at: Option<chrono::NaiveDateTime>,
+    pub(crate) last_used_at: Option<chrono::NaiveDateTime>,
+    pub(crate) revoked_at: Option<chrono::NaiveDateTime>,
+    pub(crate) permission_scoped: bool,
+    pub(crate) resource_scoped: bool,
+    pub(crate) revision: crate::models::ResourceRevision,
+}
+
+impl From<PrincipalTokenRow> for PrincipalToken {
+    fn from(row: PrincipalTokenRow) -> Self {
+        Self {
+            id: row.id,
+            token: row.token,
+            principal_id: row.principal_id,
+            name: row.name,
+            description: row.description,
+            issued: row.issued,
+            expires_at: row.expires_at,
+            last_used_at: row.last_used_at,
+            revoked_at: row.revoked_at,
+            permission_scoped: row.permission_scoped,
+            resource_scoped: row.resource_scoped,
+            revision: row.revision,
+        }
+    }
+}
+
+impl crate::traits::CursorPaginated for PrincipalTokenRow {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        PrincipalToken::supports_sort(field)
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorValue, ApiError> {
+        PrincipalToken::from(self.clone()).cursor_value(field)
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        PrincipalToken::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        PrincipalToken::tie_breaker_sort()
+    }
+}
+
+impl crate::traits::CursorSqlMapping for PrincipalTokenRow {
+    fn sql_field(
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorSqlField, ApiError> {
+        use crate::models::search::FilterField;
+        use crate::traits::{CursorSqlField, CursorSqlType};
+
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "tokens.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "tokens.name",
+                sql_type: CursorSqlType::String,
+                nullable: true,
+            },
+            FilterField::IssuedAt => CursorSqlField {
+                column: "tokens.issued",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::ExpiresAt => CursorSqlField {
+                column: "tokens.expires_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: true,
+            },
+            FilterField::LastUsedAt => CursorSqlField {
+                column: "tokens.last_used_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: true,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "tokens.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for tokens",
+                    field
+                )));
+            }
+        })
+    }
+}
+
 #[derive(Insertable)]
 #[diesel(table_name = token_scopes)]
 struct NewTokenScope<'a> {
@@ -60,11 +165,11 @@ pub(crate) async fn principal_token_metadata_db(
             .filter(crate::schema::tokens::id.eq_any(&token_ids))
             .order_by(crate::schema::tokens::id.asc())
             .for_update()
-            .load::<PrincipalToken>(conn)
+            .load::<PrincipalTokenRow>(conn)
             .await?;
         let locked_by_id = locked
             .into_iter()
-            .map(|token| (token.id, token))
+            .map(|token| (token.id, PrincipalToken::from(token)))
             .collect::<std::collections::HashMap<_, _>>();
         let ordered = token_ids
             .iter()
@@ -109,8 +214,9 @@ pub async fn principal_token_metadata_by_id_for_principal_db(
             .filter(id.eq(token_id_value))
             .filter(principal_id.eq(principal_id_value))
             .for_update()
-            .first::<PrincipalToken>(conn)
-            .await?;
+            .first::<PrincipalTokenRow>(conn)
+            .await?
+            .into();
         principal_token_metadata_conn(conn, std::slice::from_ref(&token))
             .await?
             .pop()
@@ -226,13 +332,14 @@ pub async fn revoke_token_by_id_for_principal_db(
 
     use crate::schema::tokens::dsl::{id, principal_id, revoked_at, tokens};
     with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-        let before = tokens
+        let before: Option<PrincipalToken> = tokens
             .filter(id.eq(token_id))
             .filter(principal_id.eq(principal))
             .for_update()
-            .first::<PrincipalToken>(conn)
+            .first::<PrincipalTokenRow>(conn)
             .await
-            .optional()?;
+            .optional()?
+            .map(Into::into);
 
         let Some(before) = before else {
             return Ok(0);
@@ -255,9 +362,10 @@ pub async fn revoke_token_by_id_for_principal_db(
                 .filter(revoked_at.is_null()),
         )
         .set(revoked_at.eq(diesel::dsl::now))
-        .get_result::<PrincipalToken>(conn)
+        .get_result::<PrincipalTokenRow>(conn)
         .await
-        .optional()?;
+        .optional()?
+        .map(Into::into);
 
         if let Some(after) = updated {
             let event = token_event(
@@ -315,12 +423,13 @@ pub(crate) async fn renew_principal_token_db(
         // disable into a newly usable credential.
         ensure_principal_can_mint_conn(conn, principal).await?;
 
-        let source = tokens::table
+        let source: PrincipalToken = tokens::table
             .filter(tokens::id.eq(source_token_id))
             .filter(tokens::principal_id.eq(principal))
             .for_update()
-            .first::<PrincipalToken>(conn)
-            .await?;
+            .first::<PrincipalTokenRow>(conn)
+            .await?
+            .into();
         if source.revoked_at.is_some() {
             return Err(ApiError::Conflict(
                 "Revoked tokens cannot be renewed".to_string(),
@@ -463,7 +572,7 @@ async fn create_principal_token_parts_conn(
         }
     }
 
-    let token = diesel::insert_into(tokens::table)
+    let token: PrincipalToken = diesel::insert_into(tokens::table)
         .values((
             tokens::token.eq(&hash),
             tokens::principal_id.eq(principal),
@@ -474,8 +583,9 @@ async fn create_principal_token_parts_conn(
             tokens::permission_scoped.eq(permission_scoped),
             tokens::resource_scoped.eq(resource_scoped),
         ))
-        .get_result::<PrincipalToken>(conn)
-        .await?;
+        .get_result::<PrincipalTokenRow>(conn)
+        .await?
+        .into();
 
     if !scope_strings.is_empty() {
         let rows = scope_strings
