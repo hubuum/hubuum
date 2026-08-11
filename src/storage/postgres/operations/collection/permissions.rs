@@ -1,13 +1,70 @@
 use super::*;
+use crate::models::search::SortParam;
 use crate::models::token_scope::TokenScope;
 use crate::storage::postgres::operations::authz::AuthzSubject;
+use crate::traits::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 use diesel_async::RunQueryDsl;
 use std::collections::HashMap;
+
+struct GroupPermissionQueryRow(GroupPermission);
+
+impl CursorPaginated for GroupPermissionQueryRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        GroupPermission::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        self.0.cursor_value(field)
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        GroupPermission::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        GroupPermission::tie_breaker_sort()
+    }
+}
+
+impl CursorSqlMapping for GroupPermissionQueryRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "permissions.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::Groupname => CursorSqlField {
+                column: "groups.groupname",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "permissions.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "permissions.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for group permissions",
+                    field
+                )));
+            }
+        })
+    }
+}
 
 async fn build_effective_group_permissions(
     conn: &mut crate::storage::postgres::PostgresConnection,
     target_collection_id: i32,
-    rows: Vec<(i32, i32, Group, Permission)>,
+    rows: Vec<(i32, i32, Group, PermissionRow)>,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError> {
     use crate::schema::collections::dsl::{collections, id};
 
@@ -55,7 +112,7 @@ async fn build_effective_group_permissions(
                     depth,
                     inherited: depth > 0,
                     group,
-                    permission,
+                    permission: permission.into(),
                 })
             },
         )
@@ -67,7 +124,6 @@ pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
     principal: S,
     collection_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError> {
-    use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groups, id as group_table_id};
     use crate::schema::permissions::dsl::{collection_id, group_id, permissions};
 
@@ -79,12 +135,18 @@ pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
             .filter(collection_id.eq(collection_target_id))
             .filter(group_id.eq_any(group_ids_subquery))
             .select((groups::all_columns(), permissions::all_columns()))
-            .load::<(Group, Permission)>(conn)
+            .load::<(Group, PermissionRow)>(conn)
             .await
     })
     .await?;
 
-    Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(group, permission)| GroupPermission {
+            group,
+            permission: permission.into(),
+        })
+        .collect())
 }
 
 /// All of a principal's direct permission rows across every collection, as
@@ -107,15 +169,15 @@ pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
             .select((
                 CollectionRow::as_select(),
                 Group::as_select(),
-                Permission::as_select(),
+                PermissionRow::as_select(),
             ))
-            .load::<(CollectionRow, Group, Permission)>(conn)
+            .load::<(CollectionRow, Group, PermissionRow)>(conn)
             .await
     })
     .await
     .map(|rows| {
         rows.into_iter()
-            .map(|(collection, group, permission)| (collection.into(), group, permission))
+            .map(|(collection, group, permission)| (collection.into(), group, permission.into()))
             .collect()
     })
 }
@@ -129,7 +191,6 @@ pub async fn principal_on_paginated_with_total_count_from_backend<
     collection_ref: T,
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-    use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
         collection_id, created_at as permission_created_at, group_id, id as permission_id,
@@ -186,14 +247,19 @@ pub async fn principal_on_paginated_with_total_count_from_backend<
     .await?;
 
     let mut query = build_query()?;
-    crate::apply_query_options!(query, query_options, GroupPermission);
+    crate::apply_query_options!(query, query_options, GroupPermissionQueryRow);
     let rows = with_connection(pool, async |conn| {
-        query.load::<(Group, Permission)>(conn).await
+        query.load::<(Group, PermissionRow)>(conn).await
     })
     .await?;
 
     Ok((
-        rows.into_iter().map(GroupPermission::from_tuple).collect(),
+        rows.into_iter()
+            .map(|(group, permission)| GroupPermission {
+                group,
+                permission: permission.into(),
+            })
+            .collect(),
         total_count,
     ))
 }
@@ -231,7 +297,7 @@ pub async fn effective_principal_on_from_backend<S: AuthzSubject, T: CollectionA
                 groups::all_columns(),
                 permissions::all_columns(),
             ))
-            .load::<(i32, i32, Group, Permission)>(conn)
+            .load::<(i32, i32, Group, PermissionRow)>(conn)
             .await?;
 
         build_effective_group_permissions(conn, target_collection_id, rows).await
@@ -372,7 +438,7 @@ pub async fn effective_group_on_from_backend(
                 groups::all_columns(),
                 permissions::all_columns(),
             ))
-            .load::<(i32, i32, Group, Permission)>(conn)
+            .load::<(i32, i32, Group, PermissionRow)>(conn)
             .await?;
 
         build_effective_group_permissions(conn, target_collection_id, rows).await
@@ -502,7 +568,6 @@ pub async fn groups_on_from_backend<T: CollectionAccessors>(
     permissions_filter: Vec<Permissions>,
     query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError> {
-    use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
         collection_id, created_at as permission_created_at, group_id, id as permission_id,
@@ -577,12 +642,18 @@ pub async fn groups_on_from_backend<T: CollectionAccessors>(
         base_query
             .inner_join(groups.on(group_table_id.eq(group_id)))
             .select((groups::all_columns(), permissions::all_columns()))
-            .load::<(Group, Permission)>(conn)
+            .load::<(Group, PermissionRow)>(conn)
             .await
     })
     .await?;
 
-    Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(group, permission)| GroupPermission {
+            group,
+            permission: permission.into(),
+        })
+        .collect())
 }
 
 pub async fn groups_on_paginated_from_backend<T: CollectionAccessors>(
@@ -607,7 +678,6 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-    use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
         collection_id, created_at as permission_created_at, group_id, id as permission_id,
@@ -665,17 +735,22 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
     .await?;
 
     let mut query = build_query()?;
-    crate::apply_query_options!(query, query_options, GroupPermission);
+    crate::apply_query_options!(query, query_options, GroupPermissionQueryRow);
     let rows = with_connection(pool, async |conn| {
         query
             .select((groups::all_columns(), permissions::all_columns()))
-            .load::<(Group, Permission)>(conn)
+            .load::<(Group, PermissionRow)>(conn)
             .await
     })
     .await?;
 
     Ok((
-        rows.into_iter().map(GroupPermission::from_tuple).collect(),
+        rows.into_iter()
+            .map(|(group, permission)| GroupPermission {
+                group,
+                permission: permission.into(),
+            })
+            .collect(),
         total_count,
     ))
 }
@@ -707,8 +782,9 @@ pub async fn group_on_from_backend(
         permissions
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(gid))
-            .first::<Permission>(conn)
+            .first::<PermissionRow>(conn)
             .await
+            .map(Into::into)
     })
     .await
 }

@@ -1,7 +1,4 @@
-// These are models that are used to serialize the output of the API
-// They are not used to interact with the database
-
-// A typical use is to combine the output of multiple models into a single response
+// API output DTOs assembled from one or more domain values.
 
 use crate::models::{Collection, Group, HubuumClass, Permission, ResourceRevision};
 use serde::{Deserialize, Serialize};
@@ -13,15 +10,15 @@ pub struct GroupPermission {
     pub permission: Permission,
 }
 
-/// The revisioned, SQL-owned authorization state for a collection.
+/// The revisioned authorization grant set for a collection.
 ///
-/// Individual permission rows are implementation details of this aggregate;
+/// Individual grants are implementation details of this aggregate;
 /// callers condition mutations on the revision of the complete set.
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
 pub struct CollectionPermissionSet {
     pub collection_id: i32,
     pub revision: ResourceRevision,
-    /// ACL rows contain stable group identifiers without embedding mutable
+    /// ACL entries contain stable group identifiers without embedding mutable
     /// group representations that are outside this aggregate's revision.
     pub permissions: Vec<Permission>,
 }

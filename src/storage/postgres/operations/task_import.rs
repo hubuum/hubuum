@@ -11,10 +11,9 @@ use crate::models::{
     ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
     ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportWriteCondition,
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    NewPermission, Permission, Permissions, PermissionsList, Principal, ResourceRevision,
-    RestoreTimestamps, ServiceAccount, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
-    UpdatePermission, User,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permission,
+    Permissions, PermissionsList, Principal, ResourceRevision, RestoreTimestamps, ServiceAccount,
+    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, User,
 };
 use crate::storage::postgres::operations::class::{
     HubuumClassRow, NewHubuumClassRow, UpdateHubuumClassRow,
@@ -24,6 +23,9 @@ use crate::storage::postgres::operations::collection::{
 };
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
+};
+use crate::storage::postgres::operations::permissions::{
+    NewPermission, PermissionRow, UpdatePermission,
 };
 use crate::storage::postgres::operations::relation_rows::{
     HubuumClassRelationRow, HubuumObjectRelationRow, NewHubuumClassRelationRow,
@@ -2011,7 +2013,7 @@ pub async fn apply_permissions_db(
     let existing = permissions_table
         .filter(collection_id.eq(collection_id_value))
         .filter(group_id.eq(group_id_value))
-        .first::<Permission>(conn)
+        .first::<PermissionRow>(conn)
         .await
         .optional()?;
     if existing.is_some() && !overwrite {
@@ -2021,7 +2023,7 @@ pub async fn apply_permissions_db(
     }
 
     let permission_list = PermissionsList::new(permissions.to_vec());
-    match existing {
+    let permission = match existing {
         Some(existing) => {
             let mut update = if replace_existing {
                 UpdatePermission {
@@ -2069,13 +2071,13 @@ pub async fn apply_permissions_db(
                         .filter(group_id.eq(group_id_value)),
                 )
                 .set(&update)
-                .get_result::<Permission>(conn)
+                .get_result::<PermissionRow>(conn)
                 .await
                 .optional(),
                 async move || Ok(existing),
             )
             .await
-            .map_err(ApiError::from)
+            .map_err(ApiError::from)?
         }
         None => {
             let new_entry = NewPermission {
@@ -2128,11 +2130,12 @@ pub async fn apply_permissions_db(
 
             diesel::insert_into(permissions_table)
                 .values(&new_entry)
-                .get_result::<Permission>(conn)
+                .get_result::<PermissionRow>(conn)
                 .await
-                .map_err(ApiError::from)
+                .map_err(ApiError::from)?
         }
-    }
+    };
+    Ok(permission.into())
 }
 
 fn normalize_pair(left: i32, right: i32) -> (i32, i32) {

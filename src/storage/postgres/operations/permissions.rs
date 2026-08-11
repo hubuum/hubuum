@@ -3,9 +3,183 @@ use crate::storage::postgres::prelude::*;
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
-use crate::models::{NewPermission, Permission, Permissions, PermissionsList, UpdatePermission};
+use crate::models::{Permission, Permissions, PermissionsList};
+use crate::schema::permissions;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::with_transaction;
+
+#[derive(Debug, Queryable, Selectable, Clone, Copy)]
+#[diesel(table_name = permissions)]
+pub(crate) struct PermissionRow {
+    pub(crate) id: i32,
+    pub(crate) collection_id: i32,
+    pub(crate) group_id: i32,
+    pub(crate) has_read_collection: bool,
+    pub(crate) has_update_collection: bool,
+    pub(crate) has_delete_collection: bool,
+    pub(crate) has_delegate_collection: bool,
+    pub(crate) has_create_class: bool,
+    pub(crate) has_read_class: bool,
+    pub(crate) has_update_class: bool,
+    pub(crate) has_delete_class: bool,
+    pub(crate) has_create_object: bool,
+    pub(crate) has_read_object: bool,
+    pub(crate) has_update_object: bool,
+    pub(crate) has_delete_object: bool,
+    pub(crate) has_create_class_relation: bool,
+    pub(crate) has_read_class_relation: bool,
+    pub(crate) has_update_class_relation: bool,
+    pub(crate) has_delete_class_relation: bool,
+    pub(crate) has_create_object_relation: bool,
+    pub(crate) has_read_object_relation: bool,
+    pub(crate) has_update_object_relation: bool,
+    pub(crate) has_delete_object_relation: bool,
+    pub(crate) has_read_template: bool,
+    pub(crate) has_create_template: bool,
+    pub(crate) has_update_template: bool,
+    pub(crate) has_delete_template: bool,
+    pub(crate) has_read_remote_target: bool,
+    pub(crate) has_create_remote_target: bool,
+    pub(crate) has_update_remote_target: bool,
+    pub(crate) has_delete_remote_target: bool,
+    pub(crate) has_execute_remote_target: bool,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) has_read_audit: bool,
+    pub(crate) has_manage_event_subscription: bool,
+}
+
+impl From<PermissionRow> for Permission {
+    fn from(row: PermissionRow) -> Self {
+        Self {
+            id: row.id,
+            collection_id: row.collection_id,
+            group_id: row.group_id,
+            has_read_collection: row.has_read_collection,
+            has_update_collection: row.has_update_collection,
+            has_delete_collection: row.has_delete_collection,
+            has_delegate_collection: row.has_delegate_collection,
+            has_create_class: row.has_create_class,
+            has_read_class: row.has_read_class,
+            has_update_class: row.has_update_class,
+            has_delete_class: row.has_delete_class,
+            has_create_object: row.has_create_object,
+            has_read_object: row.has_read_object,
+            has_update_object: row.has_update_object,
+            has_delete_object: row.has_delete_object,
+            has_create_class_relation: row.has_create_class_relation,
+            has_read_class_relation: row.has_read_class_relation,
+            has_update_class_relation: row.has_update_class_relation,
+            has_delete_class_relation: row.has_delete_class_relation,
+            has_create_object_relation: row.has_create_object_relation,
+            has_read_object_relation: row.has_read_object_relation,
+            has_update_object_relation: row.has_update_object_relation,
+            has_delete_object_relation: row.has_delete_object_relation,
+            has_read_template: row.has_read_template,
+            has_create_template: row.has_create_template,
+            has_update_template: row.has_update_template,
+            has_delete_template: row.has_delete_template,
+            has_read_remote_target: row.has_read_remote_target,
+            has_create_remote_target: row.has_create_remote_target,
+            has_update_remote_target: row.has_update_remote_target,
+            has_delete_remote_target: row.has_delete_remote_target,
+            has_execute_remote_target: row.has_execute_remote_target,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            has_read_audit: row.has_read_audit,
+            has_manage_event_subscription: row.has_manage_event_subscription,
+        }
+    }
+}
+
+#[derive(Debug, Insertable)]
+#[diesel(table_name = permissions)]
+pub(crate) struct NewPermission {
+    pub(crate) collection_id: i32,
+    pub(crate) group_id: i32,
+    pub(crate) has_read_collection: bool,
+    pub(crate) has_update_collection: bool,
+    pub(crate) has_delete_collection: bool,
+    pub(crate) has_delegate_collection: bool,
+    pub(crate) has_create_class: bool,
+    pub(crate) has_read_class: bool,
+    pub(crate) has_update_class: bool,
+    pub(crate) has_delete_class: bool,
+    pub(crate) has_create_object: bool,
+    pub(crate) has_read_object: bool,
+    pub(crate) has_update_object: bool,
+    pub(crate) has_delete_object: bool,
+    pub(crate) has_create_class_relation: bool,
+    pub(crate) has_read_class_relation: bool,
+    pub(crate) has_update_class_relation: bool,
+    pub(crate) has_delete_class_relation: bool,
+    pub(crate) has_create_object_relation: bool,
+    pub(crate) has_read_object_relation: bool,
+    pub(crate) has_update_object_relation: bool,
+    pub(crate) has_delete_object_relation: bool,
+    pub(crate) has_read_template: bool,
+    pub(crate) has_create_template: bool,
+    pub(crate) has_update_template: bool,
+    pub(crate) has_delete_template: bool,
+    pub(crate) has_read_remote_target: bool,
+    pub(crate) has_create_remote_target: bool,
+    pub(crate) has_update_remote_target: bool,
+    pub(crate) has_delete_remote_target: bool,
+    pub(crate) has_execute_remote_target: bool,
+    pub(crate) has_read_audit: bool,
+    pub(crate) has_manage_event_subscription: bool,
+}
+
+#[derive(Debug, AsChangeset, Default)]
+#[diesel(table_name = permissions)]
+pub(crate) struct UpdatePermission {
+    pub(crate) has_read_collection: Option<bool>,
+    pub(crate) has_update_collection: Option<bool>,
+    pub(crate) has_delete_collection: Option<bool>,
+    pub(crate) has_delegate_collection: Option<bool>,
+    pub(crate) has_create_class: Option<bool>,
+    pub(crate) has_read_class: Option<bool>,
+    pub(crate) has_update_class: Option<bool>,
+    pub(crate) has_delete_class: Option<bool>,
+    pub(crate) has_create_object: Option<bool>,
+    pub(crate) has_read_object: Option<bool>,
+    pub(crate) has_update_object: Option<bool>,
+    pub(crate) has_delete_object: Option<bool>,
+    pub(crate) has_create_class_relation: Option<bool>,
+    pub(crate) has_read_class_relation: Option<bool>,
+    pub(crate) has_update_class_relation: Option<bool>,
+    pub(crate) has_delete_class_relation: Option<bool>,
+    pub(crate) has_create_object_relation: Option<bool>,
+    pub(crate) has_read_object_relation: Option<bool>,
+    pub(crate) has_update_object_relation: Option<bool>,
+    pub(crate) has_delete_object_relation: Option<bool>,
+    pub(crate) has_read_template: Option<bool>,
+    pub(crate) has_create_template: Option<bool>,
+    pub(crate) has_update_template: Option<bool>,
+    pub(crate) has_delete_template: Option<bool>,
+    pub(crate) has_read_remote_target: Option<bool>,
+    pub(crate) has_create_remote_target: Option<bool>,
+    pub(crate) has_update_remote_target: Option<bool>,
+    pub(crate) has_delete_remote_target: Option<bool>,
+    pub(crate) has_execute_remote_target: Option<bool>,
+    pub(crate) has_read_audit: Option<bool>,
+    pub(crate) has_manage_event_subscription: Option<bool>,
+}
+
+pub(crate) trait PermissionFilter<'a, Q> {
+    fn create_boxed_filter(self, query: Q, target: bool) -> Q;
+}
+
+impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for Permissions {
+    fn create_boxed_filter(
+        self,
+        mut query: permissions::BoxedQuery<'a, diesel::pg::Pg>,
+        target: bool,
+    ) -> permissions::BoxedQuery<'a, diesel::pg::Pg> {
+        crate::apply_permission_filter!(query, self, target);
+        query
+    }
+}
 
 async fn permission_owner_revision(
     conn: &mut crate::storage::postgres::PostgresConnection,
@@ -357,9 +531,10 @@ pub(crate) async fn apply_permission_grant_without_event(
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(group_id_for_grant))
             .for_update()
-            .first::<Permission>(conn)
+            .first::<PermissionRow>(conn)
             .await
-            .optional()?;
+            .optional()?
+            .map(Into::into);
 
         match existing_entry {
             Some(existing) => {
@@ -506,8 +681,9 @@ pub(crate) async fn apply_permission_grant_without_event(
                     .filter(collection_id.eq(target_collection_id))
                     .filter(group_id.eq(group_id_for_grant))
                     .set(&update_perm)
-                    .get_result(conn)
-                    .await?)
+                    .get_result::<PermissionRow>(conn)
+                    .await?
+                    .into())
             }
             None => {
                 let new_entry = NewPermission {
@@ -563,8 +739,9 @@ pub(crate) async fn apply_permission_grant_without_event(
 
                 Ok(diesel::insert_into(permissions)
                     .values(&new_entry)
-                    .get_result(conn)
-                    .await?)
+                    .get_result::<PermissionRow>(conn)
+                    .await?
+                    .into())
             }
         }
     })
@@ -596,13 +773,14 @@ pub(crate) async fn apply_permission_grant(
 
     with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
         let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
-        let before = permissions
+        let before: Option<Permission> = permissions
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(group_id_for_grant))
             .for_update()
-            .first::<Permission>(conn)
+            .first::<PermissionRow>(conn)
             .await
-            .optional()?;
+            .optional()?
+            .map(Into::into);
 
         if let Some(current) = before
             && !grant_changes_permission(&current, &permission_list, replace_existing)
@@ -617,8 +795,9 @@ pub(crate) async fn apply_permission_grant(
                     .filter(collection_id.eq(target_collection_id))
                     .filter(group_id.eq(group_id_for_grant))
                     .set(&update_perm)
-                    .get_result::<Permission>(conn)
+                    .get_result::<PermissionRow>(conn)
                     .await?
+                    .into()
             }
             None => {
                 let new_entry = new_permission_from_list(
@@ -628,8 +807,9 @@ pub(crate) async fn apply_permission_grant(
                 );
                 diesel::insert_into(permissions)
                     .values(&new_entry)
-                    .get_result::<Permission>(conn)
+                    .get_result::<PermissionRow>(conn)
                     .await?
+                    .into()
             }
         };
         let after_owner_revision = permission_owner_revision(conn, target_collection_id).await?;
@@ -675,8 +855,9 @@ pub(crate) async fn revoke_permission_grant_without_event(
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(group_id_for_revoke))
             .for_update()
-            .first::<Permission>(conn)
-            .await?;
+            .first::<PermissionRow>(conn)
+            .await?
+            .into();
 
         if !revoke_changes_permission(&before, &permission_list) {
             return Ok(before);
@@ -785,8 +966,9 @@ pub(crate) async fn revoke_permission_grant_without_event(
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(group_id_for_revoke))
             .set(&update_perm)
-            .get_result(conn)
-            .await?)
+            .get_result::<PermissionRow>(conn)
+            .await?
+            .into())
     })
     .await
 }
@@ -818,8 +1000,9 @@ pub(crate) async fn revoke_permission_grant(
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(group_id_for_revoke))
             .for_update()
-            .first::<Permission>(conn)
-            .await?;
+            .first::<PermissionRow>(conn)
+            .await?
+            .into();
 
         if !revoke_changes_permission(&before, &permission_list) {
             return Ok(before);
@@ -830,8 +1013,9 @@ pub(crate) async fn revoke_permission_grant(
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(group_id_for_revoke))
             .set(&update_perm)
-            .get_result::<Permission>(conn)
-            .await?;
+            .get_result::<PermissionRow>(conn)
+            .await?
+            .into();
         let after_owner_revision = permission_owner_revision(conn, target_collection_id).await?;
 
         let event = permission_event(
@@ -891,13 +1075,14 @@ pub(crate) async fn revoke_all_permission_grants(
     use crate::schema::permissions::dsl::*;
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
         let before_owner_revision = lock_permission_owner(conn, collection_id_for_revoke).await?;
-        let before = permissions
+        let before: Option<Permission> = permissions
             .filter(collection_id.eq(collection_id_for_revoke))
             .filter(group_id.eq(group_id_for_revoke))
             .for_update()
-            .first::<Permission>(conn)
+            .first::<PermissionRow>(conn)
             .await
-            .optional()?;
+            .optional()?
+            .map(Into::into);
 
         diesel::delete(permissions)
             .filter(collection_id.eq(collection_id_for_revoke))
@@ -932,4 +1117,31 @@ pub(crate) async fn revoke_all_permission_grants(
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PermissionFilter, Permissions};
+    use crate::schema::permissions::dsl::permissions;
+    use crate::storage::postgres::prelude::*;
+
+    #[test]
+    fn template_permissions_filter_map_to_expected_columns() {
+        let fixtures = [
+            (Permissions::ReadTemplate, "has_read_template"),
+            (Permissions::CreateTemplate, "has_create_template"),
+            (Permissions::UpdateTemplate, "has_update_template"),
+            (Permissions::DeleteTemplate, "has_delete_template"),
+        ];
+
+        for (permission, expected_column) in fixtures {
+            let base_query = permissions.into_boxed();
+            let filtered = permission.create_boxed_filter(base_query, true);
+            let sql = diesel::debug_query::<diesel::pg::Pg, _>(&filtered).to_string();
+            assert!(
+                sql.contains(expected_column),
+                "Expected SQL to contain '{expected_column}', got: {sql}"
+            );
+        }
+    }
 }

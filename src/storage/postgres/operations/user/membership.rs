@@ -162,7 +162,6 @@ where
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        use crate::models::PermissionFilter;
         use crate::schema::collection_closure::dsl::{
             ancestor_collection_id, collection_closure, descendant_collection_id,
         };
@@ -170,6 +169,7 @@ where
         use crate::schema::permissions::dsl::{
             collection_id as permission_collection_id, group_id, permissions,
         };
+        use crate::storage::postgres::operations::permissions::PermissionFilter;
 
         let requested: Vec<Permissions> = permissions_list.into_iter().copied().collect();
 

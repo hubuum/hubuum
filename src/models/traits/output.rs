@@ -8,9 +8,7 @@ use crate::models::{
     Collection, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded, Permission,
 };
 use crate::storage::StorageContext;
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue, SelfAccessors,
-};
+use crate::traits::{CursorPaginated, CursorValue, SelfAccessors};
 
 /// Convert a `(Group, T)` tuple into a richer output type.
 pub trait FromTuple<T> {
@@ -200,38 +198,5 @@ impl CursorPaginated for GroupPermission {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for GroupPermission {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "permissions.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Groupname => CursorSqlField {
-                column: "groups.groupname",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "permissions.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "permissions.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for group permissions",
-                    field
-                )));
-            }
-        })
     }
 }

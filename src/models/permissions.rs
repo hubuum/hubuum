@@ -1,10 +1,9 @@
-use crate::storage::postgres::prelude::*;
 use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
-use crate::{errors::ApiError, schema::permissions};
+use crate::errors::ApiError;
 
 use super::search::ParsedQueryParam;
 
@@ -315,53 +314,7 @@ impl<'a> IntoIterator for &'a PermissionsList {
     }
 }
 
-pub trait PermissionFilter<'a, Q> {
-    /// ## Create a boxed filter to check if a permission is set to true or false.
-    ///
-    /// ### Arguments
-    ///
-    /// * `query` - The query to add the filter to.
-    /// * `target` - The value to check for.
-    ///
-    /// ### Returns
-    ///
-    /// * `BoxedQuery` - The query with the filter added.
-    ///
-    /// ## Example
-    ///
-    /// ```text
-    /// use crate::models::Permissions;
-    /// use crate::models::PermissionFilter;
-    /// use crate::schema::permissions::dsl::{permissions, group_id, collection_id};
-    ///
-    /// let permissions_list = vec![
-    ///  Permissions::ReadCollection,
-    ///  Permissions::UpdateCollection
-    /// ];
-    /// let mut base_query = permissions
-    ///   .into_boxed()
-    ///   .filter(collection_id.eq_any(vec![1, 2, 3]))
-    ///
-    /// for perm in permissions_list {
-    ///   base_query = perm.create_boxed_filter(base_query, true);
-    /// }
-    /// ```
-    fn create_boxed_filter(self, query: Q, target: bool) -> Q;
-}
-
-impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for Permissions {
-    fn create_boxed_filter(
-        self,
-        mut query: permissions::BoxedQuery<diesel::pg::Pg>,
-        target: bool,
-    ) -> permissions::BoxedQuery<diesel::pg::Pg> {
-        crate::apply_permission_filter!(query, self, target);
-        query
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, Clone, Copy, ToSchema)]
-#[diesel(table_name = permissions)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, ToSchema)]
 pub struct Permission {
     pub id: i32,
     pub collection_id: i32,
@@ -402,8 +355,8 @@ pub struct Permission {
 }
 
 impl Permission {
-    /// The set of permissions this row grants — the `has_*` flags that are `true`,
-    /// mapped to their [`Permissions`] variant.
+    /// The set of capabilities carried by this grant: each enabled `has_*`
+    /// flag mapped to its [`Permissions`] variant.
     pub fn granted(&self) -> Vec<Permissions> {
         [
             (self.has_read_collection, Permissions::ReadCollection),
@@ -483,87 +436,9 @@ impl Permission {
     }
 }
 
-// Insertable permission models.
-#[derive(Debug, Serialize, Deserialize, Insertable)]
-#[diesel(table_name = permissions)]
-pub struct NewPermission {
-    pub collection_id: i32,
-    pub group_id: i32,
-    pub has_read_collection: bool,
-    pub has_update_collection: bool,
-    pub has_delete_collection: bool,
-    pub has_delegate_collection: bool,
-    pub has_create_class: bool,
-    pub has_read_class: bool,
-    pub has_update_class: bool,
-    pub has_delete_class: bool,
-    pub has_create_object: bool,
-    pub has_read_object: bool,
-    pub has_update_object: bool,
-    pub has_delete_object: bool,
-    pub has_create_class_relation: bool,
-    pub has_read_class_relation: bool,
-    pub has_update_class_relation: bool,
-    pub has_delete_class_relation: bool,
-    pub has_create_object_relation: bool,
-    pub has_read_object_relation: bool,
-    pub has_update_object_relation: bool,
-    pub has_delete_object_relation: bool,
-    pub has_read_template: bool,
-    pub has_create_template: bool,
-    pub has_update_template: bool,
-    pub has_delete_template: bool,
-    pub has_read_remote_target: bool,
-    pub has_create_remote_target: bool,
-    pub has_update_remote_target: bool,
-    pub has_delete_remote_target: bool,
-    pub has_execute_remote_target: bool,
-    pub has_read_audit: bool,
-    pub has_manage_event_subscription: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
-#[diesel(table_name = permissions)]
-pub struct UpdatePermission {
-    pub has_read_collection: Option<bool>,
-    pub has_update_collection: Option<bool>,
-    pub has_delete_collection: Option<bool>,
-    pub has_delegate_collection: Option<bool>,
-    pub has_create_class: Option<bool>,
-    pub has_read_class: Option<bool>,
-    pub has_update_class: Option<bool>,
-    pub has_delete_class: Option<bool>,
-    pub has_create_object: Option<bool>,
-    pub has_read_object: Option<bool>,
-    pub has_update_object: Option<bool>,
-    pub has_delete_object: Option<bool>,
-    pub has_create_class_relation: Option<bool>,
-    pub has_read_class_relation: Option<bool>,
-    pub has_update_class_relation: Option<bool>,
-    pub has_delete_class_relation: Option<bool>,
-    pub has_create_object_relation: Option<bool>,
-    pub has_read_object_relation: Option<bool>,
-    pub has_update_object_relation: Option<bool>,
-    pub has_delete_object_relation: Option<bool>,
-    pub has_read_template: Option<bool>,
-    pub has_create_template: Option<bool>,
-    pub has_update_template: Option<bool>,
-    pub has_delete_template: Option<bool>,
-    pub has_read_remote_target: Option<bool>,
-    pub has_create_remote_target: Option<bool>,
-    pub has_update_remote_target: Option<bool>,
-    pub has_delete_remote_target: Option<bool>,
-    pub has_execute_remote_target: Option<bool>,
-    pub has_read_audit: Option<bool>,
-    pub has_manage_event_subscription: Option<bool>,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::storage::postgres::prelude::*;
-
-    use super::{PermissionFilter, Permissions, PermissionsList};
-    use crate::schema::permissions::dsl::permissions;
+    use super::{Permissions, PermissionsList};
 
     #[test]
     fn template_permissions_parse_and_display_round_trip() {
@@ -604,25 +479,5 @@ mod tests {
             permission_list.as_slice(),
             &[Permissions::ReadCollection, Permissions::UpdateCollection]
         );
-    }
-
-    #[test]
-    fn template_permissions_filter_map_to_expected_columns() {
-        let fixtures = [
-            (Permissions::ReadTemplate, "has_read_template"),
-            (Permissions::CreateTemplate, "has_create_template"),
-            (Permissions::UpdateTemplate, "has_update_template"),
-            (Permissions::DeleteTemplate, "has_delete_template"),
-        ];
-
-        for (permission, expected_column) in fixtures {
-            let base_query = permissions.into_boxed();
-            let filtered = permission.create_boxed_filter(base_query, true);
-            let sql = diesel::debug_query::<diesel::pg::Pg, _>(&filtered).to_string();
-            assert!(
-                sql.contains(expected_column),
-                "Expected SQL to contain '{expected_column}', got: {sql}"
-            );
-        }
     }
 }
