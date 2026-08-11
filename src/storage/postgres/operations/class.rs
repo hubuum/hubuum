@@ -585,17 +585,6 @@ impl ClassCollectionLookup for HubuumClassID {
     }
 }
 
-pub async fn total_class_count_from_backend(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<i64, ApiError> {
-    use crate::schema::hubuumclass::dsl::*;
-
-    with_connection(pool, async |conn| {
-        hubuumclass.count().get_result::<i64>(conn).await
-    })
-    .await
-}
-
 impl ClassIdSet {
     /// Load the `(id, name)` pairs for the classes in this set. Ids without a matching row are
     /// simply absent from the result; callers that require completeness must check themselves.

@@ -81,8 +81,11 @@ async fn process_reindex_batch(
             .order(id.asc())
             .limit(reindex_batch_size())
             .for_update()
-            .load::<HubuumObject>(conn)
-            .await?;
+            .load::<HubuumObjectRow>(conn)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<HubuumObject>>();
         acquire_computed_class_shared_lock(conn, payload.class_id).await?;
         let state = ensure_computation_state(conn, payload.class_id).await?;
         if state.evaluation_revision != payload.target_revision

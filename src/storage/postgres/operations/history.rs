@@ -1,7 +1,7 @@
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
-use crate::models::{CollectionHistory, HubuumClassHistory, HubuumObjectHistory, ResourceRevision};
+use crate::models::{CollectionHistory, HubuumClassHistory, ResourceRevision};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
 use crate::storage::{
@@ -81,6 +81,30 @@ pub(crate) struct RemoteTargetHistoryRow {
 
 crate::impl_history_pagination!(RemoteTargetHistoryRow, "remote_targets_history");
 
+#[derive(Queryable)]
+#[diesel(table_name = crate::schema::hubuumobject_history)]
+pub(crate) struct HubuumObjectHistoryRow {
+    id: i32,
+    name: String,
+    collection_id: i32,
+    hubuum_class_id: i32,
+    data: serde_json::Value,
+    description: String,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    op: String,
+    valid_from: chrono::DateTime<chrono::Utc>,
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    actor_id: Option<i32>,
+    history_id: i64,
+    actor_kind: Option<String>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    revision: ResourceRevision,
+}
+
+crate::impl_history_pagination!(HubuumObjectHistoryRow, "hubuumobject_history");
+
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
 pub(crate) async fn resolve_principal_names(
@@ -159,7 +183,7 @@ pub(crate) fn class_history_to_storage(row: HubuumClassHistory) -> ClassHistoryR
     )
 }
 
-pub(crate) fn object_history_to_storage(row: HubuumObjectHistory) -> ObjectHistoryRecord {
+pub(crate) fn object_history_to_storage(row: HubuumObjectHistoryRow) -> ObjectHistoryRecord {
     ObjectHistoryRecord::new(
         row.id,
         row.name,
@@ -346,13 +370,13 @@ history_db_fns!(
     RemoteTargetHistoryRow
 );
 
-pub async fn object_history_paginated_with_total_count(
+pub(crate) async fn object_history_paginated_with_total_count(
     object_id: i32,
     class_id: i32,
     pool: &impl crate::storage::StorageContext,
     query_options: &QueryOptions,
     collection_filter: HistoryCollectionFilter<'_>,
-) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
+) -> Result<(Vec<HubuumObjectHistoryRow>, i64), ApiError> {
     use crate::schema::hubuumobject_history::dsl as history;
 
     let total = crate::pagination::exact_count_or_skipped(query_options, async || {
@@ -404,20 +428,20 @@ pub async fn object_history_paginated_with_total_count(
             }
         }
     }
-    crate::apply_query_options!(query, query_options, crate::models::HubuumObjectHistory);
+    crate::apply_query_options!(query, query_options, HubuumObjectHistoryRow);
     let items = with_connection(pool, async |conn| {
-        query.load::<crate::models::HubuumObjectHistory>(conn).await
+        query.load::<HubuumObjectHistoryRow>(conn).await
     })
     .await?;
     Ok((items, total))
 }
 
-pub async fn object_as_of(
+pub(crate) async fn object_as_of(
     object_id: i32,
     class_id: i32,
     at: DateTime<Utc>,
     pool: &impl crate::storage::StorageContext,
-) -> Result<Option<crate::models::HubuumObjectHistory>, ApiError> {
+) -> Result<Option<HubuumObjectHistoryRow>, ApiError> {
     use crate::schema::hubuumobject_history::dsl as history;
 
     with_connection(pool, async |conn| {
@@ -428,7 +452,7 @@ pub async fn object_as_of(
             .filter(history::valid_from.le(at))
             .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
             .order(history::history_id.desc())
-            .first::<crate::models::HubuumObjectHistory>(conn)
+            .first::<HubuumObjectHistoryRow>(conn)
             .await
             .optional()
     })

@@ -17,6 +17,9 @@ use crate::models::{
     UpdatePermission, User,
 };
 use crate::storage::postgres::operations::collection::CollectionRowInsert;
+use crate::storage::postgres::operations::object::{
+    HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
+};
 use crate::storage::postgres::{SendAsyncFn, with_connection};
 
 fn assert_import_revision(
@@ -161,11 +164,12 @@ pub async fn lookup_object_by_class_and_name(
         hubuumobject
             .filter(hubuum_class_id.eq(class_id_value))
             .filter(name.eq(object_name))
-            .first::<HubuumObject>(conn)
+            .first::<HubuumObjectRow>(conn)
             .await
             .optional()
     })
     .await
+    .map(|row| row.map(Into::into))
 }
 
 pub async fn lookup_objects_by_class_and_names(
@@ -183,10 +187,11 @@ pub async fn lookup_objects_by_class_and_names(
         hubuumobject
             .filter(hubuum_class_id.eq(class_id_value))
             .filter(name.eq_any(object_names))
-            .load::<HubuumObject>(conn)
+            .load::<HubuumObjectRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn lookup_direct_class_relation(
@@ -379,9 +384,10 @@ pub async fn lookup_object_by_class_and_name_db(
     hubuumobject
         .filter(hubuum_class_id.eq(class_id_value))
         .filter(name.eq(object_name))
-        .first::<HubuumObject>(conn)
+        .first::<HubuumObjectRow>(conn)
         .await
         .optional()
+        .map(|row| row.map(Into::into))
         .map_err(ApiError::from)
 }
 
@@ -643,19 +649,20 @@ pub async fn create_object_db(
     let object = match input.timestamps.as_ref() {
         Some(timestamps) => diesel::insert_into(hubuumobject)
             .values((
-                &new_object,
+                NewHubuumObjectRow::from(&new_object),
                 created_at.eq(timestamps.created_at()),
                 updated_at.eq(timestamps.updated_at()),
             ))
-            .get_result::<HubuumObject>(conn)
+            .get_result::<HubuumObjectRow>(conn)
             .await
             .map_err(ApiError::from)?,
         None => diesel::insert_into(hubuumobject)
-            .values(&new_object)
-            .get_result::<HubuumObject>(conn)
+            .values(NewHubuumObjectRow::from(&new_object))
+            .get_result::<HubuumObjectRow>(conn)
             .await
             .map_err(ApiError::from)?,
     };
+    let object = object.into();
     crate::storage::postgres::operations::computed_field::materialize_object_in_transaction(
         conn, &object,
     )
@@ -693,11 +700,11 @@ pub async fn update_object_db(
             crate::storage::postgres::updated_or_current(
                 diesel::update(hubuumobject.filter(id.eq(object_id_value)))
                     .set((
-                        &update,
+                        UpdateHubuumObjectRow::from(&update),
                         created_at.eq(timestamps.created_at()),
                         updated_at.eq(timestamps.updated_at()),
                     ))
-                    .get_result::<HubuumObject>(conn)
+                    .get_result::<HubuumObjectRow>(conn)
                     .await
                     .optional(),
                 async || {
@@ -714,8 +721,8 @@ pub async fn update_object_db(
     } else {
         crate::storage::postgres::updated_or_current(
             diesel::update(hubuumobject.filter(id.eq(object_id_value)))
-                .set(&update)
-                .get_result::<HubuumObject>(conn)
+                .set(UpdateHubuumObjectRow::from(&update))
+                .get_result::<HubuumObjectRow>(conn)
                 .await
                 .optional(),
             async || {
@@ -728,6 +735,7 @@ pub async fn update_object_db(
         .await
         .map_err(ApiError::from)?
     };
+    let object = object.into();
     crate::storage::postgres::operations::computed_field::materialize_object_in_transaction(
         conn, &object,
     )

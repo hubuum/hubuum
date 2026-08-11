@@ -7,8 +7,6 @@ use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::hubuumclass;
-use crate::storage::StorageContext;
-use crate::storage::postgres::operations::class::total_class_count_from_backend;
 use crate::traits::SelfAccessors;
 
 #[derive(Serialize, Deserialize, Queryable, QueryableByName, Clone, PartialEq, Debug, ToSchema)]
@@ -227,13 +225,6 @@ impl ClassIdSet {
     pub(crate) fn as_slice(&self) -> &[i32] {
         &self.0
     }
-}
-
-pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
-where
-    C: StorageContext,
-{
-    total_class_count_from_backend(backend).await
 }
 
 fn new_hubuum_class_example() -> NewHubuumClass {

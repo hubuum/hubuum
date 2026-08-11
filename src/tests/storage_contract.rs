@@ -42,7 +42,7 @@ use crate::storage::{
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
     ExportTemplateStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
-    HistoryStorage, IdentityStorage, ImportStorage, MetricsStorage,
+    HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage,
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
@@ -133,6 +133,39 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
                     .metrics_event_snapshot()
                     .await
                     .expect("certified backend should supply event metrics");
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_consistent_inventory_counts() {
+    let _permit = postgres_permit().await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                let counts = backend
+                    .inventory_counts()
+                    .await
+                    .expect("certified backend should supply inventory counts");
+                let grouped_objects = counts
+                    .objects_by_class()
+                    .iter()
+                    .map(|row| row.count())
+                    .sum::<i64>();
+
+                assert_eq!(grouped_objects, counts.total_objects());
+                assert!(counts.total_classes() >= counts.objects_by_class().len() as i64);
+                assert!(counts.total_collections() >= 1);
+                assert!(
+                    counts
+                        .objects_by_class()
+                        .windows(2)
+                        .all(|rows| rows[0].class_id() < rows[1].class_id()),
+                    "per-class counts must use stable class-id ordering"
+                );
             }
         }
     }

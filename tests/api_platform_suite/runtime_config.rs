@@ -37,7 +37,7 @@ mod tests {
         let serialized = serde_json::to_string(&body).unwrap();
 
         assert_eq!(body["database"]["backend"], "postgresql");
-        assert_eq!(body["database"]["contract_version"], 21);
+        assert_eq!(body["database"]["contract_version"], 22);
         assert_eq!(
             body["database"]["capabilities"],
             serde_json::json!([
@@ -49,6 +49,7 @@ mod tests {
                 "relation_queries",
                 "identity_and_authorization_data",
                 "temporal_history",
+                "inventory_queries",
                 "unified_search",
                 "remote_targets",
                 "task_queue",

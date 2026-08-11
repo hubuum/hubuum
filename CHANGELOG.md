@@ -27,6 +27,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (administrator API):** the storage contract version is now `22`
+  and the required capability list includes `inventory_queries`. Inventory
+  totals and per-class object counts are now a mandatory, compatibility-tested
+  backend operation read from one consistent storage snapshot. Object and
+  object-history persistence rows, Diesel mappings, and SQL cursor mappings
+  are owned by the PostgreSQL adapter; application models cross the boundary as
+  backend-neutral values through mandatory, uniformly observed storage traits.
+  Public HTTP request and response shapes are unchanged. Administration and
+  monitoring clients matching contract version `21` must accept version `22`
+  and the new capability label.
 - **Breaking (administrator API):** the storage contract version is now `21`
   and the required capability list includes `export_template_lifecycle`.
   Export-template point and visibility-scoped list reads, collection source

@@ -11,6 +11,7 @@ use crate::models::{
     UnifiedSearchCursorToken, UnifiedSearchSpec,
 };
 use crate::storage::postgres::operations::authz::scope_allows;
+use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::with_connection_async;
 
 const COLLECTION_SEARCH_SQL: &str = r#"
@@ -342,10 +343,11 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Text, _>(cursor_binds.name)
                 .bind::<Integer, _>(cursor_binds.id)
                 .bind::<BigInt, _>(limit)
-                .load::<HubuumObject>(conn)
+                .load::<HubuumObjectRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 }
 

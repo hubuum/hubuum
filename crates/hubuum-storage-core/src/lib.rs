@@ -17,6 +17,7 @@ mod export_template_lifecycle;
 mod history;
 mod identity;
 mod identity_operations;
+mod inventory;
 mod object_aggregate;
 mod operational;
 mod relation_query;
@@ -103,6 +104,7 @@ pub use identity_operations::{
     StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
     StorageTokenMetadataBuilder,
 };
+pub use inventory::{InventoryStorage, StorageInventoryCounts, StorageObjectsByClassCount};
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder,
@@ -180,7 +182,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 21;
+pub const STORAGE_CONTRACT_VERSION: u16 = 22;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,6 +213,7 @@ pub enum StorageCapability {
     RelationQueries,
     IdentityAndAuthorizationData,
     TemporalHistory,
+    InventoryQueries,
     UnifiedSearch,
     RemoteTargets,
     TaskQueue,
@@ -225,7 +228,7 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -234,6 +237,7 @@ impl StorageCapability {
         Self::RelationQueries,
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
+        Self::InventoryQueries,
         Self::UnifiedSearch,
         Self::RemoteTargets,
         Self::TaskQueue,
@@ -258,6 +262,7 @@ impl StorageCapability {
             Self::RelationQueries => "relation_queries",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
+            Self::InventoryQueries => "inventory_queries",
             Self::UnifiedSearch => "unified_search",
             Self::RemoteTargets => "remote_targets",
             Self::TaskQueue => "task_queue",

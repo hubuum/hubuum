@@ -8,9 +8,9 @@ use rstest::rstest;
 use crate::events::{EntityType, EventContext};
 use crate::models::traits::{PatchObjectData, ResolveObjectTarget};
 use crate::models::{
-    HubuumClassID, HubuumObject, HubuumObjectHistory, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
-    NewHubuumClass, NewHubuumObject, NewObjectComputedData, ObjectComputedData,
-    ObjectDataPatchDocument, ObjectSelector,
+    HubuumClassID, HubuumObject, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES, NewHubuumClass,
+    NewHubuumObject, NewObjectComputedData, ObjectComputedData, ObjectDataPatchDocument,
+    ObjectSelector,
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};

@@ -114,13 +114,6 @@ fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
     }
 }
 
-pub async fn total_collection_count<C>(backend: &C) -> Result<i64, ApiError>
-where
-    C: StorageContext,
-{
-    collection_backend::total_collection_count_from_backend(backend).await
-}
-
 /// Check what permissions a user has to a given collection
 ///
 /// ## Arguments

@@ -11,6 +11,7 @@ pub(crate) mod computed_objects;
 pub(crate) mod event_administration;
 pub(crate) mod history;
 pub mod identity;
+pub(crate) mod inventory;
 pub(crate) mod object_aggregates;
 mod object_relations;
 mod objects;

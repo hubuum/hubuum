@@ -1,5 +1,4 @@
 use crate::storage::postgres::prelude::*;
-use diesel::sql_query;
 use serde_json;
 
 use crate::api::etag::RevisionOwner;
@@ -8,7 +7,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::{
     Collection, HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectRelationID, NewHubuumObject, NewHubuumObjectRelation, ObjectDataPatchDocument,
-    ObjectSelector, ObjectSelectorKind, ObjectsByClass, ResolvedClassTarget, ResolvedObjectTarget,
+    ObjectSelector, ObjectSelectorKind, ResolvedClassTarget, ResolvedObjectTarget,
     UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetObject;
@@ -18,7 +17,187 @@ use crate::storage::postgres::operations::computed_field::{
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::{ClassAccessors, SelfAccessors};
+use crate::traits::{
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    SelfAccessors,
+};
+
+/// PostgreSQL representation of an object row.
+///
+/// The domain object is intentionally free of Diesel and schema bindings. All
+/// query construction and row decoding stay inside the PostgreSQL adapter.
+#[derive(Clone, Queryable, QueryableByName, Selectable)]
+#[diesel(table_name = crate::schema::hubuumobject)]
+pub(crate) struct HubuumObjectRow {
+    pub(crate) id: i32,
+    pub(crate) name: String,
+    pub(crate) collection_id: i32,
+    pub(crate) hubuum_class_id: i32,
+    pub(crate) data: serde_json::Value,
+    pub(crate) description: String,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) revision: crate::models::ResourceRevision,
+}
+
+impl From<HubuumObjectRow> for HubuumObject {
+    fn from(row: HubuumObjectRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            collection_id: row.collection_id,
+            hubuum_class_id: row.hubuum_class_id,
+            data: row.data,
+            description: row.description,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            revision: row.revision,
+        }
+    }
+}
+
+impl CursorPaginated for HubuumObjectRow {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        HubuumObject::supports_sort(field)
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            crate::models::search::FilterField::Id => CursorValue::Integer(self.id.into()),
+            crate::models::search::FilterField::Name => CursorValue::String(self.name.clone()),
+            crate::models::search::FilterField::Description => {
+                CursorValue::String(self.description.clone())
+            }
+            crate::models::search::FilterField::Collections
+            | crate::models::search::FilterField::CollectionId => {
+                CursorValue::Integer(self.collection_id.into())
+            }
+            crate::models::search::FilterField::ClassId
+            | crate::models::search::FilterField::Classes => {
+                CursorValue::Integer(self.hubuum_class_id.into())
+            }
+            crate::models::search::FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            crate::models::search::FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            crate::models::search::FilterField::Revision => {
+                CursorValue::Integer(self.revision.get())
+            }
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for objects"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        HubuumObject::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        HubuumObject::tie_breaker_sort()
+    }
+}
+
+impl CursorSqlMapping for HubuumObjectRow {
+    fn sql_field(field: &crate::models::search::FilterField) -> Result<CursorSqlField, ApiError> {
+        use crate::models::search::FilterField;
+
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "hubuumobject.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "hubuumobject.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "hubuumobject.description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                column: "hubuumobject.collection_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassId | FilterField::Classes => CursorSqlField {
+                column: "hubuumobject.hubuum_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "hubuumobject.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "hubuumobject.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "hubuumobject.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for objects"
+                )));
+            }
+        })
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::hubuumobject)]
+pub(crate) struct NewHubuumObjectRow<'a> {
+    name: &'a str,
+    collection_id: i32,
+    hubuum_class_id: i32,
+    data: &'a serde_json::Value,
+    description: &'a str,
+}
+
+impl<'a> From<&'a NewHubuumObject> for NewHubuumObjectRow<'a> {
+    fn from(object: &'a NewHubuumObject) -> Self {
+        Self {
+            name: &object.name,
+            collection_id: object.collection_id,
+            hubuum_class_id: object.hubuum_class_id,
+            data: &object.data,
+            description: &object.description,
+        }
+    }
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = crate::schema::hubuumobject)]
+pub(crate) struct UpdateHubuumObjectRow<'a> {
+    name: Option<&'a str>,
+    collection_id: Option<i32>,
+    hubuum_class_id: Option<i32>,
+    data: Option<&'a serde_json::Value>,
+    description: Option<&'a str>,
+}
+
+impl<'a> From<&'a UpdateHubuumObject> for UpdateHubuumObjectRow<'a> {
+    fn from(update: &'a UpdateHubuumObject) -> Self {
+        Self {
+            name: update.name.as_deref(),
+            collection_id: update.collection_id,
+            hubuum_class_id: update.hubuum_class_id,
+            data: update.data.as_ref(),
+            description: update.description.as_deref(),
+        }
+    }
+}
 
 fn object_snapshot(object: &HubuumObject) -> serde_json::Value {
     serde_json::json!({
@@ -67,9 +246,10 @@ async fn persist_new_object(
     use crate::schema::hubuumobject::dsl::hubuumobject;
 
     let object = diesel::insert_into(hubuumobject)
-        .values(object)
-        .get_result::<HubuumObject>(conn)
-        .await?;
+        .values(NewHubuumObjectRow::from(object))
+        .get_result::<HubuumObjectRow>(conn)
+        .await?
+        .into();
     materialize_object_in_transaction(conn, &object).await?;
 
     if let Some(context) = context {
@@ -101,9 +281,10 @@ async fn persist_locked_object_update(
         return Ok(before);
     }
     let updated = diesel::update(hubuumobject.filter(id.eq(before.id)))
-        .set(update)
-        .get_result::<HubuumObject>(conn)
-        .await?;
+        .set(UpdateHubuumObjectRow::from(update))
+        .get_result::<HubuumObjectRow>(conn)
+        .await?
+        .into();
     materialize_object_in_transaction(conn, &updated).await?;
     if let Some(context) = context {
         let event = object_event(
@@ -127,10 +308,11 @@ async fn lock_object_and_update_class_by_id(
     use crate::schema::hubuumclass::dsl as class;
     use crate::schema::hubuumobject::dsl as object;
 
-    let current = object::hubuumobject
+    let current: HubuumObject = object::hubuumobject
         .filter(object::id.eq(object_id))
-        .first::<HubuumObject>(conn)
-        .await?;
+        .first::<HubuumObjectRow>(conn)
+        .await?
+        .into();
     let class_id = update.hubuum_class_id.unwrap_or(current.hubuum_class_id);
     acquire_object_write_class_advisory_lock(conn, class_id).await?;
     let class = class::hubuumclass
@@ -138,13 +320,14 @@ async fn lock_object_and_update_class_by_id(
         .for_update()
         .first::<HubuumClass>(conn)
         .await?;
-    let object = object::hubuumobject
+    let object: HubuumObject = object::hubuumobject
         .filter(object::id.eq(object_id))
         .filter(object::hubuum_class_id.eq(current.hubuum_class_id))
         .filter(object::collection_id.eq(current.collection_id))
         .for_update()
-        .first::<HubuumObject>(conn)
-        .await?;
+        .first::<HubuumObjectRow>(conn)
+        .await?
+        .into();
     Ok((class, object))
 }
 
@@ -179,7 +362,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
         use crate::storage::postgres::prelude::*;
 
         let objects = with_connection(pool, async |conn| {
-            diesel_async::RunQueryDsl::load::<HubuumObject>(
+            diesel_async::RunQueryDsl::load::<HubuumObjectRow>(
                 obj_rel::hubuumobject_relation
                     .filter(obj_rel::id.eq(self.id()))
                     .inner_join(
@@ -200,7 +383,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
             ));
         }
 
-        Ok((objects[0].clone(), objects[1].clone()))
+        Ok((objects[0].clone().into(), objects[1].clone().into()))
     }
 }
 
@@ -213,7 +396,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for NewHubuumObjectRelation {
         let objects = with_connection(pool, async |conn| {
             hubuumobject
                 .filter(id.eq_any(vec![self.from_hubuum_object_id, self.to_hubuum_object_id]))
-                .load::<HubuumObject>(conn)
+                .load::<HubuumObjectRow>(conn)
                 .await
         })
         .await?;
@@ -227,7 +410,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for NewHubuumObjectRelation {
                 .to_string(),
             ));
         }
-        Ok((objects[0].clone(), objects[1].clone()))
+        Ok((objects[0].clone().into(), objects[1].clone().into()))
     }
 }
 
@@ -241,7 +424,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelation {
         use crate::storage::postgres::prelude::*;
 
         let objects = with_connection(pool, async |conn| {
-            diesel_async::RunQueryDsl::load::<HubuumObject>(
+            diesel_async::RunQueryDsl::load::<HubuumObjectRow>(
                 obj_rel::hubuumobject_relation
                     .filter(obj_rel::id.eq(self.id))
                     .inner_join(
@@ -262,7 +445,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelation {
             ));
         }
 
-        Ok((objects[0].clone(), objects[1].clone()))
+        Ok((objects[0].clone().into(), objects[1].clone().into()))
     }
 }
 
@@ -292,10 +475,11 @@ impl LoadObjectRecord for HubuumObjectID {
         with_connection(pool, async |conn| {
             hubuumobject
                 .filter(id.eq(self.id()))
-                .first::<HubuumObject>(conn)
+                .first::<HubuumObjectRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
     }
 }
 
@@ -612,8 +796,9 @@ async fn persist_locked_object_data_patch(
 
     let updated = diesel::update(hubuumobject.filter(id.eq(before.id)))
         .set(data.eq(patched_data))
-        .get_result::<HubuumObject>(conn)
-        .await?;
+        .get_result::<HubuumObjectRow>(conn)
+        .await?
+        .into();
     materialize_object_in_transaction(conn, &updated).await?;
     let event = object_event(
         &updated,
@@ -655,7 +840,7 @@ impl ResolveObjectSelectorRecord for ObjectSelector {
                         class::hubuumclass::all_columns(),
                         object::hubuumobject::all_columns(),
                     ))
-                    .first::<(HubuumClass, HubuumObject)>(conn)
+                    .first::<(HubuumClass, HubuumObjectRow)>(conn)
                     .await
             }
             ObjectSelectorKind::ByName {
@@ -670,11 +855,12 @@ impl ResolveObjectSelectorRecord for ObjectSelector {
                         class::hubuumclass::all_columns(),
                         object::hubuumobject::all_columns(),
                     ))
-                    .first::<(HubuumClass, HubuumObject)>(conn)
+                    .first::<(HubuumClass, HubuumObjectRow)>(conn)
                     .await
             }
         })
         .await
+        .map(|(class, object)| (class, object.into()))
     }
 }
 
@@ -729,7 +915,7 @@ async fn lock_resolved_object_target(
             .filter(object::hubuum_class_id.eq(class_id.id()))
             .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
             .for_update()
-            .first::<HubuumObject>(conn)
+            .first::<HubuumObjectRow>(conn)
             .await
             .optional()?,
         ObjectSelectorKind::ByName {
@@ -741,7 +927,7 @@ async fn lock_resolved_object_target(
             .filter(object::collection_id.eq(resolved.collection_id))
             .filter(object::name.eq(object_name))
             .for_update()
-            .first::<HubuumObject>(conn)
+            .first::<HubuumObjectRow>(conn)
             .await
             .optional()?,
     };
@@ -755,7 +941,7 @@ async fn lock_resolved_object_target(
     )
     .await?;
 
-    Ok((locked_class, locked_object))
+    Ok((locked_class, locked_object.into()))
 }
 
 impl PatchObjectDataRecord for ObjectDataPatchDocument {
@@ -866,8 +1052,9 @@ impl DeleteObjectRecord for HubuumObject {
             let before = hubuumobject
                 .filter(id.eq(self.id))
                 .for_update()
-                .first::<HubuumObject>(conn)
-                .await?;
+                .first::<HubuumObjectRow>(conn)
+                .await?
+                .into();
             persist_locked_object_delete(conn, before, context).await
         })
         .await
@@ -944,26 +1131,4 @@ impl ObjectClassLookup for HubuumObjectID {
             .lookup_object_class(pool)
             .await
     }
-}
-
-pub async fn total_object_count_from_backend(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<i64, ApiError> {
-    use crate::schema::hubuumobject::dsl::*;
-
-    with_connection(pool, async |conn| {
-        hubuumobject.count().get_result::<i64>(conn).await
-    })
-    .await
-}
-
-pub async fn objects_per_class_count_from_backend(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<Vec<ObjectsByClass>, ApiError> {
-    let raw_query =
-        "SELECT hubuum_class_id, COUNT(*) as count FROM hubuumobject GROUP BY hubuum_class_id";
-    with_connection(pool, async |conn| {
-        sql_query(raw_query).load::<ObjectsByClass>(conn).await
-    })
-    .await
 }

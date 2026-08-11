@@ -6,10 +6,11 @@ use super::{
     ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage,
     ExportQueryStorage, ExportTemplateStorage, HistoryStorage, IdentityStorage, ImportStorage,
-    MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, PostgresStorage, RelationQueryStorage, RemoteTargetStorage,
-    RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
+    InventoryStorage, MetricsStorage, ObjectAggregateStorage, ObjectRecordStorage,
+    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
+    RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
+    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
+    observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -71,10 +72,12 @@ pub(crate) trait StorageBackend:
     + EventHealthStorage
     + EventRetentionStorage
     + HistoryStorage
+    + InventoryStorage
     + MetricsStorage
     + OperationalStateStorage
     + TokenRetentionStorage
     + UnifiedSearchStorage
+    + ObjectRecordStorage
     + RemoteTargetStorage
     + TaskQueueStorage
     + TaskExecutionStorage
@@ -148,6 +151,7 @@ mod tests {
                 "relation_queries",
                 "identity_and_authorization_data",
                 "temporal_history",
+                "inventory_queries",
                 "unified_search",
                 "remote_targets",
                 "task_queue",

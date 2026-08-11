@@ -27,6 +27,7 @@ use crate::models::{
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::search::{JsonSqlPredicate, dynamic_sql_predicate};
 use crate::storage::postgres::operations::task::{
     QueuedTaskCancellation, TaskBackend, TaskStateUpdate, cancel_queued_tasks_conn,

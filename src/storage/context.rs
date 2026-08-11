@@ -5,12 +5,13 @@ use std::pin::Pin;
 use uuid::Uuid;
 
 use crate::events::{
-    EventDeliverySettings, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
+    EventContext, EventDeliverySettings, EventFanoutSettings, EventRetentionSettings,
+    MutationProvenance,
 };
 use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
-    TokenRetentionSettings,
+    NewHubuumObject, TokenRetentionSettings, UpdateHubuumObject,
 };
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
@@ -33,19 +34,20 @@ use crate::storage::{
     EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
     ExportQueryStorage, ExportTemplateHistoryRecord, ExportTemplateStorage, HistoryAsOfQuery,
     HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
-    ImportStorage, InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery,
-    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
-    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
-    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StorageComputedObject, StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    ImportStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRecordStorage,
+    ObjectRelationsTouchingIdsQuery, OperationalExportTemplateAuditEntry,
+    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
+    OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
+    StorageAuditEvent, StorageAuditEventListQuery, StorageBackend, StorageBackendDescriptor,
+    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite,
+    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRelation,
+    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
+    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
+    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
     StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
@@ -55,7 +57,7 @@ use crate::storage::{
     StorageExportTemplatePage, StorageExportTemplateReplace, StorageExternalPrincipalState,
     StorageExternalUserSync, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageImportApply, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
-    StorageImportTaskResultPage, StorageLocalPasswordReset, StorageObject,
+    StorageImportTaskResultPage, StorageInventoryCounts, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
@@ -2672,6 +2674,160 @@ impl MetricsStorage for StorageHandle {
                 BackendImplementation::Postgresql(backend) => {
                     backend.metrics_event_snapshot().await
                 }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl InventoryStorage for StorageHandle {
+    async fn inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
+        observe_storage_call(self.backend_name(), "inventory", "counts", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.inventory_counts().await,
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl ObjectRecordStorage for StorageHandle {
+    async fn validate_object(&self, object: &HubuumObject) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "validate", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.validate_object(object).await,
+            }
+        })
+        .await
+    }
+
+    async fn validate_new_object(&self, object: &NewHubuumObject) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "object_records",
+            "validate_new",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.validate_new_object(object).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn validate_object_update(
+        &self,
+        update: &UpdateHubuumObject,
+        object_id: i32,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "object_records",
+            "validate_update",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.validate_object_update(update, object_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn save_object_record(
+        &self,
+        object: &HubuumObject,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "save", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.save_object_record(object, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn create_object_record(
+        &self,
+        object: &NewHubuumObject,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.create_object_record(object, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn update_object_record(
+        &self,
+        update: &UpdateHubuumObject,
+        object_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "update", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .update_object_record(update, object_id, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_object_record(
+        &self,
+        object: &HubuumObject,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.delete_object_record(object, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_object_record(&self, object_id: i32) -> Result<HubuumObject, StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_object_record(object_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn object_collection(&self, object_id: i32) -> Result<Collection, StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "collection", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.object_collection(object_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn object_class(&self, object_id: i32) -> Result<HubuumClass, StorageError> {
+        observe_storage_call(self.backend_name(), "object_records", "class", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.object_class(object_id).await,
             }
         })
         .await

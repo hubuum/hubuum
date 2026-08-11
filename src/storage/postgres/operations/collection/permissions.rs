@@ -58,17 +58,6 @@ async fn build_effective_group_permissions(
         .collect()
 }
 
-pub async fn total_collection_count_from_backend(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<i64, ApiError> {
-    use crate::schema::collections::dsl::*;
-
-    with_connection(pool, async |conn| {
-        collections.count().get_result::<i64>(conn).await
-    })
-    .await
-}
-
 pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
     pool: &impl crate::storage::StorageContext,
     principal: S,
