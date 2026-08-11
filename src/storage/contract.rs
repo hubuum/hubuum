@@ -4,7 +4,7 @@ use super::{
     AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage, CatalogStorage,
     ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
     ComputedObjectStorage, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventRetentionStorage, HistoryStorage, MetricsStorage, ObjectAggregateStorage,
+    EventRetentionStorage, HistoryStorage, ImportStorage, MetricsStorage, ObjectAggregateStorage,
     ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
     RelationQueryStorage, RemoteTargetStorage, RestoreStorage, TaskExecutionStorage,
     TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
@@ -85,6 +85,7 @@ pub(crate) trait StorageBackend:
     + TaskExecutionStorage
     + BackupSnapshotStorage
     + RestoreStorage
+    + ImportStorage
     + WorkflowStorage
     + OperationalStorage
     + sealed::CertifiedStorageBackend
@@ -159,6 +160,7 @@ mod tests {
                 "task_execution",
                 "backup_snapshots",
                 "restores",
+                "imports",
                 "workflows",
                 "operations",
             ]

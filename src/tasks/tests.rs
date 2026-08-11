@@ -5,7 +5,7 @@ use diesel_async::RunQueryDsl;
 use rstest::rstest;
 use std::sync::Arc;
 
-use super::execution::{execute_import_best_effort, execute_import_strict, execute_planned_item};
+use super::execution::{execute_import_best_effort, execute_import_strict};
 use super::helpers::{
     class_to_resolution, planned_result, sanitize_error_for_storage,
     should_abort_best_effort_execution,
@@ -16,11 +16,11 @@ use super::planning::{
 use super::request_hash;
 use super::resolution::{
     remember_class, remember_collection, resolve_class_planning, resolve_collection_by_id_planning,
-    resolve_collection_planning, resolve_object_planning, resolve_object_runtime,
+    resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
     CollectionResolution, ExecutionAccumulator, FailureKind, PlannedExecution, PlannedItem,
-    PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
+    PlanningFailure, PlanningState, WorkerLoopAction,
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
 use crate::errors::ApiError;
@@ -52,6 +52,7 @@ use crate::storage::postgres::operations::task_import::{
     upsert_export_template_db, upsert_group_membership_db, upsert_identity_scope_db,
     upsert_remote_target_db,
 };
+use crate::storage::postgres::{RuntimeState, execute_planned_item, resolve_object_runtime};
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
@@ -2799,7 +2800,7 @@ fn test_runtime_planning_failures_are_sanitized_for_storage() {
     assert_eq!(failure.message_for_storage(), "An internal error occurred");
 
     let stored = failure.into_result(1);
-    assert_eq!(stored.error.as_deref(), Some("An internal error occurred"));
+    assert_eq!(stored.error(), Some("An internal error occurred"));
 }
 
 #[test]

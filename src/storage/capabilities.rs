@@ -90,17 +90,6 @@ pub(crate) mod service_account {
     };
 }
 
-pub(crate) mod task {
-    pub(crate) use crate::storage::postgres::operations::task::insert_import_results;
-}
-
-pub(crate) mod task_import {
-    pub(crate) use crate::storage::postgres::operations::task_import::{
-        lookup_classes_by_collection_and_names, lookup_collections_by_name,
-        lookup_objects_by_class_and_names,
-    };
-}
-
 pub(crate) use crate::storage::postgres::{
     StorageCallSite, with_mutation_provenance_scope, with_revision_precondition_scope,
     with_statement_timeout_scope, with_storage_call_site,

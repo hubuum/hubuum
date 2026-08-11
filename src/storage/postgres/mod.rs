@@ -1,6 +1,9 @@
 mod backup_snapshot;
 mod computed_fields;
 mod error;
+mod imports;
+#[cfg(test)]
+pub(crate) use imports::{RuntimeState, execute_planned_item, resolve_object_runtime};
 #[doc(hidden)]
 pub mod operations;
 mod remote_targets;

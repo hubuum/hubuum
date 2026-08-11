@@ -1,19 +1,7 @@
 use super::helpers::{class_to_resolution, collection_to_resolution, object_to_resolution};
-use super::types::{
-    ClassResolution, CollectionResolution, ObjectResolution, PlanningState, RuntimeState,
-};
-use crate::errors::ApiError;
-use crate::models::{
-    ClassKey, Collection, CollectionKey, HubuumClass, HubuumObject, ImportCollectionInput,
-    ObjectKey,
-};
-use crate::storage::postgres::operations::task_import::{
-    lookup_class_by_collection_and_name, lookup_class_by_collection_and_name_db,
-    lookup_collection_by_id, lookup_collection_by_key, lookup_collection_by_key_db,
-    lookup_collection_child_by_name_db, lookup_collections_by_name,
-    lookup_object_by_class_and_name, lookup_object_by_class_and_name_db, lookup_root_collection,
-    lookup_root_collection_db,
-};
+use super::types::{ClassResolution, CollectionResolution, ObjectResolution, PlanningState};
+use crate::models::{ClassKey, CollectionKey, ImportCollectionInput, ObjectKey};
+use crate::storage::{ImportStorage, storage_handle};
 
 fn validate_collection_key_path(key: &CollectionKey) -> Result<(), String> {
     if let Some(path) = &key.path {
@@ -48,7 +36,8 @@ async fn find_collection_by_key_planning(
     validate_collection_key_path(key)?;
 
     if key.path.is_some() {
-        let collection = lookup_collection_by_key(pool, key)
+        let collection = storage_handle(pool)
+            .import_collection_by_key(key)
             .await
             .map_err(|err| err.to_string())?
             .map(collection_to_resolution);
@@ -67,7 +56,8 @@ async fn find_collection_by_key_planning(
         .get(&key.name)
         .cloned()
         .unwrap_or_default();
-    for collection in lookup_collections_by_name(pool, &key.name)
+    for collection in storage_handle(pool)
+        .import_collections_by_name(&key.name)
         .await
         .map_err(|err| err.to_string())?
         .into_iter()
@@ -107,7 +97,8 @@ async fn resolve_root_collection_planning(
         return Ok(collection);
     }
 
-    let collection = lookup_root_collection(pool)
+    let collection = storage_handle(pool)
+        .import_root_collection()
         .await
         .map_err(|err| err.to_string())
         .map(collection_to_resolution)?;
@@ -166,7 +157,8 @@ pub(super) async fn resolve_collection_by_id_planning(
         return Ok(collection.clone());
     }
 
-    let collection = lookup_collection_by_id(pool, collection_id)
+    let collection = storage_handle(pool)
+        .import_collection_by_id(collection_id)
         .await
         .map_err(|err| err.to_string())?
         .map(collection_to_resolution)
@@ -208,7 +200,8 @@ pub(super) async fn resolve_class_planning(
                 ));
             }
 
-            let class = lookup_class_by_collection_and_name(pool, collection.id, &key.name)
+            let class = storage_handle(pool)
+                .import_class_by_name(collection.id, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(class_to_resolution)
@@ -258,7 +251,8 @@ pub(super) async fn resolve_object_planning(
                 ));
             }
 
-            let object = lookup_object_by_class_and_name(pool, class.id, &key.name)
+            let object = storage_handle(pool)
+                .import_object_by_name(class.id, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(object_to_resolution)
@@ -269,140 +263,6 @@ pub(super) async fn resolve_object_planning(
             Ok(object)
         }
         _ => Err("Exactly one of object_ref or object_key must be provided".to_string()),
-    }
-}
-
-pub(super) async fn resolve_collection_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&CollectionKey>,
-) -> Result<Collection, ApiError> {
-    match (reference, key) {
-        (Some(reference), None) => runtime
-            .collections_by_ref
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| ApiError::BadRequest(format!("Unknown collection ref '{reference}'"))),
-        (None, Some(key)) => lookup_collection_by_key_db(conn, key)
-            .await?
-            .ok_or_else(|| {
-                ApiError::NotFound(format!(
-                    "Collection '{}' not found during execution",
-                    collection_key_label(key)
-                ))
-            }),
-        _ => Err(ApiError::BadRequest(
-            "Exactly one of collection_ref or collection_key must be provided".to_string(),
-        )),
-    }
-}
-
-pub(super) async fn resolve_collection_parent_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    input: &ImportCollectionInput,
-) -> Result<Collection, ApiError> {
-    match (
-        input.parent_collection_ref.as_deref(),
-        input.parent_collection_key.as_ref(),
-    ) {
-        (None, None) => lookup_root_collection_db(conn).await,
-        (Some(reference), None) => runtime
-            .collections_by_ref
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| ApiError::BadRequest(format!("Unknown collection ref '{reference}'"))),
-        (None, Some(key)) => lookup_collection_by_key_db(conn, key)
-            .await?
-            .ok_or_else(|| {
-                ApiError::NotFound(format!(
-                    "Collection '{}' not found during execution",
-                    collection_key_label(key)
-                ))
-            }),
-        (Some(_), Some(_)) => Err(ApiError::BadRequest(
-            "At most one of parent_collection_ref or parent_collection_key may be provided"
-                .to_string(),
-        )),
-    }
-}
-
-pub(super) async fn lookup_existing_collection_for_import_db(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    parent_collection_id: i32,
-    name: &str,
-) -> Result<Option<Collection>, ApiError> {
-    lookup_collection_child_by_name_db(conn, parent_collection_id, name).await
-}
-
-pub(super) async fn resolve_class_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&ClassKey>,
-) -> Result<HubuumClass, ApiError> {
-    match (reference, key) {
-        (Some(reference), None) => runtime
-            .classes_by_ref
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| ApiError::BadRequest(format!("Unknown class ref '{reference}'"))),
-        (None, Some(key)) => {
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                key.collection_ref.as_deref(),
-                key.collection_key.as_ref(),
-            )
-            .await?;
-            lookup_class_by_collection_and_name_db(conn, collection.id, &key.name)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::NotFound(format!(
-                        "Class '{}' not found in collection '{}' during execution",
-                        key.name, collection.name
-                    ))
-                })
-        }
-        _ => Err(ApiError::BadRequest(
-            "Exactly one of class_ref or class_key must be provided".to_string(),
-        )),
-    }
-}
-
-pub(super) async fn resolve_object_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&ObjectKey>,
-) -> Result<HubuumObject, ApiError> {
-    match (reference, key) {
-        (Some(reference), None) => runtime
-            .objects_by_ref
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| ApiError::BadRequest(format!("Unknown object ref '{reference}'"))),
-        (None, Some(key)) => {
-            let class = resolve_class_runtime(
-                conn,
-                runtime,
-                key.class_ref.as_deref(),
-                key.class_key.as_ref(),
-            )
-            .await?;
-            lookup_object_by_class_and_name_db(conn, class.id, &key.name)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::NotFound(format!(
-                        "Object '{}' not found in class '{}' during execution",
-                        key.name, class.name
-                    ))
-                })
-        }
-        _ => Err(ApiError::BadRequest(
-            "Exactly one of object_ref or object_key must be provided".to_string(),
-        )),
     }
 }
 

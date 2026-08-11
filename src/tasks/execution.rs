@@ -1,206 +1,21 @@
-use tracing::{Instrument, error, info, info_span, warn};
+use tracing::{Instrument, info, info_span, warn};
 
 use crate::errors::ApiError;
 use crate::models::{
-    Collection, EventSinkKey, GroupKey, HubuumClass, HubuumObject, IdentityScopeKey,
-    ImportAtomicity, ImportClassRelationInput, ImportCollisionPolicy,
-    ImportComputedFieldVisibility, ImportExportTemplateInput, ImportMode,
-    ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest,
-    NewHubuumClassRelation, NewTaskEventRecord, PrincipalKey, TaskResultCounts, TaskStatus,
-    TokenScope,
+    ImportAtomicity, ImportCollisionPolicy, ImportMode, ImportPermissionPolicy, ImportRequest,
+    NewTaskEventRecord, TaskResultCounts, TaskStatus, TokenScope,
 };
 use crate::observability::metrics;
 use crate::services::tasks::{
     ClaimedTask, TaskStateChange, append_task_event, complete_task, update_task_state,
 };
-use crate::storage::StorageContext;
-use crate::storage::StorageTaskCompletionArtifact;
-use crate::storage::postgres::with_transaction;
+use crate::storage::{ImportStorage, StorageContext, StorageTaskCompletionArtifact};
 
 use super::helpers::{
     flush_import_result_batches, import_failure_outcome, sanitize_error_for_storage,
-    should_abort_best_effort_execution,
 };
 use super::planning::plan_import;
-use super::resolution::{
-    resolve_class_runtime, resolve_collection_parent_runtime, resolve_collection_runtime,
-    resolve_object_runtime,
-};
-use super::types::{
-    ExecutionAccumulator, PlannedExecution, PlannedItem, PlannedTaskResult, RuntimeState,
-    TerminalTaskUpdate,
-};
-use crate::storage::postgres::operations::task_import::{
-    apply_permissions_db, check_class_relation_import_condition_db,
-    check_object_relation_import_condition_db, create_class_db, create_class_relation_db,
-    create_collection_db, create_object_db, create_object_relation_db,
-    load_export_template_sources_db, lookup_event_sink_id_by_name_db, lookup_group_by_name_db,
-    lookup_identity_scope_id_by_name_db, lookup_principal_id_by_name_db, update_class_db,
-    update_class_relation_timestamps_db, update_collection_db, update_object_db,
-    update_object_relation_timestamps_db, upsert_computed_field_db, upsert_event_sink_db,
-    upsert_event_subscription_db, upsert_export_template_db, upsert_group_db,
-    upsert_group_membership_db, upsert_identity_scope_db, upsert_principal_db,
-    upsert_remote_target_db,
-};
-
-async fn resolve_identity_scope_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&IdentityScopeKey>,
-) -> Result<i32, ApiError> {
-    if let Some(reference) = reference
-        && let Some(found_id) = runtime.identity_scopes_by_ref.get(reference)
-    {
-        return Ok(*found_id);
-    }
-    let name = key.map(|key| key.name.as_str()).ok_or_else(|| {
-        ApiError::BadRequest(
-            "Identity-scope reference was not resolved and no identity_scope_key was supplied"
-                .to_string(),
-        )
-    })?;
-    lookup_identity_scope_id_by_name_db(conn, name)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Identity scope '{name}' not found")))
-}
-
-async fn validate_import_template_composition(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    input: &ImportExportTemplateInput,
-    collection: &Collection,
-) -> Result<(), ApiError> {
-    let mut sources = load_export_template_sources_db(conn, collection.id).await?;
-    for candidate in &runtime.import_export_templates {
-        let candidate_collection = resolve_collection_runtime(
-            conn,
-            runtime,
-            candidate.collection_ref.as_deref(),
-            candidate.collection_key.as_ref(),
-        )
-        .await;
-        match candidate_collection {
-            Ok(candidate_collection) if candidate_collection.id == collection.id => {
-                sources.push((candidate.name.clone(), candidate.template.clone()));
-            }
-            Ok(_) | Err(ApiError::BadRequest(_) | ApiError::NotFound(_)) => {}
-            Err(error) => return Err(error),
-        }
-    }
-
-    input.validate_composition(&sources)
-}
-
-async fn resolve_group_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&GroupKey>,
-) -> Result<i32, ApiError> {
-    if let Some(reference) = reference
-        && let Some(id) = runtime.groups_by_ref.get(reference)
-    {
-        return Ok(*id);
-    }
-    let key = key.ok_or_else(|| {
-        ApiError::BadRequest(
-            "Group reference was not resolved and no group_key was supplied".to_string(),
-        )
-    })?;
-    let scope = key.identity_scope_name();
-    lookup_group_by_name_db(conn, scope, &key.groupname)
-        .await?
-        .map(|group| group.id)
-        .ok_or_else(|| ApiError::NotFound(format!("Group '{scope}/{}' not found", key.groupname)))
-}
-
-async fn resolve_principal_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&PrincipalKey>,
-) -> Result<i32, ApiError> {
-    if let Some(reference) = reference
-        && let Some(id) = runtime.principals_by_ref.get(reference)
-    {
-        return Ok(*id);
-    }
-    let key = key.ok_or_else(|| {
-        ApiError::BadRequest(
-            "Principal reference was not resolved and no principal_key was supplied".to_string(),
-        )
-    })?;
-    let scope = key.identity_scope_name();
-    lookup_principal_id_by_name_db(conn, scope, &key.name)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Principal '{scope}/{}' not found", key.name)))
-}
-
-async fn resolve_event_sink_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    reference: Option<&str>,
-    key: Option<&EventSinkKey>,
-) -> Result<i32, ApiError> {
-    if let Some(reference) = reference
-        && let Some(found_id) = runtime.event_sinks_by_ref.get(reference)
-    {
-        return Ok(*found_id);
-    }
-    let name = key.map(|key| key.name.as_str()).ok_or_else(|| {
-        ApiError::BadRequest(
-            "Event-sink reference was not resolved and no sink_key was supplied".to_string(),
-        )
-    })?;
-    lookup_event_sink_id_by_name_db(conn, name)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Event sink '{name}' not found")))
-}
-
-async fn resolve_class_relation_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    input: &ImportClassRelationInput,
-) -> Result<(HubuumClass, HubuumClass), ApiError> {
-    let from_class = resolve_class_runtime(
-        conn,
-        runtime,
-        input.from_class_ref.as_deref(),
-        input.from_class_key.as_ref(),
-    )
-    .await?;
-    let to_class = resolve_class_runtime(
-        conn,
-        runtime,
-        input.to_class_ref.as_deref(),
-        input.to_class_key.as_ref(),
-    )
-    .await?;
-    Ok((from_class, to_class))
-}
-
-async fn resolve_object_relation_runtime(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    input: &ImportObjectRelationInput,
-) -> Result<(HubuumObject, HubuumObject), ApiError> {
-    let from_object = resolve_object_runtime(
-        conn,
-        runtime,
-        input.from_object_ref.as_deref(),
-        input.from_object_key.as_ref(),
-    )
-    .await?;
-    let to_object = resolve_object_runtime(
-        conn,
-        runtime,
-        input.to_object_ref.as_deref(),
-        input.to_object_key.as_ref(),
-    )
-    .await?;
-    Ok((from_object, to_object))
-}
+use super::types::{ExecutionAccumulator, PlannedItem, TerminalTaskUpdate};
 
 pub(super) async fn execute_import_task<C>(
     backend: &C,
@@ -276,7 +91,8 @@ where
                 planning_time = ?planning_time,
                 total_time = ?total_timer.elapsed()
             );
-            crate::storage::postgres::operations::task::insert_import_results(pool, &results)
+            crate::storage::storage_handle(pool)
+                .record_import_results(results)
                 .await?;
             let summary = format!("Import validation failed for {failed_count} item(s)");
             finalize_task(
@@ -472,52 +288,35 @@ async fn finalize_task(
     Ok(())
 }
 
+fn import_storage_plan(
+    planned_items: &[PlannedItem],
+) -> Vec<crate::storage::StorageImportPlanItem> {
+    planned_items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            item.execution
+                .clone()
+                .map(|execution| crate::storage::StorageImportPlanItem::new(index, execution))
+        })
+        .collect()
+}
+
 pub(super) async fn execute_import_strict(
     pool: &impl crate::storage::StorageContext,
     task_id: i32,
     planned_items: &[PlannedItem],
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
-    let execution = with_transaction(
-        pool,
-        async |conn| -> Result<Vec<PlannedTaskResult>, ApiError> {
-            let mut runtime = RuntimeState::for_planned_items(planned_items);
-            let mut completed = Vec::with_capacity(planned_items.len());
+    crate::storage::storage_handle(pool)
+        .apply_import_strict(import_storage_plan(planned_items))
+        .await?;
 
-            for item in planned_items {
-                if let Some(execution) = &item.execution {
-                    let identifier = item
-                        .result
-                        .identifier
-                        .clone()
-                        .unwrap_or_else(|| item.result.entity_kind.clone());
-                    if let Err(err) = execute_planned_item(conn, &mut runtime, execution).await {
-                        error!(
-                            message = "Import execution failed during strict transaction",
-                            identifier = %identifier,
-                            error = %err
-                        );
-                        return Err(err);
-                    }
-                }
-                completed.push(item.result.clone());
-            }
-
-            Ok(completed)
-        },
-    )
-    .await;
-
-    match execution {
-        Ok(completed) => {
-            for result in &completed {
-                accumulator.push_success(task_id, result, "succeeded");
-                flush_import_result_batches(pool, accumulator, false).await?;
-            }
-            Ok(())
-        }
-        Err(err) => Err(err),
+    for item in planned_items {
+        accumulator.push_success(task_id, &item.result, "succeeded");
+        flush_import_result_batches(pool, accumulator, false).await?;
     }
+    Ok(())
 }
 
 pub(super) async fn execute_import_best_effort(
@@ -527,678 +326,51 @@ pub(super) async fn execute_import_best_effort(
     mode: &ImportMode,
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
-    let mut runtime = RuntimeState::for_planned_items(planned_items);
+    let (outcomes, aborted) = crate::storage::storage_handle(pool)
+        .apply_import_best_effort(import_storage_plan(planned_items), mode.clone())
+        .await?
+        .into_parts();
+    let cutoff = aborted
+        .then(|| outcomes.last().map(|item| item.index()))
+        .flatten();
+    let mut outcomes = outcomes
+        .into_iter()
+        .map(|item| {
+            let (index, error) = item.into_parts();
+            (index, error)
+        })
+        .collect::<std::collections::HashMap<_, _>>();
 
-    for item in planned_items {
-        let result = if let Some(execution) = &item.execution {
-            with_transaction(pool, async |conn| {
-                execute_planned_item(conn, &mut runtime, execution).await
-            })
-            .await
-            .map(|_| ())
-        } else {
-            Ok(())
-        };
-
-        match result {
-            Ok(()) => {
-                accumulator.push_success(task_id, &item.result, "succeeded");
-                flush_import_result_batches(pool, accumulator, false).await?;
-            }
-            Err(err) => {
-                let outcome = import_failure_outcome(&err);
-                let sanitized_error = sanitize_error_for_storage(&err);
-                accumulator.push_failure(task_id, &item.result, sanitized_error, outcome);
-                flush_import_result_batches(pool, accumulator, false).await?;
-                if should_abort_best_effort_execution(&err, mode) {
-                    warn!(
-                        message = "Import best-effort execution aborted early",
-                        task_id = task_id,
-                        processed_items = accumulator.processed,
-                        success_items = accumulator.success,
-                        failed_items = accumulator.failed,
-                        error = %err
-                    );
-                    break;
-                }
-            }
+    for (index, item) in planned_items.iter().enumerate() {
+        if cutoff.is_some_and(|cutoff| index > cutoff) {
+            break;
         }
+        match outcomes.remove(&index) {
+            Some(Some(error)) => {
+                let error = ApiError::from(error);
+                let outcome = import_failure_outcome(&error);
+                let sanitized_error = sanitize_error_for_storage(&error);
+                accumulator.push_failure(task_id, &item.result, sanitized_error, outcome);
+            }
+            Some(None) | None if item.execution.is_none() => {
+                accumulator.push_success(task_id, &item.result, "succeeded");
+            }
+            Some(None) => {
+                accumulator.push_success(task_id, &item.result, "succeeded");
+            }
+            None => continue,
+        }
+        flush_import_result_batches(pool, accumulator, false).await?;
     }
 
-    Ok(())
-}
-
-/// Observe the current owner revision for dry-run reporting. The value is
-/// advisory; the subsequent execution path still locks and rechecks the row.
-pub(super) async fn observed_revision_for_planned_item(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &RuntimeState,
-    execution: &PlannedExecution,
-) -> Result<Option<crate::models::ResourceRevision>, ApiError> {
-    use crate::models::ImportComputedFieldVisibility;
-    use crate::storage::postgres::prelude::*;
-
-    let revision = match execution {
-        PlannedExecution::UpsertIdentityScope { input, .. } => {
-            use crate::schema::identity_scopes::dsl as s;
-            s::identity_scopes
-                .filter(s::name.eq(&input.name))
-                .select(s::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertGroup { input, .. } => {
-            use crate::schema::groups::dsl as g;
-            let scope_id = resolve_identity_scope_runtime(
-                conn,
-                runtime,
-                input.identity_scope_ref.as_deref(),
-                input.identity_scope_key.as_ref(),
-            )
-            .await?;
-            g::groups
-                .filter(g::identity_scope_id.eq(scope_id))
-                .filter(g::groupname.eq(&input.groupname))
-                .select(g::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertPrincipal { input, .. } => {
-            use crate::schema::principals::dsl as p;
-            let scope_id = resolve_identity_scope_runtime(
-                conn,
-                runtime,
-                input.identity_scope_ref.as_deref(),
-                input.identity_scope_key.as_ref(),
-            )
-            .await?;
-            p::principals
-                .filter(p::identity_scope_id.eq(scope_id))
-                .filter(p::name.eq(&input.name))
-                .select(p::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertGroupMembership { input, .. } => {
-            use crate::schema::group_memberships::dsl as m;
-            let principal_id = resolve_principal_runtime(
-                conn,
-                runtime,
-                input.principal_ref.as_deref(),
-                input.principal_key.as_ref(),
-            )
-            .await?;
-            let group_id = resolve_group_runtime(
-                conn,
-                runtime,
-                input.group_ref.as_deref(),
-                input.group_key.as_ref(),
-            )
-            .await?;
-            m::group_memberships
-                .filter(m::principal_id.eq(principal_id))
-                .filter(m::group_id.eq(group_id))
-                .select(m::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpdateCollection { collection_id, .. } => {
-            use crate::schema::collections::dsl as c;
-            c::collections
-                .filter(c::id.eq(collection_id))
-                .select(c::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpdateClass { class_id, .. } => {
-            use crate::schema::hubuumclass::dsl as c;
-            c::hubuumclass
-                .filter(c::id.eq(class_id))
-                .select(c::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpdateObject { object_id, .. } => {
-            use crate::schema::hubuumobject::dsl as o;
-            o::hubuumobject
-                .filter(o::id.eq(object_id))
-                .select(o::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertComputedField { input, .. } => {
-            use crate::schema::computed_field_definitions::dsl as d;
-            let class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.class_ref.as_deref(),
-                input.class_key.as_ref(),
-            )
-            .await?;
-            let owner_id = match input.visibility {
-                ImportComputedFieldVisibility::Shared => None,
-                ImportComputedFieldVisibility::Personal => Some(
-                    resolve_principal_runtime(
-                        conn,
-                        runtime,
-                        input.owner_ref.as_deref(),
-                        input.owner_key.as_ref(),
-                    )
-                    .await?,
-                ),
-            };
-            let visibility = match input.visibility {
-                ImportComputedFieldVisibility::Shared => "shared",
-                ImportComputedFieldVisibility::Personal => "personal",
-            };
-            d::computed_field_definitions
-                .filter(d::class_id.eq(class.id))
-                .filter(d::visibility.eq(visibility))
-                .filter(d::key.eq(&input.key))
-                .filter(d::owner_user_id.is_not_distinct_from(owner_id))
-                .select(d::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpdateClassRelationTimestamps { input, .. }
-        | PlannedExecution::CheckClassRelationCondition(input) => {
-            use crate::schema::hubuumclass_relation::dsl as r;
-            let (from, to) = resolve_class_relation_runtime(conn, runtime, input).await?;
-            r::hubuumclass_relation
-                .filter(
-                    r::from_hubuum_class_id
-                        .eq(from.id)
-                        .and(r::to_hubuum_class_id.eq(to.id))
-                        .or(r::from_hubuum_class_id
-                            .eq(to.id)
-                            .and(r::to_hubuum_class_id.eq(from.id))),
-                )
-                .select(r::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpdateObjectRelationTimestamps { input, .. }
-        | PlannedExecution::CheckObjectRelationCondition(input) => {
-            use crate::schema::hubuumobject_relation::dsl as r;
-            let (from, to) = resolve_object_relation_runtime(conn, runtime, input).await?;
-            r::hubuumobject_relation
-                .filter(
-                    r::from_hubuum_object_id
-                        .eq(from.id)
-                        .and(r::to_hubuum_object_id.eq(to.id))
-                        .or(r::from_hubuum_object_id
-                            .eq(to.id)
-                            .and(r::to_hubuum_object_id.eq(from.id))),
-                )
-                .select(r::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::ApplyCollectionPermissions { input, .. } => {
-            use crate::schema::collection_authorization_state::dsl as a;
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            a::collection_authorization_state
-                .filter(a::collection_id.eq(collection.id))
-                .select(a::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertExportTemplate { input, .. } => {
-            use crate::schema::export_templates::dsl as t;
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            t::export_templates
-                .filter(t::collection_id.eq(collection.id))
-                .filter(t::name.eq(&input.name))
-                .select(t::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertRemoteTarget { input, .. } => {
-            use crate::schema::remote_targets::dsl as r;
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            r::remote_targets
-                .filter(r::collection_id.eq(collection.id))
-                .filter(r::name.eq(&input.name))
-                .select(r::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertEventSink { input, .. } => {
-            use crate::schema::event_sinks::dsl as s;
-            s::event_sinks
-                .filter(s::name.eq(&input.name))
-                .select(s::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::UpsertEventSubscription { input, .. } => {
-            use crate::schema::event_subscriptions::dsl as s;
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            s::event_subscriptions
-                .filter(s::collection_id.eq(collection.id))
-                .filter(s::name.eq(&input.name))
-                .select(s::revision)
-                .first(conn)
-                .await
-                .optional()?
-        }
-        PlannedExecution::CreateCollection(_)
-        | PlannedExecution::CreateClass(_)
-        | PlannedExecution::CreateObject(_)
-        | PlannedExecution::CreateClassRelation(_)
-        | PlannedExecution::CreateObjectRelation(_) => None,
-    };
-    Ok(revision)
-}
-
-pub(super) async fn execute_planned_item(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    runtime: &mut RuntimeState,
-    execution: &PlannedExecution,
-) -> Result<(), ApiError> {
-    match execution {
-        PlannedExecution::UpsertIdentityScope { input, overwrite } => {
-            let id = upsert_identity_scope_db(conn, input, *overwrite).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.identity_scopes_by_ref.insert(reference.clone(), id);
-            }
-        }
-        PlannedExecution::UpsertGroup { input, overwrite } => {
-            let scope_id = resolve_identity_scope_runtime(
-                conn,
-                runtime,
-                input.identity_scope_ref.as_deref(),
-                input.identity_scope_key.as_ref(),
-            )
-            .await?;
-            let id = upsert_group_db(conn, input, scope_id, *overwrite).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.groups_by_ref.insert(reference.clone(), id);
-            }
-        }
-        PlannedExecution::UpsertPrincipal { input, overwrite } => {
-            let scope_id = resolve_identity_scope_runtime(
-                conn,
-                runtime,
-                input.identity_scope_ref.as_deref(),
-                input.identity_scope_key.as_ref(),
-            )
-            .await?;
-            let (owner_group_id, created_by) = match &input.subtype {
-                ImportPrincipalSubtype::Human { .. } => (None, None),
-                ImportPrincipalSubtype::ServiceAccount {
-                    owner_group_ref,
-                    owner_group_key,
-                    created_by_ref,
-                    created_by_key,
-                    ..
-                } => (
-                    Some(
-                        resolve_group_runtime(
-                            conn,
-                            runtime,
-                            owner_group_ref.as_deref(),
-                            owner_group_key.as_ref(),
-                        )
-                        .await?,
-                    ),
-                    if created_by_ref.is_some() || created_by_key.is_some() {
-                        Some(
-                            resolve_principal_runtime(
-                                conn,
-                                runtime,
-                                created_by_ref.as_deref(),
-                                created_by_key.as_ref(),
-                            )
-                            .await?,
-                        )
-                    } else {
-                        None
-                    },
-                ),
-            };
-            let id = upsert_principal_db(
-                conn,
-                input,
-                scope_id,
-                owner_group_id,
-                created_by,
-                *overwrite,
-            )
-            .await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.principals_by_ref.insert(reference.clone(), id);
-            }
-        }
-        PlannedExecution::UpsertGroupMembership { input, overwrite } => {
-            let principal_id = resolve_principal_runtime(
-                conn,
-                runtime,
-                input.principal_ref.as_deref(),
-                input.principal_key.as_ref(),
-            )
-            .await?;
-            let group_id = resolve_group_runtime(
-                conn,
-                runtime,
-                input.group_ref.as_deref(),
-                input.group_key.as_ref(),
-            )
-            .await?;
-            let mut source_scope_ids = Vec::with_capacity(input.sources.len());
-            for source in &input.sources {
-                source_scope_ids.push(
-                    resolve_identity_scope_runtime(
-                        conn,
-                        runtime,
-                        source.source_scope_ref.as_deref(),
-                        source.source_scope_key.as_ref(),
-                    )
-                    .await?,
-                );
-            }
-            upsert_group_membership_db(
-                conn,
-                input,
-                principal_id,
-                group_id,
-                &source_scope_ids,
-                *overwrite,
-            )
-            .await?;
-        }
-        PlannedExecution::CreateCollection(input) => {
-            let parent = resolve_collection_parent_runtime(conn, runtime, input).await?;
-            let created = create_collection_db(conn, input, Some(parent.id)).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime
-                    .collections_by_ref
-                    .insert(reference.clone(), created);
-            }
-        }
-        PlannedExecution::UpdateCollection {
-            collection_id,
-            input,
-        } => {
-            let updated = update_collection_db(conn, *collection_id, input).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime
-                    .collections_by_ref
-                    .insert(reference.clone(), updated);
-            }
-        }
-        PlannedExecution::CreateClass(input) => {
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            let created = create_class_db(conn, input, collection.id).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.classes_by_ref.insert(reference.clone(), created);
-            }
-        }
-        PlannedExecution::UpdateClass { class_id, input } => {
-            let updated = update_class_db(conn, *class_id, input).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.classes_by_ref.insert(reference.clone(), updated);
-            }
-        }
-        PlannedExecution::CreateObject(input) => {
-            let class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.class_ref.as_deref(),
-                input.class_key.as_ref(),
-            )
-            .await?;
-            let created = create_object_db(conn, input, &class).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.objects_by_ref.insert(reference.clone(), created);
-            }
-        }
-        PlannedExecution::UpdateObject { object_id, input } => {
-            let updated = update_object_db(conn, *object_id, input).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.objects_by_ref.insert(reference.clone(), updated);
-            }
-        }
-        PlannedExecution::UpsertComputedField { input, overwrite } => {
-            let class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.class_ref.as_deref(),
-                input.class_key.as_ref(),
-            )
-            .await?;
-            let owner_id = match input.visibility {
-                ImportComputedFieldVisibility::Shared => None,
-                ImportComputedFieldVisibility::Personal => Some(
-                    resolve_principal_runtime(
-                        conn,
-                        runtime,
-                        input.owner_ref.as_deref(),
-                        input.owner_key.as_ref(),
-                    )
-                    .await?,
-                ),
-            };
-            upsert_computed_field_db(conn, input, class.id, owner_id, *overwrite).await?;
-        }
-        PlannedExecution::CreateClassRelation(input) => {
-            let (from_class, to_class) =
-                resolve_class_relation_runtime(conn, runtime, input).await?;
-            create_class_relation_db(
-                conn,
-                NewHubuumClassRelation {
-                    from_hubuum_class_id: from_class.id,
-                    to_hubuum_class_id: to_class.id,
-                    forward_template_alias: input.forward_template_alias.clone(),
-                    reverse_template_alias: input.reverse_template_alias.clone(),
-                    from_max_relations: input.from_max_relations,
-                    to_max_relations: input.to_max_relations,
-                },
-                input.timestamps.as_ref(),
-                input.condition,
-            )
-            .await?;
-        }
-        PlannedExecution::UpdateClassRelationTimestamps { input, timestamps } => {
-            let (from_class, to_class) =
-                resolve_class_relation_runtime(conn, runtime, input).await?;
-            update_class_relation_timestamps_db(
-                conn,
-                from_class.id,
-                to_class.id,
-                timestamps,
-                input.condition,
-            )
-            .await?;
-        }
-        PlannedExecution::CheckClassRelationCondition(input) => {
-            let (from_class, to_class) =
-                resolve_class_relation_runtime(conn, runtime, input).await?;
-            check_class_relation_import_condition_db(
-                conn,
-                from_class.id,
-                to_class.id,
-                input.condition,
-            )
-            .await?;
-        }
-        PlannedExecution::CreateObjectRelation(input) => {
-            let (from_object, to_object) =
-                resolve_object_relation_runtime(conn, runtime, input).await?;
-            create_object_relation_db(
-                conn,
-                &from_object,
-                &to_object,
-                input.timestamps.as_ref(),
-                input.condition,
-            )
-            .await?;
-        }
-        PlannedExecution::UpdateObjectRelationTimestamps { input, timestamps } => {
-            let (from_object, to_object) =
-                resolve_object_relation_runtime(conn, runtime, input).await?;
-            update_object_relation_timestamps_db(
-                conn,
-                &from_object,
-                &to_object,
-                timestamps,
-                input.condition,
-            )
-            .await?;
-        }
-        PlannedExecution::CheckObjectRelationCondition(input) => {
-            let (from_object, to_object) =
-                resolve_object_relation_runtime(conn, runtime, input).await?;
-            check_object_relation_import_condition_db(
-                conn,
-                &from_object,
-                &to_object,
-                input.condition,
-            )
-            .await?;
-        }
-        PlannedExecution::ApplyCollectionPermissions { input, overwrite } => {
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            let identity_scope = input.group_key.identity_scope_name();
-            let group = lookup_group_by_name_db(conn, identity_scope, &input.group_key.groupname)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::NotFound(format!(
-                        "Group '{}/{}' not found",
-                        identity_scope, input.group_key.groupname
-                    ))
-                })?;
-            apply_permissions_db(
-                conn,
-                collection.id,
-                group.id,
-                &input.permissions,
-                input.replace_existing.unwrap_or(false),
-                input.condition,
-                *overwrite,
-            )
-            .await?;
-        }
-        PlannedExecution::UpsertExportTemplate { input, overwrite } => {
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            let class_id = if input.class_ref.is_some() || input.class_key.is_some() {
-                let class = resolve_class_runtime(
-                    conn,
-                    runtime,
-                    input.class_ref.as_deref(),
-                    input.class_key.as_ref(),
-                )
-                .await?;
-                class.ensure_in_collection(collection.id, "Export template")?;
-                Some(class.id)
-            } else {
-                None
-            };
-            validate_import_template_composition(conn, runtime, input, &collection).await?;
-            upsert_export_template_db(conn, input, collection.id, class_id, *overwrite).await?;
-        }
-        PlannedExecution::UpsertRemoteTarget { input, overwrite } => {
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            let class_id = if input.class_ref.is_some() || input.class_key.is_some() {
-                let class = resolve_class_runtime(
-                    conn,
-                    runtime,
-                    input.class_ref.as_deref(),
-                    input.class_key.as_ref(),
-                )
-                .await?;
-                class.ensure_in_collection(collection.id, "Remote target")?;
-                Some(class.id)
-            } else {
-                None
-            };
-            upsert_remote_target_db(conn, input, collection.id, class_id, *overwrite).await?;
-        }
-        PlannedExecution::UpsertEventSink { input, overwrite } => {
-            let id = upsert_event_sink_db(conn, input, *overwrite).await?;
-            if let Some(reference) = &input.ref_ {
-                runtime.event_sinks_by_ref.insert(reference.clone(), id);
-            }
-        }
-        PlannedExecution::UpsertEventSubscription { input, overwrite } => {
-            let collection = resolve_collection_runtime(
-                conn,
-                runtime,
-                input.collection_ref.as_deref(),
-                input.collection_key.as_ref(),
-            )
-            .await?;
-            let sink_id = resolve_event_sink_runtime(
-                conn,
-                runtime,
-                input.sink_ref.as_deref(),
-                input.sink_key.as_ref(),
-            )
-            .await?;
-            upsert_event_subscription_db(conn, input, collection.id, sink_id, *overwrite).await?;
-        }
+    if aborted {
+        warn!(
+            message = "Import best-effort execution aborted early",
+            task_id = task_id,
+            processed_items = accumulator.processed,
+            success_items = accumulator.success,
+            failed_items = accumulator.failed
+        );
     }
 
     Ok(())
