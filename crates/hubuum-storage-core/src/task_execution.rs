@@ -491,11 +491,172 @@ impl fmt::Debug for StorageBackupTaskArtifact {
     }
 }
 
+/// Target and rendered request facts stored for a remote-call task.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageRemoteCallArtifactTarget {
+    target_id: Option<i32>,
+    subject_type: String,
+    subject_id: i32,
+    method: String,
+    rendered_url: String,
+}
+
+impl StorageRemoteCallArtifactTarget {
+    #[must_use]
+    pub fn new(
+        target_id: Option<i32>,
+        subject_type: impl Into<String>,
+        subject_id: i32,
+        method: impl Into<String>,
+        rendered_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            target_id,
+            subject_type: subject_type.into(),
+            subject_id,
+            method: method.into(),
+            rendered_url: rendered_url.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (Option<i32>, String, i32, String, String) {
+        (
+            self.target_id,
+            self.subject_type,
+            self.subject_id,
+            self.method,
+            self.rendered_url,
+        )
+    }
+}
+
+impl fmt::Debug for StorageRemoteCallArtifactTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageRemoteCallArtifactTarget")
+            .field("has_target", &self.target_id.is_some())
+            .field("method", &self.method)
+            .field("identity", &"[redacted]")
+            .field("rendered_url", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Sanitized response material retained for a remote-call task.
+#[derive(Clone, PartialEq)]
+pub struct StorageRemoteCallArtifactResponse {
+    status: Option<i32>,
+    headers: Option<Value>,
+    body_preview: Option<String>,
+}
+
+impl StorageRemoteCallArtifactResponse {
+    #[must_use]
+    pub const fn new(
+        status: Option<i32>,
+        headers: Option<Value>,
+        body_preview: Option<String>,
+    ) -> Self {
+        Self {
+            status,
+            headers,
+            body_preview,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (Option<i32>, Option<Value>, Option<String>) {
+        (self.status, self.headers, self.body_preview)
+    }
+}
+
+impl fmt::Debug for StorageRemoteCallArtifactResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageRemoteCallArtifactResponse")
+            .field("status", &self.status)
+            .field("has_headers", &self.headers.is_some())
+            .field("has_body_preview", &self.body_preview.is_some())
+            .finish()
+    }
+}
+
+/// Terminal outcome stored with a remote-call task.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageRemoteCallArtifactOutcome {
+    duration_ms: i32,
+    success: bool,
+    error: Option<String>,
+}
+
+impl StorageRemoteCallArtifactOutcome {
+    #[must_use]
+    pub const fn new(duration_ms: i32, success: bool, error: Option<String>) -> Self {
+        Self {
+            duration_ms,
+            success,
+            error,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, bool, Option<String>) {
+        (self.duration_ms, self.success, self.error)
+    }
+}
+
+impl fmt::Debug for StorageRemoteCallArtifactOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageRemoteCallArtifactOutcome")
+            .field("duration_ms", &self.duration_ms)
+            .field("success", &self.success)
+            .field("has_error", &self.error.is_some())
+            .finish()
+    }
+}
+
+/// Remote-call result stored atomically with the terminal task transition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StorageRemoteCallTaskArtifact {
+    target: StorageRemoteCallArtifactTarget,
+    response: StorageRemoteCallArtifactResponse,
+    outcome: StorageRemoteCallArtifactOutcome,
+}
+
+impl StorageRemoteCallTaskArtifact {
+    #[must_use]
+    pub const fn new(
+        target: StorageRemoteCallArtifactTarget,
+        response: StorageRemoteCallArtifactResponse,
+        outcome: StorageRemoteCallArtifactOutcome,
+    ) -> Self {
+        Self {
+            target,
+            response,
+            outcome,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        StorageRemoteCallArtifactTarget,
+        StorageRemoteCallArtifactResponse,
+        StorageRemoteCallArtifactOutcome,
+    ) {
+        (self.target, self.response, self.outcome)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum StorageTaskCompletionArtifact {
     None,
     Export(StorageExportTaskArtifact),
     Backup(StorageBackupTaskArtifact),
+    RemoteCall(StorageRemoteCallTaskArtifact),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -630,14 +791,38 @@ mod tests {
         )
         .output(Some(serde_json::json!({"secret": "output"})), None)
         .build();
+        let remote_artifact = StorageRemoteCallTaskArtifact::new(
+            StorageRemoteCallArtifactTarget::new(
+                Some(7),
+                "object-secret",
+                8,
+                "POST",
+                "https://example.invalid/?secret=url",
+            ),
+            StorageRemoteCallArtifactResponse::new(
+                Some(200),
+                Some(serde_json::json!({"secret": "headers"})),
+                Some("secret response body".to_string()),
+            ),
+            StorageRemoteCallArtifactOutcome::new(
+                9,
+                false,
+                Some("secret remote error".to_string()),
+            ),
+        );
 
-        let debug = format!("{claim:?} {artifact:?}");
+        let debug = format!("{claim:?} {artifact:?} {remote_artifact:?}");
 
         for secret in [
             "secret-backend-claim",
             "secret\": \"payload",
             "secret\": \"metadata",
             "secret\": \"output",
+            "object-secret",
+            "secret=url",
+            "secret\": \"headers",
+            "secret response body",
+            "secret remote error",
         ] {
             assert!(!debug.contains(secret));
         }

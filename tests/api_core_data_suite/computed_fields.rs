@@ -9,7 +9,7 @@ mod tests {
     use crate::models::search::parse_query_parameter;
     use crate::models::{
         ComputedFieldDefinitionRequest, GroupID, HubuumClassID, NewHubuumClass, NewHubuumObject,
-        Permissions, TaskID, TaskStatus,
+        Permissions, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, finalize_page};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
@@ -19,7 +19,9 @@ mod tests {
         enrich_objects_with_computed_query_snapshot, execute_computed_reindex_task,
         request_class_rebuild, resolve_computed_query_fields, source_data_sha256,
     };
-    use crate::storage::postgres::operations::task::recover_expired_task_leases;
+    use crate::storage::postgres::operations::task::{
+        claim_task_for_backend_test, recover_expired_task_leases,
+    };
     use crate::storage::postgres::{capture_queries, with_connection};
     use crate::tests::api_operations::{
         get_request, get_request_with_permission_backend, patch_request,
@@ -139,7 +141,7 @@ mod tests {
                     .expect("manual rebuild task")
                 }
             };
-            if let Ok(task) = TaskID::new(task_id).unwrap().instance(&context.pool).await {
+            if let Ok(task) = claim_task_for_backend_test(&context.pool, task_id).await {
                 return task;
             }
             tokio::task::yield_now().await;

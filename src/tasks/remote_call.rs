@@ -16,14 +16,16 @@ use crate::config::{
 };
 use crate::errors::ApiError;
 use crate::models::{
-    NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
-    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
-    StoredRemoteCallTaskPayload, TaskResultCounts, TaskStatus, authorize_remote_invocation,
+    NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod, RemoteInvocationBodyOverride,
+    RemoteInvocationParameters, RemoteTemplateContext, StoredRemoteCallTaskPayload,
+    TaskResultCounts, TaskStatus, authorize_remote_invocation,
 };
 use crate::observability::metrics;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update_task_state};
-use crate::storage::capabilities::remote_target::insert_remote_call_result;
-use crate::storage::{StorageContext, StorageTaskCompletionArtifact};
+use crate::storage::{
+    StorageContext, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageTaskCompletionArtifact,
+};
 use crate::traits::AuthzSubject;
 
 #[cfg(feature = "integration-test-support")]
@@ -59,7 +61,6 @@ pub(super) async fn execute_remote_call_task<C>(
 where
     C: StorageContext,
 {
-    let pool = backend;
     let payload = task
         .request_payload
         .clone()
@@ -67,7 +68,7 @@ where
     let request: StoredRemoteCallTaskPayload = serde_json::from_value(payload)?;
 
     update_task_state(
-        pool,
+        backend,
         task,
         TaskStateChange::new(TaskStatus::Running, TaskResultCounts::default())
             .started_at(task.started_at),
@@ -76,36 +77,32 @@ where
 
     let result = execute_remote_call(backend, task.id, user, scopes, &request).await;
     match result {
-        Ok(success) => finalize_remote_task(pool, task, success).await,
+        Ok(success) => finalize_remote_task(backend, task, success).await,
         Err(error) => {
             let sanitized = crate::tasks::helpers::sanitize_error_for_storage(&error);
-            let fallback = NewRemoteCallResult {
-                task_id: task.id,
-                target_id: Some(request.target_id.id()),
-                subject_type: request.subject.subject_type().as_str().to_string(),
-                subject_id: request.subject.subject_id(),
-                method: "unknown".to_string(),
-                rendered_url: "".to_string(),
-                response_status: None,
-                response_headers: None,
-                response_body_preview: None,
-                duration_ms: 0,
-                success: false,
-                error: Some(sanitized.clone()),
-            };
-            insert_remote_call_result(pool, fallback).await?;
             warn!(
                 message = "Remote call task failed before HTTP execution",
                 task_id = task.id,
                 error = %error
             );
             finalize_remote_task(
-                pool,
+                backend,
                 task,
                 RemoteExecutionOutcome {
                     success: false,
-                    summary: sanitized,
+                    summary: sanitized.clone(),
                     event_data: None,
+                    artifact: StorageRemoteCallTaskArtifact::new(
+                        StorageRemoteCallArtifactTarget::new(
+                            None,
+                            request.subject.subject_type().as_str(),
+                            request.subject.subject_id(),
+                            "unknown",
+                            "",
+                        ),
+                        StorageRemoteCallArtifactResponse::new(None, None, None),
+                        StorageRemoteCallArtifactOutcome::new(0, false, Some(sanitized)),
+                    ),
                 },
             )
             .await
@@ -117,10 +114,10 @@ struct RemoteExecutionOutcome {
     success: bool,
     summary: String,
     event_data: Option<serde_json::Value>,
+    artifact: StorageRemoteCallTaskArtifact,
 }
 
-struct RemoteFailureContext<'a, C> {
-    storage: &'a C,
+struct RemoteFailureContext<'a> {
     task_id: i32,
     target_id: i32,
     subject_type: &'a str,
@@ -138,8 +135,7 @@ async fn execute_remote_call<C>(
 where
     C: StorageContext,
 {
-    let pool = backend;
-    let target = request.target_id.instance(pool).await?;
+    let target = request.target_id.instance(backend).await?;
     let resolved =
         authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;
 
@@ -152,7 +148,6 @@ where
     let rendered_url = render_template("url_template", &target.url_template, &context)?;
     let start = Instant::now();
     let failure_context = RemoteFailureContext {
-        storage: pool,
         task_id,
         target_id: target.id,
         subject_type: resolved.subject_type.as_str(),
@@ -162,7 +157,12 @@ where
     let normalized_rendered_url = match validate_outbound_url(&rendered_url) {
         Ok(parts) => parts.url().to_string(),
         Err(error) => {
-            return record_remote_call_failure(&failure_context, rendered_url, 0, error).await;
+            return Ok(remote_call_failure(
+                &failure_context,
+                rendered_url,
+                0,
+                error,
+            ));
         }
     };
 
@@ -212,25 +212,6 @@ where
                     u64::try_from(response.duration_ms()).unwrap_or(0),
                 ),
             );
-            insert_remote_call_result(
-                pool,
-                NewRemoteCallResult {
-                    task_id,
-                    target_id: Some(target.id),
-                    subject_type: resolved.subject_type.as_str().to_string(),
-                    subject_id: resolved.subject_id,
-                    method: target.method.as_str().to_string(),
-                    rendered_url: response.url().to_string(),
-                    response_status: Some(i32::from(response.status_code())),
-                    response_headers: Some(response.headers().clone()),
-                    response_body_preview: Some(response.body_preview().to_string()),
-                    duration_ms: response.duration_ms(),
-                    success,
-                    error: (!success).then(|| format!("Remote returned HTTP {status}")),
-                },
-            )
-            .await?;
-
             let summary = if success {
                 format!("Remote call succeeded with HTTP {status}")
             } else {
@@ -243,27 +224,45 @@ where
                     "status": i32::from(response.status_code()),
                     "duration_ms": response.duration_ms(),
                 })),
+                artifact: StorageRemoteCallTaskArtifact::new(
+                    StorageRemoteCallArtifactTarget::new(
+                        Some(target.id),
+                        resolved.subject_type.as_str(),
+                        resolved.subject_id,
+                        target.method.as_str(),
+                        response.url(),
+                    ),
+                    StorageRemoteCallArtifactResponse::new(
+                        Some(i32::from(response.status_code())),
+                        Some(response.headers().clone()),
+                        Some(response.body_preview().to_string()),
+                    ),
+                    StorageRemoteCallArtifactOutcome::new(
+                        response.duration_ms(),
+                        success,
+                        (!success).then(|| format!("Remote returned HTTP {status}")),
+                    ),
+                ),
             })
         }
         Err(error) => {
             let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
-            record_remote_call_failure(
+            Ok(remote_call_failure(
                 &failure_context,
                 normalized_rendered_url,
                 duration_ms,
                 error,
-            )
-            .await
+            ))
         }
     }
 }
 
-async fn record_remote_call_failure<C: StorageContext>(
-    context: &RemoteFailureContext<'_, C>,
+fn remote_call_failure(
+    context: &RemoteFailureContext<'_>,
     rendered_url: String,
     duration_ms: i32,
     error: OutboundHttpError,
-) -> Result<RemoteExecutionOutcome, ApiError> {
+) -> RemoteExecutionOutcome {
     let metric_outcome = remote_error_outcome(&error);
     warn!(
         message = "Remote target call failed",
@@ -283,29 +282,22 @@ async fn record_remote_call_failure<C: StorageContext>(
         metric_outcome,
         std::time::Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0)),
     );
-    insert_remote_call_result(
-        context.storage,
-        NewRemoteCallResult {
-            task_id: context.task_id,
-            target_id: Some(context.target_id),
-            subject_type: context.subject_type.to_string(),
-            subject_id: context.subject_id,
-            method: context.method.to_string(),
-            rendered_url,
-            response_status: None,
-            response_headers: None,
-            response_body_preview: None,
-            duration_ms,
-            success: false,
-            error: Some(message.clone()),
-        },
-    )
-    .await?;
-    Ok(RemoteExecutionOutcome {
+    RemoteExecutionOutcome {
         success: false,
-        summary: message,
+        summary: message.clone(),
         event_data: Some(serde_json::json!({ "duration_ms": duration_ms })),
-    })
+        artifact: StorageRemoteCallTaskArtifact::new(
+            StorageRemoteCallArtifactTarget::new(
+                Some(context.target_id),
+                context.subject_type,
+                context.subject_id,
+                context.method,
+                rendered_url,
+            ),
+            StorageRemoteCallArtifactResponse::new(None, None, None),
+            StorageRemoteCallArtifactOutcome::new(duration_ms, false, Some(message)),
+        ),
+    }
 }
 
 fn status_family(status_code: u16) -> &'static str {
@@ -341,7 +333,7 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
 }
 
 async fn finalize_remote_task(
-    pool: &impl crate::storage::StorageContext,
+    backend: &impl crate::storage::StorageContext,
     task: &ClaimedTask,
     outcome: RemoteExecutionOutcome,
 ) -> Result<(), ApiError> {
@@ -351,7 +343,7 @@ async fn finalize_remote_task(
         TaskStatus::Failed
     };
     complete_task(
-        pool,
+        backend,
         task,
         TaskStateChange::new(
             status,
@@ -368,7 +360,7 @@ async fn finalize_remote_task(
             message: outcome.summary,
             data: outcome.event_data,
         },
-        StorageTaskCompletionArtifact::None,
+        StorageTaskCompletionArtifact::RemoteCall(outcome.artifact),
     )
     .await?;
     Ok(())

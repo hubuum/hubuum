@@ -600,7 +600,7 @@ where
 }
 
 async fn maybe_recover_expired_task_leases(
-    pool: &impl crate::storage::StorageContext,
+    backend: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
     let recovery_interval = task_worker_settings().recovery_interval();
     let previous_last_run = {
@@ -616,7 +616,7 @@ async fn maybe_recover_expired_task_leases(
         }
     };
 
-    match recover_expired_task_leases(pool, 100).await {
+    match recover_expired_task_leases(backend, 100).await {
         Ok(recovered) => {
             for task in recovered {
                 metrics::task_lease_recovered(&task.kind);
@@ -641,7 +641,7 @@ async fn maybe_recover_expired_task_leases(
 }
 
 async fn maybe_cleanup_expired_task_outputs(
-    pool: &impl crate::storage::StorageContext,
+    backend: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
@@ -649,7 +649,7 @@ async fn maybe_cleanup_expired_task_outputs(
     };
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
-    let deleted_exports = match purge_expired_export_outputs(pool).await {
+    let deleted_exports = match purge_expired_export_outputs(backend).await {
         Ok(deleted) => deleted,
         Err(error) => {
             metrics::task_output_cleanup_failed(metrics::TaskOutputKind::Export);
@@ -659,7 +659,7 @@ async fn maybe_cleanup_expired_task_outputs(
     metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Export, deleted_exports);
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Backup);
-    let deleted_backups = match purge_expired_backup_outputs(pool).await {
+    let deleted_backups = match purge_expired_backup_outputs(backend).await {
         Ok(deleted) => deleted,
         Err(error) => {
             metrics::task_output_cleanup_failed(metrics::TaskOutputKind::Backup);
@@ -685,10 +685,10 @@ async fn process_claimed_task(
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
 ) -> Result<(), ApiError> {
-    let pool = context;
     let task_kind = TaskKind::from_db(&task.kind)?;
     if task_kind == TaskKind::Reindex {
-        return crate::storage::postgres::operations::computed_field::execute_computed_reindex_task(pool, task).await;
+        crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
+        return Ok(());
     }
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
@@ -742,7 +742,7 @@ async fn process_claimed_task(
 }
 
 pub(super) async fn mark_claimed_task_failed(
-    pool: &impl crate::storage::StorageContext,
+    backend: &impl crate::storage::StorageContext,
     task: &ClaimedTask,
     err: &ApiError,
 ) -> Result<(), ApiError> {
@@ -757,7 +757,7 @@ pub(super) async fn mark_claimed_task_failed(
     );
 
     fail_task(
-        pool,
+        backend,
         task,
         summary.clone(),
         NewTaskEventRecord {

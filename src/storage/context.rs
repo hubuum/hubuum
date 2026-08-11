@@ -12,26 +12,26 @@ use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogPage, CatalogStorage, ComputedFieldLifecycleStorage,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
-    ComputedObjectStorage, DynLifecycleStorage, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery, HistoryPage,
-    HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    AuthorizationPrincipal, AuthorizationStorage, BackupSnapshotStorage,
+    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
+    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
+    ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage, EventArchive,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
+    EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
+    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
     ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
     StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRelation,
-    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
-    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
-    StorageError, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResultPage,
-    StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StorageBackupSnapshot, StorageClass, StorageClassComputationState, StorageClassGraphRow,
+    StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageError, StorageExportOutput, StorageExportOutputSummary,
+    StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
+    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
@@ -911,6 +911,23 @@ impl TaskExecutionStorage for StorageHandle {
 }
 
 #[async_trait]
+impl BackupSnapshotStorage for StorageHandle {
+    async fn snapshot_backup(
+        &self,
+        include_history: bool,
+    ) -> Result<StorageBackupSnapshot, StorageError> {
+        observe_storage_call(self.backend_name(), "backup_snapshots", "snapshot", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.snapshot_backup(include_history).await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
 impl ComputedFieldLifecycleStorage for StorageHandle {
     async fn computed_field_state(
         &self,
@@ -1104,6 +1121,25 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.request_computed_field_rebuild(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn execute_computed_field_rebuild(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "execute_rebuild",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.execute_computed_field_rebuild(lease).await
                     }
                 }
             },

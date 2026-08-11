@@ -6,7 +6,7 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StorageRecordMetadata};
+use crate::{StorageError, StorageRecordMetadata, StorageTask, StorageTaskLease};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StorageComputedFieldVisibility {
@@ -811,6 +811,13 @@ pub trait ComputedFieldLifecycleStorage: Send + Sync {
         &self,
         request: StorageComputedFieldRebuildRequest,
     ) -> Result<StorageClassComputationState, StorageError>;
+
+    /// Execute the backend-owned materialization workflow for a claimed
+    /// computed-field rebuild task.
+    async fn execute_computed_field_rebuild(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError>;
 }
 
 #[cfg(test)]

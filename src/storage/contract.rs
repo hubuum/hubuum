@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use super::{
-    AuthenticationStorage, AuthorizationStorage, CatalogStorage, ClassRelationStore, ClassStore,
-    CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectStorage, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryStorage, MetricsStorage,
-    ObjectAggregateStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, RelationQueryStorage, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
+    AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage, CatalogStorage,
+    ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
+    ComputedObjectStorage, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventRetentionStorage, HistoryStorage, MetricsStorage, ObjectAggregateStorage,
+    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
+    RelationQueryStorage, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
+    UnifiedSearchStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -80,6 +81,7 @@ pub(crate) trait StorageBackend:
     + UnifiedSearchStorage
     + TaskQueueStorage
     + TaskExecutionStorage
+    + BackupSnapshotStorage
     + WorkflowStorage
     + OperationalStorage
     + sealed::CertifiedStorageBackend
@@ -151,6 +153,7 @@ mod tests {
                 "unified_search",
                 "task_queue",
                 "task_execution",
+                "backup_snapshots",
                 "workflows",
                 "operations",
             ]

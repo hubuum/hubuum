@@ -50,11 +50,10 @@ pub(crate) use query::{
 #[cfg(test)]
 use query::{validate_computed_filter_count, validate_computed_query_count};
 pub(crate) use rebuild::{
-    enqueue_restored_computed_rebuilds, mark_recovered_computed_reindex_failed,
+    enqueue_restored_computed_rebuilds, mark_computed_reindex_failed_conn,
+    mark_recovered_computed_reindex_failed,
 };
-pub use rebuild::{
-    execute_computed_reindex_task, mark_computed_reindex_failed, request_class_rebuild,
-};
+pub use rebuild::{execute_computed_reindex_task, request_class_rebuild};
 
 const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
 const REINDEX_PAYLOAD_TYPE: &str = "computed_fields";

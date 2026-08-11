@@ -21,8 +21,8 @@ use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
     ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
     NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord,
-    TaskResponse, TaskResultCounts, TaskStatus, TokenID,
+    NewRemoteCallResult, NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID,
+    TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus, TokenID,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -372,6 +372,20 @@ pub trait TaskBackend: TaskIdentifier {
         .await
     }
 
+    async fn find_claimed_record(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<TaskRecord, ApiError> {
+        let claim_token = self.task_lease_token().ok_or_else(|| {
+            ApiError::BadRequest("A live task claim is required for this operation".to_string())
+        })?;
+        let task_id = self.task_id();
+        with_transaction(pool, async |conn| {
+            live_claimed_task_conn(conn, task_id, claim_token).await
+        })
+        .await
+    }
+
     async fn list_events_with_total_count(
         &self,
         pool: &impl crate::storage::StorageContext,
@@ -690,62 +704,14 @@ pub trait TaskBackend: TaskIdentifier {
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
     ) -> Result<TaskRecord, ApiError> {
-        use crate::schema::tasks::dsl::{
-            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
-            request_payload, request_redacted_at, started_at, status, success_items, summary,
-            tasks, updated_at,
-        };
-
         let task_id_value = self.task_id();
         let task_lease_token = self.task_lease_token();
         let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
-            let task = tasks
-                .filter(id.eq(task_id_value))
-                .first::<TaskRecord>(conn)
-                .await?;
-            let event_record =
-                emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance()).await?;
-            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
-                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
-
-            Ok(diesel::update(
-                tasks.filter(id.eq(task_id_value)).filter(
-                    lease_token
-                        .eq(task_lease_token)
-                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
-                        .or(lease_token.is_null().and(no_lease_token)),
-                ),
-            )
-            .set((
-                status.eq(update.status.as_str()),
-                summary.eq(update.summary),
-                processed_items.eq(update.counts.processed()),
-                success_items.eq(update.counts.success()),
-                failed_items.eq(update.counts.failed()),
-                started_at.eq(update.started_at),
-                finished_at.eq(Some(event_record.occurred_at)),
-                request_payload.eq::<Option<serde_json::Value>>(None),
-                request_redacted_at.eq(event_record.occurred_at),
-                lease_token.eq::<Option<Uuid>>(None),
-                lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
-                updated_at.eq(event_record.occurred_at),
-            ))
-            .get_result::<TaskRecord>(conn)
-            .await?)
+            finalize_terminal_conn(conn, task_id_value, task_lease_token, update, event).await
         })
         .await?;
 
-        info!(
-            message = "Task reached terminal state",
-            task_id = record.id,
-            task_kind = record.kind.as_str(),
-            status = record.status.as_str(),
-            processed_items = record.processed_items,
-            success_items = record.success_items,
-            failed_items = record.failed_items,
-            summary = record.summary.as_deref()
-        );
-        record_task_completion_metrics(&record);
+        record_task_terminal(&record);
 
         Ok(record)
     }
@@ -760,12 +726,6 @@ pub trait TaskBackend: TaskIdentifier {
         use crate::schema::export_task_outputs::dsl::{
             export_task_outputs, task_id as export_output_task_id,
         };
-        use crate::schema::tasks::dsl::{
-            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
-            request_payload, request_redacted_at, started_at, status, success_items, summary,
-            tasks, updated_at,
-        };
-
         let task_id_value = self.task_id();
         let task_lease_token = self.task_lease_token();
         let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
@@ -778,54 +738,11 @@ pub trait TaskBackend: TaskIdentifier {
                 .do_nothing()
                 .execute(conn)
                 .await?;
-
-            let task = tasks
-                .filter(id.eq(task_id_value))
-                .first::<TaskRecord>(conn)
-                .await?;
-            let event_record =
-                emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance()).await?;
-            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
-                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
-
-            Ok(diesel::update(
-                tasks.filter(id.eq(task_id_value)).filter(
-                    lease_token
-                        .eq(task_lease_token)
-                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
-                        .or(lease_token.is_null().and(no_lease_token)),
-                ),
-            )
-            .set((
-                status.eq(update.status.as_str()),
-                summary.eq(update.summary),
-                processed_items.eq(update.counts.processed()),
-                success_items.eq(update.counts.success()),
-                failed_items.eq(update.counts.failed()),
-                started_at.eq(update.started_at),
-                finished_at.eq(Some(event_record.occurred_at)),
-                request_payload.eq::<Option<serde_json::Value>>(None),
-                request_redacted_at.eq(event_record.occurred_at),
-                lease_token.eq::<Option<Uuid>>(None),
-                lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
-                updated_at.eq(event_record.occurred_at),
-            ))
-            .get_result::<TaskRecord>(conn)
-            .await?)
+            finalize_terminal_conn(conn, task_id_value, task_lease_token, update, event).await
         })
         .await?;
 
-        info!(
-            message = "Export task output stored and task finalized",
-            task_id = record.id,
-            task_kind = record.kind.as_str(),
-            status = record.status.as_str(),
-            processed_items = record.processed_items,
-            success_items = record.success_items,
-            failed_items = record.failed_items,
-            summary = record.summary.as_deref()
-        );
-        record_task_completion_metrics(&record);
+        record_task_terminal(&record);
 
         Ok(record)
     }
@@ -840,12 +757,6 @@ pub trait TaskBackend: TaskIdentifier {
         use crate::schema::backup_task_outputs::dsl::{
             backup_task_outputs, task_id as backup_output_task_id,
         };
-        use crate::schema::tasks::dsl::{
-            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
-            request_payload, request_redacted_at, started_at, status, success_items, summary,
-            tasks, updated_at,
-        };
-
         let task_id_value = self.task_id();
         let task_lease_token = self.task_lease_token();
         let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
@@ -855,49 +766,120 @@ pub trait TaskBackend: TaskIdentifier {
                 .do_nothing()
                 .execute(conn)
                 .await?;
-
-            let task = tasks
-                .filter(id.eq(task_id_value))
-                .first::<TaskRecord>(conn)
-                .await?;
-            let event_record =
-                emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance()).await?;
-            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
-                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
-
-            Ok(diesel::update(
-                tasks.filter(id.eq(task_id_value)).filter(
-                    lease_token
-                        .eq(task_lease_token)
-                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
-                        .or(lease_token.is_null().and(no_lease_token)),
-                ),
-            )
-            .set((
-                status.eq(update.status.as_str()),
-                summary.eq(update.summary),
-                processed_items.eq(update.counts.processed()),
-                success_items.eq(update.counts.success()),
-                failed_items.eq(update.counts.failed()),
-                started_at.eq(update.started_at),
-                finished_at.eq(Some(event_record.occurred_at)),
-                request_payload.eq::<Option<serde_json::Value>>(None),
-                request_redacted_at.eq(event_record.occurred_at),
-                lease_token.eq::<Option<Uuid>>(None),
-                lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
-                updated_at.eq(event_record.occurred_at),
-            ))
-            .get_result::<TaskRecord>(conn)
-            .await?)
+            finalize_terminal_conn(conn, task_id_value, task_lease_token, update, event).await
         })
         .await?;
 
-        record_task_completion_metrics(&record);
+        record_task_terminal(&record);
+        Ok(record)
+    }
+
+    async fn finalize_remote_call_with_result(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        update: TaskStateUpdate,
+        event: NewTaskEventRecord,
+        result: NewRemoteCallResult,
+    ) -> Result<TaskRecord, ApiError> {
+        let task_id_value = self.task_id();
+        let task_lease_token = self.task_lease_token();
+        let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
+            super::remote_target::upsert_remote_call_result_conn(conn, result).await?;
+            finalize_terminal_conn(conn, task_id_value, task_lease_token, update, event).await
+        })
+        .await?;
+
+        record_task_terminal(&record);
         Ok(record)
     }
 }
 
 impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
+
+pub(crate) async fn finalize_terminal_conn(
+    conn: &mut crate::storage::postgres::PostgresConnection,
+    task_id_value: i32,
+    task_lease_token: Option<Uuid>,
+    update: TaskStateUpdate,
+    event: NewTaskEventRecord,
+) -> Result<TaskRecord, ApiError> {
+    use crate::schema::tasks::dsl::{
+        failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
+        request_payload, request_redacted_at, started_at, status, success_items, summary, tasks,
+        updated_at,
+    };
+
+    let task = tasks
+        .filter(id.eq(task_id_value))
+        .first::<TaskRecord>(conn)
+        .await?;
+    let event_record =
+        emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance()).await?;
+    let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
+        <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
+
+    Ok(diesel::update(
+        tasks.filter(id.eq(task_id_value)).filter(
+            lease_token
+                .eq(task_lease_token)
+                .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
+                .or(lease_token.is_null().and(no_lease_token)),
+        ),
+    )
+    .set((
+        status.eq(update.status.as_str()),
+        summary.eq(update.summary),
+        processed_items.eq(update.counts.processed()),
+        success_items.eq(update.counts.success()),
+        failed_items.eq(update.counts.failed()),
+        started_at.eq(update.started_at),
+        finished_at.eq(Some(event_record.occurred_at)),
+        request_payload.eq::<Option<serde_json::Value>>(None),
+        request_redacted_at.eq(event_record.occurred_at),
+        lease_token.eq::<Option<Uuid>>(None),
+        lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+        updated_at.eq(event_record.occurred_at),
+    ))
+    .get_result::<TaskRecord>(conn)
+    .await?)
+}
+
+/// Load and lock a task only while the caller owns its unexpired active lease.
+///
+/// Backend workflows use this inside the same transaction as their mutations,
+/// preventing a stale worker from committing domain data after losing its
+/// claim.
+pub(crate) async fn live_claimed_task_conn(
+    conn: &mut crate::storage::postgres::PostgresConnection,
+    task_id_value: i32,
+    claim_token: Uuid,
+) -> Result<TaskRecord, ApiError> {
+    use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
+
+    tasks
+        .filter(id.eq(task_id_value))
+        .filter(lease_token.eq(Some(claim_token)))
+        .filter(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
+        .filter(status.eq_any(TaskStatus::ACTIVE.map(TaskStatus::as_str)))
+        .for_update()
+        .first::<TaskRecord>(conn)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub(crate) fn record_task_terminal(record: &TaskRecord) {
+    info!(
+        message = "Task reached terminal state",
+        task_id = record.id,
+        task_kind = record.kind.as_str(),
+        status = record.status.as_str(),
+        processed_items = record.processed_items,
+        success_items = record.success_items,
+        failed_items = record.failed_items,
+        summary = record.summary.as_deref()
+    );
+    record_task_completion_metrics(record);
+}
 
 fn record_task_completion_metrics(record: &TaskRecord) {
     metrics::task_completed(
@@ -1465,6 +1447,40 @@ pub(crate) async fn claim_next_queued_task(
     Ok(record)
 }
 
+/// Claim one known task for adapter integration tests that exercise a backend
+/// workflow directly without running the process-global worker.
+#[cfg(feature = "integration-test-support")]
+#[doc(hidden)]
+pub async fn claim_task_for_backend_test(
+    pool: &impl crate::storage::StorageContext,
+    task_id_value: i32,
+) -> Result<TaskRecord, ApiError> {
+    use crate::schema::tasks::dsl::{
+        attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
+    };
+
+    with_connection(pool, async |conn| {
+        diesel::update(
+            tasks
+                .filter(id.eq(task_id_value))
+                .filter(status.eq(TaskStatus::Queued.as_str())),
+        )
+        .set((
+            status.eq(TaskStatus::Validating.as_str()),
+            started_at.eq(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
+            lease_token.eq(Some(Uuid::new_v4())),
+            lease_expires_at.eq(sql::<Nullable<Timestamp>>(
+                "((clock_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 minute')",
+            )),
+            attempt_count.eq(attempt_count + 1),
+            updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
+        ))
+        .get_result::<TaskRecord>(conn)
+        .await
+    })
+    .await
+}
+
 /// Extend an active task lease if this worker still owns it.
 pub(crate) async fn renew_task_lease(
     pool: &impl crate::storage::StorageContext,
@@ -1933,8 +1949,8 @@ mod tests {
     use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
     use crate::models::search::QueryOptions;
     use crate::models::{
-        CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
-        NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
+        CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewRemoteCallResult,
+        NewTaskEventRecord, NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
         RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
         StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
         TokenScope,
@@ -2608,6 +2624,71 @@ mod tests {
 
         assert_eq!(
             (result.is_err(), persisted.status.as_str(), output_count),
+            (true, TaskStatus::Failed.as_str(), 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_remote_call_worker_cannot_persist_a_result() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task_of_kind(
+            &context,
+            "stale-remote-call-finalization-fence",
+            TaskKind::RemoteCall,
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+        recover_expired_task_lease(&context.pool, leased.id)
+            .await
+            .unwrap();
+
+        let result = leased
+            .finalize_remote_call_with_result(
+                &context.pool,
+                TaskStateUpdate::new(
+                    TaskStatus::Succeeded,
+                    TaskResultCounts::from_outcomes(1, 0).unwrap(),
+                )
+                .with_summary("stale remote-call completion")
+                .with_started_at(leased.started_at),
+                NewTaskEventRecord {
+                    task_id: leased.id,
+                    event_type: TaskStatus::Succeeded.as_str().to_string(),
+                    message: "stale remote-call completion".to_string(),
+                    data: None,
+                },
+                NewRemoteCallResult {
+                    task_id: leased.id,
+                    target_id: None,
+                    subject_type: "collection".to_string(),
+                    subject_id: 1,
+                    method: "GET".to_string(),
+                    rendered_url: "https://compatibility.invalid".to_string(),
+                    response_status: Some(200),
+                    response_headers: Some(serde_json::json!({})),
+                    response_body_preview: Some("stale".to_string()),
+                    duration_ms: 1,
+                    success: true,
+                    error: None,
+                },
+            )
+            .await;
+
+        let persisted = leased.find_record(&context.pool).await.unwrap();
+        let result_count = with_connection(&context.pool, async |conn| {
+            use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
+
+            remote_call_results
+                .filter(task_id.eq(leased.id))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            (result.is_err(), persisted.status.as_str(), result_count),
             (true, TaskStatus::Failed.as_str(), 0)
         );
     }
