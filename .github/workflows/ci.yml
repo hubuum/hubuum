@@ -1545,32 +1545,6 @@ jobs:
           name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
           path: dist/*
 
-  publish-main-release:
-    name: Publish main-latest artifacts
-    if: github.ref == 'refs/heads/main'
-    needs:
-      - build-main-linux-artifacts
-      - build-main-native-artifacts
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Download main artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: main-*
-          merge-multiple: true
-          path: dist
-      - name: Publish main-latest release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
-        with:
-          tag_name: main-latest
-          name: Main build
-          body: Automatically published build for the `main` branch.
-          draft: false
-          prerelease: false
-          files: dist/*
-
   publish-main-container-images:
     name: Build main container (${{ matrix.platform.arch }})
     if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
@@ -1608,11 +1582,11 @@ jobs:
           file: Dockerfile
           platforms: linux/${{ matrix.platform.arch }}
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:main-full-${{ matrix.platform.arch }}
+          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:sha-${{ github.sha }}-${{ matrix.platform.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.version=sha-${{ github.sha }}
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
@@ -1661,14 +1635,13 @@ jobs:
         run: |
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${owner}/hubuum-server"
-          final_tags=("${image}:main" "${image}:main-full")
-          
-          # Create and push manifest for each tag
-          for tag in "${final_tags[@]}"; do
-            docker buildx imagetools create -t "$tag" \
-              "${image}:main-full-amd64" \
-              "${image}:main-full-arm64"
-          done
+          sha_tag="${image}:sha-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "$sha_tag" \
+            --tag "${image}:main" \
+            --tag "${image}:main-full" \
+            "${sha_tag}-amd64" \
+            "${sha_tag}-arm64"
 
   publish-tag-container-images:
     name: Build release container (${{ matrix.platform.arch }})

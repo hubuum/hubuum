@@ -828,3 +828,47 @@ fn tagged_release_attestors_can_persist_artifact_metadata() {
         );
     }
 }
+
+#[test]
+fn main_builds_remain_run_artifacts_without_a_rolling_github_release() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
+
+    assert!(workflow.contains("\n  build-main-linux-artifacts:"));
+    assert!(workflow.contains("\n  build-main-native-artifacts:"));
+    assert!(
+        workflow.contains("name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}")
+    );
+    assert!(!workflow.contains("\n  publish-main-release:"));
+    assert!(!workflow.contains("main-latest"));
+}
+
+#[test]
+fn main_container_manifest_is_sha_addressed_before_channel_promotion() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
+    let job_start = workflow
+        .find("\n  publish-main-container-images:")
+        .expect("CI should define main container publication");
+    let job_end = workflow[job_start + 1..]
+        .find("\n  publish-tag-container-images:")
+        .map(|offset| job_start + 1 + offset)
+        .expect("main container publication should precede tagged publication");
+    let jobs = &workflow[job_start..job_end];
+
+    assert!(jobs.contains(
+        "tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:sha-${{ github.sha }}-${{ matrix.platform.arch }}"
+    ));
+    assert!(jobs.contains("org.opencontainers.image.version=sha-${{ github.sha }}"));
+    assert!(jobs.contains("sha_tag=\"${image}:sha-${GITHUB_SHA}\""));
+    for tag in ["$sha_tag", "${image}:main", "${image}:main-full"] {
+        assert!(
+            jobs.contains(&format!("--tag \"{tag}\"")),
+            "main manifest publication should create {tag}"
+        );
+    }
+    for platform in ["amd64", "arm64"] {
+        assert!(
+            jobs.contains(&format!("\"${{sha_tag}}-{platform}\"")),
+            "main manifest should use the SHA-addressed {platform} image"
+        );
+    }
+}
