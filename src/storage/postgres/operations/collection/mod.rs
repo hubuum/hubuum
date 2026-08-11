@@ -4,7 +4,6 @@ use tracing::{debug, trace};
 use crate::errors::ApiError;
 use crate::models::group::Group;
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
-use crate::models::permissions::PermissionFilter;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
 use crate::models::{
     Collection, CollectionID, HubuumObjectRelationID, NewCollection, NewCollectionWithAssignee,
@@ -13,6 +12,7 @@ use crate::models::{
 use crate::models::{HubuumClassRelation, NewHubuumObjectRelation};
 use crate::models::{HubuumObjectRelation, NewHubuumClassRelation};
 use crate::storage::postgres::operations::GetCollection;
+use crate::storage::postgres::operations::permissions::{PermissionFilter, PermissionRow};
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::traits::{
     ClassAccessors, CollectionAccessors, GroupAccessors, ObjectAccessors, SelfAccessors,

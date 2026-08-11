@@ -1,6 +1,5 @@
 use super::*;
 use crate::models::RelatedObjectForRootRow;
-use crate::models::permissions::PermissionFilter;
 use crate::models::search::{
     DEFAULT_RELATED_FILTER_DEPTH, Operator, ParsedQueryParamExt, ParsedQueryParamSqlExt,
     RelatedClassField, RelatedFilterTarget, RelatedObjectField, SQLComponent, SQLValue,
@@ -16,6 +15,7 @@ use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
 use crate::storage::postgres::operations::object::HubuumObjectRow;
+use crate::storage::postgres::operations::permissions::PermissionFilter;
 use crate::storage::postgres::operations::relation_rows::{
     ClassGraphQueryRow, HubuumClassRelationRow, HubuumObjectRelationRow,
     RelatedObjectForRootQueryRow, RelatedObjectGraphQueryRow, RelatedObjectIncludeQueryRow,

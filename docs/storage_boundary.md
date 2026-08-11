@@ -123,14 +123,14 @@ considered complete merely because a marker exists.
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Export-template, remote-target, event,
 event-sink, event-subscription, and event-delivery lifecycle rows are
-adapter-owned, as are collection, class, and object lifecycle and history rows,
-class- and object-relation rows, relation graph query rows, remote-target
-history, and remote-call result persistence rows. Domain collection, class,
-object, and relation values contain no Diesel derives, schema bindings, or SQL
-cursor mappings. Those mappings and explicit conversions live in the PostgreSQL
-adapter. Remaining mixed persistence rows move there as their backend-neutral
-DTOs are extracted. Their current locations are implementation details, not
-partial backend support.
+adapter-owned, as are permission query, insert, update, collection, class, and
+object lifecycle and history rows, class- and object-relation rows, relation
+graph query rows, remote-target history, and remote-call result persistence
+rows. Domain permission, collection, class, object, and relation values contain
+no Diesel derives, schema bindings, or SQL cursor mappings. Those mappings and
+explicit conversions live in the PostgreSQL adapter. Remaining mixed
+persistence rows move there as their backend-neutral DTOs are extracted. Their
+current locations are implementation details, not partial backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory

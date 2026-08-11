@@ -9,6 +9,7 @@ use crate::models::{
 use crate::storage::postgres::operations::collection as collection_backend;
 use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::permissions as permission_backend;
+use crate::storage::postgres::operations::permissions::PermissionRow;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
 use crate::storage::{
@@ -178,7 +179,8 @@ fn group_to_storage(group: Group) -> AuthorizationGroup {
     )
 }
 
-fn grant_to_storage(grant: Permission) -> AuthorizationGrant {
+fn grant_to_storage(grant: impl Into<Permission>) -> AuthorizationGrant {
+    let grant = grant.into();
     AuthorizationGrant::new(
         grant.id,
         grant.collection_id,
@@ -244,8 +246,8 @@ pub(crate) async fn authorize_local_collection(
     pool: &PostgresPool,
     query: AuthorizationCollectionAccessQuery,
 ) -> Result<bool, ApiError> {
-    use crate::models::permissions::PermissionFilter;
     use crate::schema::{group_memberships, permissions};
+    use crate::storage::postgres::operations::permissions::PermissionFilter;
 
     let group_ids = group_memberships::table
         .filter(group_memberships::principal_id.eq(query.principal_id()))
@@ -447,7 +449,7 @@ pub(crate) async fn authorization_policy_snapshot(
                 permissions::collection_id.asc(),
                 permissions::group_id.asc(),
             ))
-            .load::<(Permission, Group, CollectionRow)>(conn)
+            .load::<(PermissionRow, Group, CollectionRow)>(conn)
             .await
     })
     .await?;
@@ -497,7 +499,7 @@ pub(crate) async fn get_local_collection_grant(
         permissions::table
             .filter(permissions::collection_id.eq(key.collection_id()))
             .filter(permissions::group_id.eq(key.group_id()))
-            .first(conn)
+            .first::<PermissionRow>(conn)
             .await
             .optional()
     })
@@ -522,9 +524,9 @@ pub(crate) async fn load_local_collection_permission_set(
                 .filter(collection_authorization_state::collection_id.eq(query.collection_id()))
                 .select((
                     collection_authorization_state::revision,
-                    Option::<Permission>::as_select(),
+                    Option::<PermissionRow>::as_select(),
                 ))
-                .load::<(crate::models::ResourceRevision, Option<Permission>)>(conn)
+                .load::<(crate::models::ResourceRevision, Option<PermissionRow>)>(conn)
                 .await
         } else {
             collection_authorization_state::table
@@ -534,9 +536,9 @@ pub(crate) async fn load_local_collection_permission_set(
                 .filter(collection_authorization_state::collection_id.eq(query.collection_id()))
                 .select((
                     collection_authorization_state::revision,
-                    Option::<Permission>::as_select(),
+                    Option::<PermissionRow>::as_select(),
                 ))
-                .load::<(crate::models::ResourceRevision, Option<Permission>)>(conn)
+                .load::<(crate::models::ResourceRevision, Option<PermissionRow>)>(conn)
                 .await
         }
     })
