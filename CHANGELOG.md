@@ -22,6 +22,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Main-branch CI no longer updates a rolling GitHub Release. Native binaries
+  remain available as per-run Actions artifacts, while multi-architecture GHCR
+  images receive a commit-SHA tag before the movable `main` and `main-full`
+  tags are advanced to the same manifest.
 - **Breaking (Rust API support policy):** the root `hubuum` library and every
   current workspace crate are explicitly internal and non-publishable. Their
   Rust `pub` items are workspace construction details rather than supported
