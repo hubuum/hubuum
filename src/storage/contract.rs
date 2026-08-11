@@ -5,11 +5,11 @@ use super::{
     CatalogStorage, ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
     ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage,
-    ExportQueryStorage, HistoryStorage, IdentityStorage, ImportStorage, MetricsStorage,
-    ObjectAggregateStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
-    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
-    observed::ObservedLifecycleStorage,
+    ExportQueryStorage, ExportTemplateStorage, HistoryStorage, IdentityStorage, ImportStorage,
+    MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
+    OperationalStateStorage, PostgresStorage, RelationQueryStorage, RemoteTargetStorage,
+    RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
+    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -82,6 +82,7 @@ pub(crate) trait StorageBackend:
     + RestoreStorage
     + ImportStorage
     + ExportQueryStorage
+    + ExportTemplateStorage
     + StorageExecution
     + sealed::CertifiedStorageBackend
 {
@@ -155,6 +156,7 @@ mod tests {
                 "restores",
                 "imports",
                 "export_queries",
+                "export_template_lifecycle",
                 "event_administration",
                 "operations",
             ]

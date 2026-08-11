@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -13,15 +12,12 @@ use crate::models::{
     ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope, ExportScopeKind,
     ExportTemplateRunRequest, ResourceRevision,
 };
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::pagination::{CursorPaginated, CursorValue};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::export_templates;
-use crate::storage::StorageContext;
-use crate::storage::postgres::operations::export_template::{
-    self as backend, DeleteExportTemplateRecord, ExportTemplateCollectionLookup,
-    LoadExportTemplateRecord, SaveExportTemplateRecord, UpdateExportTemplateRecord,
+use crate::storage::{
+    ExportTemplateStorage, StorageContext, StorageExportTemplate, StorageExportTemplateCreate,
+    StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplateReplace, storage_handle,
 };
 use crate::traits::accessors::{
     CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter, SelfAccessors,
@@ -58,68 +54,6 @@ impl FromStr for ExportTemplateKind {
                 "Unsupported export template kind: '{value}'"
             ))),
         }
-    }
-}
-
-#[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = export_templates)]
-pub(crate) struct ExportTemplateRow {
-    id: i32,
-    collection_id: i32,
-    name: String,
-    description: String,
-    content_type: String,
-    template: String,
-    kind: String,
-    scope_kind: Option<String>,
-    class_id: Option<i32>,
-    default_query: Option<String>,
-    include: Option<serde_json::Value>,
-    relation_context: Option<serde_json::Value>,
-    default_missing_data_policy: Option<String>,
-    default_limits: Option<serde_json::Value>,
-    created_at: chrono::NaiveDateTime,
-    updated_at: chrono::NaiveDateTime,
-    revision: ResourceRevision,
-}
-
-impl ExportTemplateRow {
-    pub(crate) fn id(&self) -> i32 {
-        self.id
-    }
-
-    pub(crate) fn collection_id(&self) -> i32 {
-        self.collection_id
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn revision(&self) -> ResourceRevision {
-        self.revision
-    }
-
-    pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
-        serde_json::json!({
-            "id": self.id,
-            "collection_id": self.collection_id,
-            "name": self.name,
-            "description": self.description,
-            "content_type": self.content_type,
-            "template": self.template,
-            "kind": self.kind,
-            "scope_kind": self.scope_kind,
-            "class_id": self.class_id,
-            "default_query": self.default_query,
-            "include": self.include,
-            "relation_context": self.relation_context,
-            "default_missing_data_policy": self.default_missing_data_policy,
-            "default_limits": self.default_limits,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "revision": self.revision,
-        })
     }
 }
 
@@ -233,150 +167,6 @@ where
     Ok(Some(Option::<T>::deserialize(deserializer)?))
 }
 
-#[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = export_templates)]
-pub(crate) struct NewExportTemplateRow {
-    collection_id: i32,
-    name: String,
-    description: String,
-    content_type: String,
-    template: String,
-    kind: String,
-    scope_kind: Option<String>,
-    class_id: Option<i32>,
-    default_query: Option<String>,
-    include: Option<serde_json::Value>,
-    relation_context: Option<serde_json::Value>,
-    default_missing_data_policy: Option<String>,
-    default_limits: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, AsChangeset)]
-#[diesel(table_name = export_templates)]
-pub(crate) struct UpdateExportTemplateRow {
-    collection_id: Option<i32>,
-    name: Option<String>,
-    description: Option<String>,
-    template: Option<String>,
-    kind: Option<String>,
-    scope_kind: Option<Option<String>>,
-    class_id: Option<Option<i32>>,
-    default_query: Option<Option<String>>,
-    include: Option<Option<serde_json::Value>>,
-    relation_context: Option<Option<serde_json::Value>>,
-    default_missing_data_policy: Option<Option<String>>,
-    default_limits: Option<Option<serde_json::Value>>,
-}
-
-impl UpdateExportTemplateRow {
-    pub(crate) fn has_changes(&self, current: &ExportTemplateRow) -> bool {
-        self.collection_id
-            .is_some_and(|value| value != current.collection_id)
-            || self
-                .name
-                .as_ref()
-                .is_some_and(|value| value != &current.name)
-            || self
-                .description
-                .as_ref()
-                .is_some_and(|value| value != &current.description)
-            || self
-                .template
-                .as_ref()
-                .is_some_and(|value| value != &current.template)
-            || self
-                .kind
-                .as_ref()
-                .is_some_and(|value| value != &current.kind)
-            || self
-                .scope_kind
-                .as_ref()
-                .is_some_and(|value| value != &current.scope_kind)
-            || self
-                .class_id
-                .as_ref()
-                .is_some_and(|value| value != &current.class_id)
-            || self
-                .default_query
-                .as_ref()
-                .is_some_and(|value| value != &current.default_query)
-            || self
-                .include
-                .as_ref()
-                .is_some_and(|value| value != &current.include)
-            || self
-                .relation_context
-                .as_ref()
-                .is_some_and(|value| value != &current.relation_context)
-            || self
-                .default_missing_data_policy
-                .as_ref()
-                .is_some_and(|value| value != &current.default_missing_data_policy)
-            || self
-                .default_limits
-                .as_ref()
-                .is_some_and(|value| value != &current.default_limits)
-    }
-}
-
-impl TryFrom<ExportTemplateRow> for ExportTemplate {
-    type Error = ApiError;
-
-    fn try_from(row: ExportTemplateRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.id,
-            collection_id: row.collection_id,
-            name: row.name,
-            description: row.description,
-            content_type: ExportContentType::from_mime(&row.content_type)?,
-            template: row.template,
-            kind: ExportTemplateKind::from_str(&row.kind)?,
-            scope_kind: row
-                .scope_kind
-                .as_deref()
-                .map(ExportScopeKind::from_str)
-                .transpose()?,
-            class_id: row.class_id,
-            default_query: row.default_query,
-            include: from_optional_json(row.include)?,
-            relation_context: from_optional_json(row.relation_context)?,
-            default_missing_data_policy: row
-                .default_missing_data_policy
-                .as_deref()
-                .map(ExportMissingDataPolicy::from_str)
-                .transpose()?,
-            default_limits: from_optional_json(row.default_limits)?,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            revision: row.revision,
-        })
-    }
-}
-
-impl NewExportTemplate {
-    fn into_row(self) -> Result<NewExportTemplateRow, ApiError> {
-        let content_type = self.content_type.ensure_template_output()?.as_mime();
-
-        Ok(NewExportTemplateRow {
-            collection_id: self.collection_id,
-            name: self.name,
-            description: self.description,
-            content_type: content_type.to_string(),
-            template: self.template,
-            kind: self.kind.as_str().to_string(),
-            scope_kind: self.scope_kind.map(|scope| scope.as_str().to_string()),
-            class_id: self.class_id,
-            default_query: self.default_query,
-            include: to_optional_json(self.include)?,
-            relation_context: to_optional_json(self.relation_context)?,
-            default_missing_data_policy: self
-                .default_missing_data_policy
-                .map(|policy| policy.as_str().to_string()),
-            default_limits: to_optional_json(self.default_limits)?,
-        })
-    }
-}
-
 impl UpdateExportTemplate {
     fn is_empty(&self) -> bool {
         self.collection_id.is_none()
@@ -392,6 +182,75 @@ impl UpdateExportTemplate {
             && self.default_missing_data_policy.is_none()
             && self.default_limits.is_none()
     }
+}
+
+fn export_template_from_storage(
+    template: StorageExportTemplate,
+) -> Result<ExportTemplate, ApiError> {
+    let (metadata, collection_id, name, definition) = template.into_parts();
+    let (id, created_at, updated_at, revision) = metadata.into_parts();
+    let (
+        description,
+        content_type,
+        template,
+        kind,
+        scope_kind,
+        class_id,
+        default_query,
+        include,
+        relation_context,
+        default_missing_data_policy,
+        default_limits,
+    ) = definition.into_parts();
+    Ok(ExportTemplate {
+        id,
+        collection_id,
+        name,
+        description,
+        content_type: ExportContentType::from_mime(&content_type)?,
+        template,
+        kind: ExportTemplateKind::from_str(&kind)?,
+        scope_kind: scope_kind
+            .as_deref()
+            .map(ExportScopeKind::from_str)
+            .transpose()?,
+        class_id,
+        default_query,
+        include: from_optional_json(include)?,
+        relation_context: from_optional_json(relation_context)?,
+        default_missing_data_policy: default_missing_data_policy
+            .as_deref()
+            .map(ExportMissingDataPolicy::from_str)
+            .transpose()?,
+        default_limits: from_optional_json(default_limits)?,
+        created_at,
+        updated_at,
+        revision: ResourceRevision::new(revision)?,
+    })
+}
+
+fn storage_definition(
+    template: &ExportTemplate,
+) -> Result<StorageExportTemplateDefinition, ApiError> {
+    Ok(StorageExportTemplateDefinition::new(
+        template.description.clone(),
+        template.content_type.as_mime(),
+        template.template.clone(),
+        template.kind.as_str(),
+    )
+    .with_scope(
+        template.scope_kind.map(|scope| scope.as_str().to_string()),
+        template.class_id,
+    )
+    .with_default_query(template.default_query.clone())
+    .with_include(to_optional_json(template.include.clone())?)
+    .with_relation_context(to_optional_json(template.relation_context.clone())?)
+    .with_default_missing_data_policy(
+        template
+            .default_missing_data_policy
+            .map(|policy| policy.as_str().to_string()),
+    )
+    .with_default_limits(to_optional_json(template.default_limits.clone())?))
 }
 
 impl ExportTemplate {
@@ -476,9 +335,21 @@ impl ExportTemplate {
     pub async fn list_all(
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Vec<ExportTemplate>, ApiError> {
-        let rows = backend::load_all_rows(pool).await?;
-
-        rows.into_iter().map(TryInto::try_into).collect()
+        let query = QueryOptions {
+            filters: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            cursor: None,
+            include_total: false,
+        };
+        let page = storage_handle(pool)
+            .list_export_templates(StorageExportTemplateListQuery::candidates(query))
+            .await?;
+        page.into_parts()
+            .0
+            .into_iter()
+            .map(export_template_from_storage)
+            .collect()
     }
 
     /// List export templates (sorted/paginated per `query_options`) together with the total count
@@ -495,16 +366,22 @@ impl ExportTemplate {
             ));
         }
 
-        let (rows, total_count) =
-            backend::list_rows_with_total_count(pool, allowed_collection_ids, query_options)
-                .await?;
-
+        let page = storage_handle(pool)
+            .list_export_templates(StorageExportTemplateListQuery::within_collections(
+                allowed_collection_ids.to_vec(),
+                query_options.clone(),
+            ))
+            .await?;
+        let (rows, total_count) = page.into_parts();
         let items = rows
             .into_iter()
-            .map(TryInto::try_into)
+            .map(export_template_from_storage)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok((items, total_count))
+        Ok((
+            items,
+            total_count.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     /// List candidates without applying local permission-table visibility.
@@ -514,8 +391,16 @@ impl ExportTemplate {
         pool: &impl crate::storage::StorageContext,
         query_options: &QueryOptions,
     ) -> Result<Vec<ExportTemplate>, ApiError> {
-        let (rows, _) = backend::list_all_rows_with_total_count(pool, query_options).await?;
-        rows.into_iter().map(TryInto::try_into).collect()
+        let page = storage_handle(pool)
+            .list_export_templates(StorageExportTemplateListQuery::candidates(
+                query_options.clone(),
+            ))
+            .await?;
+        page.into_parts()
+            .0
+            .into_iter()
+            .map(export_template_from_storage)
+            .collect()
     }
 }
 
@@ -538,14 +423,11 @@ pub trait CollectionExportTemplates: CollectionAccessors {
         C: StorageContext,
     {
         let collection_id = self.collection_id(backend).await?.id();
-        let rows = crate::storage::postgres::operations::export_template::load_rows_in_collection(
-            backend,
-            collection_id,
-            exclude_template_id,
-        )
-        .await?;
+        let rows = storage_handle(backend)
+            .list_export_templates_in_collection(collection_id, exclude_template_id)
+            .await?;
 
-        rows.into_iter().map(TryInto::try_into).collect()
+        rows.into_iter().map(export_template_from_storage).collect()
     }
 }
 
@@ -571,41 +453,75 @@ impl SaveAdapter for NewExportTemplate {
 }
 
 impl NewExportTemplate {
+    fn storage_definition(&self) -> Result<StorageExportTemplateDefinition, ApiError> {
+        let content_type = self.content_type.ensure_template_output()?.as_mime();
+        Ok(StorageExportTemplateDefinition::new(
+            self.description.clone(),
+            content_type,
+            self.template.clone(),
+            self.kind.as_str(),
+        )
+        .with_scope(
+            self.scope_kind.map(|scope| scope.as_str().to_string()),
+            self.class_id,
+        )
+        .with_default_query(self.default_query.clone())
+        .with_include(to_optional_json(self.include.clone())?)
+        .with_relation_context(to_optional_json(self.relation_context.clone())?)
+        .with_default_missing_data_policy(
+            self.default_missing_data_policy
+                .map(|policy| policy.as_str().to_string()),
+        )
+        .with_default_limits(to_optional_json(self.default_limits.clone())?))
+    }
+
     async fn save_export_template(
         &self,
         pool: &impl crate::storage::StorageContext,
         context: Option<&EventContext>,
     ) -> Result<ExportTemplate, ApiError> {
-        let new_row = self.clone().into_row()?;
-        ensure_template_name_is_available(pool, new_row.collection_id, &new_row.name, None).await?;
+        let definition = self.storage_definition()?;
+        let include = to_optional_json(self.include.clone())?;
+        let relation_context = to_optional_json(self.relation_context.clone())?;
+        let default_limits = to_optional_json(self.default_limits.clone())?;
         validate_export_profile(
             pool,
-            new_row.collection_id,
+            self.collection_id,
             ExportProfileRef {
-                kind: ExportTemplateKind::from_str(&new_row.kind)?,
-                scope_kind: new_row.scope_kind.as_deref(),
-                class_id: new_row.class_id,
-                default_query: new_row.default_query.as_deref(),
-                include: new_row.include.as_ref(),
-                relation_context: new_row.relation_context.as_ref(),
-                default_missing_data_policy: new_row.default_missing_data_policy.as_deref(),
-                default_limits: new_row.default_limits.as_ref(),
+                kind: self.kind,
+                scope_kind: self.scope_kind.map(ExportScopeKind::as_str),
+                class_id: self.class_id,
+                default_query: self.default_query.as_deref(),
+                include: include.as_ref(),
+                relation_context: relation_context.as_ref(),
+                default_missing_data_policy: self
+                    .default_missing_data_policy
+                    .map(ExportMissingDataPolicy::as_str),
+                default_limits: default_limits.as_ref(),
             },
         )
         .await?;
-        let collection_templates = CollectionID::new(new_row.collection_id)?
+        let collection_templates = CollectionID::new(self.collection_id)?
             .export_templates(pool, None)
             .await?;
+        ensure_template_name_is_available(self.collection_id, &self.name, &collection_templates)?;
         validate_template(
-            &new_row.name,
-            &new_row.template,
-            new_row.collection_id,
+            &self.name,
+            &self.template,
+            self.collection_id,
             &collection_templates,
-            ExportContentType::from_mime(&new_row.content_type)?,
+            self.content_type,
         )?;
-        let row = new_row.save_export_template_record(pool, context).await?;
+        let stored = storage_handle(pool)
+            .create_export_template(StorageExportTemplateCreate::new(
+                self.collection_id,
+                self.name.clone(),
+                definition,
+                context.cloned(),
+            ))
+            .await?;
 
-        row.try_into()
+        export_template_from_storage(stored)
     }
 }
 
@@ -637,15 +553,16 @@ async fn apply_export_template_update(
     update: UpdateExportTemplate,
     context: Option<&EventContext>,
 ) -> Result<ExportTemplate, ApiError> {
-    let current_row = ExportTemplateID::new(template_id)?
-        .load_export_template_record(pool)
-        .await?;
+    let current = export_template_from_storage(
+        storage_handle(pool)
+            .get_export_template(template_id)
+            .await?,
+    )?;
 
     if update.is_empty() {
-        return current_row.try_into();
+        return Ok(current);
     }
 
-    let current = ExportTemplate::try_from(current_row.clone())?;
     let target_collection_id = update.collection_id.unwrap_or(current.collection_id);
     let target_name = update.name.clone().unwrap_or_else(|| current.name.clone());
     let target_description = update
@@ -674,8 +591,6 @@ async fn apply_export_template_update(
         default_limits: target_default_limits,
     } = resolve_export_profile(target_kind, update, &current);
 
-    ensure_template_name_is_available(pool, target_collection_id, &target_name, Some(template_id))
-        .await?;
     let include_json = to_optional_json(target_include)?;
     let relation_context_json = to_optional_json(target_relation_context)?;
     let default_limits_json = to_optional_json(target_default_limits)?;
@@ -698,6 +613,7 @@ async fn apply_export_template_update(
     let collection_templates = CollectionID::new(target_collection_id)?
         .export_templates(pool, Some(template_id))
         .await?;
+    ensure_template_name_is_available(target_collection_id, &target_name, &collection_templates)?;
     validate_template(
         &target_name,
         &target_template,
@@ -706,27 +622,36 @@ async fn apply_export_template_update(
         current.content_type,
     )?;
 
-    let changeset = UpdateExportTemplateRow {
-        collection_id: Some(target_collection_id),
-        name: Some(target_name),
-        description: Some(target_description),
-        template: Some(target_template),
-        kind: Some(target_kind.as_str().to_string()),
-        scope_kind: Some(target_scope_kind.map(|scope| scope.as_str().to_string())),
-        class_id: Some(target_class_id),
-        default_query: Some(target_default_query),
-        include: Some(include_json),
-        relation_context: Some(relation_context_json),
-        default_missing_data_policy: Some(
-            target_default_missing_data_policy.map(|policy| policy.as_str().to_string()),
-        ),
-        default_limits: Some(default_limits_json),
+    let replacement = ExportTemplate {
+        id: template_id,
+        collection_id: target_collection_id,
+        name: target_name,
+        description: target_description,
+        content_type: current.content_type,
+        template: target_template,
+        kind: target_kind,
+        scope_kind: target_scope_kind,
+        class_id: target_class_id,
+        default_query: target_default_query,
+        include: from_optional_json(include_json)?,
+        relation_context: from_optional_json(relation_context_json)?,
+        default_missing_data_policy: target_default_missing_data_policy,
+        default_limits: from_optional_json(default_limits_json)?,
+        created_at: current.created_at,
+        updated_at: current.updated_at,
+        revision: current.revision,
     };
-    let row = changeset
-        .update_export_template_record(pool, template_id, context)
+    let stored = storage_handle(pool)
+        .replace_export_template(StorageExportTemplateReplace::new(
+            template_id,
+            replacement.collection_id,
+            replacement.name.clone(),
+            storage_definition(&replacement)?,
+            context.cloned(),
+        ))
         .await?;
 
-    row.try_into()
+    export_template_from_storage(stored)
 }
 
 /// The export-execution metadata resolved for an update, after applying the patch over the current
@@ -809,8 +734,10 @@ impl DeleteAdapter for ExportTemplateID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        self.delete_export_template_record_without_events(pool)
-            .await
+        storage_handle(pool)
+            .delete_export_template(StorageExportTemplateDelete::new(self.id(), None))
+            .await?;
+        Ok(())
     }
 
     async fn delete_adapter(
@@ -818,8 +745,13 @@ impl DeleteAdapter for ExportTemplateID {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        self.delete_export_template_record(pool, Some(context))
-            .await
+        storage_handle(pool)
+            .delete_export_template(StorageExportTemplateDelete::new(
+                self.id(),
+                Some(context.clone()),
+            ))
+            .await?;
+        Ok(())
     }
 }
 
@@ -1020,7 +952,8 @@ async fn ensure_template_class_in_collection(
     target_collection_id: i32,
     target_class_id: i32,
 ) -> Result<(), ApiError> {
-    let class_collection_id = backend::class_collection_id(pool, target_class_id)
+    let class_collection_id = storage_handle(pool)
+        .export_template_class_collection_id(target_class_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
 
@@ -1083,17 +1016,15 @@ where
         .map_err(Into::into)
 }
 
-async fn ensure_template_name_is_available(
-    pool: &impl crate::storage::StorageContext,
+fn ensure_template_name_is_available(
     target_collection_id: i32,
     target_name: &str,
-    exclude_template_id: Option<i32>,
+    collection_templates: &[ExportTemplate],
 ) -> Result<(), ApiError> {
-    let conflict =
-        backend::name_conflict_exists(pool, target_collection_id, target_name, exclude_template_id)
-            .await?;
-
-    if conflict {
+    if collection_templates
+        .iter()
+        .any(|template| template.name == target_name)
+    {
         return Err(ApiError::Conflict(format!(
             "Template name '{}' already exists in collection {}",
             target_name, target_collection_id
@@ -1129,7 +1060,8 @@ impl InstanceAdapter<ExportTemplate> for ExportTemplateID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ExportTemplate, ApiError> {
-        self.load_export_template_record(pool).await?.try_into()
+        let stored = storage_handle(pool).get_export_template(self.id()).await?;
+        export_template_from_storage(stored)
     }
 }
 
@@ -1166,7 +1098,13 @@ impl CollectionAdapter for ExportTemplateID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<CollectionID, ApiError> {
-        self.lookup_export_template_collection_id(pool).await
+        CollectionID::new(
+            storage_handle(pool)
+                .get_export_template(self.id())
+                .await?
+                .into_parts()
+                .1,
+        )
     }
 }
 
@@ -1214,54 +1152,6 @@ impl CursorPaginated for ExportTemplate {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for ExportTemplate {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "export_templates.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "export_templates.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "export_templates.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
-                column: "export_templates.collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "export_templates.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "export_templates.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "export_templates.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for export templates",
-                    field
-                )));
-            }
-        })
     }
 }
 
@@ -1334,8 +1224,7 @@ fn update_export_template_example() -> UpdateExportTemplate {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::export_templates_history)]
+#[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct ExportTemplateHistory {
     pub id: i32,
     pub collection_id: i32,
@@ -1364,7 +1253,34 @@ pub struct ExportTemplateHistory {
     pub revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(ExportTemplateHistory, "export_templates_history");
+impl CursorPaginated for ExportTemplateHistory {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::HistoryId | FilterField::Revision)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::HistoryId => CursorValue::Integer(self.history_id),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
 
 #[async_trait]
 impl AuthzTarget for ExportTemplate {

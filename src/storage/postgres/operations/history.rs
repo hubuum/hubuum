@@ -2,8 +2,8 @@ use crate::errors::ApiError;
 use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
-    RemoteTargetHistory,
+    CollectionHistory, HubuumClassHistory, HubuumObjectHistory, RemoteTargetHistory,
+    ResourceRevision,
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
@@ -20,6 +20,38 @@ pub enum HistoryCollectionFilter<'a> {
     All,
     Visible(&'a [i32]),
 }
+
+#[derive(Queryable)]
+#[diesel(table_name = crate::schema::export_templates_history)]
+pub(crate) struct ExportTemplateHistoryRow {
+    id: i32,
+    collection_id: i32,
+    name: String,
+    description: String,
+    content_type: String,
+    template: String,
+    kind: String,
+    scope_kind: Option<String>,
+    class_id: Option<i32>,
+    default_query: Option<String>,
+    include: Option<serde_json::Value>,
+    relation_context: Option<serde_json::Value>,
+    default_missing_data_policy: Option<String>,
+    default_limits: Option<serde_json::Value>,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    op: String,
+    valid_from: chrono::DateTime<chrono::Utc>,
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    actor_id: Option<i32>,
+    history_id: i64,
+    actor_kind: Option<String>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    revision: ResourceRevision,
+}
+
+crate::impl_history_pagination!(ExportTemplateHistoryRow, "export_templates_history");
 
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
@@ -114,7 +146,7 @@ pub(crate) fn object_history_to_storage(row: HubuumObjectHistory) -> ObjectHisto
 }
 
 pub(crate) fn export_template_history_to_storage(
-    row: ExportTemplateHistory,
+    row: ExportTemplateHistoryRow,
 ) -> ExportTemplateHistoryRecord {
     ExportTemplateHistoryRecord::new(
         row.id,
@@ -168,7 +200,7 @@ macro_rules! history_db_fns {
         $visibility_column:ident,
         $ty:ty
     ) => {
-        pub async fn $paginate_fn(
+        pub(crate) async fn $paginate_fn(
             entity_id: i32,
             pool: &impl $crate::storage::StorageContext,
             query_options: &$crate::models::search::QueryOptions,
@@ -231,7 +263,7 @@ macro_rules! history_db_fns {
             Ok((items, total))
         }
 
-        pub async fn $as_of_fn(
+        pub(crate) async fn $as_of_fn(
             entity_id: i32,
             at: chrono::DateTime<chrono::Utc>,
             pool: &impl $crate::storage::StorageContext,
@@ -275,7 +307,7 @@ history_db_fns!(
     export_template_as_of,
     crate::schema::export_templates_history,
     collection_id,
-    crate::models::ExportTemplateHistory
+    ExportTemplateHistoryRow
 );
 
 history_db_fns!(

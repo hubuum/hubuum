@@ -77,6 +77,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Restores | Durable artifact staging, lifecycle transitions, global drain coordination, rollback-safe snapshot replacement, provenance, and recovery |
 | Imports | Planning lookups, rollback-only preflight, strict and best-effort application, and durable item results |
 | Export queries | Backend-enforced per-read budgets around export selection, includes, and relation hydration |
+| Export-template lifecycle | Point and visibility-scoped list reads, collection source discovery, class binding lookup, and atomic audited lifecycle writes |
 | Event administration | Visibility-scoped audit reads, event-sink and subscription lifecycle, and claim-free delivery inspection and intervention |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, worker coordination, and backend execution context |
 
@@ -99,6 +100,8 @@ owns target reads, lifecycle mutations, and invocation provenance.
 `RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
 `ImportStorage` owns the complete import workflow. `ExportQueryStorage` owns the
 backend read-budget scope used by selection, includes, and hydration.
+`ExportTemplateStorage` owns template point and list reads, collection source
+discovery, class binding lookup, and audited lifecycle writes.
 `AuditEventStorage`, `EventSubscriptionStorage`, and
 `EventDeliveryAdministrationStorage` own the complete event-administration
 surface.
@@ -110,24 +113,26 @@ and revision-precondition scopes used across requests and workers.
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
-`src/storage/postgres/operations/*`. Separating their persistence rows from
-root domain models is the next extraction layer; the current location is an
-implementation detail, not partial backend support. `StorageHandle` selects
-one certified PostgreSQL adapter, and only the storage implementation can
-recover its pool. Application consumers use `StorageContext`, lifecycle traits,
-mandatory capability traits, or application services. No second backend can be
-added to composition without implementing every operation behind those
-contracts.
+`src/storage/postgres/operations/*`. Export-template persistence rows are
+adapter-owned; remaining mixed persistence rows move there as their
+backend-neutral DTOs are extracted. Their current locations are implementation
+details, not partial backend support. `StorageHandle` selects one certified
+PostgreSQL adapter, and only the storage implementation can recover its pool.
+Application consumers use `StorageContext`, lifecycle traits, mandatory
+capability traits, or application services. No second backend can be added to
+composition without implementing every operation behind those contracts.
 
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 20 additionally requires coordinated initial-administrator bootstrap,
+Version 21 additionally requires the complete export-template lifecycle and a
+new `export_template_lifecycle` capability label. Version 20 required
+coordinated initial-administrator bootstrap,
 atomic local-password replacement with token revocation, the complete stored
 template set for administrator audits, and backend-aggregated export-template
 health. Process entry points construct an opaque backend through validated
 storage settings and cannot import the selected adapter, its pool, Diesel, or
-schema. The required capability labels are unchanged from version 19.
+schema.
 
 ## Export Query Semantics
 
@@ -143,6 +148,30 @@ transaction-local `statement_timeout` to every connection or transaction opened
 by the stage. That detail is private to the adapter and cannot leak back through
 the pool. The shared backend suite verifies the mandatory scope behavior, while
 PostgreSQL unit tests verify cancellation and timeout reset on connection reuse.
+
+## Export-Template Lifecycle Semantics
+
+Every selectable backend implements `ExportTemplateStorage`; point reads,
+visibility-scoped and unscoped candidate lists, collection source discovery,
+class-to-collection binding lookup, and audited lifecycle writes are one
+indivisible capability. A backend that only supports export execution or
+administrator template audits cannot satisfy `StorageBackend`.
+
+The application owns template syntax, export-profile, query, source-composition,
+and permission validation. It exchanges private-field
+`StorageExportTemplate*` DTOs with storage and resolves an API PATCH to one
+fully validated replacement before crossing the boundary. The adapter owns
+persistence rows, list pushdown, revision locking, transactions, and atomic
+event emission. PostgreSQL row types, Diesel derives, schemas, and query
+construction do not appear in the domain model, handlers, or export workflow.
+Backend-neutral cursor values remain on response models, while SQL column and
+type mappings live with the PostgreSQL rows.
+
+`StorageHandle` observes every entry point under bounded
+`export_templates/*` labels. The shared available-backend suite covers point,
+scoped list, collection-source, class-binding, create, replacement, and delete
+behavior; PostgreSQL-specific tests retain responsibility for native query,
+locking, constraint, and transaction mechanics.
 
 ## Execution Context Semantics
 
@@ -677,9 +706,10 @@ The first workspace boundaries are now in place:
   authorization, storage-execution, catalog-query, temporal-history,
   unified-search, operational
   state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
-  task-execution, backup-snapshot, remote-target, relation-query, event-health,
-  event-administration, event-fan-out, event-retention, and token-retention
-  traits without application, transport, or driver dependencies.
+  task-execution, backup-snapshot, remote-target, export-template lifecycle,
+  relation-query, event-health, event-administration, event-fan-out,
+  event-retention, and token-retention traits without application, transport,
+  or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.

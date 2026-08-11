@@ -257,6 +257,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "RestoreStorage",
         "ImportStorage",
         "ExportQueryStorage",
+        "ExportTemplateStorage",
         "StorageExecution",
         "sealed::CertifiedStorageBackend",
     ] {
@@ -373,6 +374,20 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         assert!(
             compact_context.contains(&format!("\"remote_targets\",\"{operation}\"")),
             "remote-target operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "get",
+        "list",
+        "list_in_collection",
+        "class_collection",
+        "create",
+        "replace",
+        "delete",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"export_templates\",\"{operation}\"")),
+            "export-template lifecycle operation {operation} must use the common storage observer"
         );
     }
     for operation in [
@@ -696,6 +711,42 @@ fn export_consumers_use_only_backend_neutral_query_and_authorization_contracts()
             assert!(
                 !production.contains(forbidden),
                 "{} still selects backend implementation detail {forbidden}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn export_template_consumers_use_only_the_backend_neutral_lifecycle_contract() {
+    let root = repository_root();
+    for file in [
+        "src/models/export_template.rs",
+        "src/api/v1/handlers/export_templates.rs",
+        "src/exports/mod.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "storage::postgres",
+            "diesel::",
+            "diesel_async",
+            "crate::schema",
+            "CursorSql",
+            "impl_history_pagination!",
+            "ExportTemplateRow",
+            "NewExportTemplateRow",
+            "UpdateExportTemplateRow",
+            "load_export_template_record",
+            "save_export_template_record",
+            "update_export_template_record",
+            "delete_export_template_record",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "{} still selects export-template adapter detail {forbidden}",
                 path.display()
             );
         }
