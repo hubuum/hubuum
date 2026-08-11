@@ -194,7 +194,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 29;
+pub const STORAGE_CONTRACT_VERSION: u16 = 1;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

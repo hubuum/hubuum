@@ -145,39 +145,13 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 29 additionally requires backend-neutral durable-worker notification
-listeners and adapter ownership of task, output, computed-field,
-materialization, computation-state, and revision persistence mappings. Version
-28 additionally requires complete human-user and bearer-token lifecycle
-traits, effective principal-group pages, secret-free token issuance, and
-identity-subtype persistence rows owned entirely by adapters. Version 27
-required principal point reads and the complete audited settings lifecycle to
-cross one mandatory, observed storage contract. Principal and
-principal-membership query rows, Diesel mappings, and SQL cursor mappings are
-adapter-owned. Version 26 additionally requires group point and lifecycle writes,
-identity-scope resolution, and complete membership mutation and query behavior
-to cross one mandatory, observed storage contract. Group, membership, update,
-and SQL cursor rows are adapter-owned. Version 25 required collection point and compatibility writes,
-hierarchy operations, and collection-permission projections to cross mandatory,
-observed storage contracts. Collection lifecycle and history rows, Diesel
-mappings, and SQL cursor mappings are adapter-owned. Version 24 required class
-point persistence, bulk name resolution, and event-suppressed compatibility
-writes to cross one mandatory, observed storage contract. Class lifecycle and
-history rows, Diesel mappings, and SQL cursor mappings are adapter-owned. Version
-23 required class- and object-relation point operations, lifecycle writes, and
-event-suppressed compatibility writes to cross the same mandatory, observed
-storage contract. Relation persistence and graph query rows, Diesel mappings,
-and SQL cursor mappings are adapter-owned. Version 22 required
-consistent administrative inventory queries, the `inventory_queries`
-capability label, and mandatory object point-operation abstraction. Version 21
-required the complete export-template lifecycle and a new
-`export_template_lifecycle` capability label. Version 20 required
-coordinated initial-administrator bootstrap,
-atomic local-password replacement with token revocation, the complete stored
-template set for administrator audits, and backend-aggregated export-template
-health. Process entry points construct an opaque backend through validated
-storage settings and cannot import the selected adapter, its pool, Diesel, or
-schema.
+Version 1 establishes the complete contract described in this document. It
+requires backend-neutral DTOs and errors, every advertised capability as a
+mandatory trait, uniformly observed entry points, adapter-owned native
+mechanics, and shared compatibility tests for every selectable backend.
+PostgreSQL is the only selectable production backend in version 1; logical
+memory models remain focused contract-test fixtures and cannot be selected at
+runtime.
 
 ## Export Query Semantics
 
