@@ -1,16 +1,364 @@
+use std::fmt;
+
 use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
 use crate::apply_query_options;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::remote_target::{
-    NewRemoteCallResult, NewRemoteTargetRow, RemoteCallResult, RemoteTarget, RemoteTargetID,
-    RemoteTargetRow, UpdateRemoteTargetRow,
+#[cfg(feature = "integration-test-support")]
+use crate::models::remote_target::RemoteCallResult;
+use crate::models::remote_target::RemoteTargetID;
+use crate::models::search::{FilterField, QueryOptions, SortParam};
+use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
+use crate::pagination::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
-use crate::models::search::{FilterField, QueryOptions};
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::{date_search, numeric_search, revision_search, string_search};
+
+macro_rules! impl_redacted_remote_target_row_debug {
+    ($target:ty, $($field:ident),+ $(,)?) => {
+        impl fmt::Debug for $target {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($target));
+                $(debug.field(stringify!($field), &self.$field);)+
+                debug
+                    .field("configuration", &REDACTED_DEBUG_VALUE)
+                    .finish()
+            }
+        }
+    };
+}
+
+#[derive(Clone, Queryable, Selectable)]
+#[diesel(table_name = crate::schema::remote_targets)]
+pub(crate) struct RemoteTargetRow {
+    pub(crate) id: i32,
+    pub(crate) collection_id: i32,
+    pub(crate) class_id: Option<i32>,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) method: String,
+    pub(crate) url_template: String,
+    pub(crate) headers_template: serde_json::Value,
+    pub(crate) body_template: Option<String>,
+    pub(crate) auth_config: serde_json::Value,
+    pub(crate) allowed_subject_types: serde_json::Value,
+    pub(crate) timeout_ms: i32,
+    pub(crate) enabled: bool,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) revision: ResourceRevision,
+}
+
+impl_redacted_remote_target_row_debug!(
+    RemoteTargetRow,
+    id,
+    collection_id,
+    class_id,
+    name,
+    description,
+    method,
+    allowed_subject_types,
+    timeout_ms,
+    enabled,
+    created_at,
+    updated_at,
+);
+
+impl RemoteTargetRow {
+    pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "collection_id": self.collection_id,
+            "class_id": self.class_id,
+            "name": self.name,
+            "description": self.description,
+            "method": self.method,
+            "url_template": self.url_template,
+            "headers_template": self.headers_template,
+            "body_template": self.body_template,
+            "auth_config": "<redacted>",
+            "allowed_subject_types": self.allowed_subject_types,
+            "timeout_ms": self.timeout_ms,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "revision": self.revision,
+        })
+    }
+}
+
+impl CursorPaginated for RemoteTargetRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Description
+                | FilterField::CollectionId
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::Revision
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id.into())),
+            FilterField::Name => Ok(CursorValue::String(self.name.clone())),
+            FilterField::Description => Ok(CursorValue::String(self.description.clone())),
+            FilterField::CollectionId => Ok(CursorValue::Integer(self.collection_id.into())),
+            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::UpdatedAt => Ok(CursorValue::DateTime(self.updated_at)),
+            FilterField::Revision => Ok(CursorValue::Integer(self.revision.get())),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{field}' for remote targets"
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for RemoteTargetRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "remote_targets.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "remote_targets.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "remote_targets.description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CollectionId => CursorSqlField {
+                column: "remote_targets.collection_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "remote_targets.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "remote_targets.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "remote_targets.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{field}' is not orderable for remote targets"
+                )));
+            }
+        })
+    }
+}
+
+#[derive(Clone, Insertable)]
+#[diesel(table_name = crate::schema::remote_targets)]
+pub(crate) struct NewRemoteTargetRow {
+    pub(crate) collection_id: i32,
+    pub(crate) class_id: Option<i32>,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) method: String,
+    pub(crate) url_template: String,
+    pub(crate) headers_template: serde_json::Value,
+    pub(crate) body_template: Option<String>,
+    pub(crate) auth_config: serde_json::Value,
+    pub(crate) allowed_subject_types: serde_json::Value,
+    pub(crate) timeout_ms: i32,
+    pub(crate) enabled: bool,
+}
+
+impl_redacted_remote_target_row_debug!(
+    NewRemoteTargetRow,
+    collection_id,
+    class_id,
+    name,
+    description,
+    method,
+    allowed_subject_types,
+    timeout_ms,
+    enabled,
+);
+
+#[derive(Clone, AsChangeset)]
+#[diesel(table_name = crate::schema::remote_targets)]
+pub(crate) struct UpdateRemoteTargetRow {
+    pub(crate) collection_id: Option<i32>,
+    pub(crate) class_id: Option<Option<i32>>,
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) method: Option<String>,
+    pub(crate) url_template: Option<String>,
+    pub(crate) headers_template: Option<serde_json::Value>,
+    pub(crate) body_template: Option<Option<String>>,
+    pub(crate) auth_config: Option<serde_json::Value>,
+    pub(crate) allowed_subject_types: Option<serde_json::Value>,
+    pub(crate) timeout_ms: Option<i32>,
+    pub(crate) enabled: Option<bool>,
+}
+
+impl_redacted_remote_target_row_debug!(
+    UpdateRemoteTargetRow,
+    collection_id,
+    class_id,
+    name,
+    description,
+    method,
+    allowed_subject_types,
+    timeout_ms,
+    enabled,
+);
+
+impl UpdateRemoteTargetRow {
+    pub(crate) fn has_changes(&self, current: &RemoteTargetRow) -> bool {
+        self.collection_id
+            .is_some_and(|value| value != current.collection_id)
+            || self
+                .class_id
+                .as_ref()
+                .is_some_and(|value| value != &current.class_id)
+            || self
+                .name
+                .as_ref()
+                .is_some_and(|value| value != &current.name)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+            || self
+                .method
+                .as_ref()
+                .is_some_and(|value| value != &current.method)
+            || self
+                .url_template
+                .as_ref()
+                .is_some_and(|value| value != &current.url_template)
+            || self
+                .headers_template
+                .as_ref()
+                .is_some_and(|value| value != &current.headers_template)
+            || self
+                .body_template
+                .as_ref()
+                .is_some_and(|value| value != &current.body_template)
+            || self
+                .auth_config
+                .as_ref()
+                .is_some_and(|value| value != &current.auth_config)
+            || self
+                .allowed_subject_types
+                .as_ref()
+                .is_some_and(|value| value != &current.allowed_subject_types)
+            || self
+                .timeout_ms
+                .is_some_and(|value| value != current.timeout_ms)
+            || self.enabled.is_some_and(|value| value != current.enabled)
+    }
+}
+
+#[cfg(feature = "integration-test-support")]
+#[derive(Clone, Queryable, Selectable)]
+#[diesel(table_name = crate::schema::remote_call_results)]
+struct RemoteCallResultRow {
+    id: i32,
+    task_id: i32,
+    target_id: Option<i32>,
+    subject_type: String,
+    subject_id: i32,
+    method: String,
+    rendered_url: String,
+    response_status: Option<i32>,
+    response_headers: Option<serde_json::Value>,
+    response_body_preview: Option<String>,
+    duration_ms: i32,
+    success: bool,
+    error: Option<String>,
+    created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Clone, Insertable)]
+#[diesel(table_name = crate::schema::remote_call_results)]
+pub(crate) struct NewRemoteCallResultRow {
+    pub(crate) task_id: i32,
+    pub(crate) target_id: Option<i32>,
+    pub(crate) subject_type: String,
+    pub(crate) subject_id: i32,
+    pub(crate) method: String,
+    pub(crate) rendered_url: String,
+    pub(crate) response_status: Option<i32>,
+    pub(crate) response_headers: Option<serde_json::Value>,
+    pub(crate) response_body_preview: Option<String>,
+    pub(crate) duration_ms: i32,
+    pub(crate) success: bool,
+    pub(crate) error: Option<String>,
+}
+
+impl fmt::Debug for NewRemoteCallResultRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NewRemoteCallResultRow")
+            .field("task_id", &self.task_id)
+            .field("target_id", &self.target_id)
+            .field("subject_type", &self.subject_type)
+            .field("subject_id", &self.subject_id)
+            .field("method", &self.method)
+            .field("response_status", &self.response_status)
+            .field("duration_ms", &self.duration_ms)
+            .field("success", &self.success)
+            .field("rendered_url", &REDACTED_DEBUG_VALUE)
+            .field("response_headers", &REDACTED_DEBUG_VALUE)
+            .field("response_body_preview", &REDACTED_DEBUG_VALUE)
+            .field("error", &redacted_debug_option(&self.error))
+            .finish()
+    }
+}
+
+#[cfg(feature = "integration-test-support")]
+fn remote_call_result_to_model(row: RemoteCallResultRow) -> RemoteCallResult {
+    RemoteCallResult {
+        id: row.id,
+        task_id: row.task_id,
+        target_id: row.target_id,
+        subject_type: row.subject_type,
+        subject_id: row.subject_id,
+        method: row.method,
+        rendered_url: row.rendered_url,
+        response_status: row.response_status,
+        response_headers: row.response_headers,
+        response_body_preview: row.response_body_preview,
+        duration_ms: row.duration_ms,
+        success: row.success,
+        error: row.error,
+        created_at: row.created_at,
+    }
+}
 
 fn remote_target_event(
     row: &RemoteTargetRow,
@@ -321,7 +669,7 @@ pub(crate) async fn list_rows_with_total_count(
     .await?;
 
     let mut query = build_list_query(allowed_collection_ids, query_options)?;
-    apply_query_options!(query, query_options, RemoteTarget);
+    apply_query_options!(query, query_options, RemoteTargetRow);
     let rows =
         with_connection(pool, async |conn| query.load::<RemoteTargetRow>(conn).await).await?;
 
@@ -369,11 +717,11 @@ fn build_list_query<'a>(
 
 pub(crate) async fn upsert_remote_call_result_conn(
     conn: &mut crate::storage::postgres::PostgresConnection,
-    entry: NewRemoteCallResult,
-) -> Result<RemoteCallResult, ApiError> {
+    entry: NewRemoteCallResultRow,
+) -> Result<(), ApiError> {
     use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
 
-    Ok(diesel::insert_into(remote_call_results)
+    diesel::insert_into(remote_call_results)
         .values(&entry)
         .on_conflict(task_id)
         .do_update()
@@ -391,6 +739,24 @@ pub(crate) async fn upsert_remote_call_result_conn(
             crate::schema::remote_call_results::success.eq(entry.success),
             crate::schema::remote_call_results::error.eq(entry.error.clone()),
         ))
-        .get_result::<RemoteCallResult>(conn)
-        .await?)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn load_remote_call_result_for_task(
+    pool: &impl crate::storage::StorageContext,
+    task_id_value: i32,
+) -> Result<RemoteCallResult, ApiError> {
+    use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
+
+    with_connection(pool, async |conn| {
+        remote_call_results
+            .filter(task_id.eq(task_id_value))
+            .first::<RemoteCallResultRow>(conn)
+            .await
+    })
+    .await
+    .map(remote_call_result_to_model)
 }

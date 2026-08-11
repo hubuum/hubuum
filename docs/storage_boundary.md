@@ -113,11 +113,12 @@ and revision-precondition scopes used across requests and workers.
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
-`src/storage/postgres/operations/*`. Export-template persistence rows are
-adapter-owned; remaining mixed persistence rows move there as their
-backend-neutral DTOs are extracted. Their current locations are implementation
-details, not partial backend support. `StorageHandle` selects one certified
-PostgreSQL adapter, and only the storage implementation can recover its pool.
+`src/storage/postgres/operations/*`. Export-template and remote-target
+lifecycle, history, and remote-call result persistence rows are adapter-owned;
+remaining mixed persistence rows move there as their backend-neutral DTOs are
+extracted. Their current locations are implementation details, not partial
+backend support. `StorageHandle` selects one certified PostgreSQL adapter, and
+only the storage implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
 capability traits, or application services. No second backend can be added to
 composition without implementing every operation behind those contracts.
@@ -434,12 +435,14 @@ real matching rows.
 `RemoteTargetStorage` owns remote-target point and list reads, atomic audited
 create/update/delete behavior, and invocation provenance. Transport templates,
 authentication configuration, and subject policy cross the boundary only in
-private-field, redacted-debug storage DTOs; Diesel rows stay in the PostgreSQL
-adapter. The application service performs public-model validation and converts
-between API/domain models and storage DTOs. Handlers and remote-call workers do
-not import adapter operations or recover a pool. Every entry point is observed
-under bounded `remote_targets/*` labels, and the available-backend compatibility
-test exercises all six operations.
+private-field, redacted-debug storage DTOs. Lifecycle, temporal-history, and
+remote-call result persistence rows, SQL cursor mappings, and query construction
+stay in the PostgreSQL adapter. The application service performs public-model
+validation and converts between API/domain models and storage DTOs. Handlers,
+remote-call workers, and request-level compatibility tests do not import adapter
+operations or recover a pool. Every entry point is observed under bounded
+`remote_targets/*` labels, and the available-backend compatibility test exercises
+all six operations.
 
 `CatalogStorage` owns the ordinary collection, class, and object query surface.
 Each operation applies backend-neutral filters, stable cursor state, local

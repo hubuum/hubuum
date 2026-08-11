@@ -21,8 +21,8 @@ use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
     ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
     NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewRemoteCallResult, NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID,
-    TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus, TokenID,
+    NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord,
+    TaskResponse, TaskResultCounts, TaskStatus, TokenID,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -31,6 +31,8 @@ use crate::storage::postgres::operations::history::resolve_principal_names;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::tasks::TaskLeaseDuration;
+
+use super::remote_target::NewRemoteCallResultRow;
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
@@ -773,13 +775,17 @@ pub trait TaskBackend: TaskIdentifier {
         record_task_terminal(&record);
         Ok(record)
     }
+}
 
+impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
+
+pub(crate) trait RemoteCallTaskBackend: TaskIdentifier {
     async fn finalize_remote_call_with_result(
         &self,
         pool: &impl crate::storage::StorageContext,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
-        result: NewRemoteCallResult,
+        result: NewRemoteCallResultRow,
     ) -> Result<TaskRecord, ApiError> {
         let task_id_value = self.task_id();
         let task_lease_token = self.task_lease_token();
@@ -794,7 +800,7 @@ pub trait TaskBackend: TaskIdentifier {
     }
 }
 
-impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
+impl<T: TaskIdentifier + ?Sized> RemoteCallTaskBackend for T {}
 
 pub(crate) async fn finalize_terminal_conn(
     conn: &mut crate::storage::postgres::PostgresConnection,
@@ -1940,21 +1946,22 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        CLAIM_NEXT_QUEUED_TASK_SQL, TaskBackend, TaskCreateRequest, TaskScopeSnapshot,
-        TaskStateUpdate, claim_next_queued_task, database_now, insert_import_results,
-        insert_internal_queued_task, recover_expired_task_lease, renew_task_lease,
-        task_capacity_lock_key, task_event_responses, task_kind_claim_order,
+        CLAIM_NEXT_QUEUED_TASK_SQL, RemoteCallTaskBackend, TaskBackend, TaskCreateRequest,
+        TaskScopeSnapshot, TaskStateUpdate, claim_next_queued_task, database_now,
+        insert_import_results, insert_internal_queued_task, recover_expired_task_lease,
+        renew_task_lease, task_capacity_lock_key, task_event_responses, task_kind_claim_order,
     };
     use crate::errors::ApiError;
     use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
     use crate::models::search::QueryOptions;
     use crate::models::{
-        CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewRemoteCallResult,
-        NewTaskEventRecord, NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
+        CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
+        NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
         RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
         StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
         TokenScope,
     };
+    use crate::storage::postgres::operations::remote_target::NewRemoteCallResultRow;
     use crate::storage::postgres::operations::user::DeleteUserRecord;
     use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
     use crate::tasks::TaskLeaseDuration;
@@ -2657,7 +2664,7 @@ mod tests {
                     message: "stale remote-call completion".to_string(),
                     data: None,
                 },
-                NewRemoteCallResult {
+                NewRemoteCallResultRow {
                     task_id: leased.id,
                     target_id: None,
                     subject_type: "collection".to_string(),
