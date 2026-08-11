@@ -44,15 +44,6 @@ impl<T> LifecycleStorage for T where
 {
 }
 
-/// Temporary migration gate for the operational capability family whose
-/// operation-shaped traits have not yet been fully extracted.
-///
-/// These gates prevent another implementation from becoming selectable during
-/// the refactor, but they do not certify behavior. Each one must be replaced by
-/// mandatory operation-shaped traits and shared compatibility tests, as the
-/// authentication gate has been in this layer.
-pub(crate) trait OperationalStorage: Send + Sync {}
-
 mod sealed {
     pub trait CertifiedStorageBackend {}
 }
@@ -86,13 +77,11 @@ pub(crate) trait StorageBackend:
     + RestoreStorage
     + ImportStorage
     + ExportQueryStorage
-    + OperationalStorage
     + sealed::CertifiedStorageBackend
 {
     fn descriptor(&self) -> StorageBackendDescriptor;
 }
 
-impl OperationalStorage for PostgresStorage {}
 impl sealed::CertifiedStorageBackend for PostgresStorage {}
 
 impl StorageBackend for PostgresStorage {

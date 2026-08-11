@@ -59,7 +59,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Authorization resource hydration and all-permissions-on-all-collections
   decisions now use mandatory backend-neutral DTOs and operations; application
   traits, export code, and handlers no longer import PostgreSQL authorization
-  query helpers.
+  query helpers. Backend certification no longer contains provisional workflow
+  or operational markers: all advertised families are enforced through
+  operation-shaped traits and shared available-backend tests.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.
