@@ -25,16 +25,16 @@ use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::search::{QueryOptions, parse_query_parameter};
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
-    CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSinkKind,
-    ExportContentType, ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID,
-    HubuumClassRelationID, HubuumObjectID, NewExportTemplate, NewHubuumClassRelation,
-    NewHubuumObjectRelation, NewUser, ObjectRelationLimit, Permissions, PermissionsList,
-    PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID,
-    TokenScope, UpdateExportTemplate, UpdateUser, UserID,
+    CollectionID, EventDeliveryID, EventDeliveryStatus, EventSinkKind, ExportContentType,
+    ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID,
+    HubuumObjectID, NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
+    ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
+    PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
+    UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::storage::postgres::operations::event_delivery::{
-    claim_event_deliveries, claim_event_delivery_by_id, mark_event_delivery_dead,
+    EventDeliveryRow, claim_event_deliveries, claim_event_delivery_by_id, mark_event_delivery_dead,
     mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
 };
 use crate::storage::postgres::operations::event_fanout::{
@@ -475,13 +475,13 @@ async fn mark_event_dispatched(scope: &TestScope, event_id_value: i64) {
     .unwrap();
 }
 
-async fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDelivery {
+async fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDeliveryRow {
     use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
 
     with_connection(&scope.pool, async |conn| {
         event_deliveries
             .filter(event_id.eq(event_id_value))
-            .first::<EventDelivery>(conn)
+            .first::<EventDeliveryRow>(conn)
             .await
     })
     .await

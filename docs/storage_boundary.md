@@ -114,10 +114,10 @@ considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Export-template, remote-target, event-sink,
-and event-subscription lifecycle rows are adapter-owned, as are remote-target
-history and remote-call result persistence rows. Remaining mixed persistence
-rows move there as their backend-neutral DTOs are extracted. Their current
-locations are implementation details, not partial backend support.
+event-subscription, and event-delivery lifecycle rows are adapter-owned, as are
+remote-target history and remote-call result persistence rows. Remaining mixed
+persistence rows move there as their backend-neutral DTOs are extracted. Their
+current locations are implementation details, not partial backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
@@ -558,12 +558,12 @@ through related collections. Sink and subscription writes are atomic with
 their lifecycle events, and subscription point and mutation operations are
 collection-scoped at the contract boundary.
 
-Event-sink and event-subscription API models contain no Diesel derives, schema
-bindings, persistence changesets, or SQL cursor mappings. Those rows and
-mappings stay in the PostgreSQL adapter, which converts them to backend-neutral
-storage DTOs. Handlers and request-level compatibility tests use application or
-test-support entry points rather than importing adapter rows or opening SQL
-connections.
+Event-sink, event-subscription, and event-delivery API models contain no Diesel
+derives, schema bindings, persistence changesets, claim tokens, or SQL cursor
+mappings. Those rows and mappings stay in the PostgreSQL adapter, which converts
+them to backend-neutral storage DTOs. Handlers and request-level tests use
+application or test-support entry points rather than importing adapter rows,
+opening SQL connections, or mutating delivery tables directly.
 
 Delivery administration returns claim-free projections. Opaque worker claim
 tokens never cross into handlers, logs, or administrator responses. Listing

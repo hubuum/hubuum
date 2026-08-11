@@ -628,7 +628,9 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
     }
 
     for file in [
+        "src/models/event_delivery.rs",
         "src/models/event_subscription.rs",
+        "tests/api_platform_suite/event_deliveries.rs",
         "tests/api_platform_suite/event_subscriptions.rs",
     ] {
         let path = root.join(file);
@@ -646,6 +648,7 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
             "EventSubscriptionRow",
             "NewEventSubscriptionRow",
             "UpdateEventSubscriptionRow",
+            "EventDeliveryRow",
         ] {
             assert!(
                 !source.contains(forbidden),
