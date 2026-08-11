@@ -77,6 +77,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Restores | Durable artifact staging, lifecycle transitions, global drain coordination, rollback-safe snapshot replacement, provenance, and recovery |
 | Imports | Planning lookups, rollback-only preflight, strict and best-effort application, and durable item results |
 | Export queries | Backend-enforced per-read budgets around export selection, includes, and relation hydration |
+| Event administration | Visibility-scoped audit reads, event-sink and subscription lifecycle, and claim-free delivery inspection and intervention |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, worker coordination, and backend execution context |
 
 The families are not feature flags and the admin configuration does not report
@@ -98,6 +99,9 @@ owns target reads, lifecycle mutations, and invocation provenance.
 `RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
 `ImportStorage` owns the complete import workflow. `ExportQueryStorage` owns the
 backend read-budget scope used by selection, includes, and hydration.
+`AuditEventStorage`, `EventSubscriptionStorage`, and
+`EventDeliveryAdministrationStorage` own the complete event-administration
+surface.
 `StorageExecution` owns diagnostic call-site attribution, mutation provenance,
 and revision-precondition scopes used across requests and workers.
 `OperationalStateStorage`, `MetricsStorage`, `EventHealthStorage`,
@@ -118,8 +122,8 @@ contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 17 requires the complete `IdentityStorage` operation set described
-below; the required capability labels are unchanged.
+Version 18 requires the complete event-administration operation set described
+below and adds the `event_administration` capability label.
 
 ## Export Query Semantics
 
@@ -480,6 +484,36 @@ available-backend compatibility test invokes every operation. Claiming,
 leasing, terminal transitions, and workflow-specific atomic writes remain a
 separate mandatory extraction rather than optional backend behavior.
 
+## Event Administration Semantics
+
+Every selectable backend implements `AuditEventStorage`,
+`EventSubscriptionStorage`, and `EventDeliveryAdministrationStorage` as one
+required family. A backend cannot omit administrative event behavior while
+still advertising support for event workers.
+
+The application owns query-string parsing, authorization and visibility
+decisions, transport validation, API models, revision tags, and conversion to
+`ApiError`. The boundary receives typed audit filters and normalized visible
+collection IDs. Backends must apply visibility before filtering, counting, and
+paging; enrich durable provenance; and redact payloads that are visible only
+through related collections. Sink and subscription writes are atomic with
+their lifecycle events, and subscription point and mutation operations are
+collection-scoped at the contract boundary.
+
+Delivery administration returns claim-free projections. Opaque worker claim
+tokens never cross into handlers, logs, or administrator responses. Listing
+can be scoped to a subscription for backend-level workflows and compatibility
+tests; retry and dead-letter operations atomically clear backend-owned claim
+state, with retry also waking native delivery workers.
+
+`StorageHandle` observes the family under bounded `audit_events/*`,
+`event_subscriptions/*`, and `event_delivery/*` labels. The shared compatibility
+test creates and updates a sink and subscription, reads their audit events,
+fans out a matching lifecycle event, exercises delivery list/load/dead/retry,
+and removes the fixtures using only mandatory traits. PostgreSQL-specific tests
+remain responsible for SQL filters, row locks, notifications, transaction
+rollback, and claim concurrency.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:
@@ -560,7 +594,9 @@ There are two complementary test layers:
    query and enrichment entry points; the computed-field lifecycle contract
    covers every shared and personal definition, state, and rebuild entry point;
    and the object-aggregate contract covers both storage-pushdown and delegated
-   policy execution.
+   policy execution. The event-administration contract covers audit visibility,
+   sink and subscription lifecycle, fan-out-created deliveries, and operator
+   retry and dead-letter intervention.
 
 PostgreSQL-specific tests remain responsible for behavior a logical model
 cannot reproduce: transactions, rollbacks, isolation, row locks, trigger
@@ -602,8 +638,8 @@ The first workspace boundaries are now in place:
   unified-search, operational
   state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
   task-execution, backup-snapshot, remote-target, relation-query, event-health,
-  event-fan-out, event-retention, and token-retention traits without application,
-  transport, or driver dependencies.
+  event-administration, event-fan-out, event-retention, and token-retention
+  traits without application, transport, or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.

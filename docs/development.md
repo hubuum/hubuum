@@ -71,8 +71,9 @@ for package classifications, publishing policy, and promotion requirements.
   `StorageContext` is a sealed, opaque persistence capability. Consumers pass
   it to operations but cannot extract or select the database implementation.
 - `src/storage/capabilities.rs`:
-  Application-facing capability facade for query, workflow, and operational
-  contracts that do not yet have multiple storage implementations.
+  A narrow transitional facade for the few unmigrated collection, metadata,
+  and permission operations plus test-only adapter fixtures. Migrated
+  application code must use services and mandatory storage traits instead.
 - `src/storage/postgres/operations/*`:
   Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
@@ -83,10 +84,12 @@ Metrics, readiness, maintenance state, event persistence health, atomic event
 fan-out, delivery, event retention, and token retention are also expressed as
 required storage traits with backend-neutral inputs and results. Delivery
 workers receive enriched work-item DTOs and acknowledge opaque claims through
-the contract. Retention archives receive storage-owned event DTOs rather than
-PostgreSQL row models. Runtime worker settings and counters are enriched above
-the event-health storage boundary. Validated event-worker and retention
-policies live in
+the contract. Audit reads, sink and subscription lifecycle, enabled-sink
+discovery, and claim-free delivery administration form a separate mandatory
+event-administration family. Retention archives receive storage-owned event
+DTOs rather than PostgreSQL row models. Runtime worker settings and counters
+are enriched above the event-health storage boundary. Validated event-worker
+and retention policies live in
 `hubuum-domain`; adapter-only query limits are derived through neutral
 accessors rather than leaking database terminology to consumers. A selectable
 backend must nevertheless satisfy the complete application storage contract.
@@ -120,8 +123,9 @@ To keep PostgreSQL adapter code navigable, its operations are split into focused
   `relations.rs`, `records.rs`, `permissions.rs`
 
 The `mod.rs` files in these folders organize PostgreSQL operations and their
-adapter-local extension traits. Application code must use the explicit storage
-capability facade instead of importing these modules directly.
+adapter-local extension traits. Application code must use application services
+and mandatory storage contracts instead of importing these modules directly;
+only explicitly documented unmigrated paths may use the transitional facade.
 
 ### Collection hierarchy implementation
 

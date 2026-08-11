@@ -13,8 +13,10 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::event_subscription::{
-    DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
+use crate::services::event_administration::{
+    create_event_subscription as create_event_subscription_service,
+    delete_event_subscription as delete_event_subscription_service, list_event_subscriptions,
+    load_event_subscription, update_event_subscription as update_event_subscription_service,
 };
 use crate::storage::with_revision_precondition;
 use crate::traits::UserPermissions;
@@ -53,14 +55,14 @@ pub async fn create_event_subscription(
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    subscription.sink_id.instance(&context).await?;
     let event_context = requestor.event_context(&req);
-    let created: EventSubscription = subscription
-        .into_inner()
-        .into_row(collection_id)?
-        .save_event_subscription_record(&context, &event_context)
-        .await?
-        .try_into()?;
+    let created = create_event_subscription_service(
+        &context,
+        collection_id.id(),
+        subscription.into_inner(),
+        event_context,
+    )
+    .await?;
     let location = ResponseLocation::new(format!(
         "/api/v1/collections/{}/event-subscriptions/{}",
         created.collection_id, created.id
@@ -101,8 +103,7 @@ pub async fn get_event_subscriptions(
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<EventSubscription>(&params)?;
     let (subscriptions, total_count) =
-        EventSubscription::list_with_total_count(&context, collection_id.id(), &query_options)
-            .await?;
+        list_event_subscriptions(&context, collection_id.id(), query_options).await?;
     ApiResponse::paginated(subscriptions, total_count, &params)
 }
 
@@ -136,8 +137,8 @@ pub async fn get_event_subscription(
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    let subscription = subscription_id.instance(&context).await?;
-    ensure_subscription_collection(&subscription, collection_id)?;
+    let subscription =
+        load_event_subscription(&context, collection_id.id(), subscription_id.id()).await?;
     ApiResponse::ok_revisioned(subscription)
 }
 
@@ -182,22 +183,23 @@ pub async fn patch_event_subscription(
             "Event subscription update must include at least one field".to_string(),
         ));
     }
-    if let Some(sink_id) = update.sink_id {
-        sink_id.instance(&context).await?;
-    }
-    let existing = subscription_id.instance(&context).await?;
-    ensure_subscription_collection(&existing, collection_id)?;
+    let existing =
+        load_event_subscription(&context, collection_id.id(), subscription_id.id()).await?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
-    let updated: EventSubscription = with_revision_precondition(
+    let updated = with_revision_precondition(
         &context,
         precondition,
-        update
-            .into_row(&existing)?
-            .update_event_subscription_record(&context, existing.id, &event_context),
+        update_event_subscription_service(
+            &context,
+            collection_id.id(),
+            existing.id,
+            update,
+            &existing,
+            event_context,
+        ),
     )
-    .await?
-    .try_into()?;
+    .await?;
     ApiResponse::ok_revisioned(updated)
 }
 
@@ -232,31 +234,23 @@ pub async fn delete_event_subscription(
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    let existing = subscription_id.instance(&context).await?;
-    ensure_subscription_collection(&existing, collection_id)?;
+    let existing =
+        load_event_subscription(&context, collection_id.id(), subscription_id.id()).await?;
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition(
         &context,
         precondition,
-        subscription_id.delete_event_subscription_record(&context, &event_context),
+        delete_event_subscription_service(
+            &context,
+            collection_id.id(),
+            subscription_id.id(),
+            event_context,
+        ),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
-}
-
-fn ensure_subscription_collection(
-    subscription: &EventSubscription,
-    collection_id: CollectionID,
-) -> Result<(), ApiError> {
-    if subscription.collection_id == collection_id.id() {
-        Ok(())
-    } else {
-        Err(ApiError::NotFound(
-            "Event subscription not found in collection".to_string(),
-        ))
-    }
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {

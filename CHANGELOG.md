@@ -27,6 +27,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (administrator API):** the storage contract version is now `18`
+  and the required capability list includes `event_administration`. Audit-event
+  reads, event-sink and collection-scoped subscription lifecycle, enabled-sink
+  discovery, and claim-free delivery inspection, retry, and dead-letter
+  operations now form mandatory backend contracts. Application entry points
+  use backend-neutral DTOs and services, every operation receives common
+  bounded storage tracing and metrics, and the shared available-backend suite
+  exercises the complete lifecycle through real fan-out. Public HTTP response
+  shapes are unchanged. Administration and monitoring clients matching
+  contract version `17` must accept version `18` and the new capability label.
 - **Breaking (administrator API):** the storage contract version is now `17`.
   Identity-scope reconciliation, principal-group membership, retained-token
   metadata, principal disablement, service-account reads and lifecycle, and

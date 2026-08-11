@@ -10,7 +10,8 @@ use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::events::{
-    EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
+    Action, EntityType, EventContext, EventFanoutSettings, EventRetentionSettings,
+    MutationProvenance,
 };
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
@@ -29,25 +30,31 @@ use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    AuthenticationCredential, AuthenticationStorage, AuthenticationTokenScopeQuery,
-    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
-    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
-    AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
-    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
-    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
-    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
+    AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
+    AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrantKey, AuthorizationGrantMutation,
+    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationResourceIds,
+    AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
+    CatalogListQuery, CatalogStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
+    ComputedObjectVisibility, EventArchive, EventDeliveryAdministrationStorage,
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    ExportQueryStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage,
-    IdentityStorage, ImportStorage, MetricsStorage, ObjectAggregateAuthorizationMode,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
-    OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
-    StorageBackupTaskArtifact, StorageCallSite, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
-    StorageComputedFieldVisibility, StorageError, StorageExecution, StorageExportTaskArtifact,
+    EventSubscriptionStorage, ExportQueryStorage, HistoryAsOfQuery, HistoryCollectionScope,
+    HistoryListQuery, HistoryStorage, IdentityStorage, ImportStorage, MetricsStorage,
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetStorage, RestoreStorage, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
+    StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
+    StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecution, StorageExportTaskArtifact,
     StorageImportOperation, StorageImportPlanItem, StorageImportResult, StorageObject,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
     StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
@@ -2719,6 +2726,193 @@ async fn every_available_storage_backend_supplies_event_health() {
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_supplies_complete_event_administration() {
+    let _permit = postgres_permit().await;
+    let options = || QueryOptions {
+        filters: Vec::new(),
+        sort: Vec::new(),
+        limit: Some(50),
+        cursor: None,
+        include_total: true,
+    };
+    let fanout_settings = EventFanoutSettings::new(1_000, 30_000)
+        .expect("compatibility fan-out settings should be valid");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                let event_context = EventContext::system();
+                let sink_name = prefix("event_admin_sink");
+                let sink = backend
+                    .create_event_sink(
+                        StorageEventSinkCreate::builder(
+                            sink_name,
+                            "webhook",
+                            event_context.clone(),
+                        )
+                        .configuration(serde_json::json!({}))
+                        .enabled(true)
+                        .build(),
+                    )
+                    .await
+                    .expect("certified backend should create event sinks");
+                let sink_id = sink.id();
+
+                assert!(
+                    backend
+                        .enabled_event_sink_count()
+                        .await
+                        .expect("certified backend should count enabled event sinks")
+                        >= 1
+                );
+                assert_eq!(
+                    backend
+                        .load_event_sink(sink_id)
+                        .await
+                        .expect("certified backend should load event sinks")
+                        .id(),
+                    sink_id
+                );
+                let (sinks, sink_total) = backend
+                    .list_event_sinks(StorageEventSinkListQuery::new(options()))
+                    .await
+                    .expect("certified backend should list event sinks")
+                    .into_parts();
+                assert!(!sinks.is_empty());
+                assert!(sink_total.is_some_and(|total| total >= 1));
+                let updated_sink = backend
+                    .update_event_sink(
+                        StorageEventSinkUpdate::new(sink_id, event_context.clone())
+                            .name(Some(prefix("event_admin_sink_updated"))),
+                    )
+                    .await
+                    .expect("certified backend should update event sinks");
+                assert!(updated_sink.revision() > sink.revision());
+
+                let subscription = backend
+                    .create_event_subscription(
+                        StorageEventSubscriptionCreate::builder(
+                            1,
+                            sink_id,
+                            prefix("event_admin_subscription"),
+                            event_context.clone(),
+                        )
+                        .description("storage compatibility event subscription")
+                        .entity_types(vec![EntityType::EventSubscription.as_str().to_string()])
+                        .actions(vec![Action::Created.as_str().to_string()])
+                        .routing(serde_json::json!({}))
+                        .enabled(true)
+                        .build(),
+                    )
+                    .await
+                    .expect("certified backend should create event subscriptions");
+                let subscription_id = subscription.id();
+                assert_eq!(
+                    backend
+                        .load_event_subscription(1, subscription_id)
+                        .await
+                        .expect("certified backend should load scoped subscriptions")
+                        .collection_id(),
+                    1
+                );
+                let (subscriptions, subscription_total) = backend
+                    .list_event_subscriptions(StorageEventSubscriptionListQuery::new(1, options()))
+                    .await
+                    .expect("certified backend should list scoped subscriptions")
+                    .into_parts();
+                assert!(!subscriptions.is_empty());
+                assert!(subscription_total.is_some_and(|total| total >= 1));
+                let updated_subscription = backend
+                    .update_event_subscription(
+                        StorageEventSubscriptionUpdate::new(
+                            1,
+                            subscription_id,
+                            event_context.clone(),
+                        )
+                        .description(Some(
+                            "updated storage compatibility subscription".to_string(),
+                        )),
+                    )
+                    .await
+                    .expect("certified backend should update event subscriptions");
+                assert!(updated_subscription.revision() > subscription.revision());
+
+                let (audit_events, audit_total) = backend
+                    .list_audit_events(StorageAuditEventListQuery::new(
+                        vec![1],
+                        false,
+                        StorageAuditEventFilters::new()
+                            .entity_type(Some(EntityType::EventSubscription))
+                            .entity_id(Some(subscription_id)),
+                        options(),
+                    ))
+                    .await
+                    .expect("certified backend should list event audit records")
+                    .into_parts();
+                assert!(audit_events.len() >= 2);
+                assert!(audit_total.is_some_and(|total| total >= 2));
+
+                let mut delivery = None;
+                for _ in 0..20 {
+                    let (deliveries, total) = backend
+                        .list_event_deliveries(
+                            StorageEventDeliveryListQuery::new(options())
+                                .subscription_id(Some(subscription_id)),
+                        )
+                        .await
+                        .expect("certified backend should list event deliveries")
+                        .into_parts();
+                    assert!(total.is_some());
+                    if let Some(row) = deliveries.into_iter().next() {
+                        delivery = Some(row);
+                        break;
+                    }
+                    backend
+                        .process_event_fanout_batch(fanout_settings)
+                        .await
+                        .expect("certified backend should fan out lifecycle events");
+                }
+                let delivery = delivery
+                    .expect("event-administration compatibility event should produce a delivery");
+                let delivery_id = delivery.id();
+                let dead = backend
+                    .mark_event_delivery_dead(delivery_id)
+                    .await
+                    .expect("certified backend should dead-letter event deliveries");
+                assert_eq!(dead.status(), "dead");
+                let pending = backend
+                    .release_event_delivery_for_retry(delivery_id)
+                    .await
+                    .expect("certified backend should release event deliveries for retry");
+                assert_eq!(pending.status(), "pending");
+                assert_eq!(
+                    backend
+                        .load_event_delivery(delivery_id)
+                        .await
+                        .expect("certified backend should load event deliveries")
+                        .id(),
+                    delivery_id
+                );
+
+                backend
+                    .delete_event_subscription(StorageEventSubscriptionDelete::new(
+                        1,
+                        subscription_id,
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("event-subscription compatibility fixture should be removed");
+                backend
+                    .delete_event_sink(StorageEventSinkDelete::new(sink_id, event_context))
+                    .await
+                    .expect("event-sink compatibility fixture should be removed");
+            }
+        }
+    }
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_processes_event_fanout() {
     let _permit = postgres_permit().await;
     let settings = EventFanoutSettings::new(10, 30_000)
@@ -2800,7 +2994,16 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
             StorageBackendKind::Postgresql => {
                 let backend = StorageHandle::postgres(pool().get_ref().clone());
                 fn accepts_event_delivery_contract(_backend: &impl EventDeliveryStorage) {}
+                fn accepts_event_administration_contract(
+                    _backend: &(
+                         impl AuditEventStorage
+                         + EventSubscriptionStorage
+                         + EventDeliveryAdministrationStorage
+                     ),
+                ) {
+                }
                 accepts_event_delivery_contract(&backend);
+                accepts_event_administration_contract(&backend);
                 let descriptor = backend.descriptor();
                 assert_eq!(descriptor.kind(), kind);
                 assert_eq!(descriptor.contract_version(), STORAGE_CONTRACT_VERSION);

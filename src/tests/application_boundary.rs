@@ -237,6 +237,9 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "ComputedObjectStorage",
         "ObjectAggregateStorage",
         "RelationQueryStorage",
+        "AuditEventStorage",
+        "EventSubscriptionStorage",
+        "EventDeliveryAdministrationStorage",
         "EventDeliveryStorage",
         "EventFanoutStorage",
         "EventHealthStorage",
@@ -483,6 +486,70 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             compact_context.contains(&format!("\"relations\",\"{operation}\"")),
             "relation operation {operation} must use the common storage observer"
         );
+    }
+    assert!(
+        compact_context.contains("\"audit_events\",\"list\""),
+        "audit event listing must use the common storage observer"
+    );
+    for operation in [
+        "count_enabled_sinks",
+        "list_sinks",
+        "load_sink",
+        "create_sink",
+        "update_sink",
+        "delete_sink",
+        "list_subscriptions",
+        "load_subscription",
+        "create_subscription",
+        "update_subscription",
+        "delete_subscription",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"event_subscriptions\",\"{operation}\"")),
+            "event-subscription operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in ["list", "load", "release_for_retry", "mark_dead"] {
+        assert!(
+            compact_context.contains(&format!("\"event_delivery\",\"{operation}\"")),
+            "event-delivery administration operation {operation} must use the common storage observer"
+        );
+    }
+}
+
+#[test]
+fn event_administration_consumers_use_the_backend_neutral_application_service() {
+    let root = repository_root();
+    for file in [
+        "src/application.rs",
+        "src/api/v1/handlers/events.rs",
+        "src/api/v1/handlers/event_sinks.rs",
+        "src/api/v1/handlers/event_subscriptions.rs",
+        "src/api/v1/handlers/event_deliveries.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "storage::capabilities::events",
+            "storage::capabilities::event_subscription",
+            "storage::capabilities::event_delivery",
+            "list_events_with_total_count",
+            "save_event_sink_record",
+            "update_event_sink_record",
+            "delete_event_sink_record",
+            "save_event_subscription_record",
+            "update_event_subscription_record",
+            "delete_event_subscription_record",
+            "EventSink::list_with_total_count",
+            "EventSubscription::list_with_total_count",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} still uses event adapter detail {forbidden}",
+                path.display()
+            );
+        }
     }
 }
 

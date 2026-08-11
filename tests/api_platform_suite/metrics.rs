@@ -133,7 +133,7 @@ async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() 
 
     assert!(
         body.contains(
-            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"17\"} 1"
+            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"18\"} 1"
         )
     );
     assert!(body.contains(

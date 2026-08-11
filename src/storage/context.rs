@@ -16,9 +16,9 @@ use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity, AuthenticationStorage,
-    AuthenticationTokenScope, AuthenticationTokenScopeQuery, AuthorizationClassResource,
-    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuditEventStorage, AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity,
+    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
+    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
     AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrantPage,
@@ -27,24 +27,29 @@ use crate::storage::{
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
     ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
     ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage, EventArchive,
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
-    ImportStorage, InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery,
-    OperationalStateStorage, PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
-    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StorageComputedObject, StorageError, StorageExecution, StorageExportOutput,
-    StorageExportOutputSummary, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure, StorageImportApply,
-    StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
+    EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
+    ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
+    HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage, ImportStorage,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage,
+    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage, StorageAuditEvent,
+    StorageAuditEventListQuery, StorageBackend, StorageBackendDescriptor, StorageBackupOutput,
+    StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite, StorageClass,
+    StorageClassComputationState, StorageClassGraphRow, StorageClassRelation, StorageCollection,
+    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
+    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageError, StorageEventDelivery,
+    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
+    StorageExportOutput, StorageExportOutputSummary, StorageExternalPrincipalState,
+    StorageExternalUserSync, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageImportApply, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
     StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
     StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
@@ -2528,6 +2533,293 @@ impl EventHealthStorage for StorageHandle {
                 }
             },
         )
+        .await
+    }
+}
+
+#[async_trait]
+impl AuditEventStorage for StorageHandle {
+    async fn list_audit_events(
+        &self,
+        query: StorageAuditEventListQuery,
+    ) -> Result<StorageEventPage<StorageAuditEvent>, StorageError> {
+        observe_storage_call(self.backend_name(), "audit_events", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_audit_events(query).await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl EventSubscriptionStorage for StorageHandle {
+    async fn enabled_event_sink_count(&self) -> Result<i64, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "count_enabled_sinks",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.enabled_event_sink_count().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_event_sinks(
+        &self,
+        query: StorageEventSinkListQuery,
+    ) -> Result<StorageEventPage<StorageEventSink>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "list_sinks",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_event_sinks(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_event_sink(&self, sink_id: i32) -> Result<StorageEventSink, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "load_sink",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_event_sink(sink_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn create_event_sink(
+        &self,
+        request: StorageEventSinkCreate,
+    ) -> Result<StorageEventSink, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "create_sink",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.create_event_sink(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn update_event_sink(
+        &self,
+        request: StorageEventSinkUpdate,
+    ) -> Result<StorageEventSink, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "update_sink",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.update_event_sink(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn delete_event_sink(&self, request: StorageEventSinkDelete) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "delete_sink",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.delete_event_sink(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_event_subscriptions(
+        &self,
+        query: StorageEventSubscriptionListQuery,
+    ) -> Result<StorageEventPage<StorageEventSubscription>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "list_subscriptions",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_event_subscriptions(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_event_subscription(
+        &self,
+        collection_id: i32,
+        subscription_id: i32,
+    ) -> Result<StorageEventSubscription, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "load_subscription",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .load_event_subscription(collection_id, subscription_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn create_event_subscription(
+        &self,
+        request: StorageEventSubscriptionCreate,
+    ) -> Result<StorageEventSubscription, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "create_subscription",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.create_event_subscription(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn update_event_subscription(
+        &self,
+        request: StorageEventSubscriptionUpdate,
+    ) -> Result<StorageEventSubscription, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "update_subscription",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.update_event_subscription(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn delete_event_subscription(
+        &self,
+        request: StorageEventSubscriptionDelete,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_subscriptions",
+            "delete_subscription",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.delete_event_subscription(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl EventDeliveryAdministrationStorage for StorageHandle {
+    async fn list_event_deliveries(
+        &self,
+        query: StorageEventDeliveryListQuery,
+    ) -> Result<StorageEventPage<StorageEventDelivery>, StorageError> {
+        observe_storage_call(self.backend_name(), "event_delivery", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_event_deliveries(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_event_delivery(
+        &self,
+        delivery_id: i64,
+    ) -> Result<StorageEventDelivery, StorageError> {
+        observe_storage_call(self.backend_name(), "event_delivery", "load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_event_delivery(delivery_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn release_event_delivery_for_retry(
+        &self,
+        delivery_id: i64,
+    ) -> Result<StorageEventDelivery, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_delivery",
+            "release_for_retry",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.release_event_delivery_for_retry(delivery_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn mark_event_delivery_dead(
+        &self,
+        delivery_id: i64,
+    ) -> Result<StorageEventDelivery, StorageError> {
+        observe_storage_call(self.backend_name(), "event_delivery", "mark_dead", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.mark_event_delivery_dead(delivery_id).await
+                }
+            }
+        })
         .await
     }
 }

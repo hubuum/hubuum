@@ -9,8 +9,9 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{EventSink, EventSinkID, NewEventSink, UpdateEventSink};
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::event_subscription::{
-    DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
+use crate::services::event_administration::{
+    create_event_sink as create_event_sink_service, delete_event_sink as delete_event_sink_service,
+    list_event_sinks, load_event_sink, update_event_sink as update_event_sink_service,
 };
 use crate::storage::with_revision_precondition;
 
@@ -38,12 +39,7 @@ pub async fn create_event_sink(
     sink: web::Json<NewEventSink>,
 ) -> Result<impl Responder, ApiError> {
     let event_context = admin.event_context(&req);
-    let created: EventSink = sink
-        .into_inner()
-        .into_row()?
-        .save_event_sink_record(&context, &event_context)
-        .await?
-        .try_into()?;
+    let created = create_event_sink_service(&context, sink.into_inner(), event_context).await?;
     let location = ResponseLocation::new(format!("/api/v1/event-sinks/{}", created.id))?;
     ApiResponse::created_revisioned(created, location)
 }
@@ -70,7 +66,7 @@ pub async fn get_event_sinks(
 ) -> Result<impl Responder, ApiError> {
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<EventSink>(&params)?;
-    let (sinks, total_count) = EventSink::list_with_total_count(&context, &query_options).await?;
+    let (sinks, total_count) = list_event_sinks(&context, query_options).await?;
     ApiResponse::paginated(sinks, total_count, &params)
 }
 
@@ -93,7 +89,7 @@ pub async fn get_event_sink(
     _admin: AdminAccess,
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
-    ApiResponse::ok_revisioned(sink_id.into_inner().instance(&context).await?)
+    ApiResponse::ok_revisioned(load_event_sink(&context, sink_id.into_inner().id()).await?)
 }
 
 #[utoipa::path(
@@ -127,18 +123,15 @@ pub async fn patch_event_sink(
             "Event sink update must include at least one field".to_string(),
         ));
     }
-    let existing = sink_id.instance(&context).await?;
+    let existing = load_event_sink(&context, sink_id.id()).await?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = admin.event_context(&req);
-    let updated: EventSink = with_revision_precondition(
+    let updated = with_revision_precondition(
         &context,
         precondition,
-        update
-            .into_row(&existing)?
-            .update_event_sink_record(&context, existing.id, &event_context),
+        update_event_sink_service(&context, existing.id, update, &existing, event_context),
     )
-    .await?
-    .try_into()?;
+    .await?;
     ApiResponse::ok_revisioned(updated)
 }
 
@@ -163,14 +156,14 @@ pub async fn delete_event_sink(
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
     let sink_id = sink_id.into_inner();
-    let existing = sink_id.instance(&context).await?;
+    let existing = load_event_sink(&context, sink_id.id()).await?;
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = admin.event_context(&req);
     with_revision_precondition(
         &context,
         precondition,
-        sink_id.delete_event_sink_record(&context, &event_context),
+        delete_event_sink_service(&context, sink_id.id(), event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(etag))

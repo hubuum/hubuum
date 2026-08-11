@@ -148,6 +148,47 @@ impl From<EventDelivery> for EventDeliveryResponse {
     }
 }
 
+impl CursorPaginated for EventDeliveryResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Status
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::NextAttemptAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id)),
+            FilterField::Status => Ok(CursorValue::String(self.status.clone())),
+            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::UpdatedAt => Ok(CursorValue::DateTime(self.updated_at)),
+            FilterField::NextAttemptAt => Ok(CursorValue::DateTime(self.next_attempt_at)),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for event deliveries",
+                field
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventDeliveryUpdateResponse {
     pub delivery: EventDeliveryResponse,
