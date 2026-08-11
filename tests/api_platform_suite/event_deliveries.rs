@@ -1,19 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use serde_json::json;
 
-    use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+    use crate::events::{Action, EntityType};
     use crate::models::{
-        CollectionID, EventDelivery, EventDeliveryHealthResponse, EventDeliveryResponse,
-        EventDeliveryStatus, EventDeliveryUpdateResponse, EventSinkID, EventSinkKind, NewEventSink,
+        CollectionID, EventDeliveryHealthResponse, EventDeliveryResponse, EventDeliveryStatus,
+        EventDeliveryUpdateResponse, EventSinkID, EventSinkKind, NewEventSink,
         NewEventSubscription,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
-    use crate::storage::postgres::operations::event_fanout::fanout_event;
-    use crate::storage::postgres::with_connection;
-    use crate::test_support::{save_event_sink, save_event_subscription};
+    use crate::test_support::{
+        create_collection_event_delivery, save_event_sink, save_event_subscription,
+        set_event_delivery_claim_token, set_event_delivery_status,
+    };
     use crate::tests::TestContext;
     use crate::tests::api_operations::{get_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -21,7 +21,7 @@ mod tests {
     const DELIVERIES_ENDPOINT: &str = "/api/v1/event-deliveries";
 
     struct DeliveryFixture {
-        delivery: EventDelivery,
+        delivery: EventDeliveryResponse,
         sink_id: i32,
         sink_name: String,
         subscription_id: i32,
@@ -64,29 +64,11 @@ mod tests {
         .await
         .unwrap();
 
-        let event = NewEvent::new(
-            EntityType::Collection,
-            Action::Created,
-            ActorKind::System,
-            "delivery api test",
+        let delivery = create_collection_event_delivery(
+            &context.pool,
+            fixture.collection.id,
+            &fixture.collection.name,
         )
-        .unwrap()
-        .with_collection_id(fixture.collection.id)
-        .with_entity_id(fixture.collection.id)
-        .with_entity_name(&fixture.collection.name);
-        let event = with_connection(&context.pool, async |conn| emit_event(conn, &event).await)
-            .await
-            .unwrap();
-        fanout_event(&context.pool, event.id).await.unwrap();
-
-        let delivery = with_connection(&context.pool, async |conn| {
-            use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
-
-            event_deliveries
-                .filter(event_id.eq(event.id))
-                .first::<EventDelivery>(conn)
-                .await
-        })
         .await
         .unwrap();
 
@@ -171,16 +153,9 @@ mod tests {
     async fn test_event_delivery_dead_letter_does_not_rewrite_succeeded_delivery() {
         let context = TestContext::new().await;
         let delivery = create_delivery(&context).await.delivery;
-        with_connection(&context.pool, async |conn| {
-            use crate::schema::event_deliveries::dsl::{event_deliveries, id, status};
-
-            diesel::update(event_deliveries.filter(id.eq(delivery.id)))
-                .set(status.eq(EventDeliveryStatus::Succeeded.as_str()))
-                .execute(conn)
-                .await
-        })
-        .await
-        .unwrap();
+        set_event_delivery_status(&context.pool, delivery.id, EventDeliveryStatus::Succeeded)
+            .await
+            .unwrap();
 
         let resp = post_request(
             &context.pool,
@@ -196,16 +171,9 @@ mod tests {
     async fn test_event_delivery_list_applies_status_filter_to_rows_and_total() {
         let context = TestContext::new().await;
         let dead = create_delivery(&context).await.delivery;
-        with_connection(&context.pool, async |conn| {
-            use crate::schema::event_deliveries::dsl::{event_deliveries, id, status};
-
-            diesel::update(event_deliveries.filter(id.eq(dead.id)))
-                .set(status.eq(EventDeliveryStatus::Dead.as_str()))
-                .execute(conn)
-                .await
-        })
-        .await
-        .unwrap();
+        set_event_delivery_status(&context.pool, dead.id, EventDeliveryStatus::Dead)
+            .await
+            .unwrap();
 
         let resp = get_request(
             &context.pool,
@@ -238,18 +206,9 @@ mod tests {
         let context = TestContext::new().await;
         let delivery = create_delivery(&context).await.delivery;
         let claim_token = uuid::Uuid::new_v4();
-        with_connection(&context.pool, async |conn| {
-            use crate::schema::event_deliveries::dsl::{
-                claim_token as token, event_deliveries, id,
-            };
-
-            diesel::update(event_deliveries.filter(id.eq(delivery.id)))
-                .set(token.eq(Some(claim_token)))
-                .execute(conn)
-                .await
-        })
-        .await
-        .unwrap();
+        set_event_delivery_claim_token(&context.pool, delivery.id, claim_token)
+            .await
+            .unwrap();
 
         let resp = get_request(
             &context.pool,

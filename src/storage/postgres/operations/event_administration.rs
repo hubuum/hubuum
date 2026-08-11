@@ -10,11 +10,11 @@ use hubuum_storage_core::{
 use crate::errors::ApiError;
 use crate::events::EventResponse;
 use crate::models::{
-    EventDelivery as EventDeliveryRow, EventDeliveryID, EventSink, EventSinkID, EventSubscription,
-    EventSubscriptionID,
+    EventDeliveryID, EventSink, EventSinkID, EventSubscription, EventSubscriptionID,
 };
 use crate::storage::postgres::PostgresPool;
 
+use super::event_delivery::EventDeliveryRow;
 use super::event_subscription::{
     DeleteEventSinkRecord, DeleteEventSubscriptionRecord, EventSinkRow, EventSubscriptionRow,
     NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,

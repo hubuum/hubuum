@@ -1,18 +1,12 @@
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
 
-use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
-use crate::models::redacted_debug_option;
 use crate::models::search::{FilterField, SortParam};
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
-use crate::schema::event_deliveries;
+use crate::pagination::{CursorPaginated, CursorValue};
 
 /// Identifier wrapper for an event delivery.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
@@ -82,41 +76,6 @@ impl FromStr for EventDeliveryStatus {
     }
 }
 
-#[derive(Clone, Queryable, Selectable, PartialEq, Eq)]
-#[diesel(table_name = event_deliveries)]
-pub struct EventDelivery {
-    pub id: i64,
-    pub event_id: i64,
-    pub subscription_id: i32,
-    pub status: String,
-    pub attempts: i32,
-    pub next_attempt_at: NaiveDateTime,
-    pub last_error: Option<String>,
-    pub locked_until: Option<NaiveDateTime>,
-    pub(crate) claim_token: Option<Uuid>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
-impl fmt::Debug for EventDelivery {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EventDelivery")
-            .field("id", &self.id)
-            .field("event_id", &self.event_id)
-            .field("subscription_id", &self.subscription_id)
-            .field("status", &self.status)
-            .field("attempts", &self.attempts)
-            .field("next_attempt_at", &self.next_attempt_at)
-            .field("last_error", &redacted_debug_option(&self.last_error))
-            .field("locked_until", &self.locked_until)
-            .field("claim_token", &redacted_debug_option(&self.claim_token))
-            .field("created_at", &self.created_at)
-            .field("updated_at", &self.updated_at)
-            .finish()
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventDeliveryResponse {
     pub id: i64,
@@ -129,23 +88,6 @@ pub struct EventDeliveryResponse {
     pub locked_until: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
-}
-
-impl From<EventDelivery> for EventDeliveryResponse {
-    fn from(delivery: EventDelivery) -> Self {
-        Self {
-            id: delivery.id,
-            event_id: delivery.event_id,
-            subscription_id: delivery.subscription_id,
-            status: delivery.status,
-            attempts: delivery.attempts,
-            next_attempt_at: delivery.next_attempt_at,
-            last_error: delivery.last_error,
-            locked_until: delivery.locked_until,
-            created_at: delivery.created_at,
-            updated_at: delivery.updated_at,
-        }
-    }
 }
 
 impl CursorPaginated for EventDeliveryResponse {
@@ -192,14 +134,6 @@ impl CursorPaginated for EventDeliveryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventDeliveryUpdateResponse {
     pub delivery: EventDeliveryResponse,
-}
-
-impl From<EventDelivery> for EventDeliveryUpdateResponse {
-    fn from(delivery: EventDelivery) -> Self {
-        Self {
-            delivery: delivery.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
@@ -360,89 +294,9 @@ impl EventDeliveryHealthResponse {
     }
 }
 
-impl CursorPaginated for EventDelivery {
-    fn supports_sort(field: &FilterField) -> bool {
-        matches!(
-            field,
-            FilterField::Id
-                | FilterField::Status
-                | FilterField::CreatedAt
-                | FilterField::UpdatedAt
-                | FilterField::NextAttemptAt
-        )
-    }
-
-    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
-        match field {
-            FilterField::Id => Ok(CursorValue::Integer(self.id)),
-            FilterField::Status => Ok(CursorValue::String(self.status.clone())),
-            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
-            FilterField::UpdatedAt => Ok(CursorValue::DateTime(self.updated_at)),
-            FilterField::NextAttemptAt => Ok(CursorValue::DateTime(self.next_attempt_at)),
-            _ => Err(ApiError::BadRequest(format!(
-                "Unsupported sort field '{}' for event deliveries",
-                field
-            ))),
-        }
-    }
-
-    fn default_sort() -> Vec<SortParam> {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
-    }
-
-    fn tie_breaker_sort() -> Vec<SortParam> {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
-    }
-}
-
-impl CursorSqlMapping for EventDelivery {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "event_deliveries.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Status => CursorSqlField {
-                column: "event_deliveries.status",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "event_deliveries.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "event_deliveries.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::NextAttemptAt => CursorSqlField {
-                column: "event_deliveries.next_attempt_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for event deliveries",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::REDACTED_DEBUG_VALUE;
     use crate::storage::{
         EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
         EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
@@ -461,59 +315,6 @@ mod tests {
                 poll_wakeups: 5,
             },
         }
-    }
-
-    #[test]
-    fn event_delivery_response_omits_internal_claim_token() {
-        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .unwrap()
-            .naive_utc();
-        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
-        let delivery = EventDelivery {
-            id: 1,
-            event_id: 2,
-            subscription_id: 3,
-            status: EventDeliveryStatus::InFlight.as_str().to_string(),
-            attempts: 1,
-            next_attempt_at: timestamp,
-            last_error: None,
-            locked_until: Some(timestamp),
-            claim_token: Some(claim_token),
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
-
-        let serialized = serde_json::to_value(EventDeliveryResponse::from(delivery)).unwrap();
-
-        assert!(serialized.get("claim_token").is_none());
-        assert!(!serialized.to_string().contains(&claim_token.to_string()));
-    }
-
-    #[test]
-    fn event_delivery_debug_redacts_claim_token_and_error() {
-        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .unwrap()
-            .naive_utc();
-        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
-        let delivery = EventDelivery {
-            id: 1,
-            event_id: 2,
-            subscription_id: 3,
-            status: EventDeliveryStatus::InFlight.as_str().to_string(),
-            attempts: 1,
-            next_attempt_at: timestamp,
-            last_error: Some("delivery-error-secret".to_string()),
-            locked_until: Some(timestamp),
-            claim_token: Some(claim_token),
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
-
-        let debug = format!("{delivery:?}");
-
-        assert!(debug.contains(REDACTED_DEBUG_VALUE));
-        assert!(!debug.contains("delivery-error-secret"));
-        assert!(!debug.contains(&claim_token.to_string()));
     }
 
     #[test]

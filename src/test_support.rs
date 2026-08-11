@@ -11,13 +11,19 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use crate::auth::ConfiguredLdapScope;
 use crate::errors::ApiError;
+use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
 use crate::models::user::User;
 use crate::models::{
-    CollectionID, NewEventSink, NewEventSubscription, RemoteCallResult, TaskKind,
-    validate_sink_parts, validate_subscription_parts,
+    CollectionID, EventDeliveryResponse, EventDeliveryStatus, NewEventSink, NewEventSubscription,
+    RemoteCallResult, TaskKind, validate_sink_parts, validate_subscription_parts,
 };
 use crate::services::Services;
 use crate::storage::postgres::PostgresPool;
+use crate::storage::postgres::operations::event_delivery::{
+    load_event_delivery_for_event, set_event_delivery_claim_token_for_test,
+    set_event_delivery_status_for_test,
+};
+use crate::storage::postgres::operations::event_fanout::fanout_event;
 use crate::storage::postgres::operations::event_subscription::{
     NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
 };
@@ -139,6 +145,46 @@ pub async fn audit_event_count(
             .await
     })
     .await
+}
+
+/// Emit, fan out, and load one collection event delivery for request tests.
+pub async fn create_collection_event_delivery(
+    pool: &PostgresPool,
+    collection_id: i32,
+    entity_name: &str,
+) -> Result<EventDeliveryResponse, ApiError> {
+    use crate::storage::postgres::with_connection;
+
+    let event = NewEvent::new(
+        EntityType::Collection,
+        Action::Created,
+        ActorKind::System,
+        "delivery api test",
+    )?
+    .with_collection_id(collection_id)
+    .with_entity_id(collection_id)
+    .with_entity_name(entity_name);
+    let event = with_connection(pool, async |conn| emit_event(conn, &event).await).await?;
+    fanout_event(pool, event.id).await?;
+    load_event_delivery_for_event(pool, event.id).await
+}
+
+/// Set a delivery status through adapter-owned test support.
+pub async fn set_event_delivery_status(
+    pool: &PostgresPool,
+    delivery_id: i64,
+    status: EventDeliveryStatus,
+) -> Result<(), ApiError> {
+    set_event_delivery_status_for_test(pool, delivery_id, status).await
+}
+
+/// Set a delivery claim token through adapter-owned test support.
+pub async fn set_event_delivery_claim_token(
+    pool: &PostgresPool,
+    delivery_id: i64,
+    claim_token: uuid::Uuid,
+) -> Result<(), ApiError> {
+    set_event_delivery_claim_token_for_test(pool, delivery_id, claim_token).await
 }
 
 pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<i32, ApiError> {
