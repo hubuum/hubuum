@@ -52,9 +52,9 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity, AuthenticationStorage,
-    AuthenticationTokenScope, AuthenticationTokenScopeQuery, AuthorizationClassResource,
-    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuditEventStorage, AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity,
+    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
+    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
     AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrantPage,
@@ -63,27 +63,33 @@ use super::{
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
     ClassRelationStore, ClassStore, CollectionStore, ComputedObjectEnrichmentQuery,
     ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, EventArchive,
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    IdentityStorage, InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
-    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalStateStorage, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    StorageCallSite, StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
-    StorageComputedObject, StorageError, StorageExecution, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageIdentity, StorageIdentityPage, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePoolState, StoragePrincipalGroup, StorageQueryBudget,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRevisionPrecondition,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenMetadata,
-    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
+    ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope,
+    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
+    OperationalStateStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
+    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetHistoryRecord, StorageAuditEvent, StorageAuditEventListQuery, StorageCallSite,
+    StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
+    StorageComputedObject, StorageError, StorageEventDelivery, StorageEventDeliveryListQuery,
+    StorageEventPage, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
+    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentity, StorageIdentityPage,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageObject, StorageObjectAggregatePage,
+    StorageObjectGraphRow, StorageObjectRelation, StoragePoolState, StoragePrincipalGroup,
+    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenListQuery, StorageTokenMetadata, TaskGaugeSnapshot, TokenRetentionStorage,
+    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
+    UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -965,6 +971,155 @@ impl OperationalStateStorage for PostgresStorage {
 impl EventHealthStorage for PostgresStorage {
     async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
         operations::event_observability::load_event_delivery_health(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl AuditEventStorage for PostgresStorage {
+    async fn list_audit_events(
+        &self,
+        query: StorageAuditEventListQuery,
+    ) -> Result<StorageEventPage<StorageAuditEvent>, StorageError> {
+        operations::event_administration::list_audit_events(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl EventSubscriptionStorage for PostgresStorage {
+    async fn enabled_event_sink_count(&self) -> Result<i64, StorageError> {
+        operations::event_administration::enabled_event_sink_count(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_event_sinks(
+        &self,
+        query: StorageEventSinkListQuery,
+    ) -> Result<StorageEventPage<StorageEventSink>, StorageError> {
+        operations::event_administration::list_event_sinks(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_event_sink(&self, sink_id: i32) -> Result<StorageEventSink, StorageError> {
+        operations::event_administration::load_event_sink(&self.pool, sink_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_event_sink(
+        &self,
+        request: StorageEventSinkCreate,
+    ) -> Result<StorageEventSink, StorageError> {
+        operations::event_administration::create_event_sink(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_event_sink(
+        &self,
+        request: StorageEventSinkUpdate,
+    ) -> Result<StorageEventSink, StorageError> {
+        operations::event_administration::update_event_sink(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_event_sink(&self, request: StorageEventSinkDelete) -> Result<(), StorageError> {
+        operations::event_administration::delete_event_sink(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_event_subscriptions(
+        &self,
+        query: StorageEventSubscriptionListQuery,
+    ) -> Result<StorageEventPage<StorageEventSubscription>, StorageError> {
+        operations::event_administration::list_event_subscriptions(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_event_subscription(
+        &self,
+        collection_id: i32,
+        subscription_id: i32,
+    ) -> Result<StorageEventSubscription, StorageError> {
+        operations::event_administration::load_event_subscription(
+            &self.pool,
+            collection_id,
+            subscription_id,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn create_event_subscription(
+        &self,
+        request: StorageEventSubscriptionCreate,
+    ) -> Result<StorageEventSubscription, StorageError> {
+        operations::event_administration::create_event_subscription(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_event_subscription(
+        &self,
+        request: StorageEventSubscriptionUpdate,
+    ) -> Result<StorageEventSubscription, StorageError> {
+        operations::event_administration::update_event_subscription(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_event_subscription(
+        &self,
+        request: StorageEventSubscriptionDelete,
+    ) -> Result<(), StorageError> {
+        operations::event_administration::delete_event_subscription(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl EventDeliveryAdministrationStorage for PostgresStorage {
+    async fn list_event_deliveries(
+        &self,
+        query: StorageEventDeliveryListQuery,
+    ) -> Result<StorageEventPage<StorageEventDelivery>, StorageError> {
+        operations::event_administration::list_event_deliveries(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_event_delivery(
+        &self,
+        delivery_id: i64,
+    ) -> Result<StorageEventDelivery, StorageError> {
+        operations::event_administration::load_event_delivery(&self.pool, delivery_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn release_event_delivery_for_retry(
+        &self,
+        delivery_id: i64,
+    ) -> Result<StorageEventDelivery, StorageError> {
+        operations::event_administration::release_event_delivery_for_retry(&self.pool, delivery_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn mark_event_delivery_dead(
+        &self,
+        delivery_id: i64,
+    ) -> Result<StorageEventDelivery, StorageError> {
+        operations::event_administration::mark_event_delivery_dead(&self.pool, delivery_id)
             .await
             .map_err(map_postgres_error)
     }

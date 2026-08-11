@@ -553,9 +553,10 @@ pub async fn load_event_delivery(
 
 pub async fn list_event_deliveries_with_total_count(
     pool: &impl crate::storage::StorageContext,
+    subscription_id_filter: Option<i32>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventDelivery>, i64), ApiError> {
-    let query = build_event_delivery_query(query_options)?;
+    let query = build_event_delivery_query(subscription_id_filter, query_options)?;
     let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {
             query.count().get_result::<i64>(conn).await
@@ -563,7 +564,7 @@ pub async fn list_event_deliveries_with_total_count(
         .await
     })
     .await?;
-    let mut query = build_event_delivery_query(query_options)?;
+    let mut query = build_event_delivery_query(subscription_id_filter, query_options)?;
     crate::apply_query_options!(query, query_options, EventDelivery);
     let deliveries =
         with_connection(pool, async |conn| query.load::<EventDelivery>(conn).await).await?;
@@ -571,13 +572,17 @@ pub async fn list_event_deliveries_with_total_count(
 }
 
 fn build_event_delivery_query(
+    subscription_id_filter: Option<i32>,
     query_options: &QueryOptions,
 ) -> Result<crate::schema::event_deliveries::BoxedQuery<'static, diesel::pg::Pg>, ApiError> {
     use crate::schema::event_deliveries::dsl::{
-        created_at, event_deliveries, id, next_attempt_at, status, updated_at,
+        created_at, event_deliveries, id, next_attempt_at, status, subscription_id, updated_at,
     };
 
     let mut query = event_deliveries.into_boxed();
+    if let Some(value) = subscription_id_filter {
+        query = query.filter(subscription_id.eq(value));
+    }
     for param in query_options.filters.clone() {
         let operator = param.operator.clone();
         match param.field {

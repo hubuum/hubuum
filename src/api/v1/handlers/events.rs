@@ -14,7 +14,7 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::storage::capabilities::events::{list_events_with_total_count, parse_event_filters};
+use crate::services::event_administration::{list_audit_events, parse_audit_event_filters};
 use crate::traits::AuthzSubject;
 use crate::traits::scope_allows;
 
@@ -72,21 +72,7 @@ async fn list_visible_events(
 
     let (params, mut passthrough) =
         parse_query_parameter_with_passthrough(req.query_string(), &filter_keys)?;
-    let mut filters = parse_event_filters(&mut passthrough)?;
-    if let Some((entity_type, entity_id)) = entity_filter {
-        if filters.entity_type.is_some() {
-            return Err(ApiError::BadRequest(
-                "entity_type is fixed by this route".to_string(),
-            ));
-        }
-        if filters.entity_id.is_some() {
-            return Err(ApiError::BadRequest(
-                "entity_id is fixed by this route".to_string(),
-            ));
-        }
-        filters.entity_type = Some(entity_type);
-        filters.entity_id = Some(entity_id);
-    }
+    let filters = parse_audit_event_filters(&mut passthrough, entity_filter)?;
     let search_params = prepare_db_pagination::<EventResponse>(&params)?;
     let (visible_collections, include_collection_less) = if context
         .permission_backend()
@@ -121,12 +107,12 @@ async fn list_visible_events(
     if let Some(scope) = requestor.scopes() {
         scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
     }
-    let (events, total_count) = list_events_with_total_count(
+    let (events, total_count) = list_audit_events(
         &context,
-        &accessible_collection_ids,
+        accessible_collection_ids,
         include_collection_less,
-        &filters,
-        &search_params,
+        filters,
+        search_params,
     )
     .await?;
     ApiResponse::paginated(events, total_count, &params)

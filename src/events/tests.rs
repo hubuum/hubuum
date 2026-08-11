@@ -25,11 +25,11 @@ use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::search::{QueryOptions, parse_query_parameter};
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
-    CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSinkID, EventSinkKind,
+    CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSinkKind,
     ExportContentType, ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID,
-    HubuumClassRelationID, HubuumObjectID, NewEventSink, NewEventSubscription, NewExportTemplate,
-    NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow, NewUser,
-    ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
+    HubuumClassRelationID, HubuumObjectID, NewEventSinkRow, NewEventSubscriptionRow,
+    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
+    NewUser, ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
     PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
     UpdateRemoteTargetRow, UpdateUser, UserID,
 };
@@ -303,31 +303,28 @@ async fn create_collection_event_subscription_with_filter(
     enabled: bool,
     filter: hubuum_events_core::EventSubscriptionFilter,
 ) -> i32 {
-    let sink = NewEventSink {
+    let sink = NewEventSinkRow {
         name: scope.scoped_name(&format!("{label}_sink")),
-        kind: EventSinkKind::Webhook,
+        kind: EventSinkKind::Webhook.as_str().to_string(),
         config: serde_json::json!({}),
         secret_ref: None,
         enabled: true,
     }
-    .into_row()
-    .unwrap()
     .save_event_sink_record_without_events(&scope.pool)
     .await
     .unwrap();
 
-    NewEventSubscription {
-        sink_id: EventSinkID::new(sink.id).unwrap(),
+    NewEventSubscriptionRow {
+        collection_id,
+        sink_id: sink.id,
         name: scope.scoped_name(&format!("{label}_subscription")),
         description: String::new(),
-        entity_types: vec![EntityType::Collection.as_str().to_string()],
-        actions: vec![Action::Created.as_str().to_string()],
-        filter,
+        entity_types: serde_json::json!([EntityType::Collection.as_str()]),
+        actions: serde_json::json!([Action::Created.as_str()]),
+        filter: serde_json::to_value(filter).unwrap(),
         routing: serde_json::json!({}),
         enabled,
     }
-    .into_row(CollectionID::new(collection_id).unwrap())
-    .unwrap()
     .save_event_subscription_record_without_events(&scope.pool)
     .await
     .unwrap()

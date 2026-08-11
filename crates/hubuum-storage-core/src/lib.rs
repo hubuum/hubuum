@@ -9,6 +9,7 @@ mod backup_snapshot;
 mod catalog;
 mod computed_field_lifecycle;
 mod computed_objects;
+mod event_administration;
 mod events;
 mod execution;
 mod export_query;
@@ -51,6 +52,16 @@ pub use computed_objects::{
     ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility,
     StorageComputedFieldError, StorageComputedObject, StorageComputedScope,
     StorageSharedComputedScope,
+};
+pub use event_administration::{
+    AuditEventStorage, EventDeliveryAdministrationStorage, EventSubscriptionStorage,
+    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageEventDelivery,
+    StorageEventDeliveryBuilder, StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink,
+    StorageEventSinkBuilder, StorageEventSinkCreate, StorageEventSinkCreateBuilder,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionCreateBuilder, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
 };
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
@@ -157,7 +168,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 17;
+pub const STORAGE_CONTRACT_VERSION: u16 = 18;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,11 +207,12 @@ pub enum StorageCapability {
     Restores,
     Imports,
     ExportQueries,
+    EventAdministration,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -217,6 +229,7 @@ impl StorageCapability {
         Self::Restores,
         Self::Imports,
         Self::ExportQueries,
+        Self::EventAdministration,
         Self::Operations,
     ];
 
@@ -239,6 +252,7 @@ impl StorageCapability {
             Self::Restores => "restores",
             Self::Imports => "imports",
             Self::ExportQueries => "export_queries",
+            Self::EventAdministration => "event_administration",
             Self::Operations => "operations",
         }
     }
@@ -414,6 +428,7 @@ mod tests {
                 "restores",
                 "imports",
                 "export_queries",
+                "event_administration",
                 "operations",
             ]
         );

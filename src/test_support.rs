@@ -12,7 +12,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use crate::auth::ConfiguredLdapScope;
 use crate::errors::ApiError;
 use crate::models::user::User;
-use crate::models::{CollectionID, NewEventSink, NewEventSubscription, TaskKind};
+use crate::models::{
+    CollectionID, NewEventSink, NewEventSinkRow, NewEventSubscription, NewEventSubscriptionRow,
+    TaskKind, validate_sink_parts, validate_subscription_parts,
+};
 use crate::services::Services;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::event_subscription::{
@@ -107,10 +110,19 @@ pub fn services_for_postgres(pool: PostgresPool) -> Services {
 }
 
 pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<i32, ApiError> {
-    let sink = sink
-        .into_row()?
-        .save_event_sink_record_without_events(pool)
-        .await?;
+    validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
+    let sink = NewEventSinkRow {
+        name: sink.name,
+        kind: sink.kind.as_str().to_string(),
+        config: sink.config,
+        secret_ref: sink
+            .secret_ref
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        enabled: sink.enabled,
+    }
+    .save_event_sink_record_without_events(pool)
+    .await?;
     Ok(sink.id)
 }
 
@@ -119,10 +131,25 @@ pub async fn save_event_subscription(
     subscription: NewEventSubscription,
     collection_id: CollectionID,
 ) -> Result<i32, ApiError> {
-    let subscription = subscription
-        .into_row(collection_id)?
-        .save_event_subscription_record_without_events(pool)
-        .await?;
+    validate_subscription_parts(
+        &subscription.entity_types,
+        &subscription.actions,
+        &subscription.filter,
+        &subscription.routing,
+    )?;
+    let subscription = NewEventSubscriptionRow {
+        collection_id: collection_id.id(),
+        sink_id: subscription.sink_id.id(),
+        name: subscription.name,
+        description: subscription.description,
+        entity_types: serde_json::to_value(subscription.entity_types)?,
+        actions: serde_json::to_value(subscription.actions)?,
+        filter: serde_json::to_value(subscription.filter)?,
+        routing: subscription.routing,
+        enabled: subscription.enabled,
+    }
+    .save_event_subscription_record_without_events(pool)
+    .await?;
     Ok(subscription.id)
 }
 

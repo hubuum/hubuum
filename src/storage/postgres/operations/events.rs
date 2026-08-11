@@ -7,7 +7,6 @@ use crate::events::{Action, ActorKind, EntityType, Event, EventResponse, Princip
 use crate::models::search::QueryOptions;
 use crate::storage::postgres::operations::history::resolve_principal_names;
 use crate::storage::postgres::with_connection;
-use crate::utilities::extensions::CustomStringExtensions;
 
 #[derive(Debug, Clone, Default)]
 pub struct EventListFilters {
@@ -217,26 +216,6 @@ fn event_response_for_visibility(
     }
 }
 
-pub fn parse_event_filters(
-    passthrough: &mut HashMap<String, Vec<String>>,
-) -> Result<EventListFilters, ApiError> {
-    Ok(EventListFilters {
-        entity_type: parse_optional_catalog_filter(
-            passthrough,
-            "entity_type",
-            EntityType::from_db,
-        )?,
-        entity_id: parse_optional_i32_filter(passthrough, "entity_id")?,
-        action: parse_optional_catalog_filter(passthrough, "action", Action::from_db)?,
-        actor_kind: parse_optional_catalog_filter(passthrough, "actor_kind", ActorKind::from_db)?,
-        actor_user_id: parse_optional_i32_filter(passthrough, "actor_user_id")?,
-        initiator_user_id: parse_optional_i32_filter(passthrough, "initiator_user_id")?,
-        collection_id: parse_optional_i32_filter(passthrough, "collection_id")?,
-        occurred_after: parse_optional_date_filter(passthrough, "occurred_after")?,
-        occurred_before: parse_optional_date_filter(passthrough, "occurred_before")?,
-    })
-}
-
 async fn apply_legacy_task_provenance(
     pool: &impl crate::storage::StorageContext,
     events_to_enrich: &mut [Event],
@@ -300,60 +279,4 @@ pub(crate) async fn load_queued_task_initiators(
             task_id.map(|task_id| (task_id, initiator_user_id.or(actor_user_id)))
         })
         .collect())
-}
-
-fn take_single(
-    passthrough: &mut HashMap<String, Vec<String>>,
-    key: &str,
-) -> Result<Option<String>, ApiError> {
-    match passthrough.remove(key) {
-        Some(values) if values.len() > 1 => Err(ApiError::BadRequest(format!("duplicate {key}"))),
-        Some(mut values) => Ok(values.pop()),
-        None => Ok(None),
-    }
-}
-
-fn parse_optional_i32_filter(
-    passthrough: &mut HashMap<String, Vec<String>>,
-    key: &str,
-) -> Result<Option<i32>, ApiError> {
-    take_single(passthrough, key)?
-        .map(|value| {
-            value
-                .parse::<i32>()
-                .map_err(|error| ApiError::BadRequest(format!("bad {key}: {error}")))
-        })
-        .transpose()
-}
-
-fn parse_optional_date_filter(
-    passthrough: &mut HashMap<String, Vec<String>>,
-    key: &str,
-) -> Result<Option<chrono::NaiveDateTime>, ApiError> {
-    take_single(passthrough, key)?
-        .map(|value| {
-            let mut values = value.as_date()?;
-            if values.len() != 1 {
-                return Err(ApiError::BadRequest(format!(
-                    "{key} must contain one value"
-                )));
-            }
-            Ok(values.remove(0))
-        })
-        .transpose()
-}
-
-fn parse_optional_catalog_filter<T, F>(
-    passthrough: &mut HashMap<String, Vec<String>>,
-    key: &str,
-    parse: F,
-) -> Result<Option<T>, ApiError>
-where
-    F: Fn(&str) -> Result<T, hubuum_events_core::EventCatalogError>,
-{
-    take_single(passthrough, key)?
-        .map(|value| {
-            parse(&value).map_err(|error| ApiError::BadRequest(format!("bad {key}: {error}")))
-        })
-        .transpose()
 }

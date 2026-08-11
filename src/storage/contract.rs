@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use super::{
-    AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage, CatalogStorage,
-    ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
-    ComputedObjectStorage, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventRetentionStorage, ExportQueryStorage, HistoryStorage, IdentityStorage, ImportStorage,
-    MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, PostgresStorage, RelationQueryStorage, RemoteTargetStorage,
-    RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
+    AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
+    CatalogStorage, ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
+    ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage,
+    ExportQueryStorage, HistoryStorage, IdentityStorage, ImportStorage, MetricsStorage,
+    ObjectAggregateStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
+    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
+    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
+    observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -62,6 +63,9 @@ pub(crate) trait StorageBackend:
     + ComputedObjectStorage
     + ObjectAggregateStorage
     + RelationQueryStorage
+    + AuditEventStorage
+    + EventSubscriptionStorage
+    + EventDeliveryAdministrationStorage
     + EventDeliveryStorage
     + EventFanoutStorage
     + EventHealthStorage
@@ -151,6 +155,7 @@ mod tests {
                 "restores",
                 "imports",
                 "export_queries",
+                "event_administration",
                 "operations",
             ]
         );

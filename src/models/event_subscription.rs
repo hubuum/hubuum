@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{CollectionID, REDACTED_DEBUG_VALUE, ResourceRevision};
+use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -456,19 +456,6 @@ impl TryFrom<EventSubscriptionRow> for EventSubscription {
     }
 }
 
-impl NewEventSink {
-    pub(crate) fn into_row(self) -> Result<NewEventSinkRow, ApiError> {
-        validate_sink_parts(self.kind, &self.config, self.secret_ref.as_deref())?;
-        Ok(NewEventSinkRow {
-            name: self.name,
-            kind: self.kind.as_str().to_string(),
-            config: self.config,
-            secret_ref: normalize_optional_string(self.secret_ref),
-            enabled: self.enabled,
-        })
-    }
-}
-
 impl UpdateEventSink {
     pub fn is_empty(&self) -> bool {
         self.name.is_none()
@@ -476,51 +463,6 @@ impl UpdateEventSink {
             && self.config.is_none()
             && self.secret_ref.is_none()
             && self.enabled.is_none()
-    }
-
-    pub(crate) fn into_row(self, existing: &EventSink) -> Result<UpdateEventSinkRow, ApiError> {
-        let kind = self.kind.unwrap_or(existing.kind);
-        let config = self
-            .config
-            .clone()
-            .unwrap_or_else(|| existing.config.clone());
-        let secret_ref = match self.secret_ref.clone() {
-            Some(value) => value,
-            None => existing.secret_ref.clone(),
-        };
-        validate_sink_parts(kind, &config, secret_ref.as_deref())?;
-        Ok(UpdateEventSinkRow {
-            name: self.name,
-            kind: self.kind.map(|kind| kind.as_str().to_string()),
-            config: self.config,
-            secret_ref: self.secret_ref.map(normalize_optional_string),
-            enabled: self.enabled,
-        })
-    }
-}
-
-impl NewEventSubscription {
-    pub(crate) fn into_row(
-        self,
-        collection_id: CollectionID,
-    ) -> Result<NewEventSubscriptionRow, ApiError> {
-        validate_subscription_parts(
-            &self.entity_types,
-            &self.actions,
-            &self.filter,
-            &self.routing,
-        )?;
-        Ok(NewEventSubscriptionRow {
-            collection_id: collection_id.id(),
-            sink_id: self.sink_id.id(),
-            name: self.name,
-            description: self.description,
-            entity_types: serde_json::to_value(self.entity_types)?,
-            actions: serde_json::to_value(self.actions)?,
-            filter: serde_json::to_value(self.filter)?,
-            routing: self.routing,
-            enabled: self.enabled,
-        })
     }
 }
 
@@ -534,39 +476,6 @@ impl UpdateEventSubscription {
             && self.filter.is_none()
             && self.routing.is_none()
             && self.enabled.is_none()
-    }
-
-    pub(crate) fn into_row(
-        self,
-        existing: &EventSubscription,
-    ) -> Result<UpdateEventSubscriptionRow, ApiError> {
-        let entity_types = self
-            .entity_types
-            .clone()
-            .unwrap_or_else(|| existing.entity_types.clone());
-        let actions = self
-            .actions
-            .clone()
-            .unwrap_or_else(|| existing.actions.clone());
-        let routing = self
-            .routing
-            .clone()
-            .unwrap_or_else(|| existing.routing.clone());
-        let filter = self
-            .filter
-            .clone()
-            .unwrap_or_else(|| existing.filter.clone());
-        validate_subscription_parts(&entity_types, &actions, &filter, &routing)?;
-        Ok(UpdateEventSubscriptionRow {
-            sink_id: self.sink_id.map(EventSinkID::id),
-            name: self.name,
-            description: self.description,
-            entity_types: self.entity_types.map(serde_json::to_value).transpose()?,
-            actions: self.actions.map(serde_json::to_value).transpose()?,
-            filter: self.filter.map(serde_json::to_value).transpose()?,
-            routing: self.routing,
-            enabled: self.enabled,
-        })
     }
 }
 
@@ -657,12 +566,6 @@ pub fn validate_subscription_parts(
     }
 
     Ok(())
-}
-
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn empty_json_object() -> serde_json::Value {

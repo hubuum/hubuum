@@ -39,8 +39,8 @@ use crate::middlewares::rate_limit::{
 };
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
+use crate::services::event_administration::enabled_event_sink_count;
 use crate::storage::StorageHandle;
-use crate::storage::capabilities::event_subscription::enabled_event_sink_count;
 use crate::storage::postgres;
 use crate::storage::postgres::{PostgresPoolSettings, init_postgres_pool_with_settings};
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
