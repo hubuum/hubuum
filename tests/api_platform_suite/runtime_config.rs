@@ -66,10 +66,9 @@ mod tests {
         assert_eq!(body["database"]["url"]["configured"], true);
         assert!(body["database"]["pool_size"].is_number());
         assert!(body["exports"]["storage_query_budget_ms"].is_number());
-        assert!(
-            body["exports"]
-                .get("database_statement_timeout_ms")
-                .is_none()
+        assert_eq!(
+            body["exports"]["database_statement_timeout_ms"],
+            body["exports"]["storage_query_budget_ms"]
         );
         assert!(!serialized.contains("postgres://"));
     }

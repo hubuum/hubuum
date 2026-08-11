@@ -19771,7 +19771,7 @@
       },
       "CollectionPermissionSet": {
         "type": "object",
-        "description": "The revisioned, SQL-owned authorization state for a collection.\n\nIndividual permission rows are implementation details of this aggregate;\ncallers condition mutations on the revision of the complete set.",
+        "description": "The revisioned authorization grant set for a collection.\n\nIndividual grants are implementation details of this aggregate;\ncallers condition mutations on the revision of the complete set.",
         "required": [
           "collection_id",
           "revision",
@@ -19787,7 +19787,7 @@
             "items": {
               "$ref": "#/components/schemas/Permission"
             },
-            "description": "ACL rows contain stable group identifiers without embedding mutable\ngroup representations that are outside this aggregate's revision."
+            "description": "ACL entries contain stable group identifiers without embedding mutable\ngroup representations that are outside this aggregate's revision."
           },
           "revision": {
             "$ref": "#/components/schemas/ResourceRevision"
@@ -21273,9 +21273,16 @@
           "template_max_objects",
           "max_output_bytes",
           "stage_timeout_ms",
-          "storage_query_budget_ms"
+          "storage_query_budget_ms",
+          "database_statement_timeout_ms"
         ],
         "properties": {
+          "database_statement_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Deprecated compatibility alias for `storage_query_budget_ms`.\n\nThe value is identical and remains present so administrator clients do\nnot break while migrating away from the PostgreSQL-shaped field name.",
+            "minimum": 0
+          },
           "max_output_bytes": {
             "type": "integer",
             "minimum": 0

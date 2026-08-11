@@ -39,7 +39,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   native notifications, migrations, and adapter-specific failures. PostgreSQL
   is the only selectable production backend, and compatibility tests exercise
   every required capability for every selectable backend. Public HTTP request
-  and response shapes are unchanged.
+  and response shapes are unchanged; the deprecated administrator configuration
+  field `exports.database_statement_timeout_ms` remains as an alias for
+  `exports.storage_query_budget_ms`.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

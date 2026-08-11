@@ -143,6 +143,11 @@ pub struct ExportConfig {
     pub stage_timeout_ms: u64,
     /// Backend-neutral budget applied to each export storage read stage.
     pub storage_query_budget_ms: u64,
+    /// Deprecated compatibility alias for `storage_query_budget_ms`.
+    ///
+    /// The value is identical and remains present so administrator clients do
+    /// not break while migrating away from the PostgreSQL-shaped field name.
+    pub database_statement_timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -339,6 +344,7 @@ impl RunningConfig {
                 max_output_bytes: config.export_max_output_bytes,
                 stage_timeout_ms: config.export_stage_timeout_ms,
                 storage_query_budget_ms: config.export_storage_query_budget_ms(),
+                database_statement_timeout_ms: config.export_storage_query_budget_ms(),
             },
             backups: BackupConfig {
                 output_retention_hours: config.backup_output_retention_hours,
