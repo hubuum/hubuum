@@ -83,12 +83,10 @@ The families are not feature flags and the admin configuration does not report
 optional support. Every selectable backend implements the entire list. The
 sealed composition in `src/storage/contract.rs` makes adding a backend an
 explicit architecture change rather than an incidental trait implementation.
-During extraction, the remaining operational family retains a temporary central
-migration gate. That gate prevents another backend from becoming selectable,
-but it is not behavioral proof and must be replaced by mandatory operation-shaped
-traits and shared tests. The former
-identity, catalog-query, relation-query, history, and unified-search gates have
-now been replaced by the real `AuthenticationStorage`,
+Backend certification contains no empty capability markers. Identity,
+catalog-query, relation-query, history, unified-search, workflow, and operational
+responsibilities are enforced by operation-shaped traits and shared tests. The
+complete contract includes `AuthenticationStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
 `ObjectAggregateStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
@@ -99,8 +97,11 @@ execution is part of `ComputedFieldLifecycleStorage`. `RemoteTargetStorage`
 owns target reads, lifecycle mutations, and invocation provenance.
 `RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
 `ImportStorage` owns the complete import workflow. `ExportQueryStorage` owns the
-backend read-budget scope used by selection, includes, and hydration. No family
-is considered complete merely because a marker exists.
+backend read-budget scope used by selection, includes, and hydration.
+`OperationalStateStorage`, `MetricsStorage`, `EventHealthStorage`,
+`TokenRetentionStorage`, `EventDeliveryStorage`, `EventFanoutStorage`, and
+`EventRetentionStorage` jointly enforce the operations family. No family is
+considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from

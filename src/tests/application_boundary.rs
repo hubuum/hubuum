@@ -252,7 +252,6 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "RestoreStorage",
         "ImportStorage",
         "ExportQueryStorage",
-        "OperationalStorage",
         "sealed::CertifiedStorageBackend",
     ] {
         assert!(
@@ -268,6 +267,12 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         !contract_source.contains("CertifiedStorageBackend for MemoryStorageModel"),
         "the focused memory contract model must not be selectable as a full backend"
     );
+    for forbidden_marker in ["WorkflowStorage", "OperationalStorage"] {
+        assert!(
+            !contract_source.contains(forbidden_marker),
+            "complete storage certification must not rely on marker {forbidden_marker}"
+        );
+    }
     assert!(
         context_source.contains("assert_complete_storage_backend(&backend)"),
         "application composition must enforce the complete storage contract"
