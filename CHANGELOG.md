@@ -27,6 +27,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (administrator API):** the storage contract version is now `24`.
+  Class point persistence, bulk name resolution, and event-suppressed
+  compatibility writes now cross a mandatory, uniformly observed backend
+  contract. Class, class-history, create, and update persistence rows and SQL
+  cursor mappings are owned by the PostgreSQL adapter; domain models and output
+  DTOs contain no Diesel or PostgreSQL mapping details. Required capability
+  labels and public HTTP request and response shapes are unchanged.
+  Administration and monitoring clients matching contract version `23` must
+  accept version `24`.
 - **Breaking (administrator API):** the storage contract version is now `23`.
   Class- and object-relation point operations, lifecycle writes, and deliberately
   event-suppressed compatibility writes now cross the same mandatory, uniformly

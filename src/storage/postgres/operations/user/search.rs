@@ -10,6 +10,7 @@ use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::storage::postgres::operations::authz::{
     AuthzSubject as PostgresAuthzSubject, scope_allows,
 };
+use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
@@ -698,7 +699,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, HubuumClassExpanded);
+        crate::apply_query_options!(base_query, query_options, HubuumClassRow);
 
         trace_query!(base_query, "Searching classes");
 
@@ -706,10 +707,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             base_query
                 .select(hubuumclass::all_columns())
                 .distinct()
-                .load::<HubuumClass>(conn)
+                .load::<HubuumClassRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<HubuumClass>>();
 
         let collection_map: std::collections::HashMap<i32, Collection> =
             collections.into_iter().map(|n| (n.id, n)).collect();

@@ -10,8 +10,8 @@ use crate::events::{
 };
 use crate::models::search::QueryOptions;
 use crate::models::{
-    Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
-    NewHubuumObject, TokenRetentionSettings, UpdateHubuumObject,
+    ClassIdSet, Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
+    NewHubuumClass, NewHubuumObject, TokenRetentionSettings, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
@@ -27,9 +27,9 @@ use crate::storage::{
     AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
-    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
-    ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage, EventArchive,
-    EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
+    ClassRecordStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage,
+    EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
     EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
     EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
     ExportQueryStorage, ExportTemplateHistoryRecord, ExportTemplateStorage, HistoryAsOfQuery,
@@ -2686,6 +2686,89 @@ impl InventoryStorage for StorageHandle {
         observe_storage_call(self.backend_name(), "inventory", "counts", async {
             match &self.implementation {
                 BackendImplementation::Postgresql(backend) => backend.inventory_counts().await,
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl ClassRecordStorage for StorageHandle {
+    async fn create_class_record(
+        &self,
+        class: &NewHubuumClass,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, StorageError> {
+        observe_storage_call(self.backend_name(), "class_records", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.create_class_record(class, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn update_class_record(
+        &self,
+        update: &UpdateHubuumClass,
+        class_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, StorageError> {
+        observe_storage_call(self.backend_name(), "class_records", "update", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.update_class_record(update, class_id, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_class_record(
+        &self,
+        class: &HubuumClass,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "class_records", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.delete_class_record(class, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_class_record(&self, class_id: i32) -> Result<HubuumClass, StorageError> {
+        observe_storage_call(self.backend_name(), "class_records", "load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_class_record(class_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn class_collection(&self, class_id: i32) -> Result<Collection, StorageError> {
+        observe_storage_call(self.backend_name(), "class_records", "collection", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.class_collection(class_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn class_names(
+        &self,
+        class_ids: &ClassIdSet,
+    ) -> Result<Vec<(i32, String)>, StorageError> {
+        observe_storage_call(self.backend_name(), "class_records", "names", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.class_names(class_ids).await,
             }
         })
         .await

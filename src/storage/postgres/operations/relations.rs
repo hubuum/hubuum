@@ -14,6 +14,7 @@ use crate::models::{
     ObjectRelationSelectorKind, PreparedClassRelation, PreparedObjectRelation,
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget, User, user_can_on_any,
 };
+use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::relation_rows::{
@@ -778,8 +779,11 @@ async fn load_class_relation_endpoint_records(
 
     let classes = hubuumclass
         .filter(id.eq_any([from_class_id, to_class_id]))
-        .load::<HubuumClass>(conn)
-        .await?;
+        .load::<HubuumClassRow>(conn)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<HubuumClass>>();
     let from_class = classes
         .iter()
         .find(|class| class.id == from_class_id)
@@ -910,12 +914,14 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
                 .try_into()?;
             let from_class = hubuumclass
                 .filter(class_id.eq(relation.from_hubuum_class_id))
-                .first::<HubuumClass>(conn)
-                .await?;
+                .first::<HubuumClassRow>(conn)
+                .await?
+                .into();
             let to_class = hubuumclass
                 .filter(class_id.eq(relation.to_hubuum_class_id))
-                .first::<HubuumClass>(conn)
-                .await?;
+                .first::<HubuumClassRow>(conn)
+                .await?
+                .into();
 
             diesel::delete(hubuumclass_relation.filter(id.eq(self.id)))
                 .execute(conn)
@@ -977,12 +983,14 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
                 .try_into()?;
             let from_class = hubuumclass
                 .filter(class_id.eq(relation.from_hubuum_class_id))
-                .first::<HubuumClass>(conn)
-                .await?;
+                .first::<HubuumClassRow>(conn)
+                .await?
+                .into();
             let to_class = hubuumclass
                 .filter(class_id.eq(relation.to_hubuum_class_id))
-                .first::<HubuumClass>(conn)
-                .await?;
+                .first::<HubuumClassRow>(conn)
+                .await?
+                .into();
             diesel::delete(hubuumclass_relation.filter(id.eq(self.id())))
                 .execute(conn)
                 .await?;
@@ -1066,12 +1074,14 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
                     .try_into()?;
                 let from_class = hubuumclass
                     .filter(id.eq(relation.from_hubuum_class_id))
-                    .first::<HubuumClass>(conn)
-                    .await?;
+                    .first::<HubuumClassRow>(conn)
+                    .await?
+                    .into();
                 let to_class = hubuumclass
                     .filter(id.eq(relation.to_hubuum_class_id))
-                    .first::<HubuumClass>(conn)
-                    .await?;
+                    .first::<HubuumClassRow>(conn)
+                    .await?
+                    .into();
                 let event = NewEvent::new(
                     EntityType::ClassRelation,
                     Action::Created,
@@ -1116,13 +1126,15 @@ impl CreatePreparedClassRelationRecord for PreparedClassRelation {
                 let from_class = hubuumclass
                     .filter(id.eq(self.command().from_hubuum_class_id))
                     .for_update()
-                    .first::<HubuumClass>(conn)
-                    .await?;
+                    .first::<HubuumClassRow>(conn)
+                    .await?
+                    .into();
                 let to_class = hubuumclass
                     .filter(id.eq(self.command().to_hubuum_class_id))
                     .for_update()
-                    .first::<HubuumClass>(conn)
-                    .await?;
+                    .first::<HubuumClassRow>(conn)
+                    .await?
+                    .into();
                 if &from_class != self.from_class() || &to_class != self.to_class() {
                     return Err(ApiError::NotFound(
                         "Class relation endpoints no longer match the prepared target".to_string(),
@@ -1184,13 +1196,15 @@ impl DeleteResolvedClassRelationRecord for ResolvedClassRelationTarget {
             let from_class = hubuumclass
                 .filter(class_id.eq(relation.from_hubuum_class_id))
                 .for_update()
-                .first::<HubuumClass>(conn)
-                .await?;
+                .first::<HubuumClassRow>(conn)
+                .await?
+                .into();
             let to_class = hubuumclass
                 .filter(class_id.eq(relation.to_hubuum_class_id))
                 .for_update()
-                .first::<HubuumClass>(conn)
-                .await?;
+                .first::<HubuumClassRow>(conn)
+                .await?
+                .into();
             if &relation != self.relation()
                 || &from_class != self.from_class()
                 || &to_class != self.to_class()

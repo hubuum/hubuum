@@ -214,6 +214,70 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
 }
 
 #[test]
+fn class_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in ["src/models/class.rs", "src/models/traits/class.rs"] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    let adapter_path = root.join("src/storage/postgres/operations/class.rs");
+    let adapter_source = fs::read_to_string(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "struct HubuumClassRow",
+        "struct NewHubuumClassRow",
+        "struct UpdateHubuumClassRow",
+        "impl From<HubuumClassRow> for HubuumClass",
+        "impl CursorSqlMapping for HubuumClassRow",
+    ] {
+        assert!(
+            adapter_source.contains(required),
+            "PostgreSQL class adapter is missing {required}"
+        );
+    }
+
+    let history_path = root.join("src/storage/postgres/operations/history.rs");
+    let history_source = fs::read_to_string(&history_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
+    assert!(
+        history_source.contains("struct HubuumClassHistoryRow"),
+        "PostgreSQL history adapter must own the class-history row"
+    );
+
+    let output_path = root.join("src/models/traits/output.rs");
+    let output_source = fs::read_to_string(&output_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", output_path.display()));
+    assert!(
+        !output_source.contains("impl CursorSqlMapping for HubuumClassExpanded"),
+        "expanded class output must not own PostgreSQL cursor mappings"
+    );
+
+    assert!(
+        violations.is_empty(),
+        "class domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn object_domain_types_are_free_of_persistence_implementation_details() {
     let root = repository_root();
     let mut violations = Vec::new();
@@ -357,6 +421,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "HistoryStorage",
         "InventoryStorage",
         "UnifiedSearchStorage",
+        "ClassRecordStorage",
         "ObjectRecordStorage",
         "RemoteTargetStorage",
         "TaskQueueStorage",
@@ -522,6 +587,12 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         compact_context.contains("\"inventory\",\"counts\""),
         "inventory counts must use the common storage observer"
     );
+    for operation in ["create", "update", "delete", "load", "collection", "names"] {
+        assert!(
+            compact_context.contains(&format!("\"class_records\",\"{operation}\"")),
+            "class record operation {operation} must use the common storage observer"
+        );
+    }
     for operation in [
         "validate",
         "validate_new",

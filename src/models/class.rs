@@ -1,4 +1,3 @@
-use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -6,11 +5,9 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::hubuumclass;
 use crate::traits::SelfAccessors;
 
-#[derive(Serialize, Deserialize, Queryable, QueryableByName, Clone, PartialEq, Debug, ToSchema)]
-#[diesel(table_name = hubuumclass )]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, ToSchema)]
 pub struct HubuumClass {
     pub id: i32,
     pub name: String,
@@ -23,9 +20,8 @@ pub struct HubuumClass {
     pub revision: ResourceRevision,
 }
 
-#[derive(Serialize, Deserialize, Insertable, Clone, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = new_hubuum_class_example)]
-#[diesel(table_name = hubuumclass)]
 pub struct NewHubuumClass {
     pub name: String,
     pub collection_id: i32,
@@ -34,9 +30,8 @@ pub struct NewHubuumClass {
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, AsChangeset, Clone, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = update_hubuum_class_example)]
-#[diesel(table_name = hubuumclass)]
 pub struct UpdateHubuumClass {
     pub name: Option<String>,
     pub collection_id: Option<i32>,
@@ -198,8 +193,8 @@ impl ResolvedClassTarget {
 ///
 /// Construct via [`ClassIdSet::new`]; the inner vec stays private so the "sorted, deduped,
 /// positive" invariant holds for every consumer — including callers that `binary_search` the
-/// set and rely on the ordering. Bulk class-keyed backend lookups hang off this type (see
-/// `crate::storage::postgres::operations::class`).
+/// set and rely on the ordering. Storage contracts can accept this type without trusting callers
+/// to normalize class identifiers themselves.
 #[derive(Debug, Clone)]
 pub(crate) struct ClassIdSet(Vec<i32>);
 
@@ -247,8 +242,7 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::hubuumclass_history)]
+#[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassHistory {
     pub id: i32,
     pub name: String,
@@ -269,7 +263,45 @@ pub struct HubuumClassHistory {
     pub revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
+impl crate::traits::CursorPaginated for HubuumClassHistory {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        matches!(
+            field,
+            crate::models::search::FilterField::HistoryId
+                | crate::models::search::FilterField::Revision
+        )
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorValue, ApiError> {
+        Ok(match field {
+            crate::models::search::FilterField::HistoryId => {
+                crate::traits::CursorValue::Integer(self.history_id)
+            }
+            crate::models::search::FilterField::Revision => {
+                crate::traits::CursorValue::Integer(self.revision.get())
+            }
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        vec![crate::models::search::SortParam {
+            field: crate::models::search::FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Self::default_sort()
+    }
+}
 
 #[async_trait]
 impl AuthzTarget for HubuumClass {

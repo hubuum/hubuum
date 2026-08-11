@@ -1,7 +1,7 @@
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
-use crate::models::{CollectionHistory, HubuumClassHistory, ResourceRevision};
+use crate::models::{CollectionHistory, ResourceRevision};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
 use crate::storage::{
@@ -105,6 +105,30 @@ pub(crate) struct HubuumObjectHistoryRow {
 
 crate::impl_history_pagination!(HubuumObjectHistoryRow, "hubuumobject_history");
 
+#[derive(Queryable)]
+#[diesel(table_name = crate::schema::hubuumclass_history)]
+pub(crate) struct HubuumClassHistoryRow {
+    id: i32,
+    name: String,
+    collection_id: i32,
+    json_schema: Option<serde_json::Value>,
+    validate_schema: bool,
+    description: String,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    op: String,
+    valid_from: chrono::DateTime<chrono::Utc>,
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    actor_id: Option<i32>,
+    history_id: i64,
+    actor_kind: Option<String>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    revision: ResourceRevision,
+}
+
+crate::impl_history_pagination!(HubuumClassHistoryRow, "hubuumclass_history");
+
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
 pub(crate) async fn resolve_principal_names(
@@ -169,7 +193,7 @@ pub(crate) fn collection_history_to_storage(row: CollectionHistory) -> Collectio
     )
 }
 
-pub(crate) fn class_history_to_storage(row: HubuumClassHistory) -> ClassHistoryRecord {
+pub(crate) fn class_history_to_storage(row: HubuumClassHistoryRow) -> ClassHistoryRecord {
     ClassHistoryRecord::new(
         row.id,
         row.name,
@@ -351,7 +375,7 @@ history_db_fns!(
     class_as_of,
     crate::schema::hubuumclass_history,
     collection_id,
-    crate::models::HubuumClassHistory
+    HubuumClassHistoryRow
 );
 
 history_db_fns!(

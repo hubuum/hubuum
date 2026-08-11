@@ -11,7 +11,7 @@ use crate::models::{
     UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetObject;
-use crate::storage::postgres::operations::class::lock_resolved_class_target;
+use crate::storage::postgres::operations::class::{HubuumClassRow, lock_resolved_class_target};
 use crate::storage::postgres::operations::computed_field::{
     acquire_computed_class_shared_lock, materialize_object_in_transaction,
 };
@@ -318,8 +318,9 @@ async fn lock_object_and_update_class_by_id(
     let class = class::hubuumclass
         .filter(class::id.eq(class_id))
         .for_update()
-        .first::<HubuumClass>(conn)
-        .await?;
+        .first::<HubuumClassRow>(conn)
+        .await?
+        .into();
     let object: HubuumObject = object::hubuumobject
         .filter(object::id.eq(object_id))
         .filter(object::hubuum_class_id.eq(current.hubuum_class_id))
@@ -840,7 +841,7 @@ impl ResolveObjectSelectorRecord for ObjectSelector {
                         class::hubuumclass::all_columns(),
                         object::hubuumobject::all_columns(),
                     ))
-                    .first::<(HubuumClass, HubuumObjectRow)>(conn)
+                    .first::<(HubuumClassRow, HubuumObjectRow)>(conn)
                     .await
             }
             ObjectSelectorKind::ByName {
@@ -855,12 +856,12 @@ impl ResolveObjectSelectorRecord for ObjectSelector {
                         class::hubuumclass::all_columns(),
                         object::hubuumobject::all_columns(),
                     ))
-                    .first::<(HubuumClass, HubuumObjectRow)>(conn)
+                    .first::<(HubuumClassRow, HubuumObjectRow)>(conn)
                     .await
             }
         })
         .await
-        .map(|(class, object)| (class, object.into()))
+        .map(|(class, object)| (class.into(), object.into()))
     }
 }
 
@@ -885,7 +886,7 @@ async fn lock_resolved_object_target(
             .filter(class::name.eq(&resolved_class.name))
             .filter(class::collection_id.eq(resolved_class.collection_id))
             .for_update()
-            .first::<HubuumClass>(conn)
+            .first::<HubuumClassRow>(conn)
             .await
             .optional()?,
         ObjectSelectorKind::ByName {
@@ -896,10 +897,11 @@ async fn lock_resolved_object_target(
             .filter(class::name.eq(class_name))
             .filter(class::collection_id.eq(resolved_class.collection_id))
             .for_update()
-            .first::<HubuumClass>(conn)
+            .first::<HubuumClassRow>(conn)
             .await
             .optional()?,
     };
+    let locked_class = locked_class.map(Into::into);
     let locked_class =
         crate::storage::postgres::require_existing_revision_target(locked_class, &owner_key)?;
 
@@ -1111,13 +1113,14 @@ impl ObjectClassLookup for HubuumObject {
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_connection(pool, async |conn| {
+        let row = with_connection(pool, async |conn| {
             hubuumclass
                 .filter(id.eq(self.hubuum_class_id))
-                .first::<HubuumClass>(conn)
+                .first::<HubuumClassRow>(conn)
                 .await
         })
-        .await
+        .await?;
+        Ok(row.into())
     }
 }
 

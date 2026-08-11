@@ -26,6 +26,7 @@ use crate::models::{
     ValidatedComputedFieldPatch,
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
+use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::search::{JsonSqlPredicate, dynamic_sql_predicate};
@@ -303,8 +304,9 @@ async fn class_record(
     use crate::schema::hubuumclass::dsl::{hubuumclass, id};
     Ok(hubuumclass
         .filter(id.eq(target_class_id))
-        .first::<HubuumClass>(conn)
-        .await?)
+        .first::<HubuumClassRow>(conn)
+        .await?
+        .into())
 }
 
 async fn locked_class_record_in_collection(
@@ -313,11 +315,12 @@ async fn locked_class_record_in_collection(
     authorized_collection_id: i32,
 ) -> Result<HubuumClass, ApiError> {
     use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-    let class = hubuumclass
+    let class: HubuumClass = hubuumclass
         .filter(id.eq(target_class_id))
         .for_share()
-        .first::<HubuumClass>(conn)
-        .await?;
+        .first::<HubuumClassRow>(conn)
+        .await?
+        .into();
     if class.collection_id != authorized_collection_id {
         return Err(ApiError::Conflict(format!(
             "Class {target_class_id} moved from collection {authorized_collection_id}; authorize the request again"

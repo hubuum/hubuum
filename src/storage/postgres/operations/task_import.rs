@@ -16,6 +16,9 @@ use crate::models::{
     RestoreTimestamps, ServiceAccount, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
     UpdatePermission, User,
 };
+use crate::storage::postgres::operations::class::{
+    HubuumClassRow, NewHubuumClassRow, UpdateHubuumClassRow,
+};
 use crate::storage::postgres::operations::collection::CollectionRowInsert;
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
@@ -129,11 +132,12 @@ pub async fn lookup_class_by_collection_and_name(
         hubuumclass
             .filter(collection_id.eq(collection_id_value))
             .filter(name.eq(class_name))
-            .first::<HubuumClass>(conn)
+            .first::<HubuumClassRow>(conn)
             .await
             .optional()
     })
     .await
+    .map(|row| row.map(Into::into))
 }
 
 pub async fn lookup_classes_by_collection_and_names(
@@ -151,10 +155,11 @@ pub async fn lookup_classes_by_collection_and_names(
         hubuumclass
             .filter(collection_id.eq(collection_id_value))
             .filter(name.eq_any(class_names))
-            .load::<HubuumClass>(conn)
+            .load::<HubuumClassRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn lookup_object_by_class_and_name(
@@ -374,10 +379,11 @@ pub async fn lookup_class_by_collection_and_name_db(
     hubuumclass
         .filter(collection_id.eq(collection_id_value))
         .filter(name.eq(class_name))
-        .first::<HubuumClass>(conn)
+        .first::<HubuumClassRow>(conn)
         .await
         .optional()
         .map_err(ApiError::from)
+        .map(|row| row.map(Into::into))
 }
 
 pub async fn lookup_object_by_class_and_name_db(
@@ -564,17 +570,19 @@ pub async fn create_class_db(
     match input.timestamps.as_ref() {
         Some(timestamps) => diesel::insert_into(hubuumclass)
             .values((
-                &new_class,
+                NewHubuumClassRow::from(&new_class),
                 created_at.eq(timestamps.created_at()),
                 updated_at.eq(timestamps.updated_at()),
             ))
-            .get_result::<HubuumClass>(conn)
+            .get_result::<HubuumClassRow>(conn)
             .await
+            .map(Into::into)
             .map_err(ApiError::from),
         None => diesel::insert_into(hubuumclass)
-            .values(&new_class)
-            .get_result::<HubuumClass>(conn)
+            .values(NewHubuumClassRow::from(&new_class))
+            .get_result::<HubuumClassRow>(conn)
             .await
+            .map(Into::into)
             .map_err(ApiError::from),
     }
 }
@@ -609,16 +617,22 @@ pub async fn update_class_db(
             crate::storage::postgres::updated_or_current(
                 diesel::update(hubuumclass.filter(id.eq(class_id_value)))
                     .set((
-                        &update,
+                        UpdateHubuumClassRow::from(&update),
                         created_at.eq(timestamps.created_at()),
                         updated_at.eq(timestamps.updated_at()),
                     ))
-                    .get_result::<HubuumClass>(conn)
+                    .get_result::<HubuumClassRow>(conn)
                     .await
                     .optional(),
-                async || hubuumclass.filter(id.eq(class_id_value)).first(conn).await,
+                async || {
+                    hubuumclass
+                        .filter(id.eq(class_id_value))
+                        .first::<HubuumClassRow>(conn)
+                        .await
+                },
             )
             .await
+            .map(Into::into)
             .map_err(ApiError::from)
         })
         .await;
@@ -626,13 +640,19 @@ pub async fn update_class_db(
 
     crate::storage::postgres::updated_or_current(
         diesel::update(hubuumclass.filter(id.eq(class_id_value)))
-            .set(&update)
-            .get_result::<HubuumClass>(conn)
+            .set(UpdateHubuumClassRow::from(&update))
+            .get_result::<HubuumClassRow>(conn)
             .await
             .optional(),
-        async || hubuumclass.filter(id.eq(class_id_value)).first(conn).await,
+        async || {
+            hubuumclass
+                .filter(id.eq(class_id_value))
+                .first::<HubuumClassRow>(conn)
+                .await
+        },
     )
     .await
+    .map(Into::into)
     .map_err(ApiError::from)
 }
 
