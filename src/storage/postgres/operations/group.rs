@@ -6,18 +6,165 @@ use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE,
 };
-use crate::models::search::{FilterField, QueryOptions};
-use crate::models::{
-    Group, GroupID, NewGroup, NewPrincipalGroup, Principal, PrincipalGroup, UpdateGroup,
-};
+use crate::models::search::{FilterField, QueryOptions, SortParam};
+use crate::models::{Group, GroupID, NewGroup, Principal, PrincipalGroup, UpdateGroup};
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::identity::{
     identity_scope_by_name, identity_scope_id_by_name_conn,
 };
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
+use crate::traits::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 use crate::{date_search, numeric_search, string_search};
 
 const OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT: i64 = 10;
+
+#[derive(Debug, Queryable, Selectable, Clone)]
+#[diesel(table_name = crate::schema::groups)]
+pub(crate) struct GroupRow {
+    pub(crate) id: i32,
+    pub(crate) groupname: String,
+    pub(crate) description: String,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) identity_scope_id: i32,
+    pub(crate) managed_by: String,
+    pub(crate) external_key: Option<String>,
+    pub(crate) last_sync_attempted_at: Option<chrono::NaiveDateTime>,
+    pub(crate) last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub(crate) revision: crate::models::ResourceRevision,
+}
+
+impl From<GroupRow> for Group {
+    fn from(row: GroupRow) -> Self {
+        Self {
+            id: row.id,
+            groupname: row.groupname,
+            description: row.description,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            identity_scope_id: row.identity_scope_id,
+            managed_by: row.managed_by,
+            external_key: row.external_key,
+            last_sync_attempted_at: row.last_sync_attempted_at,
+            last_sync_success_at: row.last_sync_success_at,
+            revision: row.revision,
+        }
+    }
+}
+
+#[derive(Debug, Queryable, Selectable, Clone)]
+#[diesel(table_name = crate::schema::group_memberships)]
+pub(crate) struct PrincipalGroupRow {
+    pub(crate) principal_id: i32,
+    pub(crate) group_id: i32,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) revision: crate::models::ResourceRevision,
+}
+
+impl From<PrincipalGroupRow> for PrincipalGroup {
+    fn from(row: PrincipalGroupRow) -> Self {
+        Self {
+            principal_id: row.principal_id,
+            group_id: row.group_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            revision: row.revision,
+        }
+    }
+}
+
+impl CursorPaginated for GroupRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        Group::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name | FilterField::Groupname => {
+                CursorValue::String(self.groupname.clone())
+            }
+            FilterField::Description => CursorValue::String(self.description.clone()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for groups",
+                    field
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        Group::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Group::tie_breaker_sort()
+    }
+}
+
+impl CursorSqlMapping for GroupRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "groups.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::Groupname => CursorSqlField {
+                column: "groups.groupname",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "groups.description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "groups.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "groups.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "groups.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for groups",
+                    field
+                )));
+            }
+        })
+    }
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = crate::schema::groups)]
+struct UpdateGroupRow<'a> {
+    groupname: Option<&'a str>,
+}
+
+impl<'a> From<&'a UpdateGroup> for UpdateGroupRow<'a> {
+    fn from(update: &'a UpdateGroup) -> Self {
+        Self {
+            groupname: update.groupname.as_deref(),
+        }
+    }
+}
 
 fn group_snapshot(group: &Group) -> serde_json::Value {
     serde_json::json!({
@@ -76,10 +223,10 @@ async fn insert_effective_membership(
         .filter(principal_id.eq(principal))
         .filter(group_id.eq(group))
         .for_update()
-        .first::<PrincipalGroup>(conn)
+        .first::<PrincipalGroupRow>(conn)
         .await
         .optional()?;
-    if let Some(membership) = current {
+    if let Some(membership) = current.map(PrincipalGroup::from) {
         crate::storage::postgres::assert_locked_revision_precondition(
             conn,
             &owner_key,
@@ -97,7 +244,7 @@ async fn insert_effective_membership(
             crate::schema::group_memberships::group_id.eq(group),
         ))
         .on_conflict_do_nothing()
-        .get_result::<PrincipalGroup>(conn)
+        .get_result::<PrincipalGroupRow>(conn)
         .await
         .optional()?;
     match inserted {
@@ -165,9 +312,10 @@ async fn remove_manual_membership_source(
         .filter(group_memberships::principal_id.eq(principal))
         .filter(group_memberships::group_id.eq(group))
         .for_update()
-        .first::<PrincipalGroup>(conn)
+        .first::<PrincipalGroupRow>(conn)
         .await
-        .optional()?;
+        .optional()?
+        .map(PrincipalGroup::from);
     let Some(membership) = membership else {
         crate::storage::postgres::assert_revision_precondition_allows_missing_target(&owner_key)?;
         return Ok(None);
@@ -270,11 +418,12 @@ async fn lock_group_for_delete(
 ) -> Result<Group, ApiError> {
     use crate::schema::groups::dsl::{groups, id};
 
-    let group = groups
+    let group: Group = groups
         .filter(id.eq(group_id))
         .for_update()
-        .first::<Group>(conn)
-        .await?;
+        .first::<GroupRow>(conn)
+        .await?
+        .into();
     crate::storage::postgres::assert_locked_revision_precondition(
         conn,
         &RevisionOwner::Group.key(group.id),
@@ -356,7 +505,11 @@ impl LoadGroupRecord for GroupID {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, async |conn| {
-            groups.filter(id.eq(self.id())).first::<Group>(conn).await
+            groups
+                .filter(id.eq(self.id()))
+                .first::<GroupRow>(conn)
+                .await
+                .map(Into::into)
         })
         .await
     }
@@ -456,8 +609,9 @@ impl SaveGroupRecord for NewGroup {
                     groups::description.eq(&description),
                     groups::managed_by.eq(LOCAL_PROVIDER_KIND),
                 ))
-                .get_result::<Group>(conn)
+                .get_result::<GroupRow>(conn)
                 .await
+                .map(Into::into)
         })
         .await
     }
@@ -493,8 +647,9 @@ impl SaveGroupRecord for NewGroup {
                     groups::description.eq(&description),
                     groups::managed_by.eq(LOCAL_PROVIDER_KIND),
                 ))
-                .get_result::<Group>(conn)
-                .await?;
+                .get_result::<GroupRow>(conn)
+                .await?
+                .into();
             let event = group_event(
                 &group,
                 Action::Created,
@@ -539,9 +694,10 @@ impl UpdateGroupRecord for UpdateGroup {
         with_connection(pool, async |conn| -> Result<Group, ApiError> {
             ensure_group_allows_local_write(conn, group_id).await?;
             Ok(diesel::update(groups.filter(id.eq(group_id)))
-                .set(self)
-                .get_result::<Group>(conn)
-                .await?)
+                .set(&UpdateGroupRow::from(self))
+                .get_result::<GroupRow>(conn)
+                .await?
+                .into())
         })
         .await
     }
@@ -561,11 +717,12 @@ impl UpdateGroupRecord for UpdateGroup {
         use crate::schema::groups::dsl::{groups, id};
 
         with_transaction(pool, async |conn| -> Result<Group, ApiError> {
-            let before = groups
+            let before: Group = groups
                 .filter(id.eq(group_id))
                 .for_update()
-                .first::<Group>(conn)
-                .await?;
+                .first::<GroupRow>(conn)
+                .await?
+                .into();
             crate::storage::postgres::assert_locked_revision_precondition(
                 conn,
                 &RevisionOwner::Group.key(before.id),
@@ -577,9 +734,10 @@ impl UpdateGroupRecord for UpdateGroup {
                 return Ok(before);
             }
             let after = diesel::update(groups.filter(id.eq(group_id)))
-                .set(self)
-                .get_result::<Group>(conn)
-                .await?;
+                .set(&UpdateGroupRow::from(self))
+                .get_result::<GroupRow>(conn)
+                .await?
+                .into();
             let event = group_event(
                 &after,
                 Action::Updated,
@@ -705,9 +863,16 @@ impl GroupMembersBackend for Group {
         );
 
         with_connection(pool, async |conn| {
-            base_query.load::<(PrincipalGroup, Principal)>(conn).await
+            base_query
+                .load::<(PrincipalGroupRow, Principal)>(conn)
+                .await
         })
         .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(membership, principal)| (membership.into(), principal))
+                .collect()
+        })
     }
 
     async fn count_group_members_paginated(
@@ -811,7 +976,7 @@ impl GroupMembersBackend for Group {
     }
 }
 
-async fn save_manual_membership(
+pub(crate) async fn save_manual_membership(
     pool: &impl crate::storage::StorageContext,
     principal_id: i32,
     group_id: i32,
@@ -849,56 +1014,6 @@ async fn save_manual_membership(
     .await
 }
 
-pub trait SavePrincipalGroupRecord {
-    async fn save_principal_group_record_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<PrincipalGroup, ApiError>;
-
-    async fn save_principal_group_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
-    ) -> Result<PrincipalGroup, ApiError> {
-        let _ = context;
-        self.save_principal_group_record_without_events(pool).await
-    }
-}
-
-impl SavePrincipalGroupRecord for NewPrincipalGroup {
-    async fn save_principal_group_record_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<PrincipalGroup, ApiError> {
-        save_manual_membership(pool, self.principal_id, self.group_id, None).await
-    }
-
-    async fn save_principal_group_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
-    ) -> Result<PrincipalGroup, ApiError> {
-        save_manual_membership(pool, self.principal_id, self.group_id, context).await
-    }
-}
-
-impl SavePrincipalGroupRecord for PrincipalGroup {
-    async fn save_principal_group_record_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<PrincipalGroup, ApiError> {
-        save_manual_membership(pool, self.principal_id, self.group_id, None).await
-    }
-
-    async fn save_principal_group_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
-    ) -> Result<PrincipalGroup, ApiError> {
-        save_manual_membership(pool, self.principal_id, self.group_id, context).await
-    }
-}
-
 async fn load_principal_group(
     conn: &mut crate::storage::postgres::PostgresConnection,
     principal: i32,
@@ -908,8 +1023,9 @@ async fn load_principal_group(
     group_memberships
         .filter(principal_id.eq(principal))
         .filter(group_id.eq(group))
-        .first::<PrincipalGroup>(conn)
+        .first::<PrincipalGroupRow>(conn)
         .await
+        .map(Into::into)
 }
 
 pub async fn principal_group_by_ids(
@@ -923,71 +1039,17 @@ pub async fn principal_group_by_ids(
     .await
 }
 
-pub trait DeletePrincipalGroupRecord {
-    async fn delete_principal_group_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError>;
-}
+pub(crate) async fn group_member_principal(
+    pool: &impl crate::storage::StorageContext,
+    principal_id: i32,
+) -> Result<Principal, ApiError> {
+    use crate::schema::principals::dsl::{id, principals};
 
-impl DeletePrincipalGroupRecord for PrincipalGroup {
-    async fn delete_principal_group_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError> {
-        with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            remove_manual_membership_source(conn, self.principal_id, self.group_id).await?;
-            Ok(())
-        })
-        .await?;
-        Ok(())
-    }
-}
-
-pub trait PrincipalGroupPrincipalLookup {
-    async fn load_principal_group_principal(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<Principal, ApiError>;
-}
-
-impl PrincipalGroupPrincipalLookup for PrincipalGroup {
-    async fn load_principal_group_principal(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<Principal, ApiError> {
-        use crate::schema::principals::dsl::{id, principals};
-
-        with_connection(pool, async |conn| {
-            principals
-                .filter(id.eq(self.principal_id))
-                .first::<Principal>(conn)
-                .await
-        })
-        .await
-    }
-}
-
-pub trait PrincipalGroupGroupLookup {
-    async fn load_principal_group_group(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<Group, ApiError>;
-}
-
-impl PrincipalGroupGroupLookup for PrincipalGroup {
-    async fn load_principal_group_group(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<Group, ApiError> {
-        use crate::schema::groups::dsl::{groups, id};
-
-        with_connection(pool, async |conn| {
-            groups
-                .filter(id.eq(self.group_id))
-                .first::<Group>(conn)
-                .await
-        })
-        .await
-    }
+    with_connection(pool, async |conn| {
+        principals
+            .filter(id.eq(principal_id))
+            .first::<Principal>(conn)
+            .await
+    })
+    .await
 }

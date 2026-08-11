@@ -8,6 +8,7 @@ use crate::models::{
 };
 use crate::storage::postgres::operations::collection as collection_backend;
 use crate::storage::postgres::operations::collection::CollectionRow;
+use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::permissions as permission_backend;
 use crate::storage::postgres::operations::permissions::PermissionRow;
 use crate::storage::postgres::prelude::*;
@@ -160,7 +161,8 @@ fn collection_to_storage(collection: Collection) -> AuthorizationCollection {
     )
 }
 
-fn group_to_storage(group: Group) -> AuthorizationGroup {
+fn group_to_storage(group: impl Into<Group>) -> AuthorizationGroup {
+    let group = group.into();
     AuthorizationGroup::new(
         AuthorizationGroupIdentity::new(
             group.id,
@@ -432,7 +434,7 @@ pub(crate) async fn list_authorization_group_candidates(
             }
         }
     }
-    let rows = with_connection(pool, async |conn| query.load::<Group>(conn).await).await?;
+    let rows = with_connection(pool, async |conn| query.load::<GroupRow>(conn).await).await?;
     Ok(rows.into_iter().map(group_to_storage).collect())
 }
 
@@ -449,7 +451,7 @@ pub(crate) async fn authorization_policy_snapshot(
                 permissions::collection_id.asc(),
                 permissions::group_id.asc(),
             ))
-            .load::<(PermissionRow, Group, CollectionRow)>(conn)
+            .load::<(PermissionRow, GroupRow, CollectionRow)>(conn)
             .await
     })
     .await?;

@@ -27,14 +27,15 @@ use crate::events::{
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ClassIdSet, ClassSelector, Collection, CollectionID, Group, HubuumClass, HubuumClassID,
-    HubuumClassRelation, HubuumClassRelationID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectRelationID, MaintenanceState, NewCollectionWithAssignee, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, ObjectDataPatchDocument,
-    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, Permission,
-    PreparedClassRelation, PreparedObjectRelation, PrincipalID, ResolvedClassRelationTarget,
-    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget,
-    TokenRetentionSettings, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    ClassIdSet, ClassSelector, Collection, CollectionID, Group, GroupID, HubuumClass,
+    HubuumClassID, HubuumClassRelation, HubuumClassRelationID, HubuumObject, HubuumObjectID,
+    HubuumObjectRelation, HubuumObjectRelationID, MaintenanceState, NewCollectionWithAssignee,
+    NewGroup, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
+    Permission, PreparedClassRelation, PreparedObjectRelation, Principal, PrincipalGroup,
+    PrincipalID, ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
+    ResolvedObjectTarget, TokenRetentionSettings, UpdateCollection, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::class::{
@@ -51,6 +52,9 @@ use crate::storage::postgres::operations::collection::{
     groups_on_paginated_with_total_count_from_backend, move_collection_record_from_backend,
     principal_all_permissions_from_backend, principal_on_from_backend,
     principal_on_paginated_with_total_count_from_backend, user_can_on_any_from_backend,
+};
+use crate::storage::postgres::operations::group::{
+    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord, UpdateGroupRecord,
 };
 use crate::storage::postgres::operations::object::{
     CreateObjectInResolvedClassRecord, DeleteObjectRecord, DeleteResolvedObjectRecord,
@@ -85,9 +89,9 @@ use super::{
     ComputedObjectStorage, EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch,
     EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
     EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    IdentityStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
+    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateHistoryRecord, GroupStorage,
+    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName,
+    HistoryStorage, IdentityStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
     ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRecordStorage,
     ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
@@ -1286,6 +1290,126 @@ impl TokenRetentionStorage for PostgresStorage {
         settings: TokenRetentionSettings,
     ) -> Result<usize, StorageError> {
         operations::token_retention::purge_expired_token_batch(&self.pool, settings)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl GroupStorage for PostgresStorage {
+    async fn load_group(&self, group_id: i32) -> Result<Group, StorageError> {
+        GroupID::new(group_id)
+            .map_err(map_postgres_error)?
+            .load_group_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError> {
+        GroupID::new(group_id).map_err(map_postgres_error)?;
+        operations::group::group_identity_scope_name(&self.pool, group_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_group(
+        &self,
+        command: &NewGroup,
+        context: Option<&EventContext>,
+    ) -> Result<Group, StorageError> {
+        command
+            .save_group_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_group(
+        &self,
+        group_id: i32,
+        update: &UpdateGroup,
+        context: Option<&EventContext>,
+    ) -> Result<Group, StorageError> {
+        let group_id = GroupID::new(group_id).map_err(map_postgres_error)?;
+        update
+            .update_group_record(group_id.id(), &self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_group(
+        &self,
+        group_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<usize, StorageError> {
+        GroupID::new(group_id)
+            .map_err(map_postgres_error)?
+            .delete_group_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn group_members(&self, group_id: i32) -> Result<Vec<Principal>, StorageError> {
+        let group = self.load_group(group_id).await?;
+        group
+            .load_group_members(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn group_members_page(
+        &self,
+        group_id: i32,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<(PrincipalGroup, Principal)>, StorageError> {
+        let group = self.load_group(group_id).await?;
+        group
+            .load_group_members_paginated(&self.pool, query_options)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn count_group_members(
+        &self,
+        group_id: i32,
+        query_options: &QueryOptions,
+    ) -> Result<i64, StorageError> {
+        let group = self.load_group(group_id).await?;
+        group
+            .count_group_members_paginated(&self.pool, query_options)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn group_member_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::group::group_member_principal(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn add_group_member(
+        &self,
+        principal_id: i32,
+        group_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<PrincipalGroup, StorageError> {
+        GroupID::new(group_id).map_err(map_postgres_error)?;
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::group::save_manual_membership(&self.pool, principal_id, group_id, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn remove_group_member(
+        &self,
+        principal_id: i32,
+        group_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        let group = self.load_group(group_id).await?;
+        group
+            .remove_group_member_from_backend(principal_id, &self.pool, context)
             .await
             .map_err(map_postgres_error)
     }

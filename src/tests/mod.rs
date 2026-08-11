@@ -62,6 +62,7 @@ use crate::models::{
     PrincipalTokenCreateRequest, TokenResourceScope, TokenScope,
 };
 use crate::storage::postgres::PostgresPool;
+use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::{init_postgres_pool, with_connection};
 
 use crate::utilities::auth::{generate_random_password, hash_password};
@@ -756,13 +757,13 @@ pub async fn ensure_admin_group(pool: &PostgresPool) -> Group {
     let result = with_connection(pool, async |conn| {
         groups
             .filter(groupname.eq(&admin_groupname))
-            .first::<Group>(conn)
+            .first::<GroupRow>(conn)
             .await
     })
     .await;
 
     if let Ok(group) = result {
-        return group;
+        return group.into();
     }
 
     let result = NewGroup {
@@ -779,10 +780,11 @@ pub async fn ensure_admin_group(pool: &PostgresPool) -> Group {
                 return with_connection(pool, async |conn| {
                     groups
                         .filter(groupname.eq(&admin_groupname))
-                        .first::<Group>(conn)
+                        .first::<GroupRow>(conn)
                         .await
                 })
                 .await
+                .map(Into::into)
                 .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create admin group: {e:?}"),

@@ -6,12 +6,12 @@ use super::{
     CollectionPermissionStorage, CollectionRecordStorage, CollectionStore,
     ComputedFieldLifecycleStorage, ComputedObjectStorage, EventDeliveryAdministrationStorage,
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, HistoryStorage,
-    IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage, ObjectAggregateStorage,
-    ObjectRecordStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
-    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
-    observed::ObservedLifecycleStorage,
+    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, GroupStorage,
+    HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage,
+    ObjectAggregateStorage, ObjectRecordStorage, ObjectRelationStore, ObjectStore,
+    OperationalStateStorage, PostgresStorage, RelationQueryStorage, RemoteTargetStorage,
+    RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
+    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -78,6 +78,7 @@ pub(crate) trait StorageBackend:
     + OperationalStateStorage
     + TokenRetentionStorage
     + UnifiedSearchStorage
+    + GroupStorage
     + CollectionPermissionStorage
     + CollectionRecordStorage
     + ClassRecordStorage

@@ -21,6 +21,7 @@ use crate::storage::postgres::operations::class::{
 use crate::storage::postgres::operations::collection::{
     CollectionRow, CollectionRowInsert, UpdateCollectionRow,
 };
+use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
 };
@@ -266,11 +267,12 @@ pub async fn lookup_group_by_name(
             .filter(groups::groupname.eq(value))
             .filter(identity_scopes::name.eq(identity_scope))
             .select(groups::all_columns)
-            .first::<Group>(conn)
+            .first::<GroupRow>(conn)
             .await
             .optional()
     })
     .await
+    .map(|row| row.map(Into::into))
 }
 
 pub async fn lookup_collection_by_name_db(
@@ -424,9 +426,10 @@ pub async fn lookup_group_by_name_db(
         .filter(groups::groupname.eq(value))
         .filter(identity_scopes::name.eq(identity_scope))
         .select(groups::all_columns)
-        .first::<Group>(conn)
+        .first::<GroupRow>(conn)
         .await
         .optional()
+        .map(|row| row.map(Into::into))
         .map_err(ApiError::from)
 }
 
@@ -904,7 +907,7 @@ pub async fn upsert_group_db(
         .filter(identity_scope_id.eq(identity_scope_id_value))
         .filter(groupname.eq(&input.groupname))
         .for_update()
-        .first::<Group>(conn)
+        .first::<GroupRow>(conn)
         .await
         .optional()?;
     let row = match existing {
@@ -934,10 +937,15 @@ pub async fn upsert_group_db(
                             created_at.eq(created),
                             updated_at.eq(updated),
                         ))
-                        .get_result::<Group>(conn)
+                        .get_result::<GroupRow>(conn)
                         .await
                         .optional(),
-                    async || groups.filter(id.eq(existing.id)).first(conn).await,
+                    async || {
+                        groups
+                            .filter(id.eq(existing.id))
+                            .first::<GroupRow>(conn)
+                            .await
+                    },
                 )
                 .await
                 .map_err(ApiError::from)
@@ -959,7 +967,7 @@ pub async fn upsert_group_db(
                     created_at.eq(created),
                     updated_at.eq(updated),
                 ))
-                .get_result::<Group>(conn)
+                .get_result::<GroupRow>(conn)
                 .await?
         }
     };
@@ -2228,7 +2236,7 @@ mod tests {
             ensure_identity_scope(&scope.pool, &external_scope_name, LDAP_PROVIDER_KIND)
                 .await
                 .unwrap();
-        let external_group = with_connection(&scope.pool, async |conn| {
+        let external_group: Group = with_connection(&scope.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -2239,10 +2247,11 @@ mod tests {
                     groups::managed_by.eq(LDAP_PROVIDER_KIND),
                     groups::external_key.eq(scope.scoped_name("external_group_key")),
                 ))
-                .get_result::<Group>(conn)
+                .get_result::<GroupRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
         .unwrap();
 
         let external_key = GroupKey {

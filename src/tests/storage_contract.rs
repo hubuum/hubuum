@@ -23,8 +23,8 @@ use crate::models::{
     CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, GroupID,
     HubuumClassHistory, HubuumObjectHistory, ImportAtomicity, ImportClassInput,
     ImportCollectionInput, ImportMode, NewCollectionWithAssignee, NewComputedFieldDefinition,
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    RemoteTargetHistory, UpdateCollection,
+    NewGroup, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    Permissions, RemoteTargetHistory, UpdateCollection, UpdateGroup,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -45,14 +45,14 @@ use crate::storage::{
     ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
-    ExportTemplateStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
-    HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage,
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetStorage, RestoreStorage, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
+    ExportTemplateStorage, GroupStorage, HistoryAsOfQuery, HistoryCollectionScope,
+    HistoryListQuery, HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage,
+    MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
+    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
     StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
@@ -169,6 +169,122 @@ async fn every_available_storage_backend_supplies_consistent_inventory_counts() 
                         .windows(2)
                         .all(|rows| rows[0].class_id() < rows[1].class_id()),
                     "per-class counts must use stable class-id ordering"
+                );
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_complete_group_behavior() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let initial_name = prefix("group_contract");
+                let renamed = prefix("group_contract_renamed");
+                let created = backend
+                    .create_group(
+                        &NewGroup {
+                            identity_scope: None,
+                            groupname: initial_name,
+                            description: Some("storage compatibility group".to_string()),
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("certified backend should create groups");
+
+                let loaded = backend
+                    .load_group(created.id)
+                    .await
+                    .expect("certified backend should load groups");
+                assert_eq!(loaded.id, created.id);
+                assert_eq!(
+                    backend
+                        .group_identity_scope_name(created.id)
+                        .await
+                        .expect("certified backend should resolve group identity scopes"),
+                    LOCAL_IDENTITY_SCOPE
+                );
+
+                let updated = backend
+                    .update_group(
+                        created.id,
+                        &UpdateGroup {
+                            groupname: Some(renamed.clone()),
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("certified backend should update groups");
+                assert_eq!(updated.groupname, renamed);
+
+                let user = crate::tests::create_user_with_params(
+                    pool.get_ref(),
+                    &prefix("group_contract_user"),
+                    "testpassword",
+                )
+                .await;
+                backend
+                    .add_group_member(user.id, created.id, None)
+                    .await
+                    .expect("certified backend should add group members");
+
+                let members = backend
+                    .group_members(created.id)
+                    .await
+                    .expect("certified backend should list group members");
+                assert!(members.iter().any(|member| member.id == user.id));
+                assert_eq!(
+                    backend
+                        .group_member_principal(user.id)
+                        .await
+                        .expect("certified backend should load a membership principal")
+                        .id,
+                    user.id
+                );
+
+                let query_options = QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: Some(10),
+                    cursor: None,
+                    include_total: true,
+                };
+                let page = backend
+                    .group_members_page(created.id, &query_options)
+                    .await
+                    .expect("certified backend should page group members");
+                assert!(page.iter().any(|(_, member)| member.id == user.id));
+                assert_eq!(
+                    backend
+                        .count_group_members(created.id, &query_options)
+                        .await
+                        .expect("certified backend should count group members"),
+                    1
+                );
+
+                backend
+                    .remove_group_member(user.id, created.id, None)
+                    .await
+                    .expect("certified backend should remove group members");
+                assert_eq!(
+                    backend
+                        .count_group_members(created.id, &query_options)
+                        .await
+                        .expect("certified backend should recount group members"),
+                    0
+                );
+                assert_eq!(
+                    backend
+                        .delete_group(created.id, None)
+                        .await
+                        .expect("certified backend should delete groups"),
+                    1
                 );
             }
         }

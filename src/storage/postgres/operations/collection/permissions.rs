@@ -64,7 +64,7 @@ impl CursorSqlMapping for GroupPermissionQueryRow {
 async fn build_effective_group_permissions(
     conn: &mut crate::storage::postgres::PostgresConnection,
     target_collection_id: i32,
-    rows: Vec<(i32, i32, Group, PermissionRow)>,
+    rows: Vec<(i32, i32, GroupRow, PermissionRow)>,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError> {
     use crate::schema::collections::dsl::{collections, id};
 
@@ -111,7 +111,7 @@ async fn build_effective_group_permissions(
                     source_collection,
                     depth,
                     inherited: depth > 0,
-                    group,
+                    group: group.into(),
                     permission: permission.into(),
                 })
             },
@@ -135,7 +135,7 @@ pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
             .filter(collection_id.eq(collection_target_id))
             .filter(group_id.eq_any(group_ids_subquery))
             .select((groups::all_columns(), permissions::all_columns()))
-            .load::<(Group, PermissionRow)>(conn)
+            .load::<(GroupRow, PermissionRow)>(conn)
             .await
     })
     .await?;
@@ -143,7 +143,7 @@ pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
     Ok(rows
         .into_iter()
         .map(|(group, permission)| GroupPermission {
-            group,
+            group: group.into(),
             permission: permission.into(),
         })
         .collect())
@@ -168,16 +168,18 @@ pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
             .filter(group_id.eq_any(group_ids_subquery))
             .select((
                 CollectionRow::as_select(),
-                Group::as_select(),
+                GroupRow::as_select(),
                 PermissionRow::as_select(),
             ))
-            .load::<(CollectionRow, Group, PermissionRow)>(conn)
+            .load::<(CollectionRow, GroupRow, PermissionRow)>(conn)
             .await
     })
     .await
     .map(|rows| {
         rows.into_iter()
-            .map(|(collection, group, permission)| (collection.into(), group, permission.into()))
+            .map(|(collection, group, permission)| {
+                (collection.into(), group.into(), permission.into())
+            })
             .collect()
     })
 }
@@ -249,14 +251,14 @@ pub async fn principal_on_paginated_with_total_count_from_backend<
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermissionQueryRow);
     let rows = with_connection(pool, async |conn| {
-        query.load::<(Group, PermissionRow)>(conn).await
+        query.load::<(GroupRow, PermissionRow)>(conn).await
     })
     .await?;
 
     Ok((
         rows.into_iter()
             .map(|(group, permission)| GroupPermission {
-                group,
+                group: group.into(),
                 permission: permission.into(),
             })
             .collect(),
@@ -297,7 +299,7 @@ pub async fn effective_principal_on_from_backend<S: AuthzSubject, T: CollectionA
                 groups::all_columns(),
                 permissions::all_columns(),
             ))
-            .load::<(i32, i32, Group, PermissionRow)>(conn)
+            .load::<(i32, i32, GroupRow, PermissionRow)>(conn)
             .await?;
 
         build_effective_group_permissions(conn, target_collection_id, rows).await
@@ -438,7 +440,7 @@ pub async fn effective_group_on_from_backend(
                 groups::all_columns(),
                 permissions::all_columns(),
             ))
-            .load::<(i32, i32, Group, PermissionRow)>(conn)
+            .load::<(i32, i32, GroupRow, PermissionRow)>(conn)
             .await?;
 
         build_effective_group_permissions(conn, target_collection_id, rows).await
@@ -481,10 +483,11 @@ pub async fn groups_can_on_from_backend(
         groups
             .filter(group_table_id.eq_any(group_ids))
             .order(group_table_id.asc())
-            .load::<Group>(conn)
+            .load::<GroupRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn groups_can_on_paginated_with_total_count_from_backend(
@@ -556,8 +559,12 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
     .await?;
 
     let mut query = build_query()?;
-    crate::apply_query_options!(query, query_options, Group);
-    let items = with_connection(pool, async |conn| query.load::<Group>(conn).await).await?;
+    crate::apply_query_options!(query, query_options, GroupRow);
+    let items = with_connection(pool, async |conn| query.load::<GroupRow>(conn).await)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
 
     Ok((items, total_count))
 }
@@ -642,7 +649,7 @@ pub async fn groups_on_from_backend<T: CollectionAccessors>(
         base_query
             .inner_join(groups.on(group_table_id.eq(group_id)))
             .select((groups::all_columns(), permissions::all_columns()))
-            .load::<(Group, PermissionRow)>(conn)
+            .load::<(GroupRow, PermissionRow)>(conn)
             .await
     })
     .await?;
@@ -650,7 +657,7 @@ pub async fn groups_on_from_backend<T: CollectionAccessors>(
     Ok(rows
         .into_iter()
         .map(|(group, permission)| GroupPermission {
-            group,
+            group: group.into(),
             permission: permission.into(),
         })
         .collect())
@@ -739,7 +746,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
     let rows = with_connection(pool, async |conn| {
         query
             .select((groups::all_columns(), permissions::all_columns()))
-            .load::<(Group, PermissionRow)>(conn)
+            .load::<(GroupRow, PermissionRow)>(conn)
             .await
     })
     .await?;
@@ -747,7 +754,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
     Ok((
         rows.into_iter()
             .map(|(group, permission)| GroupPermission {
-                group,
+                group: group.into(),
                 permission: permission.into(),
             })
             .collect(),
