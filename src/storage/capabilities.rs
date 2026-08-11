@@ -82,16 +82,6 @@ pub(crate) mod relations {
     };
 }
 
-pub(crate) mod restore {
-    pub(crate) use crate::storage::postgres::operations::restore::{
-        RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
-        expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
-        load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
-        maintenance_generation_and_instances_db, restore_coordinator_tick_db,
-        resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
-    };
-}
-
 pub(crate) mod service_account {
     pub(crate) use crate::storage::postgres::operations::service_account::{
         DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,

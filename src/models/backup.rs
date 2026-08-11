@@ -6,11 +6,10 @@ use chrono::NaiveDateTime;
 use diesel::{Insertable, Queryable, Selectable};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
-use crate::schema::{backup_task_outputs, restore_jobs, server_instances};
+use crate::schema::backup_task_outputs;
 
 use super::principal::Principal;
 
@@ -369,41 +368,6 @@ impl<T> BackupOutputLookup<T> {
     }
 }
 
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = restore_jobs)]
-pub struct RestoreJobRecord {
-    pub id: i64,
-    pub status: String,
-    pub requested_by: Option<i32>,
-    pub requested_by_identity_scope: String,
-    pub requested_by_name: String,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub capability_hash: String,
-    pub error: Option<String>,
-    pub expires_at: NaiveDateTime,
-    pub confirmed_at: Option<NaiveDateTime>,
-    pub finished_at: Option<NaiveDateTime>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = restore_jobs)]
-pub struct NewRestoreJobRecord {
-    pub status: String,
-    pub requested_by: Option<i32>,
-    pub requested_by_identity_scope: String,
-    pub requested_by_name: String,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub capability_hash: String,
-    pub validation_summary: serde_json::Value,
-    pub expires_at: NaiveDateTime,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreJobStatus {
@@ -433,6 +397,7 @@ impl FromStr for RestoreJobStatus {
         match value {
             "validated" => Ok(Self::Validated),
             "confirmed" => Ok(Self::Confirmed),
+            "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "expired" => Ok(Self::Expired),
             _ => Err(ApiError::InternalServerError(format!(
@@ -523,16 +488,6 @@ impl fmt::Debug for RestoreConfirmRequest {
 }
 
 pub const RESTORE_CONFIRMATION_PHRASE: &str = "REPLACE ALL HUBUUM DATA";
-
-#[derive(Debug, Clone, Queryable, Selectable, Insertable)]
-#[diesel(table_name = server_instances)]
-pub struct ServerInstanceRecord {
-    pub instance_id: Uuid,
-    pub maintenance_generation: i64,
-    pub drained: bool,
-    pub last_heartbeat_at: NaiveDateTime,
-    pub started_at: NaiveDateTime,
-}
 
 #[cfg(test)]
 mod sensitive_debug_tests {

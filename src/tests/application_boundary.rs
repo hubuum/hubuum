@@ -246,6 +246,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "TaskQueueStorage",
         "TaskExecutionStorage",
         "BackupSnapshotStorage",
+        "RestoreStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
@@ -303,6 +304,26 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         compact_context.contains("\"backup_snapshots\",\"snapshot\""),
         "backup snapshot creation must use the common storage observer"
     );
+    for operation in [
+        "stage",
+        "get_job",
+        "get_status",
+        "expire",
+        "start_draining",
+        "apply",
+        "fail_and_resume",
+        "coordinator_snapshot",
+        "resume_without_job",
+        "resume_terminal",
+        "tick",
+        "drain_state",
+        "remove_instance",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"restores\",\"{operation}\"")),
+            "restore operation {operation} must use the common storage observer"
+        );
+    }
     for operation in [
         "get",
         "list",
@@ -436,6 +457,42 @@ fn remote_target_consumers_use_the_backend_neutral_application_service() {
             );
         }
     }
+}
+
+#[test]
+fn restore_consumers_use_only_the_mandatory_storage_contract() {
+    let root = repository_root();
+    let path = root.join("src/restores/mod.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+
+    for forbidden in [
+        "storage::capabilities::restore",
+        "apply_restore_db",
+        "delete_server_instance_db",
+        "expire_restore_stage_db",
+        "fail_restore_and_resume_db",
+        "insert_restore_job_db",
+        "load_restore_coordinator_snapshot_db",
+        "load_restore_job_db",
+        "load_restore_status_job_db",
+        "maintenance_generation_and_instances_db",
+        "restore_coordinator_tick_db",
+        "resume_maintenance_without_job_db",
+        "resume_terminal_restore_db",
+        "start_restore_draining_db",
+        "RestoreJobRow",
+        "RestoreJobStatusRecord",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "restore application code still uses backend detail {forbidden}"
+        );
+    }
+    assert!(
+        source.contains("RestoreStorage"),
+        "restore application code must depend on the mandatory storage contract"
+    );
 }
 
 #[test]
