@@ -33,7 +33,8 @@ use crate::models::{
     NewGroup, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
     ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
     Permission, PreparedClassRelation, PreparedObjectRelation, Principal, PrincipalGroup,
-    PrincipalID, ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
+    PrincipalID, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsResponse,
+    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
     ResolvedObjectTarget, TokenRetentionSettings, UpdateCollection, UpdateGroup, UpdateHubuumClass,
     UpdateHubuumObject,
 };
@@ -96,7 +97,7 @@ use super::{
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRecordStorage,
     ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
     OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
-    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, ReadinessSnapshot,
+    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, PrincipalStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
     StorageAuditEvent, StorageAuditEventListQuery, StorageCallSite, StorageClass,
@@ -1412,6 +1413,96 @@ impl GroupStorage for PostgresStorage {
             .remove_group_member_from_backend(principal_id, &self.pool, context)
             .await
             .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl PrincipalStorage for PostgresStorage {
+    async fn load_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::principal::load_principal_by_id(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_principal_settings(
+        &self,
+        principal_id: i32,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::principal::load_principal_settings(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn replace_principal_settings(
+        &self,
+        principal_id: i32,
+        settings: PrincipalSettings,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::principal::mutate_principal_settings(
+            &self.pool,
+            principal_id,
+            operations::principal::PrincipalSettingsMutation::Replace,
+            settings,
+            context,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn merge_principal_settings(
+        &self,
+        principal_id: i32,
+        patch: PrincipalSettings,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::principal::mutate_principal_settings(
+            &self.pool,
+            principal_id,
+            operations::principal::PrincipalSettingsMutation::Patch,
+            patch,
+            context,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn apply_principal_settings_patch(
+        &self,
+        principal_id: i32,
+        patch: PrincipalSettingsPatch,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::principal::apply_principal_settings_patch(
+            &self.pool,
+            principal_id,
+            patch,
+            context,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn reset_principal_settings(
+        &self,
+        principal_id: i32,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
+        operations::principal::mutate_principal_settings(
+            &self.pool,
+            principal_id,
+            operations::principal::PrincipalSettingsMutation::Reset,
+            PrincipalSettings::default(),
+            context,
+        )
+        .await
+        .map_err(map_postgres_error)
     }
 }
 

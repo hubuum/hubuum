@@ -13,8 +13,8 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     ClassIdSet, Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
     NewCollectionWithAssignee, NewGroup, NewHubuumClass, NewHubuumObject, Principal,
-    PrincipalGroup, TokenRetentionSettings, UpdateCollection, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject,
+    PrincipalGroup, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsResponse,
+    TokenRetentionSettings, UpdateCollection, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::models::{Group, Permission};
 use crate::permissions::{AppContext, PermissionBackend};
@@ -46,15 +46,15 @@ use crate::storage::{
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRecordStorage,
     ObjectRelationsTouchingIdsQuery, OperationalExportTemplateAuditEntry,
     OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
-    OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
-    StorageAuditEvent, StorageAuditEventListQuery, StorageBackend, StorageBackendDescriptor,
-    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite,
-    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRelation,
-    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
-    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
-    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    OperationalTaskQueueSnapshot, PostgresStorage, PrincipalStorage, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
+    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
     StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
@@ -2846,6 +2846,115 @@ impl GroupStorage for StorageHandle {
                 BackendImplementation::Postgresql(backend) => {
                     backend
                         .remove_group_member(principal_id, group_id, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl PrincipalStorage for StorageHandle {
+    async fn load_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
+        observe_storage_call(self.backend_name(), "principals", "load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_principal(principal_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_principal_settings(
+        &self,
+        principal_id: i32,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        observe_storage_call(self.backend_name(), "principals", "settings_load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_principal_settings(principal_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn replace_principal_settings(
+        &self,
+        principal_id: i32,
+        settings: PrincipalSettings,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "principals",
+            "settings_replace",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .replace_principal_settings(principal_id, settings, context)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn merge_principal_settings(
+        &self,
+        principal_id: i32,
+        patch: PrincipalSettings,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        observe_storage_call(self.backend_name(), "principals", "settings_merge", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .merge_principal_settings(principal_id, patch, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn apply_principal_settings_patch(
+        &self,
+        principal_id: i32,
+        patch: PrincipalSettingsPatch,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "principals",
+            "settings_json_patch",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .apply_principal_settings_patch(principal_id, patch, context)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn reset_principal_settings(
+        &self,
+        principal_id: i32,
+        context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, StorageError> {
+        observe_storage_call(self.backend_name(), "principals", "settings_reset", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .reset_principal_settings(principal_id, context)
                         .await
                 }
             }

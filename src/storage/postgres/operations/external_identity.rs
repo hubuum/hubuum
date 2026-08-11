@@ -10,6 +10,7 @@ use crate::models::{
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::identity::ensure_identity_scope;
+use crate::storage::postgres::operations::principal::PrincipalRow;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};
 
@@ -122,7 +123,7 @@ pub async fn sync_external_user(
             .filter(principals::identity_scope_id.eq(scope.id))
             .filter(principals::external_subject.eq(&profile.subject))
             .select(principals::all_columns)
-            .first::<Principal>(conn)
+            .first::<PrincipalRow>(conn)
             .await
             .optional()?;
 
@@ -137,7 +138,7 @@ pub async fn sync_external_user(
                         principals::last_sync_attempted_at.eq(sync_time),
                         principals::last_sync_success_at.eq(sync_time),
                     ))
-                    .get_result::<Principal>(conn)
+                    .get_result::<PrincipalRow>(conn)
                     .await?
             }
         } else {
@@ -152,7 +153,7 @@ pub async fn sync_external_user(
                     principals::last_sync_success_at.eq(sync_time),
                 ))
                 .on_conflict_do_nothing()
-                .get_result::<Principal>(conn)
+                .get_result::<PrincipalRow>(conn)
                 .await
                 .optional()?;
 
@@ -162,7 +163,7 @@ pub async fn sync_external_user(
                     let principal = principals::table
                         .filter(principals::identity_scope_id.eq(scope.id))
                         .filter(principals::name.eq(&profile.name))
-                        .first::<Principal>(conn)
+                        .first::<PrincipalRow>(conn)
                         .await?;
                     if principal.provider_managed && principal.kind == PrincipalKind::Human.as_str()
                     {
@@ -176,6 +177,7 @@ pub async fn sync_external_user(
                 }
             }
         };
+        let principal: Principal = principal.into();
 
         if principal.kind != PrincipalKind::Human.as_str() {
             return Err(ApiError::Conflict(

@@ -24,7 +24,8 @@ use crate::models::{
     HubuumClassHistory, HubuumObjectHistory, ImportAtomicity, ImportClassInput,
     ImportCollectionInput, ImportMode, NewCollectionWithAssignee, NewComputedFieldDefinition,
     NewGroup, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    Permissions, RemoteTargetHistory, UpdateCollection, UpdateGroup,
+    Permissions, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument,
+    RemoteTargetHistory, UpdateCollection, UpdateGroup,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -50,10 +51,10 @@ use crate::storage::{
     MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
     ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
     ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
-    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
-    StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
+    PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
+    RestoreStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters,
+    StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
     StorageDefaultAdminBootstrap, StorageError, StorageEventDeliveryListQuery,
@@ -286,6 +287,87 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
                         .expect("certified backend should delete groups"),
                     1
                 );
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_complete_principal_behavior() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("principal_contract_user"),
+        "testpassword",
+    )
+    .await;
+    let event_context = EventContext::user(user.id, None, None);
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let loaded = backend
+                    .load_principal(user.id)
+                    .await
+                    .expect("certified backend should load principals");
+                assert_eq!(loaded.id, user.id);
+
+                let initial = backend
+                    .load_principal_settings(user.id)
+                    .await
+                    .expect("certified backend should load principal settings");
+                assert_eq!(initial.as_value(), &serde_json::json!({}));
+
+                let replaced = backend
+                    .replace_principal_settings(
+                        user.id,
+                        PrincipalSettings::new(serde_json::json!({
+                            "theme": "light",
+                            "notifications": {"email": true}
+                        }))
+                        .expect("valid principal settings"),
+                        &event_context,
+                    )
+                    .await
+                    .expect("certified backend should replace principal settings");
+                assert_eq!(replaced.as_value()["theme"], "light");
+
+                let merged = backend
+                    .merge_principal_settings(
+                        user.id,
+                        PrincipalSettings::new(serde_json::json!({
+                            "notifications": {"push": true}
+                        }))
+                        .expect("valid principal settings patch"),
+                        &event_context,
+                    )
+                    .await
+                    .expect("certified backend should merge principal settings");
+                assert_eq!(merged.as_value()["notifications"]["email"], true);
+                assert_eq!(merged.as_value()["notifications"]["push"], true);
+
+                let patch_document =
+                    serde_json::from_value::<PrincipalSettingsPatchDocument>(serde_json::json!([
+                        {"op": "replace", "path": "/theme", "value": "dark"}
+                    ]))
+                    .expect("valid bounded principal settings JSON Patch");
+                let patched = backend
+                    .apply_principal_settings_patch(
+                        user.id,
+                        PrincipalSettingsPatch::JsonPatch(patch_document),
+                        &event_context,
+                    )
+                    .await
+                    .expect("certified backend should apply principal settings JSON Patch");
+                assert_eq!(patched.as_value()["theme"], "dark");
+
+                let reset = backend
+                    .reset_principal_settings(user.id, &event_context)
+                    .await
+                    .expect("certified backend should reset principal settings");
+                assert_eq!(reset.as_value(), &serde_json::json!({}));
             }
         }
     }

@@ -12,6 +12,7 @@ use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::identity::{
     identity_scope_by_name, identity_scope_id_by_name_conn,
 };
+use crate::storage::postgres::operations::principal::{PrincipalMemberQueryRow, PrincipalRow};
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -805,10 +806,11 @@ impl GroupMembersBackend for Group {
                 .filter(group_id.eq(self.id))
                 .inner_join(principals)
                 .select(crate::schema::principals::all_columns)
-                .load::<Principal>(conn)
+                .load::<PrincipalRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 
     async fn load_group_members_paginated(
@@ -856,21 +858,17 @@ impl GroupMembersBackend for Group {
             }
         }
 
-        crate::apply_query_options!(
-            base_query,
-            query_options,
-            crate::models::PrincipalMemberResponse
-        );
+        crate::apply_query_options!(base_query, query_options, PrincipalMemberQueryRow);
 
         with_connection(pool, async |conn| {
             base_query
-                .load::<(PrincipalGroupRow, Principal)>(conn)
+                .load::<(PrincipalGroupRow, PrincipalRow)>(conn)
                 .await
         })
         .await
         .map(|rows| {
             rows.into_iter()
-                .map(|(membership, principal)| (membership.into(), principal))
+                .map(|(membership, principal)| (membership.into(), principal.into()))
                 .collect()
         })
     }
@@ -1048,8 +1046,9 @@ pub(crate) async fn group_member_principal(
     with_connection(pool, async |conn| {
         principals
             .filter(id.eq(principal_id))
-            .first::<Principal>(conn)
+            .first::<PrincipalRow>(conn)
             .await
+            .map(Into::into)
     })
     .await
 }

@@ -27,6 +27,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (administrator API):** the storage contract version is now `27`.
+  Principal point reads and the complete audited settings lifecycle now cross a
+  mandatory, uniformly observed backend contract. Principal and
+  principal-membership query rows, Diesel mappings, and SQL cursor mappings are
+  owned by the PostgreSQL adapter; the principal domain model contains no
+  Diesel or PostgreSQL implementation details. Required capability labels and
+  public HTTP request and response shapes are unchanged. Administration and
+  monitoring clients matching contract version `26` must accept version `27`.
 - **Breaking (administrator API):** the storage contract version is now `26`.
   Group lifecycle, identity-scope resolution, membership mutation, listing,
   paging, and counting now cross one mandatory, uniformly observed backend
