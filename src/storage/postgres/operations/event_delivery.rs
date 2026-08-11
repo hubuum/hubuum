@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::events::{EntityType, Event, EventDeliverySettings};
-use crate::models::event_subscription::{EventSinkRow, EventSubscriptionRow};
 use crate::models::search::{FilterField, Operator, ParsedQueryParamExt, QueryOptions};
 use crate::models::{
     EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink, EventSubscription,
@@ -19,6 +18,8 @@ use crate::storage::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
     EventDeliveryWorkItem,
 };
+
+use super::event_subscription::{EventSinkRow, EventSubscriptionRow};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClaimedEventDelivery {

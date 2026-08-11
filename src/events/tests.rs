@@ -27,11 +27,10 @@ use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_f
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSinkKind,
     ExportContentType, ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID,
-    HubuumClassRelationID, HubuumObjectID, NewEventSinkRow, NewEventSubscriptionRow,
-    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
-    ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
-    PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
-    UpdateUser, UserID,
+    HubuumClassRelationID, HubuumObjectID, NewExportTemplate, NewHubuumClassRelation,
+    NewHubuumObjectRelation, NewUser, ObjectRelationLimit, Permissions, PermissionsList,
+    PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID,
+    TokenScope, UpdateExportTemplate, UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::storage::postgres::operations::event_delivery::{
@@ -45,7 +44,7 @@ use crate::storage::postgres::operations::event_retention::{
     purge_event_retention_without_archive, try_acquire_event_retention_lock,
 };
 use crate::storage::postgres::operations::event_subscription::{
-    SaveEventSinkRecord, SaveEventSubscriptionRecord,
+    NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
 };
 use crate::storage::postgres::operations::events::{
     EventListFilters, list_events_with_total_count,

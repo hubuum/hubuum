@@ -1,6 +1,5 @@
 use std::{fmt, str::FromStr};
 
-use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize, Serializer};
@@ -9,10 +8,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision};
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
-use crate::schema::{event_sinks, event_subscriptions};
+use crate::pagination::{CursorPaginated, CursorValue};
 
 crate::int_id_newtype! {
     /// Identifier wrapper for an event sink.
@@ -103,30 +99,6 @@ macro_rules! impl_redacted_event_subscription_debug {
     };
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = event_sinks)]
-pub(crate) struct EventSinkRow {
-    pub id: i32,
-    pub name: String,
-    pub kind: String,
-    pub config: serde_json::Value,
-    pub secret_ref: Option<String>,
-    pub enabled: bool,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-    pub revision: ResourceRevision,
-}
-
-impl_redacted_event_sink_debug!(
-    EventSinkRow,
-    id,
-    name,
-    kind,
-    enabled,
-    created_at,
-    updated_at,
-);
-
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSink {
     pub id: i32,
@@ -172,84 +144,6 @@ pub struct UpdateEventSink {
 }
 
 impl_redacted_event_sink_debug!(UpdateEventSink, name, kind, enabled);
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = event_sinks)]
-pub(crate) struct NewEventSinkRow {
-    pub name: String,
-    pub kind: String,
-    pub config: serde_json::Value,
-    pub secret_ref: Option<String>,
-    pub enabled: bool,
-}
-
-impl_redacted_event_sink_debug!(NewEventSinkRow, name, kind, enabled);
-
-#[derive(Clone, AsChangeset)]
-#[diesel(table_name = event_sinks)]
-pub(crate) struct UpdateEventSinkRow {
-    pub name: Option<String>,
-    pub kind: Option<String>,
-    pub config: Option<serde_json::Value>,
-    pub secret_ref: Option<Option<String>>,
-    pub enabled: Option<bool>,
-}
-
-impl_redacted_event_sink_debug!(UpdateEventSinkRow, name, kind, enabled);
-
-impl UpdateEventSinkRow {
-    pub(crate) fn has_changes(&self, current: &EventSinkRow) -> bool {
-        self.name
-            .as_ref()
-            .is_some_and(|value| value != &current.name)
-            || self
-                .kind
-                .as_ref()
-                .is_some_and(|value| value != &current.kind)
-            || self
-                .config
-                .as_ref()
-                .is_some_and(|value| value != &current.config)
-            || self
-                .secret_ref
-                .as_ref()
-                .is_some_and(|value| value != &current.secret_ref)
-            || self.enabled.is_some_and(|value| value != current.enabled)
-    }
-}
-
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = event_subscriptions)]
-pub(crate) struct EventSubscriptionRow {
-    pub id: i32,
-    pub collection_id: i32,
-    pub sink_id: i32,
-    pub name: String,
-    pub description: String,
-    pub entity_types: serde_json::Value,
-    pub actions: serde_json::Value,
-    pub filter: serde_json::Value,
-    pub routing: serde_json::Value,
-    pub enabled: bool,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-    pub revision: ResourceRevision,
-}
-
-impl_redacted_event_subscription_debug!(
-    EventSubscriptionRow,
-    id,
-    collection_id,
-    sink_id,
-    name,
-    description,
-    entity_types,
-    actions,
-    filter,
-    enabled,
-    created_at,
-    updated_at,
-);
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSubscription {
@@ -334,127 +228,6 @@ impl_redacted_event_subscription_debug!(
     filter,
     enabled,
 );
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = event_subscriptions)]
-pub(crate) struct NewEventSubscriptionRow {
-    pub collection_id: i32,
-    pub sink_id: i32,
-    pub name: String,
-    pub description: String,
-    pub entity_types: serde_json::Value,
-    pub actions: serde_json::Value,
-    pub filter: serde_json::Value,
-    pub routing: serde_json::Value,
-    pub enabled: bool,
-}
-
-impl_redacted_event_subscription_debug!(
-    NewEventSubscriptionRow,
-    collection_id,
-    sink_id,
-    name,
-    description,
-    entity_types,
-    actions,
-    filter,
-    enabled,
-);
-
-#[derive(Clone, AsChangeset)]
-#[diesel(table_name = event_subscriptions)]
-pub(crate) struct UpdateEventSubscriptionRow {
-    pub sink_id: Option<i32>,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub entity_types: Option<serde_json::Value>,
-    pub actions: Option<serde_json::Value>,
-    pub filter: Option<serde_json::Value>,
-    pub routing: Option<serde_json::Value>,
-    pub enabled: Option<bool>,
-}
-
-impl_redacted_event_subscription_debug!(
-    UpdateEventSubscriptionRow,
-    sink_id,
-    name,
-    description,
-    entity_types,
-    actions,
-    filter,
-    enabled,
-);
-
-impl UpdateEventSubscriptionRow {
-    pub(crate) fn has_changes(&self, current: &EventSubscriptionRow) -> bool {
-        self.sink_id.is_some_and(|value| value != current.sink_id)
-            || self
-                .name
-                .as_ref()
-                .is_some_and(|value| value != &current.name)
-            || self
-                .description
-                .as_ref()
-                .is_some_and(|value| value != &current.description)
-            || self
-                .entity_types
-                .as_ref()
-                .is_some_and(|value| value != &current.entity_types)
-            || self
-                .actions
-                .as_ref()
-                .is_some_and(|value| value != &current.actions)
-            || self
-                .filter
-                .as_ref()
-                .is_some_and(|value| value != &current.filter)
-            || self
-                .routing
-                .as_ref()
-                .is_some_and(|value| value != &current.routing)
-            || self.enabled.is_some_and(|value| value != current.enabled)
-    }
-}
-
-impl TryFrom<EventSinkRow> for EventSink {
-    type Error = ApiError;
-
-    fn try_from(row: EventSinkRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.id,
-            name: row.name,
-            kind: EventSinkKind::from_str(&row.kind)?,
-            config: row.config,
-            secret_ref: row.secret_ref,
-            enabled: row.enabled,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            revision: row.revision,
-        })
-    }
-}
-
-impl TryFrom<EventSubscriptionRow> for EventSubscription {
-    type Error = ApiError;
-
-    fn try_from(row: EventSubscriptionRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.id,
-            collection_id: row.collection_id,
-            sink_id: row.sink_id,
-            name: row.name,
-            description: row.description,
-            entity_types: serde_json::from_value(row.entity_types)?,
-            actions: serde_json::from_value(row.actions)?,
-            filter: serde_json::from_value(row.filter)?,
-            routing: row.routing,
-            enabled: row.enabled,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            revision: row.revision,
-        })
-    }
-}
 
 impl UpdateEventSink {
     pub fn is_empty(&self) -> bool {
@@ -729,44 +502,6 @@ impl CursorPaginated for EventSink {
     }
 }
 
-impl CursorSqlMapping for EventSink {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "event_sinks.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "event_sinks.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Kind => CursorSqlField {
-                column: "event_sinks.kind",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "event_sinks.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "event_sinks.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for event sinks",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl CursorPaginated for EventSubscription {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
@@ -800,39 +535,6 @@ impl CursorPaginated for EventSubscription {
             field: FilterField::Id,
             descending: false,
         }]
-    }
-}
-
-impl CursorSqlMapping for EventSubscription {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "event_subscriptions.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "event_subscriptions.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "event_subscriptions.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "event_subscriptions.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for event subscriptions",
-                    field
-                )));
-            }
-        })
     }
 }
 
@@ -930,10 +632,10 @@ mod tests {
             secret_ref: Some("request-secret-reference".to_string()),
             enabled: true,
         };
-        let row = EventSinkRow {
+        let persisted = EventSink {
             id: 1,
             name: "webhook".to_string(),
-            kind: "webhook".to_string(),
+            kind: EventSinkKind::Webhook,
             config: serde_json::json!({
                 "headers": {"authorization": "stored-config-secret"}
             }),
@@ -949,7 +651,7 @@ mod tests {
             &["request-config-secret", "request-secret-reference"],
         );
         assert_omits(
-            &format!("{row:?}"),
+            &format!("{persisted:?}"),
             &["stored-config-secret", "stored-secret-reference"],
         );
     }
@@ -968,15 +670,15 @@ mod tests {
             }),
             enabled: true,
         };
-        let row = EventSubscriptionRow {
+        let persisted = EventSubscription {
             id: 2,
             collection_id: 3,
             sink_id: 1,
             name: "subscription".to_string(),
             description: String::new(),
-            entity_types: serde_json::json!(["object"]),
-            actions: serde_json::json!(["updated"]),
-            filter: serde_json::json!({}),
+            entity_types: vec!["object".to_string()],
+            actions: vec!["updated".to_string()],
+            filter: EventSubscriptionFilter::default(),
             routing: serde_json::json!({
                 "url": "https://example.invalid/hook?key=stored-routing-secret"
             }),
@@ -987,6 +689,6 @@ mod tests {
         };
 
         assert_omits(&format!("{request:?}"), &["request-routing-secret"]);
-        assert_omits(&format!("{row:?}"), &["stored-routing-secret"]);
+        assert_omits(&format!("{persisted:?}"), &["stored-routing-secret"]);
     }
 }

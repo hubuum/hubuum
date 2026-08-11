@@ -10,15 +10,16 @@ use hubuum_storage_core::{
 use crate::errors::ApiError;
 use crate::events::EventResponse;
 use crate::models::{
-    EventDelivery as EventDeliveryRow, EventDeliveryID, EventSink, EventSinkID, EventSinkRow,
-    EventSubscription, EventSubscriptionID, EventSubscriptionRow, NewEventSinkRow,
-    NewEventSubscriptionRow, UpdateEventSinkRow, UpdateEventSubscriptionRow,
+    EventDelivery as EventDeliveryRow, EventDeliveryID, EventSink, EventSinkID, EventSubscription,
+    EventSubscriptionID,
 };
 use crate::storage::postgres::PostgresPool;
 
 use super::event_subscription::{
-    DeleteEventSinkRecord, DeleteEventSubscriptionRecord, SaveEventSinkRecord,
-    SaveEventSubscriptionRecord, UpdateEventSinkRecord, UpdateEventSubscriptionRecord,
+    DeleteEventSinkRecord, DeleteEventSubscriptionRecord, EventSinkRow, EventSubscriptionRow,
+    NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
+    UpdateEventSinkRecord, UpdateEventSinkRow, UpdateEventSubscriptionRecord,
+    UpdateEventSubscriptionRow,
 };
 
 fn storage_audit_event(event: EventResponse) -> StorageAuditEvent {

@@ -13,13 +13,13 @@ use crate::auth::ConfiguredLdapScope;
 use crate::errors::ApiError;
 use crate::models::user::User;
 use crate::models::{
-    CollectionID, NewEventSink, NewEventSinkRow, NewEventSubscription, NewEventSubscriptionRow,
-    RemoteCallResult, TaskKind, validate_sink_parts, validate_subscription_parts,
+    CollectionID, NewEventSink, NewEventSubscription, RemoteCallResult, TaskKind,
+    validate_sink_parts, validate_subscription_parts,
 };
 use crate::services::Services;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::event_subscription::{
-    SaveEventSinkRecord, SaveEventSubscriptionRecord,
+    NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
 };
 use crate::storage::postgres::operations::remote_target::load_remote_call_result_for_task;
 use crate::storage::{DynLifecycleStorage, PostgresStorage};
@@ -116,6 +116,29 @@ pub async fn remote_call_result(
     task_id: i32,
 ) -> Result<RemoteCallResult, ApiError> {
     load_remote_call_result_for_task(pool, task_id).await
+}
+
+/// Count audit events through the PostgreSQL test adapter boundary.
+pub async fn audit_event_count(
+    pool: &PostgresPool,
+    entity_type_value: crate::events::EntityType,
+    action_value: crate::events::Action,
+    entity_id_value: i32,
+) -> Result<i64, ApiError> {
+    use crate::schema::events::dsl::{action, entity_id, entity_type, events};
+    use crate::storage::postgres::prelude::*;
+    use crate::storage::postgres::with_connection;
+
+    with_connection(pool, async |conn| {
+        events
+            .filter(entity_type.eq(entity_type_value.as_str()))
+            .filter(action.eq(action_value.as_str()))
+            .filter(entity_id.eq(entity_id_value))
+            .count()
+            .get_result::<i64>(conn)
+            .await
+    })
+    .await
 }
 
 pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<i32, ApiError> {

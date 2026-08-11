@@ -12,6 +12,8 @@ use crate::models::EventDeliveryStatus;
 use crate::storage::postgres::with_connection;
 use crate::storage::postgres::with_transaction;
 
+use super::event_subscription::EventSubscriptionRow;
+
 pub(crate) async fn process_event_fanout_batch(
     pool: &crate::storage::postgres::PostgresPool,
     settings: EventFanoutSettings,
@@ -139,7 +141,7 @@ pub async fn fanout_events(
 async fn load_enabled_subscriptions(
     conn: &mut crate::storage::postgres::PostgresConnection,
     collection_ids: &[i32],
-) -> Result<Vec<crate::models::event_subscription::EventSubscriptionRow>, ApiError> {
+) -> Result<Vec<EventSubscriptionRow>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions};
 
     if collection_ids.is_empty() {
@@ -152,7 +154,7 @@ async fn load_enabled_subscriptions(
         .filter(event_sinks::enabled.eq(true))
         .filter(event_subscriptions::collection_id.eq_any(collection_ids))
         .select(event_subscriptions::all_columns)
-        .load::<crate::models::event_subscription::EventSubscriptionRow>(conn)
+        .load::<EventSubscriptionRow>(conn)
         .await
         .map_err(ApiError::from)
 }
@@ -190,14 +192,10 @@ struct CompiledEventSubscription {
     filter: hubuum_events_core::EventSubscriptionFilter,
 }
 
-impl TryFrom<crate::models::event_subscription::EventSubscriptionRow>
-    for CompiledEventSubscription
-{
+impl TryFrom<EventSubscriptionRow> for CompiledEventSubscription {
     type Error = ApiError;
 
-    fn try_from(
-        subscription: crate::models::event_subscription::EventSubscriptionRow,
-    ) -> Result<Self, Self::Error> {
+    fn try_from(subscription: EventSubscriptionRow) -> Result<Self, Self::Error> {
         let entity_types = serde_json::from_value::<Vec<String>>(subscription.entity_types)
             .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         let actions = serde_json::from_value::<Vec<String>>(subscription.actions)

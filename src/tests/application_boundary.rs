@@ -594,11 +594,13 @@ fn process_entry_points_compose_only_through_backend_neutral_storage() {
 fn event_administration_consumers_use_the_backend_neutral_application_service() {
     let root = repository_root();
     for file in [
+        "src/models/event_subscription.rs",
         "src/application.rs",
         "src/api/v1/handlers/events.rs",
         "src/api/v1/handlers/event_sinks.rs",
         "src/api/v1/handlers/event_subscriptions.rs",
         "src/api/v1/handlers/event_deliveries.rs",
+        "tests/api_platform_suite/event_subscriptions.rs",
     ] {
         let path = root.join(file);
         let source = fs::read_to_string(&path)
@@ -620,6 +622,34 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
             assert!(
                 !source.contains(forbidden),
                 "{} still uses event adapter detail {forbidden}",
+                path.display()
+            );
+        }
+    }
+
+    for file in [
+        "src/models/event_subscription.rs",
+        "tests/api_platform_suite/event_subscriptions.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "storage::postgres",
+            "diesel::",
+            "diesel_async",
+            "crate::schema",
+            "CursorSql",
+            "EventSinkRow",
+            "NewEventSinkRow",
+            "UpdateEventSinkRow",
+            "EventSubscriptionRow",
+            "NewEventSubscriptionRow",
+            "UpdateEventSubscriptionRow",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} still uses event persistence detail {forbidden}",
                 path.display()
             );
         }
