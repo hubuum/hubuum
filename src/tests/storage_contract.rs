@@ -33,21 +33,21 @@ use crate::storage::{
     AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
     AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrantKey, AuthorizationGrantMutation,
-    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationResourceIds,
-    AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
-    ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
-    ComputedObjectVisibility, EventArchive, EventDeliveryAdministrationStorage,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    EventSubscriptionStorage, ExportQueryStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, IdentityStorage, ImportStorage, MetricsStorage,
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetStorage, RestoreStorage, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrantDelete, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
+    AuthorizationPermissionSetQuery, AuthorizationResourceIds, AuthorizationStorage,
+    BackupSnapshotStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
+    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
+    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
+    EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
+    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage, IdentityStorage,
+    ImportStorage, MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
+    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
     StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
@@ -1539,11 +1539,14 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
                 let key = AuthorizationGrantKey::new(collection_id, group.id);
                 backend
-                    .apply_local_collection_grant(AuthorizationGrantMutation::new(
-                        key,
-                        [AuthorizationPermission::ReadCollection],
-                        false,
-                    ))
+                    .apply_local_collection_grant(
+                        AuthorizationGrantMutation::new(
+                            key,
+                            [AuthorizationPermission::ReadCollection],
+                            false,
+                        )
+                        .event_context(EventContext::system()),
+                    )
                     .await
                     .expect("certified backend should apply a local grant");
                 let grant = backend
@@ -1556,6 +1559,18 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                         .permissions()
                         .contains(&AuthorizationPermission::ReadCollection)
                 );
+                let (permission_collection_id, permission_revision, permission_grants) = backend
+                    .load_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
+                        collection_id,
+                        Some(group.id),
+                    ))
+                    .await
+                    .expect("certified backend should load revisioned permission sets")
+                    .into_parts();
+                assert_eq!(permission_collection_id, collection_id);
+                assert!(permission_revision > 0);
+                assert_eq!(permission_grants.len(), 1);
+                assert_eq!(permission_grants[0].group_id(), group.id);
                 assert!(
                     backend
                         .authorize_local_collection(access_query())
@@ -1638,11 +1653,14 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 }));
 
                 backend
-                    .revoke_local_collection_grant(AuthorizationGrantMutation::new(
-                        key,
-                        [AuthorizationPermission::ReadCollection],
-                        false,
-                    ))
+                    .revoke_local_collection_grant(
+                        AuthorizationGrantMutation::new(
+                            key,
+                            [AuthorizationPermission::ReadCollection],
+                            false,
+                        )
+                        .event_context(EventContext::system()),
+                    )
                     .await
                     .expect("certified backend should revoke selected local permissions");
                 assert!(
@@ -1652,7 +1670,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                         .expect("revoked local grant should deny")
                 );
                 backend
-                    .revoke_all_local_collection_grants(key)
+                    .revoke_all_local_collection_grants(
+                        AuthorizationGrantDelete::new(key).event_context(EventContext::system()),
+                    )
                     .await
                     .expect("certified backend should remove the local grant row");
             }
@@ -2703,6 +2723,18 @@ async fn every_available_storage_backend_supplies_operational_state() {
 
                 assert_eq!(readiness.maintenance_state(), state);
                 assert!(readiness.schema_is_ready());
+                let storage = backend
+                    .storage_snapshot()
+                    .await
+                    .expect("certified backend should expose database diagnostics");
+                assert!(storage.active_sessions() >= 0);
+                assert!(storage.storage_bytes() > 0);
+                let task_queue = backend
+                    .task_queue_snapshot()
+                    .await
+                    .expect("certified backend should expose task queue diagnostics");
+                assert!(task_queue.statuses().total() >= 0);
+                assert!(task_queue.total_task_events() >= 0);
             }
         }
     }

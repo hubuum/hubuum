@@ -71,9 +71,9 @@ for package classifications, publishing policy, and promotion requirements.
   `StorageContext` is a sealed, opaque persistence capability. Consumers pass
   it to operations but cannot extract or select the database implementation.
 - `src/storage/capabilities.rs`:
-  A narrow transitional facade for the few unmigrated collection, metadata,
-  and permission operations plus test-only adapter fixtures. Migrated
-  application code must use services and mandatory storage traits instead.
+  Test-only adapter fixtures used to construct opaque worker claims. Production
+  application code has no PostgreSQL capability facade; it uses services and
+  mandatory storage traits.
 - `src/storage/postgres/operations/*`:
   Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
@@ -122,10 +122,9 @@ To keep PostgreSQL adapter code navigable, its operations are split into focused
 - `src/storage/postgres/operations/collection/`:
   `relations.rs`, `records.rs`, `permissions.rs`
 
-The `mod.rs` files in these folders organize PostgreSQL operations and their
-adapter-local extension traits. Application code must use application services
-and mandatory storage contracts instead of importing these modules directly;
-only explicitly documented unmigrated paths may use the transitional facade.
+The `mod.rs` files in these folders organize PostgreSQL operations and any
+adapter-private helpers. Application code must use application services and
+mandatory storage contracts instead of importing these modules directly.
 
 ### Collection hierarchy implementation
 
@@ -139,11 +138,11 @@ permission semantics. Keep hierarchy writes in
 
 Normal collection and class lifecycle handlers enter this implementation
 through their service and storage capabilities. Do not bypass those services
-from a migrated handler. Imports, restore code, fixtures, list/search,
-permissions, and history still use operation-shaped PostgreSQL adapters during
-the internal migration. That location does not make them optional backend
-features: a selectable backend must supply equivalent capabilities before it
-can be registered.
+from a handler. Application permission and metadata paths likewise use the
+mandatory authorization and operational contracts; only backend code and
+test-only fixtures may select PostgreSQL operations. Internal adapter location
+does not make behavior optional: a selectable backend must supply every
+capability before it can be registered.
 
 When adding a collection creation path, use the shared collection insert helper
 from the collection backend so `collections` and `collection_closure` stay in

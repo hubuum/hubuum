@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::NaiveDateTime;
 use hubuum_domain::{MaintenanceState, TokenRetentionSettings};
 
 use crate::StorageError;
@@ -27,6 +28,248 @@ impl ReadinessSnapshot {
     #[must_use]
     pub const fn maintenance_state(self) -> MaintenanceState {
         self.maintenance_state
+    }
+}
+
+/// Backend-neutral persisted storage state for administrator diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalStorageSnapshot {
+    active_sessions: i64,
+    storage_bytes: i64,
+    last_maintenance_at: Option<NaiveDateTime>,
+}
+
+impl OperationalStorageSnapshot {
+    #[must_use]
+    pub const fn new(
+        active_sessions: i64,
+        storage_bytes: i64,
+        last_maintenance_at: Option<NaiveDateTime>,
+    ) -> Self {
+        Self {
+            active_sessions,
+            storage_bytes,
+            last_maintenance_at,
+        }
+    }
+
+    #[must_use]
+    pub const fn active_sessions(self) -> i64 {
+        self.active_sessions
+    }
+
+    #[must_use]
+    pub const fn storage_bytes(self) -> i64 {
+        self.storage_bytes
+    }
+
+    #[must_use]
+    pub const fn last_maintenance_at(self) -> Option<NaiveDateTime> {
+        self.last_maintenance_at
+    }
+}
+
+/// Persisted task counts grouped by lifecycle status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalTaskStatusCounts {
+    total: i64,
+    active: OperationalTaskActiveCounts,
+    terminal: OperationalTaskTerminalCounts,
+}
+
+impl OperationalTaskStatusCounts {
+    #[must_use]
+    pub const fn new(
+        total: i64,
+        active: OperationalTaskActiveCounts,
+        terminal: OperationalTaskTerminalCounts,
+    ) -> Self {
+        Self {
+            total,
+            active,
+            terminal,
+        }
+    }
+
+    #[must_use]
+    pub const fn total(self) -> i64 {
+        self.total
+    }
+
+    #[must_use]
+    pub const fn queued(self) -> i64 {
+        self.active.queued
+    }
+
+    #[must_use]
+    pub const fn validating(self) -> i64 {
+        self.active.validating
+    }
+
+    #[must_use]
+    pub const fn running(self) -> i64 {
+        self.active.running
+    }
+
+    #[must_use]
+    pub const fn succeeded(self) -> i64 {
+        self.terminal.succeeded
+    }
+
+    #[must_use]
+    pub const fn failed(self) -> i64 {
+        self.terminal.failed
+    }
+
+    #[must_use]
+    pub const fn partially_succeeded(self) -> i64 {
+        self.terminal.partially_succeeded
+    }
+
+    #[must_use]
+    pub const fn cancelled(self) -> i64 {
+        self.terminal.cancelled
+    }
+}
+
+/// Persisted non-terminal task counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalTaskActiveCounts {
+    queued: i64,
+    validating: i64,
+    running: i64,
+}
+
+impl OperationalTaskActiveCounts {
+    #[must_use]
+    pub const fn new(queued: i64, validating: i64, running: i64) -> Self {
+        Self {
+            queued,
+            validating,
+            running,
+        }
+    }
+}
+
+/// Persisted terminal task counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalTaskTerminalCounts {
+    succeeded: i64,
+    failed: i64,
+    partially_succeeded: i64,
+    cancelled: i64,
+}
+
+impl OperationalTaskTerminalCounts {
+    #[must_use]
+    pub const fn new(
+        succeeded: i64,
+        failed: i64,
+        partially_succeeded: i64,
+        cancelled: i64,
+    ) -> Self {
+        Self {
+            succeeded,
+            failed,
+            partially_succeeded,
+            cancelled,
+        }
+    }
+}
+
+/// Persisted task counts grouped by workflow kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalTaskKindCounts {
+    imports: i64,
+    exports: i64,
+    reindexes: i64,
+}
+
+impl OperationalTaskKindCounts {
+    #[must_use]
+    pub const fn new(imports: i64, exports: i64, reindexes: i64) -> Self {
+        Self {
+            imports,
+            exports,
+            reindexes,
+        }
+    }
+
+    #[must_use]
+    pub const fn imports(self) -> i64 {
+        self.imports
+    }
+
+    #[must_use]
+    pub const fn exports(self) -> i64 {
+        self.exports
+    }
+
+    #[must_use]
+    pub const fn reindexes(self) -> i64 {
+        self.reindexes
+    }
+}
+
+/// Backend-neutral task queue state for administrator diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalTaskQueueSnapshot {
+    statuses: OperationalTaskStatusCounts,
+    kinds: OperationalTaskKindCounts,
+    total_task_events: i64,
+    total_import_result_rows: i64,
+    oldest_queued_at: Option<NaiveDateTime>,
+    oldest_active_at: Option<NaiveDateTime>,
+}
+
+impl OperationalTaskQueueSnapshot {
+    #[must_use]
+    pub const fn new(
+        statuses: OperationalTaskStatusCounts,
+        kinds: OperationalTaskKindCounts,
+        total_task_events: i64,
+        total_import_result_rows: i64,
+        oldest_queued_at: Option<NaiveDateTime>,
+        oldest_active_at: Option<NaiveDateTime>,
+    ) -> Self {
+        Self {
+            statuses,
+            kinds,
+            total_task_events,
+            total_import_result_rows,
+            oldest_queued_at,
+            oldest_active_at,
+        }
+    }
+
+    #[must_use]
+    pub const fn statuses(self) -> OperationalTaskStatusCounts {
+        self.statuses
+    }
+
+    #[must_use]
+    pub const fn kinds(self) -> OperationalTaskKindCounts {
+        self.kinds
+    }
+
+    #[must_use]
+    pub const fn total_task_events(self) -> i64 {
+        self.total_task_events
+    }
+
+    #[must_use]
+    pub const fn total_import_result_rows(self) -> i64 {
+        self.total_import_result_rows
+    }
+
+    #[must_use]
+    pub const fn oldest_queued_at(self) -> Option<NaiveDateTime> {
+        self.oldest_queued_at
+    }
+
+    #[must_use]
+    pub const fn oldest_active_at(self) -> Option<NaiveDateTime> {
+        self.oldest_active_at
     }
 }
 
@@ -377,6 +620,10 @@ pub trait OperationalStateStorage: Send + Sync {
     async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError>;
 
     async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError>;
+
+    async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError>;
+
+    async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError>;
 }
 
 /// Token retention behavior required from every selectable storage backend.

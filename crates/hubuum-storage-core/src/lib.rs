@@ -28,12 +28,13 @@ mod unified_search;
 pub use authorization::{
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationObjectResource,
-    AuthorizationPermission, AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
-    AuthorizationResourceIds, AuthorizationStorage,
+    AuthorizationPermission, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
+    AuthorizationStorage,
 };
 pub use backup_snapshot::{BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot};
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
@@ -105,7 +106,9 @@ pub use object_aggregate::{
 pub use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-    EventSubscriptionHealthSnapshot, OperationalStateStorage, ReadinessSnapshot,
+    EventSubscriptionHealthSnapshot, OperationalStateStorage, OperationalStorageSnapshot,
+    OperationalTaskActiveCounts, OperationalTaskKindCounts, OperationalTaskQueueSnapshot,
+    OperationalTaskStatusCounts, OperationalTaskTerminalCounts, ReadinessSnapshot,
     TokenRetentionStorage,
 };
 pub use relation_query::{
@@ -168,7 +171,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 18;
+pub const STORAGE_CONTRACT_VERSION: u16 = 19;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

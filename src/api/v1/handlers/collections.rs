@@ -17,10 +17,10 @@ use crate::models::{
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
-use crate::services::catalog as catalog_service;
 use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
+use crate::services::{authorization as authorization_service, catalog as catalog_service};
 use crate::storage::with_revision_precondition;
 use crate::traits::{UserPermissions, scope_allows};
 use actix_web::{
@@ -30,16 +30,11 @@ use tracing::{debug, info};
 
 use crate::traits::PermissionController;
 
-async fn sql_collection_permission_set(
+async fn local_collection_permission_set(
     context: &AppContext,
     collection: &Collection,
 ) -> Result<CollectionPermissionSet, ApiError> {
-    crate::storage::capabilities::collection::collection_permission_set_from_backend(
-        &context,
-        collection.id,
-        None,
-    )
-    .await
+    authorization_service::collection_permission_set(context.backend(), collection.id, None).await
 }
 
 fn collection_precondition(
@@ -493,7 +488,7 @@ pub async fn get_collection_permissions(
     );
 
     if context.permission_backend().uses_local_permission_store() {
-        let permission_set = sql_collection_permission_set(&context, &collection).await?;
+        let permission_set = local_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
     }
 
@@ -552,13 +547,12 @@ pub async fn get_collection_group_permissions(
     );
 
     if context.permission_backend().uses_local_permission_store() {
-        let permission_set =
-            crate::storage::capabilities::collection::collection_permission_set_from_backend(
-                &context,
-                collection.id,
-                Some(group_id.id()),
-            )
-            .await?;
+        let permission_set = authorization_service::collection_permission_set(
+            context.backend(),
+            collection.id,
+            Some(group_id.id()),
+        )
+        .await?;
         if permission_set.permissions.is_empty() {
             return Err(ApiError::NotFound(
                 "Permission record not found".to_string(),
@@ -676,7 +670,7 @@ pub async fn grant_collection_group_permissions(
     );
 
     if context.permission_backend().uses_local_permission_store() {
-        let current = sql_collection_permission_set(&context, &collection).await?;
+        let current = local_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition(
@@ -685,7 +679,7 @@ pub async fn grant_collection_group_permissions(
             collection.grant(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&context, &collection).await?;
+        let updated = local_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::revisioned(
             updated,
             StatusCode::CREATED,
@@ -754,7 +748,7 @@ pub async fn replace_collection_group_permissions(
     }
 
     if context.permission_backend().uses_local_permission_store() {
-        let current = sql_collection_permission_set(&context, &collection).await?;
+        let current = local_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition(
@@ -763,7 +757,7 @@ pub async fn replace_collection_group_permissions(
             collection.set_permissions(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&context, &collection).await?;
+        let updated = local_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
@@ -816,7 +810,7 @@ pub async fn revoke_collection_group_permissions(
     );
 
     if context.permission_backend().uses_local_permission_store() {
-        let current = sql_collection_permission_set(&context, &collection).await?;
+        let current = local_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition(
@@ -825,7 +819,7 @@ pub async fn revoke_collection_group_permissions(
             collection.revoke_all(&context, group_id, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&context, &collection).await?;
+        let updated = local_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
@@ -940,7 +934,7 @@ pub async fn grant_collection_group_permission(
 
     let permissions = PermissionsList::new([permission]);
     if context.permission_backend().uses_local_permission_store() {
-        let current = sql_collection_permission_set(&context, &collection).await?;
+        let current = local_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition(
@@ -949,7 +943,7 @@ pub async fn grant_collection_group_permission(
             collection.grant(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&context, &collection).await?;
+        let updated = local_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::revisioned(
             updated,
             StatusCode::CREATED,
@@ -1008,7 +1002,7 @@ pub async fn revoke_collection_group_permission(
 
     let permissions = PermissionsList::new([permission]);
     if context.permission_backend().uses_local_permission_store() {
-        let current = sql_collection_permission_set(&context, &collection).await?;
+        let current = local_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition(
@@ -1017,7 +1011,7 @@ pub async fn revoke_collection_group_permission(
             collection.revoke(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&context, &collection).await?;
+        let updated = local_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 

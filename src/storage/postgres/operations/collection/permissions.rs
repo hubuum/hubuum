@@ -1,67 +1,8 @@
 use super::*;
 use crate::models::token_scope::TokenScope;
-use crate::models::{CollectionPermissionSet, ResourceRevision};
 use crate::storage::postgres::operations::authz::AuthzSubject;
 use diesel_async::RunQueryDsl;
 use std::collections::HashMap;
-
-/// Load a collection's SQL permission rows and aggregate revision from one
-/// database snapshot. When `group_id` is present, only that group's row is
-/// included while the aggregate revision still describes the complete ACL.
-pub(crate) async fn collection_permission_set_from_backend(
-    pool: &impl crate::storage::StorageContext,
-    collection_id: i32,
-    group_id: Option<i32>,
-) -> Result<CollectionPermissionSet, ApiError> {
-    use crate::schema::{collection_authorization_state, permissions};
-
-    let rows = with_connection(pool, async |conn| {
-        if let Some(group_id) = group_id {
-            collection_authorization_state::table
-                .left_join(
-                    permissions::table.on(permissions::collection_id
-                        .eq(collection_authorization_state::collection_id)
-                        .and(permissions::group_id.eq(group_id))),
-                )
-                .filter(collection_authorization_state::collection_id.eq(collection_id))
-                .select((
-                    collection_authorization_state::revision,
-                    Option::<Permission>::as_select(),
-                ))
-                .load::<(ResourceRevision, Option<Permission>)>(conn)
-                .await
-        } else {
-            collection_authorization_state::table
-                .left_join(permissions::table.on(
-                    permissions::collection_id.eq(collection_authorization_state::collection_id),
-                ))
-                .filter(collection_authorization_state::collection_id.eq(collection_id))
-                .select((
-                    collection_authorization_state::revision,
-                    Option::<Permission>::as_select(),
-                ))
-                .load::<(ResourceRevision, Option<Permission>)>(conn)
-                .await
-        }
-    })
-    .await?;
-
-    let owner_revision = rows
-        .as_slice()
-        .first()
-        .map(|(revision, _)| *revision)
-        .ok_or_else(|| ApiError::NotFound(format!("Collection {collection_id} not found")))?;
-    let permissions = rows
-        .into_iter()
-        .filter_map(|(_, permission)| permission)
-        .collect();
-
-    Ok(CollectionPermissionSet {
-        collection_id,
-        revision: owner_revision,
-        permissions,
-    })
-}
 
 async fn build_effective_group_permissions(
     conn: &mut crate::storage::postgres::PostgresConnection,

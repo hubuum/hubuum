@@ -53,6 +53,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `19`.
+  Revisioned collection permission sets, atomic event-aware local grant
+  mutations, persisted storage diagnostics, and task-queue diagnostics are now
+  mandatory authorization and operations behavior. Application consumers no
+  longer import the transitional PostgreSQL capability facade, and the former
+  PostgreSQL permission-controller extension trait is now adapter-owned
+  operation code behind `AuthorizationStorage`. Required capability labels and
+  public HTTP response shapes are unchanged. Administration and monitoring
+  clients matching contract version `18` must accept version `19`.
 - **Breaking (administrator API):** the storage contract version is now `18`
   and the required capability list includes `event_administration`. Audit-event
   reads, event-sink and collection-scoped subscription lifecycle, enabled-sink

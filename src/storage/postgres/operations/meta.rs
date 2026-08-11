@@ -3,9 +3,13 @@ use diesel::sql_types::{BigInt, Nullable, Timestamp};
 
 use crate::errors::ApiError;
 use crate::storage::postgres::with_connection;
+use crate::storage::{
+    OperationalStorageSnapshot, OperationalTaskActiveCounts, OperationalTaskKindCounts,
+    OperationalTaskQueueSnapshot, OperationalTaskStatusCounts, OperationalTaskTerminalCounts,
+};
 
 #[derive(QueryableByName, Debug)]
-pub struct DatabaseState {
+struct DatabaseStateRow {
     #[diesel(sql_type = BigInt)]
     pub active_connections: i64,
     #[diesel(sql_type = BigInt)]
@@ -15,7 +19,7 @@ pub struct DatabaseState {
 }
 
 #[derive(QueryableByName, Debug)]
-pub struct TaskQueueState {
+struct TaskQueueStateRow {
     #[diesel(sql_type = BigInt)]
     pub total_tasks: i64,
     #[diesel(sql_type = BigInt)]
@@ -48,9 +52,9 @@ pub struct TaskQueueState {
     pub oldest_active_at: Option<chrono::NaiveDateTime>,
 }
 
-pub async fn load_database_state(
+pub(crate) async fn load_storage_snapshot(
     pool: &impl crate::storage::StorageContext,
-) -> Result<DatabaseState, ApiError> {
+) -> Result<OperationalStorageSnapshot, ApiError> {
     const QUERY: &str = r#"
         SELECT
           (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') AS active_connections,
@@ -61,18 +65,19 @@ pub async fn load_database_state(
 
     with_connection(pool, async |conn| {
         diesel::sql_query(QUERY)
-            .get_result::<DatabaseState>(conn)
+            .get_result::<DatabaseStateRow>(conn)
             .await
     })
     .await
-    .map_err(|error| {
-        ApiError::InternalServerError(format!("Error getting state for the database: {error}"))
+    .map(|row| {
+        OperationalStorageSnapshot::new(row.active_connections, row.db_size, row.last_vacuum_time)
     })
+    .map_err(|error| ApiError::InternalServerError(format!("Error getting storage state: {error}")))
 }
 
-pub async fn load_task_queue_state(
+pub(crate) async fn load_task_queue_snapshot(
     pool: &impl crate::storage::StorageContext,
-) -> Result<TaskQueueState, ApiError> {
+) -> Result<OperationalTaskQueueSnapshot, ApiError> {
     const QUERY: &str = r#"
         SELECT
           COUNT(*)::bigint AS total_tasks,
@@ -95,8 +100,34 @@ pub async fn load_task_queue_state(
 
     with_connection(pool, async |conn| {
         diesel::sql_query(QUERY)
-            .get_result::<TaskQueueState>(conn)
+            .get_result::<TaskQueueStateRow>(conn)
             .await
     })
     .await
+    .map(|row| {
+        let statuses = OperationalTaskStatusCounts::new(
+            row.total_tasks,
+            OperationalTaskActiveCounts::new(
+                row.queued_tasks,
+                row.validating_tasks,
+                row.running_tasks,
+            ),
+            OperationalTaskTerminalCounts::new(
+                row.succeeded_tasks,
+                row.failed_tasks,
+                row.partially_succeeded_tasks,
+                row.cancelled_tasks,
+            ),
+        );
+        let kinds =
+            OperationalTaskKindCounts::new(row.import_tasks, row.export_tasks, row.reindex_tasks);
+        OperationalTaskQueueSnapshot::new(
+            statuses,
+            kinds,
+            row.total_task_events,
+            row.total_import_result_rows,
+            row.oldest_queued_at,
+            row.oldest_active_at,
+        )
+    })
 }

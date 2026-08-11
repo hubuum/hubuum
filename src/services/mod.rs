@@ -1,4 +1,5 @@
 pub mod authentication;
+pub(crate) mod authorization;
 pub(crate) mod authorization_resources;
 pub(crate) mod backups;
 pub(crate) mod catalog;
@@ -13,6 +14,7 @@ pub mod identity;
 pub(crate) mod object_aggregates;
 mod object_relations;
 mod objects;
+pub(crate) mod operational_administration;
 pub(crate) mod related_filter_authorization;
 pub(crate) mod relation_queries;
 pub(crate) mod remote_targets;

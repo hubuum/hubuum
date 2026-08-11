@@ -8,8 +8,8 @@ use crate::models::class::total_class_count;
 use crate::models::collection::total_collection_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::permissions::AppContext;
+use crate::services::operational_administration as operational_service;
 use crate::storage::MetricsStorage;
-use crate::storage::capabilities::meta::{load_database_state, load_task_queue_state};
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -98,7 +98,7 @@ pub async fn get_db_state(
     context: AppContext,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let row = load_database_state(&context).await?;
+    let row = operational_service::storage_snapshot(context.backend()).await?;
     let state = context.backend().metrics_pool_state();
     debug!(
         message = "DB state requested",
@@ -122,9 +122,9 @@ pub async fn get_db_state(
         connections_closed_invalid: state.connections_closed_invalid,
         connections_closed_max_lifetime: state.connections_closed_max_lifetime,
         connections_closed_idle_timeout: state.connections_closed_idle_timeout,
-        active_connections: row.active_connections,
-        db_size: row.db_size,
-        last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
+        active_connections: row.active_sessions(),
+        db_size: row.storage_bytes(),
+        last_vacuum_time: row.last_maintenance_at().map(|dt| dt.to_string()),
     };
     Ok(ApiResponse::new(response, StatusCode::OK))
 }
@@ -177,34 +177,36 @@ pub async fn get_task_queue_state(
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let config = get_config()?.clone();
-    let state = load_task_queue_state(&context).await?;
+    let state = operational_service::task_queue_snapshot(context.backend()).await?;
 
     debug!(
         message = "Task queue state requested",
         requestor = requestor.user.id
     );
 
-    let active_tasks = state.validating_tasks + state.running_tasks;
+    let statuses = state.statuses();
+    let kinds = state.kinds();
+    let active_tasks = statuses.validating() + statuses.running();
     let response = TaskQueueStateResponse {
         actix_workers: config.actix_workers,
         configured_task_workers: config.task_workers,
         task_poll_interval_ms: config.task_poll_interval_ms,
-        total_tasks: state.total_tasks,
-        queued_tasks: state.queued_tasks,
-        validating_tasks: state.validating_tasks,
-        running_tasks: state.running_tasks,
+        total_tasks: statuses.total(),
+        queued_tasks: statuses.queued(),
+        validating_tasks: statuses.validating(),
+        running_tasks: statuses.running(),
         active_tasks,
-        succeeded_tasks: state.succeeded_tasks,
-        failed_tasks: state.failed_tasks,
-        partially_succeeded_tasks: state.partially_succeeded_tasks,
-        cancelled_tasks: state.cancelled_tasks,
-        import_tasks: state.import_tasks,
-        export_tasks: state.export_tasks,
-        reindex_tasks: state.reindex_tasks,
-        total_task_events: state.total_task_events,
-        total_import_result_rows: state.total_import_result_rows,
-        oldest_queued_at: state.oldest_queued_at.map(|dt| dt.to_string()),
-        oldest_active_at: state.oldest_active_at.map(|dt| dt.to_string()),
+        succeeded_tasks: statuses.succeeded(),
+        failed_tasks: statuses.failed(),
+        partially_succeeded_tasks: statuses.partially_succeeded(),
+        cancelled_tasks: statuses.cancelled(),
+        import_tasks: kinds.imports(),
+        export_tasks: kinds.exports(),
+        reindex_tasks: kinds.reindexes(),
+        total_task_events: state.total_task_events(),
+        total_import_result_rows: state.total_import_result_rows(),
+        oldest_queued_at: state.oldest_queued_at().map(|dt| dt.to_string()),
+        oldest_active_at: state.oldest_active_at().map(|dt| dt.to_string()),
     };
 
     Ok(ApiResponse::new(response, StatusCode::OK))

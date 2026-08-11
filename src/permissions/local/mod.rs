@@ -13,8 +13,9 @@ use crate::permissions::storage::{
 };
 use crate::storage::{
     AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrantKey, AuthorizationGrantMutation,
-    AuthorizationGroupMembershipQuery, AuthorizationStorage, StorageHandle,
+    AuthorizationCollectionsQuery, AuthorizationGrantDelete, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationStorage,
+    StorageHandle,
 };
 
 use super::backend::PermissionBackend;
@@ -259,8 +260,14 @@ impl PermissionBackend for LocalPermissionBackend {
         collection_id: CollectionID,
         group_id: GroupID,
     ) -> Result<(), ApiError> {
-        let key = AuthorizationGrantKey::new(collection_id.id(), group_id.id());
-        Ok(self.storage.revoke_all_local_collection_grants(key).await?)
+        let request = AuthorizationGrantDelete::new(AuthorizationGrantKey::new(
+            collection_id.id(),
+            group_id.id(),
+        ));
+        Ok(self
+            .storage
+            .revoke_all_local_collection_grants(request)
+            .await?)
     }
 
     fn supports_mutation(&self) -> bool {
