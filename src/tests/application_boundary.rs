@@ -263,6 +263,49 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
 }
 
 #[test]
+fn principal_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let path = root.join("src/models/principal.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+    let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+    let violations = [
+        "diesel::",
+        "diesel(",
+        "crate::schema",
+        "storage::postgres",
+        "CursorSqlMapping",
+        "CursorSqlField",
+        "CursorSqlType",
+    ]
+    .into_iter()
+    .filter(|forbidden| production_source.contains(forbidden))
+    .collect::<Vec<_>>();
+
+    let adapter_path = root.join("src/storage/postgres/operations/principal.rs");
+    let adapter_source = fs::read_to_string(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "struct PrincipalRow",
+        "struct PrincipalMemberQueryRow",
+        "impl From<PrincipalRow> for Principal",
+        "impl CursorSqlMapping for PrincipalRow",
+        "impl CursorSqlMapping for PrincipalMemberQueryRow",
+    ] {
+        assert!(
+            adapter_source.contains(required),
+            "PostgreSQL principal adapter is missing {required}"
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "principal domain types crossed into persistence details: {}",
+        violations.join(", ")
+    );
+}
+
+#[test]
 fn permission_domain_types_are_free_of_persistence_implementation_details() {
     let root = repository_root();
     let mut violations = Vec::new();
@@ -594,6 +637,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "CollectionRecordStorage",
         "ClassRecordStorage",
         "GroupStorage",
+        "PrincipalStorage",
         "ObjectRecordStorage",
         "RemoteTargetStorage",
         "TaskQueueStorage",
@@ -652,6 +696,19 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         assert!(
             compact_context.contains(&format!("\"groups\",\"{operation}\"")),
             "group operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "load",
+        "settings_load",
+        "settings_replace",
+        "settings_merge",
+        "settings_json_patch",
+        "settings_reset",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"principals\",\"{operation}\"")),
+            "principal operation {operation} must use the common storage observer"
         );
     }
     for operation in ["list", "enrich"] {

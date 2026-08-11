@@ -10,7 +10,7 @@ mod tests {
     use crate::models::user::{NewUser, User};
     use crate::models::{
         IdentityScope, LDAP_PROVIDER_KIND, MembershipPrincipalResponse, NewIdentityScope,
-        Principal, PrincipalID, PrincipalKind, PrincipalMemberResponse,
+        PrincipalID, PrincipalKind, PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::storage::postgres::operations::identity::ensure_identity_scope;
@@ -296,7 +296,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let external = with_connection(&context.pool, async |conn| {
+        let external_id = with_connection(&context.pool, async |conn| {
             use crate::schema::principals;
 
             diesel::insert_into(principals::table)
@@ -307,11 +307,17 @@ mod tests {
                     principals::provider_managed.eq(true),
                     principals::external_subject.eq(context.scoped_name("batch_subject")),
                 ))
-                .get_result::<Principal>(conn)
+                .returning(principals::id)
+                .get_result::<i32>(conn)
                 .await
         })
         .await
         .unwrap();
+        let external = PrincipalID::new(external_id)
+            .unwrap()
+            .principal(&context.pool)
+            .await
+            .unwrap();
 
         let responses =
             futures::future::try_join_all(vec![local, external].into_iter().map(|principal| {

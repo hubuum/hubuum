@@ -101,7 +101,10 @@ keep transitional point-load, validation, bulk lookup, and event-suppressed
 fixture operations behind the same mandatory backend boundary. None of these
 contracts exposes rows or connections. `GroupStorage` owns group point reads,
 identity-scope resolution, lifecycle writes, membership mutation, listing,
-paging, and counting through backend-neutral domain values.
+paging, and counting through backend-neutral domain values. `PrincipalStorage`
+owns principal point reads and the complete settings lifecycle, including
+atomic concurrency and audit behavior, without exposing adapter rows or
+connections.
 `TaskQueueStorage` replaces task submission and reads, while
 `TaskExecutionStorage` owns the complete worker claim and state machine.
 `BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
@@ -130,7 +133,10 @@ class, and object lifecycle and history rows, class- and object-relation rows, r
 graph query rows, remote-target history, and remote-call result persistence
 rows. Domain permission, group, collection, class, object, and relation values
 contain no Diesel derives, schema bindings, or SQL cursor mappings. Those mappings and
-explicit conversions live in the PostgreSQL adapter. Remaining mixed
+explicit conversions live in the PostgreSQL adapter. Principal and
+principal-membership query rows are also adapter-owned, and the principal
+domain model contains no Diesel derives, schema bindings, or SQL cursor
+mappings. Remaining mixed
 persistence rows move there as their backend-neutral DTOs are extracted. Their
 current locations are implementation details, not partial backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
@@ -142,7 +148,10 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 26 additionally requires group point and lifecycle writes,
+Version 27 additionally requires principal point reads and the complete audited
+settings lifecycle to cross one mandatory, observed storage contract. Principal
+and principal-membership query rows, Diesel mappings, and SQL cursor mappings
+are adapter-owned. Version 26 additionally requires group point and lifecycle writes,
 identity-scope resolution, and complete membership mutation and query behavior
 to cross one mandatory, observed storage contract. Group, membership, update,
 and SQL cursor rows are adapter-owned. Version 25 required collection point and compatibility writes,

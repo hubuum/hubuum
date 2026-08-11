@@ -28,6 +28,7 @@ use crate::storage::postgres::operations::object::{
 use crate::storage::postgres::operations::permissions::{
     NewPermission, PermissionRow, UpdatePermission,
 };
+use crate::storage::postgres::operations::principal::PrincipalRow;
 use crate::storage::postgres::operations::relation_rows::{
     HubuumClassRelationRow, HubuumObjectRelationRow, NewHubuumClassRelationRow,
     NewHubuumObjectRelationRow,
@@ -1009,7 +1010,7 @@ pub async fn upsert_principal_db(
         .filter(p::identity_scope_id.eq(identity_scope_id_value))
         .filter(p::name.eq(&input.name))
         .for_update()
-        .first::<Principal>(conn)
+        .first::<PrincipalRow>(conn)
         .await
         .optional()?;
     if let Some(existing) = &existing {
@@ -1046,13 +1047,13 @@ pub async fn upsert_principal_db(
                             p::created_at.eq(created),
                             p::updated_at.eq(updated),
                         ))
-                        .get_result::<Principal>(conn)
+                        .get_result::<PrincipalRow>(conn)
                         .await
                         .optional(),
                     async || {
                         p::principals
                             .filter(p::id.eq(existing.id))
-                            .first(conn)
+                            .first::<PrincipalRow>(conn)
                             .await
                     },
                 )
@@ -1077,10 +1078,11 @@ pub async fn upsert_principal_db(
                     p::created_at.eq(created),
                     p::updated_at.eq(updated),
                 ))
-                .get_result::<Principal>(conn)
+                .get_result::<PrincipalRow>(conn)
                 .await?
         }
     };
+    let principal: Principal = principal.into();
 
     match &input.subtype {
         ImportPrincipalSubtype::Human {

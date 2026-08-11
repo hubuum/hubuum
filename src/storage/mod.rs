@@ -18,6 +18,7 @@ mod observed;
 mod operational;
 #[doc(hidden)]
 pub mod postgres;
+mod principals;
 
 pub(crate) use class_relations::ClassRelationStore;
 pub(crate) use classes::{ClassRecordStorage, ClassStore};
@@ -154,3 +155,4 @@ pub(crate) use operational::{
     TokenRetentionStorage,
 };
 pub(crate) use postgres::PostgresStorage;
+pub(crate) use principals::PrincipalStorage;

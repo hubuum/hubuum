@@ -1,4 +1,3 @@
-use crate::storage::postgres::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
@@ -11,13 +10,9 @@ use crate::models::json_patch::{
     MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
 };
 use crate::models::search::{FilterField, SortParam};
-use crate::schema::principals;
-use crate::storage::StorageContext;
-use crate::storage::postgres::operations::principal::PrincipalSettingsMutation;
+use crate::storage::{PrincipalStorage, StorageContext, storage_handle};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 /// The kind of a principal: a human user or a non-human service account.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy, ToSchema)]
@@ -57,10 +52,7 @@ impl PrincipalKind {
 /// The identity parent shared by both users and service accounts. A principal id
 /// IS the user/service-account id (class-table inheritance), and `(identity_scope_id,
 /// name)` is the race-safe authority for cross-kind identity-name uniqueness.
-#[derive(
-    Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
-)]
-#[diesel(table_name = principals)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Principal {
     pub id: i32,
     pub kind: String,
@@ -71,7 +63,7 @@ pub struct Principal {
     pub provider_managed: bool,
     #[serde(skip, default = "empty_principal_settings_value")]
     #[schema(ignore)]
-    settings: serde_json::Value,
+    pub(crate) settings: serde_json::Value,
     pub external_subject: Option<String>,
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
@@ -443,44 +435,6 @@ impl CursorPaginated for PrincipalMemberResponse {
     }
 }
 
-impl CursorSqlMapping for PrincipalMemberResponse {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "principals.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "group_memberships.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "group_memberships.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "group_memberships.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for memberships",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl IdAccessor for Principal {
     fn accessor_id(&self) -> i32 {
         self.id
@@ -498,8 +452,6 @@ impl InstanceAdapter<Principal> for Principal {
 
 /// Insertable row for creating the parent principal. The id is assigned by the
 /// serial sequence; subtype tables (users/service_accounts) reference it.
-#[derive(Insertable)]
-#[diesel(table_name = principals)]
 pub struct NewPrincipal<'a> {
     pub identity_scope_id: i32,
     pub kind: &'a str,
@@ -539,8 +491,10 @@ impl PrincipalID {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::load_principal_settings(backend, self.id())
+        storage_handle(backend)
+            .load_principal_settings(self.id())
             .await
+            .map_err(ApiError::from)
     }
 
     pub async fn replace_settings<C>(
@@ -552,14 +506,10 @@ impl PrincipalID {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::mutate_principal_settings(
-            backend,
-            self.id(),
-            PrincipalSettingsMutation::Replace,
-            settings,
-            event_context,
-        )
-        .await
+        storage_handle(backend)
+            .replace_principal_settings(self.id(), settings, event_context)
+            .await
+            .map_err(ApiError::from)
     }
 
     pub async fn patch_settings<C>(
@@ -571,14 +521,10 @@ impl PrincipalID {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::mutate_principal_settings(
-            backend,
-            self.id(),
-            PrincipalSettingsMutation::Patch,
-            patch,
-            event_context,
-        )
-        .await
+        storage_handle(backend)
+            .merge_principal_settings(self.id(), patch, event_context)
+            .await
+            .map_err(ApiError::from)
     }
 
     pub(crate) async fn apply_settings_patch<C>(
@@ -590,13 +536,10 @@ impl PrincipalID {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::apply_principal_settings_patch(
-            backend,
-            self.id(),
-            patch,
-            event_context,
-        )
-        .await
+        storage_handle(backend)
+            .apply_principal_settings_patch(self.id(), patch, event_context)
+            .await
+            .map_err(ApiError::from)
     }
 
     pub async fn reset_settings<C>(
@@ -607,14 +550,10 @@ impl PrincipalID {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::mutate_principal_settings(
-            backend,
-            self.id(),
-            PrincipalSettingsMutation::Reset,
-            PrincipalSettings::default(),
-            event_context,
-        )
-        .await
+        storage_handle(backend)
+            .reset_principal_settings(self.id(), event_context)
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -623,7 +562,10 @@ pub async fn load_principal_by_id(
     pool: &impl crate::storage::StorageContext,
     principal_id: i32,
 ) -> Result<Principal, ApiError> {
-    crate::storage::postgres::operations::principal::load_principal_by_id(pool, principal_id).await
+    storage_handle(pool)
+        .load_principal(principal_id)
+        .await
+        .map_err(ApiError::from)
 }
 
 impl CursorPaginated for Principal {
@@ -664,43 +606,5 @@ impl CursorPaginated for Principal {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for Principal {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "principals.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "principals.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "principals.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "principals.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for principals",
-                    field
-                )));
-            }
-        })
     }
 }

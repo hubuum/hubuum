@@ -9,8 +9,8 @@ use super::{
     EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, GroupStorage,
     HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage,
     ObjectAggregateStorage, ObjectRecordStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, PostgresStorage, RelationQueryStorage, RemoteTargetStorage,
-    RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
+    OperationalStateStorage, PostgresStorage, PrincipalStorage, RelationQueryStorage,
+    RemoteTargetStorage, RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
     TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
 };
 
@@ -79,6 +79,7 @@ pub(crate) trait StorageBackend:
     + TokenRetentionStorage
     + UnifiedSearchStorage
     + GroupStorage
+    + PrincipalStorage
     + CollectionPermissionStorage
     + CollectionRecordStorage
     + ClassRecordStorage
