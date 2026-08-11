@@ -3,10 +3,11 @@ use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{Array, BigInt, Bool, Timestamp};
 
 use crate::errors::ApiError;
-use crate::events::{Event, EventRetentionSettings};
+use crate::events::EventRetentionSettings;
 #[cfg(test)]
 use crate::storage::context::postgres_pool;
 use crate::storage::postgres::PostgresConnection;
+use crate::storage::postgres::operations::event_record::EventRow;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::with_transaction;
 use crate::storage::{EventArchive, EventRetentionSummary, RetainedEvent};
@@ -45,7 +46,7 @@ pub(crate) async fn try_acquire_event_retention_lock(
 pub(crate) async fn select_events_for_retention_purge_conn(
     conn: &mut PostgresConnection,
     settings: EventRetentionSettings,
-) -> Result<Vec<Event>, ApiError> {
+) -> Result<Vec<EventRow>, ApiError> {
     let cutoff = settings
         .event_cutoff(Utc::now().naive_utc())
         .ok_or_else(|| {
@@ -64,7 +65,7 @@ pub(crate) async fn select_events_for_retention_purge_conn(
     Ok(events
         .filter(id.eq_any(ids))
         .order(id.asc())
-        .load::<Event>(conn)
+        .load::<EventRow>(conn)
         .await?)
 }
 

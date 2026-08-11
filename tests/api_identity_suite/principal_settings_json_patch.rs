@@ -6,7 +6,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::errors::ApiError;
-    use crate::events::{Action, EntityType, Event};
+    use crate::events::{Action, EntityType};
     use crate::models::{
         MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS, Permissions,
         PrincipalID, PrincipalSettingsResponse, ResourceRevision,
@@ -69,23 +69,24 @@ mod tests {
     }
 
     async fn mutation_state(pool: &PostgresPool, principal_id: i32) -> MutationState {
-        use crate::schema::{events, principals};
+        use crate::schema::principals;
 
-        let (revision, updated_at, event_count) = with_connection(pool, async |conn| {
+        let (revision, updated_at) = with_connection(pool, async |conn| {
             let (revision, updated_at) = principals::table
                 .filter(principals::id.eq(principal_id))
                 .select((principals::revision, principals::updated_at))
                 .first::<(ResourceRevision, NaiveDateTime)>(conn)
                 .await?;
-            let event_count = events::table
-                .filter(events::entity_type.eq(EntityType::User.as_str()))
-                .filter(events::entity_id.eq(principal_id))
-                .filter(events::action.eq(Action::Updated.as_str()))
-                .count()
-                .get_result::<i64>(conn)
-                .await?;
-            Ok::<_, ApiError>((revision, updated_at, event_count))
+            Ok::<_, ApiError>((revision, updated_at))
         })
+        .await
+        .unwrap();
+        let event_count = crate::test_support::audit_event_count(
+            pool,
+            EntityType::User,
+            Action::Updated,
+            principal_id,
+        )
         .await
         .unwrap();
         MutationState {
@@ -649,17 +650,16 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let updated: PrincipalSettingsResponse = test::read_body_json(response).await;
 
-        let event = with_connection(&context.pool, async |conn| {
-            crate::schema::events::table
-                .filter(crate::schema::events::entity_type.eq(EntityType::ServiceAccount.as_str()))
-                .filter(crate::schema::events::entity_id.eq(account.id))
-                .filter(crate::schema::events::action.eq(Action::Updated.as_str()))
-                .order(crate::schema::events::id.desc())
-                .first::<Event>(conn)
-                .await
-        })
+        let event = crate::test_support::audit_events(
+            &context.pool,
+            EntityType::ServiceAccount,
+            account.id,
+            Some(Action::Updated),
+        )
         .await
-        .unwrap();
+        .unwrap()
+        .pop()
+        .expect("settings patch should emit an audit event");
 
         assert_eq!(
             event.before,

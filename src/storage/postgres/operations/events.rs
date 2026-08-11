@@ -5,6 +5,7 @@ use crate::apply_query_options;
 use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, Event, EventResponse, PrincipalNames};
 use crate::models::search::QueryOptions;
+use crate::storage::postgres::operations::event_record::EventRow;
 use crate::storage::postgres::operations::history::resolve_principal_names;
 use crate::storage::postgres::with_connection;
 
@@ -50,8 +51,12 @@ pub async fn list_events_with_total_count(
         filters,
         query_options,
     )?;
-    apply_query_options!(query, query_options, EventResponse);
-    let mut rows = with_connection(pool, async |conn| query.load::<Event>(conn).await).await?;
+    apply_query_options!(query, query_options, EventRow);
+    let mut rows = with_connection(pool, async |conn| query.load::<EventRow>(conn).await)
+        .await?
+        .into_iter()
+        .map(Event::from)
+        .collect::<Vec<_>>();
     apply_legacy_task_provenance(pool, &mut rows).await?;
     let principal_ids = rows
         .iter()

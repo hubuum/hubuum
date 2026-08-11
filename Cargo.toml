@@ -205,6 +205,11 @@ name = "api_platform"
 path = "tests/api_platform.rs"
 required-features = ["integration-test-support"]
 
+[[test]]
+name = "restore_roundtrip"
+path = "tests/restore_roundtrip.rs"
+required-features = ["integration-test-support"]
+
 [[bench]]
 name = "json_predicate_construction_callgrind"
 harness = false

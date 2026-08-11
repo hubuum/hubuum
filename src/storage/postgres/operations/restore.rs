@@ -5,12 +5,13 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+use crate::events::{Action, ActorKind, EntityType, NewEvent};
 use crate::models::backup::{
     BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
     backup_history_sections,
 };
 use crate::models::{MaintenanceState, RestoreJobStatus};
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::storage::{

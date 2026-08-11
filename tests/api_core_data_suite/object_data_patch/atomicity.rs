@@ -243,8 +243,7 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
     let updated: HubuumObject = test::read_body_json(response).await;
 
     assert!(updated.updated_at > before.updated_at);
-    let (computed, history, events) = with_connection(&test_context.pool, async |conn| {
-        use crate::schema::events::dsl as event;
+    let (computed, history) = with_connection(&test_context.pool, async |conn| {
         use crate::schema::hubuumobject_history::dsl as history;
         use crate::schema::object_computed_data::dsl as computed;
 
@@ -257,15 +256,16 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
             .order(history::history_id.asc())
             .load::<HubuumObjectHistory>(conn)
             .await?;
-        let events = event::events
-            .filter(event::entity_type.eq("object"))
-            .filter(event::entity_id.eq(before.id))
-            .order(event::id.asc())
-            .select(Event::as_select())
-            .load::<Event>(conn)
-            .await?;
-        Ok::<_, diesel::result::Error>((computed, history, events))
+        Ok::<_, diesel::result::Error>((computed, history))
     })
+    .await
+    .unwrap();
+    let events = crate::test_support::audit_events(
+        &test_context.pool,
+        crate::events::EntityType::Object,
+        before.id,
+        None,
+    )
     .await
     .unwrap();
 

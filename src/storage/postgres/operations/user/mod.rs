@@ -4,7 +4,7 @@ use std::iter::IntoIterator;
 use tracing::debug;
 
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
 };
@@ -16,6 +16,7 @@ use crate::models::{
     HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList, PrincipalToken,
     RelatedObjectGraphRow, RelatedObjectIncludeRow, Token, UpdateUser, User, UserID,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::traits::{ClassAccessors, GroupAccessors, SelfAccessors};
 

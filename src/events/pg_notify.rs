@@ -206,7 +206,8 @@ mod tests {
 
     use crate::config::get_config;
     use crate::errors::ApiError;
-    use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+    use crate::events::{Action, ActorKind, EntityType, NewEvent};
+    use crate::storage::postgres::operations::event_record::emit_event;
     use crate::storage::postgres::{init_postgres_pool, with_transaction};
     use crate::tests::test_scope;
 

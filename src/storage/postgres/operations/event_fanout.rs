@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::storage::postgres::operations::event_record::EventRow;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::prelude::*;
 use chrono::Utc;
@@ -67,8 +68,11 @@ pub(crate) async fn claim_events_for_fanout(
                 fanout_locked_until.eq(Some(lock_deadline)),
                 fanout_claim_token.eq(Some(claim_token)),
             ))
-            .get_results::<Event>(conn)
-            .await?;
+            .get_results::<EventRow>(conn)
+            .await?
+            .into_iter()
+            .map(Event::from)
+            .collect();
 
         Ok(claimed)
     })
@@ -100,8 +104,11 @@ pub async fn fanout_events(
             .filter(id.eq_any(event_ids))
             .filter(dispatched_at.is_null())
             .order(id.asc())
-            .load::<Event>(conn)
-            .await?;
+            .load::<EventRow>(conn)
+            .await?
+            .into_iter()
+            .map(Event::from)
+            .collect::<Vec<_>>();
         if claimed_events.is_empty() {
             return Ok(0);
         }

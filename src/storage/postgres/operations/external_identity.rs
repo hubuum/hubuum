@@ -3,10 +3,11 @@ use diesel::dsl::not;
 use hubuum_auth_core::AuthenticatedExternalUser;
 
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::{
     EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, Principal, PrincipalKind, User,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::identity::ensure_identity_scope;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};

@@ -4,7 +4,7 @@ use crate::storage::postgres::prelude::*;
 pub use crate::config::max_transitive_depth as max_transitive_depth_from_config;
 
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::search::{FilterField, ParsedQueryParam, ParsedQueryParamExt, QueryOptions};
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassRelationTransitive,
@@ -14,6 +14,7 @@ use crate::models::{
     ObjectRelationSelectorKind, PreparedClassRelation, PreparedObjectRelation,
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget, User, user_can_on_any,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::{
     apply_query_options, bind_transitive_filter_params, date_search, numeric_search,

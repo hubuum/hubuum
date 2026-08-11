@@ -16,7 +16,7 @@ use crate::errors::ApiError;
 use crate::events::retention::process_event_retention_batch;
 use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, EventDeliverySettings, EventFanoutSettings,
-    EventRetentionSettings, NewEvent, RequestProvenance, emit_event,
+    EventRetentionSettings, NewEvent, RequestProvenance,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
@@ -40,6 +40,8 @@ use crate::storage::postgres::operations::event_delivery::{
 use crate::storage::postgres::operations::event_fanout::{
     claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
 };
+use crate::storage::postgres::operations::event_record::EventRow;
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::event_retention::{
     purge_event_retention_without_archive, try_acquire_event_retention_lock,
 };
@@ -455,8 +457,9 @@ async fn insert_collection_created_event_at(
                 summary.eq("collection retention test"),
                 metadata.eq(serde_json::json!({})),
             ))
-            .get_result::<Event>(conn)
+            .get_result::<EventRow>(conn)
             .await
+            .map(Event::from)
     })
     .await
     .unwrap()
@@ -2333,8 +2336,9 @@ async fn events_for(
             .filter(entity_type.eq(event_entity_type))
             .filter(entity_id.eq(event_entity_id))
             .order(id.asc())
-            .load::<Event>(conn)
+            .load::<EventRow>(conn)
             .await
+            .map(|rows| rows.into_iter().map(Event::from).collect())
     })
     .await
     .unwrap()
@@ -2360,8 +2364,9 @@ async fn events_for_type(scope: &TestScope, event_entity_type: &str) -> Vec<Even
         events
             .filter(entity_type.eq(event_entity_type))
             .order(id.asc())
-            .load::<Event>(conn)
+            .load::<EventRow>(conn)
             .await
+            .map(|rows| rows.into_iter().map(Event::from).collect())
     })
     .await
     .unwrap()

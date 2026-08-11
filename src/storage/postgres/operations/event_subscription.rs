@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::api::etag::RevisionOwner;
 use crate::apply_query_options;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::event_subscription::{
     EventSink, EventSinkID, EventSinkKind, EventSubscription, EventSubscriptionID,
 };
@@ -16,6 +16,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};
 
 macro_rules! impl_redacted_event_sink_row_debug {

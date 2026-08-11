@@ -5,7 +5,7 @@ use std::time::Duration;
 use actix_web::{http::StatusCode, test};
 use rstest::rstest;
 
-use crate::events::{Event, EventContext};
+use crate::events::{EntityType, EventContext};
 use crate::models::traits::{PatchObjectData, ResolveObjectTarget};
 use crate::models::{
     HubuumClassID, HubuumObject, HubuumObjectHistory, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
@@ -82,17 +82,9 @@ async fn object_history_count(context: &TestContext, object_id: i32) -> i64 {
 }
 
 async fn object_event_count(context: &TestContext, object_id: i32) -> i64 {
-    with_connection(&context.pool, async |conn| {
-        use crate::schema::events::dsl::{entity_id, entity_type, events};
-        events
-            .filter(entity_type.eq("object"))
-            .filter(entity_id.eq(object_id))
-            .count()
-            .get_result(conn)
-            .await
-    })
-    .await
-    .unwrap()
+    crate::test_support::audit_event_total(&context.pool, EntityType::Object, object_id)
+        .await
+        .unwrap()
 }
 
 async fn current_object(context: &TestContext, object_id: i32) -> HubuumObject {

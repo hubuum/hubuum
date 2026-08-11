@@ -1,13 +1,13 @@
-//! `Event` / `NewEvent` models for the unified `events` stream (#71).
+//! Backend-neutral event models for the unified event stream (#71).
 //!
 //! `NewEvent` is a validating builder: the `(entity_type, action)` pair is
 //! checked against the authoritative catalog at construction, so invalid
-//! combinations (e.g. `object_relation.updated`) can never reach
-//! [`super::emit_event`]. The struct holds validated `String` snapshots of the
-//! catalog enums at the Diesel boundary while exposing typed builders; the
-//! [`Event`] read model converts back to the typed enums on demand.
+//! combinations (e.g. `object_relation.updated`) can never reach a storage
+//! adapter. The struct holds validated `String` snapshots of the catalog enums
+//! while exposing typed builders; [`Event`] converts them back to typed enums
+//! on demand. Database rows, fan-out claims, and query mappings belong to each
+//! storage adapter.
 
-use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,10 +19,7 @@ use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
-use crate::schema::events;
+use crate::pagination::{CursorPaginated, CursorValue};
 
 use super::{
     Action, ActorKind, EntityType, EventCatalogError, EventContext, EventEnvelope,
@@ -148,9 +145,8 @@ impl From<EventId> for Uuid {
     }
 }
 
-/// A committed event row — the read model for the audit log (#74) and delivery.
-#[derive(Clone, Serialize, Deserialize, Queryable, Selectable)]
-#[diesel(table_name = events)]
+/// A committed, backend-neutral event used by audit and delivery workflows.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: i64,
     pub event_id: Uuid,
@@ -169,9 +165,6 @@ pub struct Event {
     pub after: Option<serde_json::Value>,
     pub metadata: serde_json::Value,
     pub schema_version: i32,
-    pub dispatched_at: Option<NaiveDateTime>,
-    pub fanout_locked_until: Option<NaiveDateTime>,
-    pub fanout_claim_token: Option<Uuid>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
     pub before_revision: Option<ResourceRevision>,
@@ -199,12 +192,6 @@ impl fmt::Debug for Event {
             .field("after", &redacted_debug_option(&self.after))
             .field("metadata", &REDACTED_DEBUG_VALUE)
             .field("schema_version", &self.schema_version)
-            .field("dispatched_at", &self.dispatched_at)
-            .field("fanout_locked_until", &self.fanout_locked_until)
-            .field(
-                "fanout_claim_token",
-                &redacted_debug_option(&self.fanout_claim_token),
-            )
             .field("initiator_user_id", &self.initiator_user_id)
             .field("task_id", &self.task_id)
             .finish()
@@ -385,39 +372,14 @@ impl CursorPaginated for EventResponse {
     }
 }
 
-impl CursorSqlMapping for EventResponse {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "events.id",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            FilterField::OccurredAt => CursorSqlField {
-                column: "events.occurred_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for events",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 /// A validated, not-yet-persisted event. Built by mutation code inside a
-/// `with_transaction` block and appended by [`super::emit_event`].
+/// storage-adapter transaction and appended by that adapter.
 ///
 /// Required identity is provided to [`NewEvent::new`], which validates the
 /// `(entity_type, action)` pair against the catalog; optional provenance and
 /// snapshot fields are added with the `with_*` builders. Columns owned by the
-/// database (`id`, `occurred_at`, `dispatched_at`, fan-out claim fields) are
-/// intentionally absent so the row uses their defaults on insert.
-#[derive(Insertable)]
-#[diesel(table_name = events)]
+/// storage backend (`id`, `occurred_at`, dispatch state, and claim fields) are
+/// intentionally absent.
 pub struct NewEvent {
     event_id: Uuid,
     entity_type: String,
@@ -610,17 +572,51 @@ impl NewEvent {
     pub fn correlation_id(&self) -> Option<&str> {
         self.correlation_id.as_deref()
     }
+
+    pub(crate) fn entity_type_value(&self) -> &str {
+        &self.entity_type
+    }
+
+    pub(crate) fn entity_id_value(&self) -> Option<i32> {
+        self.entity_id
+    }
+
+    pub(crate) fn entity_name_value(&self) -> Option<&str> {
+        self.entity_name.as_deref()
+    }
+
+    pub(crate) fn collection_id_value(&self) -> Option<i32> {
+        self.collection_id
+    }
+
+    pub(crate) fn action_value(&self) -> &str {
+        &self.action
+    }
+
+    pub(crate) fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    pub(crate) fn before(&self) -> Option<&serde_json::Value> {
+        self.before.as_ref()
+    }
+
+    pub(crate) fn after(&self) -> Option<&serde_json::Value> {
+        self.after.as_ref()
+    }
+
+    pub(crate) fn metadata(&self) -> &serde_json::Value {
+        &self.metadata
+    }
+
+    pub(crate) fn schema_version(&self) -> i32 {
+        self.schema_version
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn timestamp() -> NaiveDateTime {
-        chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .unwrap()
-            .naive_utc()
-    }
 
     #[test]
     fn new_event_debug_redacts_payload_snapshots() {
@@ -641,44 +637,5 @@ mod tests {
         assert!(!debug.contains("before-secret"));
         assert!(!debug.contains("after-secret"));
         assert!(!debug.contains("metadata-secret"));
-    }
-
-    #[test]
-    fn stored_event_debug_redacts_payloads_and_fanout_claim_token() {
-        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
-        let event = Event {
-            id: 1,
-            event_id: Uuid::new_v4(),
-            occurred_at: timestamp(),
-            entity_type: EntityType::Collection.as_str().to_string(),
-            entity_id: Some(2),
-            entity_name: Some("collection".to_string()),
-            collection_id: Some(2),
-            action: Action::Created.as_str().to_string(),
-            actor_user_id: Some(3),
-            actor_kind: ActorKind::User.as_str().to_string(),
-            request_id: None,
-            correlation_id: None,
-            summary: "created".to_string(),
-            before: Some(serde_json::json!({"token": "stored-before-secret"})),
-            after: Some(serde_json::json!({"token": "stored-after-secret"})),
-            before_revision: None,
-            after_revision: None,
-            metadata: serde_json::json!({"token": "stored-metadata-secret"}),
-            schema_version: 1,
-            dispatched_at: None,
-            fanout_locked_until: Some(timestamp()),
-            fanout_claim_token: Some(claim_token),
-            initiator_user_id: Some(3),
-            task_id: None,
-        };
-
-        let debug = format!("{event:?}");
-
-        assert!(debug.contains(REDACTED_DEBUG_VALUE));
-        assert!(!debug.contains("stored-before-secret"));
-        assert!(!debug.contains("stored-after-secret"));
-        assert!(!debug.contains("stored-metadata-secret"));
-        assert!(!debug.contains(&claim_token.to_string()));
     }
 }
