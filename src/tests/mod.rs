@@ -58,8 +58,9 @@ use crate::models::collection::{Collection, NewCollectionWithAssignee};
 use crate::models::group::{Group, NewGroup};
 use crate::models::user::{NewUser, User};
 use crate::models::{
-    HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject, Permissions, PrincipalID,
-    PrincipalToken, PrincipalTokenCreateRequest, Token, TokenResourceScope, TokenScope,
+    HubuumClass, HubuumObject, LOCAL_IDENTITY_SCOPE, NewHubuumClass, NewHubuumObject, Permissions,
+    PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, Token, TokenResourceScope,
+    TokenScope,
 };
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::group::GroupRow;
@@ -69,7 +70,6 @@ use crate::storage::postgres::{init_postgres_pool, with_connection};
 use crate::utilities::auth::{generate_random_password, hash_password};
 
 use crate::storage::postgres::operations::service_account::SaveServiceAccount;
-use crate::storage::postgres::operations::user::CreateUserRecord;
 use crate::traits::{CanDelete, CanSave};
 use std::sync::LazyLock;
 use tokio::sync::{Mutex, MutexGuard};
@@ -526,19 +526,25 @@ pub async fn create_user_with_params(pool: &PostgresPool, username: &str, passwo
     };
     let result = match password {
         "testpassword" => {
-            NewUser {
-                password: TEST_USER_PASSWORD_HASH.clone(),
-                ..new_user
-            }
-            .create_user_record_without_events(pool)
+            crate::services::identity::create_user_with_password_hash(
+                pool,
+                NewUser {
+                    password: TEST_USER_PASSWORD_HASH.clone(),
+                    ..new_user
+                },
+                None,
+            )
             .await
         }
         "testadminpassword" => {
-            NewUser {
-                password: TEST_ADMIN_PASSWORD_HASH.clone(),
-                ..new_user
-            }
-            .create_user_record_without_events(pool)
+            crate::services::identity::create_user_with_password_hash(
+                pool,
+                NewUser {
+                    password: TEST_ADMIN_PASSWORD_HASH.clone(),
+                    ..new_user
+                },
+                None,
+            )
             .await
         }
         _ => new_user.save_without_events(pool).await,
@@ -723,7 +729,9 @@ pub async fn create_groups_with_prefix(
 }
 
 pub async fn ensure_user(pool: &PostgresPool, uname: &str) -> User {
-    if let Ok(user) = User::get_by_name(pool, uname).await {
+    if let Ok(user) =
+        crate::services::identity::load_user_by_name(pool, LOCAL_IDENTITY_SCOPE, uname).await
+    {
         return user;
     }
 
@@ -740,9 +748,13 @@ pub async fn ensure_user(pool: &PostgresPool, uname: &str) -> User {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return User::get_by_name(pool, uname)
-                    .await
-                    .expect("Failed to fetch user after conflict");
+                return crate::services::identity::load_user_by_name(
+                    pool,
+                    LOCAL_IDENTITY_SCOPE,
+                    uname,
+                )
+                .await
+                .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create user '{uname}': {e:?}"),
         }

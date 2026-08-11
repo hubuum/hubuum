@@ -68,23 +68,27 @@ use crate::storage::{
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
     StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageQueryBudget, StorageRelatedDirection,
-    StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageServiceAccountCreate,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageTokenListQuery, StorageTokenListState, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
+    StoragePersonalComputedFieldUpdate, StoragePrincipalGroupListQuery, StorageQueryBudget,
+    StorageRelatedDirection, StorageRelatedSort, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
+    StorageRevisionPrecondition, StorageServiceAccountCreate, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenRenew,
+    StorageTokenRevoke, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchQuery,
+    UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -493,11 +497,207 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                     .await
                     .expect("certified backend should load effective memberships");
                 assert_eq!(membership.principal_id(), user.id);
+                let group_options = prepare_db_pagination::<crate::models::Group>(&QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: Some(20),
+                    cursor: None,
+                    include_total: true,
+                })
+                .expect("identity compatibility group query should be valid");
+                let (groups, group_total) = backend
+                    .list_principal_groups(StoragePrincipalGroupListQuery::new(
+                        user.id,
+                        group_options,
+                    ))
+                    .await
+                    .expect("certified backend should list principal groups")
+                    .into_parts();
+                assert!(group_total.is_some_and(|total| total >= 1));
+                assert!(groups.into_iter().any(|group| {
+                    let (id, ..) = group.into_parts();
+                    id == owner_group.id
+                }));
                 assert!(
                     backend
                         .is_human_owner_group_member(user.id, owner_group.id)
                         .await
                         .expect("certified backend should evaluate human ownership")
+                );
+
+                let event_context = EventContext::user(user.id, None, None);
+                let contract_username = prefix("complete_user_contract");
+                let contract_user = backend
+                    .create_user(StorageUserCreate::new(
+                        None,
+                        &contract_username,
+                        "complete-user-contract-password-hash",
+                        Some("Complete Contract".to_string()),
+                        Some("complete-contract@example.invalid".to_string()),
+                        Some(event_context.clone()),
+                    ))
+                    .await
+                    .expect("certified backend should create users");
+                let contract_user_id = contract_user.into_parts().0;
+                assert_eq!(
+                    backend
+                        .load_user(contract_user_id)
+                        .await
+                        .expect("certified backend should load users")
+                        .into_parts()
+                        .0,
+                    contract_user_id
+                );
+                assert_eq!(
+                    backend
+                        .load_user_by_name(
+                            LOCAL_IDENTITY_SCOPE.to_string(),
+                            contract_username.clone(),
+                        )
+                        .await
+                        .expect("certified backend should resolve scoped user names")
+                        .into_parts()
+                        .0,
+                    contract_user_id
+                );
+                assert_eq!(
+                    backend
+                        .load_user_point(contract_user_id)
+                        .await
+                        .expect("certified backend should load user points")
+                        .into_parts()
+                        .0,
+                    contract_user_id
+                );
+                let user_options =
+                    prepare_db_pagination::<crate::models::UserWithName>(&QueryOptions {
+                        filters: vec![ParsedQueryParam {
+                            field: FilterField::Id,
+                            operator: SearchOperator::Equals { is_negated: false },
+                            value: contract_user_id.to_string(),
+                        }],
+                        sort: Vec::new(),
+                        limit: Some(100),
+                        cursor: None,
+                        include_total: true,
+                    })
+                    .expect("identity compatibility user query should be valid");
+                let (users, user_total) = backend
+                    .list_users(StorageUserListQuery::new(user_options))
+                    .await
+                    .expect("certified backend should list users")
+                    .into_parts();
+                assert!(user_total.is_some_and(|total| total >= 1));
+                assert!(users.into_iter().any(|item| {
+                    let (user, ..) = item.into_parts();
+                    user.into_parts().0 == contract_user_id
+                }));
+                backend
+                    .update_user(StorageUserUpdate::new(
+                        contract_user_id,
+                        None,
+                        Some("Updated Contract".to_string()),
+                        None,
+                        Some(event_context.clone()),
+                    ))
+                    .await
+                    .expect("certified backend should update users");
+                backend
+                    .set_user_password(StorageUserPasswordUpdate::new(
+                        contract_user_id,
+                        "updated-complete-user-contract-password-hash",
+                    ))
+                    .await
+                    .expect("certified backend should replace local passwords");
+
+                let token_policy = StorageTokenIssuancePolicy::new(24, 24);
+                let first_hash = prefix("complete_token_hash");
+                let first_token = backend
+                    .create_token(
+                        StorageTokenCreate::new(contract_user_id, &first_hash, token_policy)
+                            .event_context(Some(event_context.clone())),
+                    )
+                    .await
+                    .expect("certified backend should create tokens");
+                let first_token_id = first_token.id();
+                assert_eq!(
+                    backend
+                        .load_token_metadata(contract_user_id, first_token_id)
+                        .await
+                        .expect("certified backend should load token metadata")
+                        .id(),
+                    first_token_id
+                );
+                let batch = backend
+                    .load_token_metadata_batch(vec![first_token_id, first_token_id])
+                    .await
+                    .expect("certified backend should preserve token batch order");
+                assert_eq!(batch.len(), 2);
+                assert_eq!(batch[0].id(), batch[1].id());
+
+                let second_hash = prefix("complete_renewed_token_hash");
+                let renewed = backend
+                    .renew_token(StorageTokenRenew::new(
+                        first_token_id,
+                        contract_user_id,
+                        &second_hash,
+                        None,
+                        token_policy,
+                        Some(event_context.clone()),
+                    ))
+                    .await
+                    .expect("certified backend should renew tokens");
+                assert_ne!(renewed.id(), first_token_id);
+                assert_eq!(
+                    backend
+                        .revoke_token(StorageTokenRevoke::new(
+                            first_token_id,
+                            contract_user_id,
+                            Some(event_context.clone()),
+                        ))
+                        .await
+                        .expect("certified backend should revoke principal-scoped tokens"),
+                    1
+                );
+                assert_eq!(
+                    backend
+                        .revoke_token_by_hash(StorageTokenHashRevoke::new(
+                            Some(contract_user_id),
+                            second_hash,
+                        ))
+                        .await
+                        .expect("certified backend should revoke HMAC-keyed tokens"),
+                    1
+                );
+                let third_hash = prefix("complete_revoke_all_token_hash");
+                backend
+                    .create_token(StorageTokenCreate::new(
+                        contract_user_id,
+                        third_hash,
+                        token_policy,
+                    ))
+                    .await
+                    .expect("certified backend should create a token for bulk revocation");
+                assert_eq!(
+                    backend
+                        .revoke_all_principal_tokens(contract_user_id)
+                        .await
+                        .expect("certified backend should revoke all principal tokens"),
+                    1
+                );
+                backend
+                    .anonymize_user(contract_user_id)
+                    .await
+                    .expect("certified backend should anonymize users");
+                assert_eq!(
+                    backend
+                        .delete_user(StorageUserDelete::new(
+                            contract_user_id,
+                            Some(event_context.clone()),
+                        ))
+                        .await
+                        .expect("certified backend should delete users"),
+                    1
                 );
 
                 let token_options =
@@ -531,7 +731,6 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                     1
                 );
 
-                let event_context = EventContext::user(user.id, None, None);
                 let service_account_name = prefix("identity_contract_sa");
                 let created = backend
                     .create_service_account(StorageServiceAccountCreate::new(

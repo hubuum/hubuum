@@ -62,29 +62,32 @@ use crate::storage::{
     StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
     StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
     StorageExportTemplatePage, StorageExportTemplateReplace, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
-    StorageImportApply, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
-    StorageImportTaskResultPage, StorageInventoryCounts, StorageLocalPasswordReset, StorageObject,
-    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StorageExternalUserSync, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StorageImportApply, StorageImportPlanItem, StorageImportPreflight,
+    StorageImportResult, StorageImportTaskResultPage, StorageInventoryCounts,
+    StorageLocalPasswordReset, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
+    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
-    StoragePrincipalGroup, StorageQueryBudget, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPage, StorageRemoteTargetUpdate, StorageRestoreApply,
-    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
-    StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
-    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
-    StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
-    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenListQuery,
-    StorageTokenMetadata, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
-    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StorageQueryBudget,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
+    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageRevisionPrecondition, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageSyncedHuman, StorageTask, StorageTaskAccess,
+    StorageTaskClaim, StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventPage, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery,
+    StorageTaskStateUpdate, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
+    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
+    TokenRetentionStorage, TokenStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -399,6 +402,20 @@ impl IdentityStorage for StorageHandle {
         .await
     }
 
+    async fn list_principal_groups(
+        &self,
+        query: StoragePrincipalGroupListQuery,
+    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "list_groups", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_principal_groups(query).await
+                }
+            }
+        })
+        .await
+    }
+
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,
@@ -635,6 +652,194 @@ impl IdentityStorage for StorageHandle {
                 }
             },
         )
+        .await
+    }
+}
+
+#[async_trait]
+impl UserStorage for StorageHandle {
+    async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.load_user(id).await,
+            }
+        })
+        .await
+    }
+
+    async fn load_user_by_name(
+        &self,
+        identity_scope: String,
+        name: String,
+    ) -> Result<StorageUser, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "load_by_name", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_user_by_name(identity_scope, name).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "load_point", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.load_user_point(id).await,
+            }
+        })
+        .await
+    }
+
+    async fn list_users(
+        &self,
+        query: StorageUserListQuery,
+    ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.list_users(query).await,
+            }
+        })
+        .await
+    }
+
+    async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.create_user(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "update", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.update_user(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn set_user_password(
+        &self,
+        request: StorageUserPasswordUpdate,
+    ) -> Result<usize, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "set_password", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.set_user_password(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError> {
+        observe_storage_call(self.backend_name(), "user", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.delete_user(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "user", "anonymize", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.anonymize_user(id).await,
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl TokenStorage for StorageHandle {
+    async fn create_token(
+        &self,
+        request: StorageTokenCreate,
+    ) -> Result<StorageTokenMetadata, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.create_token(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn renew_token(
+        &self,
+        request: StorageTokenRenew,
+    ) -> Result<StorageTokenMetadata, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "renew", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.renew_token(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn load_token_metadata(
+        &self,
+        principal_id: i32,
+        token_id: i32,
+    ) -> Result<StorageTokenMetadata, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "load_metadata", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_token_metadata(principal_id, token_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_token_metadata_batch(
+        &self,
+        token_ids: Vec<i32>,
+    ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "load_metadata_batch", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_token_metadata_batch(token_ids).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "revoke", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.revoke_token(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn revoke_token_by_hash(
+        &self,
+        request: StorageTokenHashRevoke,
+    ) -> Result<usize, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "revoke_by_hash", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.revoke_token_by_hash(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
+        observe_storage_call(self.backend_name(), "token", "revoke_all", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.revoke_all_principal_tokens(principal_id).await
+                }
+            }
+        })
         .await
     }
 }

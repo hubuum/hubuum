@@ -6,7 +6,6 @@ use crate::storage::postgres::operations::identity::identity_scope_by_name;
 use crate::storage::postgres::operations::principal::{
     InsertPrincipalRecord, lock_principal_revision_conn, principal_revision_conn,
 };
-use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::operations::token::revoke_all_tokens_for_principal_conn;
 use diesel_async::RunQueryDsl;
 
@@ -79,53 +78,30 @@ async fn ensure_user_allows_local_write_conn(
     Ok(())
 }
 
-impl User {
-    /// Resolve a human user by its principal name.
-    pub async fn get_by_name(
-        pool: &impl crate::storage::StorageContext,
-        name_arg: &str,
-    ) -> Result<User, ApiError> {
-        Self::get_by_name_in_scope(pool, LOCAL_IDENTITY_SCOPE, name_arg).await
-    }
+/// Resolve a human user by identity scope and principal name.
+pub(crate) async fn load_user_by_name_record(
+    pool: &impl crate::storage::StorageContext,
+    scope_arg: &str,
+    name_arg: &str,
+) -> Result<User, ApiError> {
+    use crate::schema::{identity_scopes, principals, users};
 
-    /// Resolve a human user by identity scope and principal name.
-    pub async fn get_by_name_in_scope(
-        pool: &impl crate::storage::StorageContext,
-        scope_arg: &str,
-        name_arg: &str,
-    ) -> Result<User, ApiError> {
-        use crate::schema::identity_scopes;
-        use crate::schema::principals;
-        use crate::schema::users;
-
-        let name = name_arg.to_string();
-        let scope = scope_arg.to_string();
-        crate::storage::postgres::with_connection_async(pool, async move |conn| {
-            users::table
-                .inner_join(principals::table.on(users::id.eq(principals::id)))
-                .inner_join(
-                    identity_scopes::table
-                        .on(principals::identity_scope_id.eq(identity_scopes::id)),
-                )
-                .filter(principals::name.eq(name))
-                .filter(identity_scopes::name.eq(scope))
-                .select(users::all_columns)
-                .first::<UserRow>(conn)
-                .await
-                .map(Into::into)
-        })
-        .await
-    }
-}
-
-pub(crate) trait SetUserPasswordRecord {
-    /// Persist a pre-hashed password and revoke all active bearer tokens in one
-    /// transaction. Returns the number of tokens revoked.
-    async fn set_password_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        password_hash: &str,
-    ) -> Result<usize, ApiError>;
+    let name = name_arg.to_string();
+    let scope = scope_arg.to_string();
+    crate::storage::postgres::with_connection_async(pool, async move |conn| {
+        users::table
+            .inner_join(principals::table.on(users::id.eq(principals::id)))
+            .inner_join(
+                identity_scopes::table.on(principals::identity_scope_id.eq(identity_scopes::id)),
+            )
+            .filter(principals::name.eq(name))
+            .filter(identity_scopes::name.eq(scope))
+            .select(users::all_columns)
+            .first::<UserRow>(conn)
+            .await
+            .map(Into::into)
+    })
+    .await
 }
 
 async fn set_local_password_conn(
@@ -170,18 +146,15 @@ pub(crate) async fn reset_local_password_record(
     .await
 }
 
-impl SetUserPasswordRecord for User {
-    async fn set_password_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        password_hash: &str,
-    ) -> Result<usize, ApiError> {
-        let principal_id = PrincipalID::new(self.id)?;
-        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            set_local_password_conn(conn, principal_id, password_hash).await
-        })
-        .await
-    }
+pub(crate) async fn set_user_password_record(
+    pool: &impl crate::storage::StorageContext,
+    principal_id: PrincipalID,
+    password_hash: &str,
+) -> Result<usize, ApiError> {
+    with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+        set_local_password_conn(conn, principal_id, password_hash).await
+    })
+    .await
 }
 
 pub async fn count_user_records(
@@ -192,138 +165,6 @@ pub async fn count_user_records(
         users.count().get_result::<i64>(conn).await
     })
     .await
-}
-
-pub trait StoreUserTokenRecord {
-    async fn store_user_token_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        token_value: &Token,
-    ) -> Result<(), ApiError>;
-}
-
-impl StoreUserTokenRecord for User {
-    async fn store_user_token_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        token_value: &Token,
-    ) -> Result<(), ApiError> {
-        use crate::schema::tokens::dsl::{expires_at, issued, principal_id, token};
-        let token_hash = token_value.storage_hash();
-        let lifetime = crate::models::configured_token_lifetime()?;
-
-        with_connection(pool, async |conn| {
-            let issued_at = diesel::dsl::sql::<diesel::sql_types::Timestamp>(
-                "statement_timestamp() AT TIME ZONE 'UTC'",
-            );
-            let expiry = diesel::dsl::sql::<
-                diesel::sql_types::Nullable<diesel::sql_types::Timestamp>,
-            >("(statement_timestamp() AT TIME ZONE 'UTC') + (")
-            .bind::<diesel::sql_types::BigInt, _>(lifetime.hours())
-            .sql(" * INTERVAL '1 hour')");
-            diesel::insert_into(crate::schema::tokens::table)
-                .values((
-                    principal_id.eq(self.id),
-                    token.eq(token_hash),
-                    issued.eq(issued_at),
-                    expires_at.eq(expiry),
-                ))
-                .execute(conn)
-                .await
-        })
-        .await?;
-        Ok(())
-    }
-}
-
-pub trait OwnedUserTokenRecord {
-    async fn load_owned_user_token_record(
-        &self,
-        token_value: &Token,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<PrincipalToken, ApiError>;
-
-    async fn delete_owned_user_token_record(
-        &self,
-        token_value: &Token,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError>;
-
-    async fn delete_all_user_tokens_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError>;
-}
-
-impl OwnedUserTokenRecord for User {
-    async fn load_owned_user_token_record(
-        &self,
-        token_value: &Token,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<PrincipalToken, ApiError> {
-        use crate::schema::tokens::dsl::{principal_id, token, tokens};
-        let token_hash = token_value.storage_hash();
-
-        with_connection(pool, async |conn| {
-            tokens
-                .filter(principal_id.eq(self.id))
-                .filter(token.eq(token_hash))
-                .first::<PrincipalTokenRow>(conn)
-                .await
-                .map(Into::into)
-        })
-        .await
-    }
-
-    async fn delete_owned_user_token_record(
-        &self,
-        token_value: &Token,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError> {
-        use crate::schema::tokens::dsl::{principal_id, revoked_at, token, tokens};
-        let token_hash = token_value.storage_hash();
-
-        // Soft-revoke: revoked rows are retained for auditability.
-        with_connection(pool, async |conn| {
-            diesel::update(
-                tokens
-                    .filter(principal_id.eq(self.id))
-                    .filter(token.eq(token_hash))
-                    .filter(revoked_at.is_null()),
-            )
-            .set(revoked_at.eq(diesel::dsl::now))
-            .execute(conn)
-            .await
-        })
-        .await
-    }
-
-    async fn delete_all_user_tokens_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError> {
-        let principal_id = PrincipalID::new(self.id)?;
-        with_connection(pool, async |conn| {
-            revoke_all_tokens_for_principal_conn(conn, principal_id).await
-        })
-        .await
-    }
-}
-
-pub trait DeleteUserRecord {
-    async fn delete_user_record_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError>;
-
-    async fn delete_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError> {
-        let _ = context;
-        self.delete_user_record_without_events(pool).await
-    }
 }
 
 /// Delete a user by removing its principal row, which cascades to the `users`
@@ -344,7 +185,7 @@ async fn delete_principal_without_events(
     .await
 }
 
-async fn delete_principal(
+pub(crate) async fn delete_user_record(
     pool: &impl crate::storage::StorageContext,
     principal_id_value: i32,
     context: Option<&EventContext>,
@@ -374,40 +215,6 @@ async fn delete_principal(
         Ok(deleted)
     })
     .await
-}
-
-impl DeleteUserRecord for User {
-    async fn delete_user_record_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError> {
-        delete_principal_without_events(pool, self.id).await
-    }
-
-    async fn delete_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError> {
-        delete_principal(pool, self.id, context).await
-    }
-}
-
-impl DeleteUserRecord for UserID {
-    async fn delete_user_record_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<usize, ApiError> {
-        delete_principal_without_events(pool, self.id()).await
-    }
-
-    async fn delete_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError> {
-        delete_principal(pool, self.id(), context).await
-    }
 }
 
 pub trait CreateUserRecord {
@@ -650,32 +457,7 @@ impl UpdateUserRecord for UpdateUser {
     }
 }
 
-pub trait AnonymizeUserRecord {
-    async fn anonymize_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError>;
-}
-
-impl AnonymizeUserRecord for UserID {
-    async fn anonymize_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError> {
-        anonymize_user_record(pool, self.id()).await
-    }
-}
-
-impl AnonymizeUserRecord for User {
-    async fn anonymize_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError> {
-        anonymize_user_record(pool, self.id).await
-    }
-}
-
-async fn anonymize_user_record(
+pub(crate) async fn anonymize_user_record(
     pool: &impl crate::storage::StorageContext,
     target_id: i32,
 ) -> Result<(), ApiError> {
@@ -717,74 +499,26 @@ async fn anonymize_user_record(
     .await
 }
 
-pub trait DeleteTokenRecord {
-    async fn delete_token_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError>;
-}
+pub(crate) async fn load_user_record(
+    pool: &impl crate::storage::StorageContext,
+    user_id: i32,
+) -> Result<User, ApiError> {
+    use crate::schema::users::dsl::{id, users};
 
-impl DeleteTokenRecord for Token {
-    async fn delete_token_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError> {
-        use crate::schema::tokens::dsl::{revoked_at, token, tokens};
-        let token_hash = self.storage_hash();
-
-        // Soft-revoke rather than hard-delete.
-        with_connection(pool, async |conn| {
-            diesel::update(
-                tokens
-                    .filter(token.eq(token_hash))
-                    .filter(revoked_at.is_null()),
-            )
-            .set(revoked_at.eq(diesel::dsl::now))
-            .execute(conn)
+    with_connection(pool, async |conn| {
+        users
+            .filter(id.eq(user_id))
+            .first::<UserRow>(conn)
             .await
-        })
-        .await?;
-        Ok(())
-    }
-}
-
-pub trait LoadUserRecord {
-    async fn load_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<User, ApiError>;
-}
-
-impl LoadUserRecord for User {
-    async fn load_user_record(
-        &self,
-        _pool: &impl crate::storage::StorageContext,
-    ) -> Result<User, ApiError> {
-        Ok(self.clone())
-    }
-}
-
-impl LoadUserRecord for UserID {
-    async fn load_user_record(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::{id, users};
-
-        with_connection(pool, async |conn| {
-            users
-                .filter(id.eq(self.id()))
-                .first::<UserRow>(conn)
-                .await
-                .map(Into::into)
-        })
-        .await
-    }
+            .map(Into::into)
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Token;
     use crate::models::user::UserID;
     use crate::services::authentication::authenticate_bearer_token;
     use crate::tests::{TestScope, create_user_with_params};

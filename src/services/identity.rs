@@ -7,20 +7,25 @@ use crate::events::EventContext;
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    CollectionID, HubuumClassID, HubuumObjectID, IdentityScope, NewServiceAccount, Permissions,
-    PrincipalGroup, PrincipalTokenMetadata, ResourceRevision, ServiceAccount,
-    ServiceAccountWithName, TokenListState, TokenResourceScope, TokenScope, TokenScopeDetails,
-    UpdateServiceAccount,
+    CollectionID, Group, HubuumClassID, HubuumObjectID, IdentityScope, NewServiceAccount,
+    Permissions, PrincipalGroup, PrincipalToken, PrincipalTokenCreateRequest,
+    PrincipalTokenMetadata, ResourceRevision, ServiceAccount, ServiceAccountWithName,
+    TokenListState, TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount,
+    UpdateUser, User, UserPointResponse, UserWithName,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
-    AuthenticationTokenScope, IdentityStorage, StorageContext, StorageExternalGroup,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
+    AuthenticationResourceScope, AuthenticationTokenScope, IdentityStorage, StorageContext,
+    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
+    StorageIdentityGroup, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
     StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenMetadata, storage_handle,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
+    StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -65,6 +70,35 @@ fn principal_group_from_storage(group: StoragePrincipalGroup) -> Result<Principa
         created_at: group.created_at(),
         updated_at: group.updated_at(),
         revision: revision(group.revision(), "group membership")?,
+    })
+}
+
+fn identity_group_from_storage(group: StorageIdentityGroup) -> Result<Group, ApiError> {
+    let (
+        id,
+        groupname,
+        description,
+        identity_scope_id,
+        managed_by,
+        external_key,
+        last_sync_attempted_at,
+        last_sync_success_at,
+        created_at,
+        updated_at,
+        group_revision,
+    ) = group.into_parts();
+    Ok(Group {
+        id,
+        groupname,
+        description,
+        created_at,
+        updated_at,
+        identity_scope_id,
+        managed_by,
+        external_key,
+        last_sync_attempted_at,
+        last_sync_success_at,
+        revision: revision(group_revision, "group")?,
     })
 }
 
@@ -162,6 +196,303 @@ fn token_metadata_from_storage(
     })
 }
 
+fn user_from_storage(user: StorageUser) -> User {
+    let (id, password, proper_name, email, created_at, updated_at, anonymized_at) =
+        user.into_parts();
+    User {
+        id,
+        kind: crate::models::PrincipalKind::Human.as_str().to_string(),
+        password,
+        proper_name,
+        email,
+        created_at,
+        updated_at,
+        anonymized_at,
+    }
+}
+
+fn user_list_item_from_storage(item: StorageUserListItem) -> Result<UserWithName, ApiError> {
+    let (user, scope, provider, name, managed, attempted, succeeded, item_revision) =
+        item.into_parts();
+    Ok(UserWithName::from_tuple((
+        user_from_storage(user),
+        scope,
+        provider,
+        name,
+        managed,
+        attempted,
+        succeeded,
+        revision(item_revision, "user")?,
+    )))
+}
+
+fn user_point_from_storage(point: StorageUserPoint) -> Result<UserPointResponse, ApiError> {
+    let (id, proper_name, email, created_at, updated_at, scope_id, managed, name, point_revision) =
+        point.into_parts();
+    Ok(UserPointResponse {
+        id,
+        identity_scope_id: scope_id,
+        provider_managed: managed,
+        name,
+        proper_name,
+        email,
+        created_at,
+        updated_at,
+        revision: revision(point_revision, "user")?,
+    })
+}
+
+fn token_scope_to_storage(scope: &TokenScope) -> AuthenticationTokenScope {
+    let permissions = scope.permissions().map(|permissions| {
+        permissions
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    });
+    let resources = scope.resource_ids().map(|resources| {
+        AuthenticationResourceScope::new(
+            resources.collection_ids().to_vec(),
+            resources.class_ids().to_vec(),
+            resources.object_ids().to_vec(),
+        )
+    });
+    AuthenticationTokenScope::new(permissions, resources)
+}
+
+fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssuancePolicy {
+    StorageTokenIssuancePolicy::new(
+        policy.default_lifetime().hours(),
+        policy.maximum_lifetime().hours(),
+    )
+}
+
+pub async fn load_user(context: &impl StorageContext, id: i32) -> Result<User, ApiError> {
+    Ok(user_from_storage(
+        storage_handle(context).load_user(id).await?,
+    ))
+}
+
+pub async fn load_user_by_name(
+    context: &impl StorageContext,
+    identity_scope: &str,
+    name: &str,
+) -> Result<User, ApiError> {
+    Ok(user_from_storage(
+        storage_handle(context)
+            .load_user_by_name(identity_scope.to_string(), name.to_string())
+            .await?,
+    ))
+}
+
+pub async fn load_user_point(
+    context: &impl StorageContext,
+    id: i32,
+) -> Result<UserPointResponse, ApiError> {
+    user_point_from_storage(storage_handle(context).load_user_point(id).await?)
+}
+
+pub async fn list_users(
+    context: &impl StorageContext,
+    options: QueryOptions,
+) -> Result<(Vec<UserWithName>, i64), ApiError> {
+    let (rows, total) = storage_handle(context)
+        .list_users(StorageUserListQuery::new(options))
+        .await?
+        .into_parts();
+    Ok((
+        rows.into_iter()
+            .map(user_list_item_from_storage)
+            .collect::<Result<Vec<_>, _>>()?,
+        total.unwrap_or(SKIPPED_TOTAL_COUNT),
+    ))
+}
+
+pub async fn create_user(
+    context: &impl StorageContext,
+    request: crate::models::NewUser,
+    event_context: Option<&EventContext>,
+) -> Result<User, ApiError> {
+    let request = request.hash_password().await?;
+    create_user_with_password_hash(context, request, event_context).await
+}
+
+pub(crate) async fn create_user_with_password_hash(
+    context: &impl StorageContext,
+    request: crate::models::NewUser,
+    event_context: Option<&EventContext>,
+) -> Result<User, ApiError> {
+    let storage_request = StorageUserCreate::new(
+        request.identity_scope,
+        request.name,
+        request.password,
+        request.proper_name,
+        request.email,
+        event_context.cloned(),
+    );
+    Ok(user_from_storage(
+        storage_handle(context).create_user(storage_request).await?,
+    ))
+}
+
+pub async fn update_user(
+    context: &impl StorageContext,
+    id: i32,
+    request: UpdateUser,
+    event_context: Option<&EventContext>,
+) -> Result<User, ApiError> {
+    let request = request.hash_password().await?;
+    let storage_request = StorageUserUpdate::new(
+        id,
+        request.password,
+        request.proper_name,
+        request.email,
+        event_context.cloned(),
+    );
+    Ok(user_from_storage(
+        storage_handle(context).update_user(storage_request).await?,
+    ))
+}
+
+pub async fn set_user_password(
+    context: &impl StorageContext,
+    id: i32,
+    password_hash: String,
+) -> Result<usize, ApiError> {
+    Ok(storage_handle(context)
+        .set_user_password(StorageUserPasswordUpdate::new(id, password_hash))
+        .await?)
+}
+
+pub async fn delete_user(
+    context: &impl StorageContext,
+    id: i32,
+    event_context: Option<&EventContext>,
+) -> Result<usize, ApiError> {
+    Ok(storage_handle(context)
+        .delete_user(StorageUserDelete::new(id, event_context.cloned()))
+        .await?)
+}
+
+pub async fn anonymize_user(context: &impl StorageContext, id: i32) -> Result<(), ApiError> {
+    Ok(storage_handle(context).anonymize_user(id).await?)
+}
+
+pub async fn create_token(
+    context: &impl StorageContext,
+    request: PrincipalTokenCreateRequest,
+    issuance_policy: crate::models::TokenIssuancePolicy,
+    event_context: Option<&EventContext>,
+) -> Result<crate::models::IssuedToken, ApiError> {
+    let parts = request.into_parts();
+    let raw = crate::utilities::auth::generate_token();
+    let storage_request = StorageTokenCreate::new(
+        parts.principal_id.id(),
+        raw.storage_hash(),
+        token_policy(issuance_policy),
+    )
+    .name(parts.name)
+    .description(parts.description)
+    .expires_at(parts.expires_at)
+    .scope(parts.scope.as_ref().map(token_scope_to_storage))
+    .event_context(event_context.cloned());
+    let metadata = token_metadata_from_storage(
+        storage_handle(context)
+            .create_token(storage_request)
+            .await?,
+    )?;
+    let expires_at = metadata.expires_at.ok_or_else(|| {
+        ApiError::InternalServerError(
+            "newly issued token is missing its persisted expiry".to_string(),
+        )
+    })?;
+    Ok(crate::models::IssuedToken::new(raw, expires_at))
+}
+
+pub async fn renew_token(
+    context: &impl StorageContext,
+    source_token_id: i32,
+    principal_id: i32,
+    expires_at: Option<chrono::NaiveDateTime>,
+    issuance_policy: crate::models::TokenIssuancePolicy,
+    event_context: Option<&EventContext>,
+) -> Result<crate::models::IssuedToken, ApiError> {
+    let raw = crate::utilities::auth::generate_token();
+    let request = StorageTokenRenew::new(
+        source_token_id,
+        principal_id,
+        raw.storage_hash(),
+        expires_at,
+        token_policy(issuance_policy),
+        event_context.cloned(),
+    );
+    let metadata =
+        token_metadata_from_storage(storage_handle(context).renew_token(request).await?)?;
+    let expires_at = metadata.expires_at.ok_or_else(|| {
+        ApiError::InternalServerError(
+            "newly renewed token is missing its persisted expiry".to_string(),
+        )
+    })?;
+    Ok(crate::models::IssuedToken::new(raw, expires_at))
+}
+
+pub async fn load_token_metadata(
+    context: &impl StorageContext,
+    principal_id: i32,
+    token_id: i32,
+) -> Result<PrincipalTokenMetadata, ApiError> {
+    token_metadata_from_storage(
+        storage_handle(context)
+            .load_token_metadata(principal_id, token_id)
+            .await?,
+    )
+}
+
+pub async fn load_token_metadata_batch(
+    context: &impl StorageContext,
+    tokens: &[PrincipalToken],
+) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
+    storage_handle(context)
+        .load_token_metadata_batch(tokens.iter().map(|token| token.id).collect())
+        .await?
+        .into_iter()
+        .map(token_metadata_from_storage)
+        .collect()
+}
+
+pub async fn revoke_token(
+    context: &impl StorageContext,
+    token_id: i32,
+    principal_id: i32,
+    event_context: Option<&EventContext>,
+) -> Result<usize, ApiError> {
+    Ok(storage_handle(context)
+        .revoke_token(StorageTokenRevoke::new(
+            token_id,
+            principal_id,
+            event_context.cloned(),
+        ))
+        .await?)
+}
+
+pub async fn revoke_token_by_hash(
+    context: &impl StorageContext,
+    principal_id: Option<i32>,
+    token_hash: String,
+) -> Result<usize, ApiError> {
+    Ok(storage_handle(context)
+        .revoke_token_by_hash(StorageTokenHashRevoke::new(principal_id, token_hash))
+        .await?)
+}
+
+pub async fn revoke_all_principal_tokens(
+    context: &impl StorageContext,
+    principal_id: i32,
+) -> Result<usize, ApiError> {
+    Ok(storage_handle(context)
+        .revoke_all_principal_tokens(principal_id)
+        .await?)
+}
+
 pub async fn ensure_identity_scope(
     context: &impl StorageContext,
     name: &str,
@@ -205,6 +536,23 @@ pub async fn load_principal_group(
             .load_principal_group(principal_id, group_id)
             .await?,
     )
+}
+
+pub async fn list_principal_groups(
+    context: &impl StorageContext,
+    principal_id: i32,
+    options: QueryOptions,
+) -> Result<(Vec<Group>, i64), ApiError> {
+    let (rows, total) = storage_handle(context)
+        .list_principal_groups(StoragePrincipalGroupListQuery::new(principal_id, options))
+        .await?
+        .into_parts();
+    Ok((
+        rows.into_iter()
+            .map(identity_group_from_storage)
+            .collect::<Result<Vec<_>, _>>()?,
+        total.unwrap_or(SKIPPED_TOTAL_COUNT),
+    ))
 }
 
 pub async fn list_retained_tokens(

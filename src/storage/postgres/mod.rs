@@ -107,16 +107,20 @@ use super::{
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentity, StorageIdentityPage,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StorageInventoryCounts,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentity, StorageIdentityGroup,
+    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure, StorageInventoryCounts,
     StorageLocalPasswordReset, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePoolState, StoragePrincipalGroup, StorageQueryBudget,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRevisionPrecondition,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenMetadata,
-    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageObjectRelation, StoragePoolState, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
+    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata,
+    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
+    StorageUserUpdate, TaskGaugeSnapshot, TokenRetentionStorage, TokenStorage, UnifiedSearchClass,
+    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    UserStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -303,6 +307,15 @@ impl IdentityStorage for PostgresStorage {
             .map_err(map_postgres_error)
     }
 
+    async fn list_principal_groups(
+        &self,
+        query: StoragePrincipalGroupListQuery,
+    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
+        operations::identity_operations::list_principal_groups(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,
@@ -415,6 +428,134 @@ impl IdentityStorage for PostgresStorage {
         request: StorageExternalUserSync,
     ) -> Result<StorageSyncedHuman, StorageError> {
         operations::identity_operations::sync_external_user(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl UserStorage for PostgresStorage {
+    async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError> {
+        operations::identity_operations::load_user(&self.pool, id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_user_by_name(
+        &self,
+        identity_scope: String,
+        name: String,
+    ) -> Result<StorageUser, StorageError> {
+        operations::identity_operations::load_user_by_name(&self.pool, identity_scope, name)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError> {
+        operations::identity_operations::load_user_point(&self.pool, id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_users(
+        &self,
+        query: StorageUserListQuery,
+    ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError> {
+        operations::identity_operations::list_users(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError> {
+        operations::identity_operations::create_user(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError> {
+        operations::identity_operations::update_user(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn set_user_password(
+        &self,
+        request: StorageUserPasswordUpdate,
+    ) -> Result<usize, StorageError> {
+        operations::identity_operations::set_user_password(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError> {
+        operations::identity_operations::delete_user(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
+        operations::identity_operations::anonymize_user(&self.pool, id)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl TokenStorage for PostgresStorage {
+    async fn create_token(
+        &self,
+        request: StorageTokenCreate,
+    ) -> Result<StorageTokenMetadata, StorageError> {
+        operations::identity_operations::create_token(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn renew_token(
+        &self,
+        request: StorageTokenRenew,
+    ) -> Result<StorageTokenMetadata, StorageError> {
+        operations::identity_operations::renew_token(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_token_metadata(
+        &self,
+        principal_id: i32,
+        token_id: i32,
+    ) -> Result<StorageTokenMetadata, StorageError> {
+        operations::identity_operations::load_token_metadata(&self.pool, principal_id, token_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_token_metadata_batch(
+        &self,
+        token_ids: Vec<i32>,
+    ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
+        operations::identity_operations::load_token_metadata_batch(&self.pool, token_ids)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError> {
+        operations::identity_operations::revoke_token(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn revoke_token_by_hash(
+        &self,
+        request: StorageTokenHashRevoke,
+    ) -> Result<usize, StorageError> {
+        operations::identity_operations::revoke_token_by_hash(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
+        operations::identity_operations::revoke_all_principal_tokens(&self.pool, principal_id)
             .await
             .map_err(map_postgres_error)
     }

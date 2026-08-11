@@ -86,10 +86,11 @@ for package classifications, publishing policy, and promotion requirements.
 Server, administration, and bootstrap entry points build validated
 `StorageSettings` and receive an opaque `StorageHandle`. They must not import
 PostgreSQL pools, Diesel, generated schemas, or adapter operations. Initial
-administrator creation, local-password reset with token revocation, complete
-template-audit reads, and export-template health aggregation are mandatory
-identity and operational contract methods, so a selectable backend cannot omit
-any process-lifecycle behavior.
+administrator creation, human-user lifecycle, local-password reset with token
+revocation, bearer-token lifecycle, complete template-audit reads, and
+export-template health aggregation are mandatory identity and operational
+contract methods, so a selectable backend cannot omit any process-lifecycle
+behavior.
 
 The collection, class, object, class-relation, and object-relation point and
 lifecycle operations are the first backend-neutral service/storage ports.

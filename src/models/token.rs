@@ -15,7 +15,6 @@ use crate::models::{
     PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
     TokenScope, TokenScopeDetails,
 };
-use crate::storage::postgres::operations::user::DeleteTokenRecord;
 use crate::storage::{AuthenticatedToken, StorageContext};
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -145,20 +144,7 @@ impl PrincipalTokenCreateRequest {
         C: StorageContext,
     {
         let issuance_policy = configured_token_issuance_policy()?;
-        let (token, persisted) =
-            crate::storage::postgres::operations::token::create_principal_token_request_db(
-                backend,
-                self,
-                issuance_policy,
-                context,
-            )
-            .await?;
-        let expires_at = persisted.expires_at.ok_or_else(|| {
-            ApiError::InternalServerError(
-                "newly issued token is missing its persisted expiry".to_string(),
-            )
-        })?;
-        Ok(IssuedToken::new(token, expires_at))
+        crate::services::identity::create_token(backend, self, issuance_policy, context).await
     }
 
     pub(crate) fn into_parts(self) -> PrincipalTokenCreateParts {
@@ -256,8 +242,7 @@ impl PrincipalTokenMetadata {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::token::principal_token_metadata_db(backend, tokens)
-            .await
+        crate::services::identity::load_token_metadata_batch(backend, tokens).await
     }
 
     /// Load one retained token by id, constrained to its owning principal.
@@ -273,12 +258,8 @@ impl PrincipalTokenMetadata {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::token::principal_token_metadata_by_id_for_principal_db(
-            backend,
-            token_id.id(),
-            principal_id.id(),
-        )
-        .await
+        crate::services::identity::load_token_metadata(backend, principal_id.id(), token_id.id())
+            .await
     }
 
     pub(crate) fn from_token_and_scope(
@@ -491,7 +472,8 @@ impl Token {
     where
         C: StorageContext,
     {
-        self.delete_token_record(backend).await
+        crate::services::identity::revoke_token_by_hash(backend, None, self.storage_hash()).await?;
+        Ok(())
     }
 
     pub fn storage_hash(&self) -> String {
@@ -523,12 +505,7 @@ pub async fn revoke_token_by_id_for_principal_without_events<C>(
 where
     C: StorageContext,
 {
-    crate::storage::postgres::operations::token::revoke_token_by_id_for_principal_without_events_db(
-        backend,
-        token_id.id(),
-        principal_id.id(),
-    )
-    .await
+    crate::services::identity::revoke_token(backend, token_id.id(), principal_id.id(), None).await
 }
 
 pub async fn revoke_token_by_id_for_principal<C>(
@@ -540,13 +517,8 @@ pub async fn revoke_token_by_id_for_principal<C>(
 where
     C: StorageContext,
 {
-    crate::storage::postgres::operations::token::revoke_token_by_id_for_principal_db(
-        backend,
-        token_id.id(),
-        principal_id.id(),
-        context,
-    )
-    .await
+    crate::services::identity::revoke_token(backend, token_id.id(), principal_id.id(), context)
+        .await
 }
 
 /// Mint a fresh token by copying one retained token's descriptive metadata and
@@ -565,7 +537,7 @@ where
     C: StorageContext,
 {
     let issuance_policy = configured_token_issuance_policy()?;
-    let (token, persisted) = crate::storage::postgres::operations::token::renew_principal_token_db(
+    crate::services::identity::renew_token(
         backend,
         token_id.id(),
         principal_id.id(),
@@ -573,13 +545,7 @@ where
         issuance_policy,
         context,
     )
-    .await?;
-    let expires_at = persisted.expires_at.ok_or_else(|| {
-        ApiError::InternalServerError(
-            "newly renewed token is missing its persisted expiry".to_string(),
-        )
-    })?;
-    Ok(IssuedToken::new(token, expires_at))
+    .await
 }
 
 impl CursorPaginated for PrincipalTokenMetadata {

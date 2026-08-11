@@ -106,6 +106,134 @@ pub struct StoragePrincipalGroup {
     revision: i64,
 }
 
+/// Group projection returned for one principal's effective memberships.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageIdentityGroup {
+    id: i32,
+    name: String,
+    description: String,
+    identity_scope_id: i32,
+    managed_by: String,
+    external_key: Option<String>,
+    last_sync_attempted_at: Option<NaiveDateTime>,
+    last_sync_success_at: Option<NaiveDateTime>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+    revision: i64,
+}
+
+impl StorageIdentityGroup {
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: i32,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        identity_scope_id: i32,
+        managed_by: impl Into<String>,
+        external_key: Option<String>,
+        last_sync_attempted_at: Option<NaiveDateTime>,
+        last_sync_success_at: Option<NaiveDateTime>,
+        created_at: NaiveDateTime,
+        updated_at: NaiveDateTime,
+        revision: i64,
+    ) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            description: description.into(),
+            identity_scope_id,
+            managed_by: managed_by.into(),
+            external_key,
+            last_sync_attempted_at,
+            last_sync_success_at,
+            created_at,
+            updated_at,
+            revision,
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::type_complexity)]
+    pub fn into_parts(
+        self,
+    ) -> (
+        i32,
+        String,
+        String,
+        i32,
+        String,
+        Option<String>,
+        Option<NaiveDateTime>,
+        Option<NaiveDateTime>,
+        NaiveDateTime,
+        NaiveDateTime,
+        i64,
+    ) {
+        (
+            self.id,
+            self.name,
+            self.description,
+            self.identity_scope_id,
+            self.managed_by,
+            self.external_key,
+            self.last_sync_attempted_at,
+            self.last_sync_success_at,
+            self.created_at,
+            self.updated_at,
+            self.revision,
+        )
+    }
+}
+
+impl fmt::Debug for StorageIdentityGroup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageIdentityGroup")
+            .field("id", &"<redacted>")
+            .field("name", &"<redacted>")
+            .field("managed_by", &self.managed_by)
+            .field("has_external_key", &self.external_key.is_some())
+            .finish()
+    }
+}
+
+/// Stable group-membership list request for one principal.
+#[derive(Clone, PartialEq)]
+pub struct StoragePrincipalGroupListQuery {
+    principal_id: i32,
+    options: QueryOptions,
+}
+
+impl StoragePrincipalGroupListQuery {
+    #[must_use]
+    pub const fn new(principal_id: i32, options: QueryOptions) -> Self {
+        Self {
+            principal_id,
+            options,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, QueryOptions) {
+        (self.principal_id, self.options)
+    }
+}
+
+impl fmt::Debug for StoragePrincipalGroupListQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoragePrincipalGroupListQuery")
+            .field("principal_id", &"<redacted>")
+            .field("filter_count", &self.options.filters.len())
+            .field("sort_count", &self.options.sort.len())
+            .field("limit", &self.options.limit)
+            .field("has_cursor", &self.options.cursor.is_some())
+            .field("include_total", &self.options.include_total)
+            .finish()
+    }
+}
+
 impl StoragePrincipalGroup {
     #[must_use]
     pub const fn new(
@@ -1213,6 +1341,13 @@ pub trait IdentityStorage: Send + Sync {
         principal_id: i32,
         group_id: i32,
     ) -> Result<StoragePrincipalGroup, StorageError>;
+
+    /// List every effective group membership for one principal with stable
+    /// filtering, cursor pagination, and optional exact total.
+    async fn list_principal_groups(
+        &self,
+        query: StoragePrincipalGroupListQuery,
+    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError>;
 
     /// Return hash-free retained token metadata using the requested lifecycle
     /// state, filters, stable cursor page, and optional exact total.

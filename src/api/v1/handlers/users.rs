@@ -8,7 +8,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::user::{
     NewUser, UpdateUser, UserID, UserPointResponse, UserResponse, UserWithName,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::storage::with_revision_precondition;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
@@ -44,14 +44,9 @@ pub async fn get_users(
 
     debug!(message = "User list requested", requestor = user.id);
 
-    let total_count = if params.include_total {
-        user.count_users(&context, count_query_options(&params))
-            .await?
-    } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
     let search_params = prepare_db_pagination::<UserWithName>(&params)?;
-    let result = user.search_users(&context, search_params).await?;
+    let (result, total_count) =
+        crate::services::identity::list_users(&context, search_params).await?;
 
     ApiResponse::mapped_paginated(result, total_count, &params, |users| {
         users.into_iter().map(UserResponse::from).collect()

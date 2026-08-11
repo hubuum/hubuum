@@ -117,6 +117,10 @@ impl TokenIssuancePolicy {
         self.default_lifetime
     }
 
+    pub fn maximum_lifetime(self) -> TokenLifetime {
+        self.maximum_lifetime
+    }
+
     pub fn resolve_expiry(
         self,
         issued_at: NaiveDateTime,

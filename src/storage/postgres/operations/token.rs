@@ -4,9 +4,10 @@ use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::principal::PrincipalKind;
+use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, Token, TokenIssuancePolicy, TokenScope, TokenScopeDetails,
+    PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenMetadata,
+    ResourceRevision, TokenIssuancePolicy, TokenScope, TokenScopeDetails,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -17,6 +18,9 @@ use crate::storage::postgres::operations::authz::{
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
+use crate::traits::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 
 #[derive(Queryable, Selectable, Clone)]
 #[diesel(table_name = crate::schema::tokens)]
@@ -32,7 +36,7 @@ pub(crate) struct PrincipalTokenRow {
     pub(crate) revoked_at: Option<chrono::NaiveDateTime>,
     pub(crate) permission_scoped: bool,
     pub(crate) resource_scoped: bool,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: ResourceRevision,
 }
 
 impl From<PrincipalTokenRow> for PrincipalToken {
@@ -54,34 +58,26 @@ impl From<PrincipalTokenRow> for PrincipalToken {
     }
 }
 
-impl crate::traits::CursorPaginated for PrincipalTokenRow {
-    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+impl CursorPaginated for PrincipalTokenRow {
+    fn supports_sort(field: &FilterField) -> bool {
         PrincipalToken::supports_sort(field)
     }
 
-    fn cursor_value(
-        &self,
-        field: &crate::models::search::FilterField,
-    ) -> Result<crate::traits::CursorValue, ApiError> {
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
         PrincipalToken::from(self.clone()).cursor_value(field)
     }
 
-    fn default_sort() -> Vec<crate::models::search::SortParam> {
+    fn default_sort() -> Vec<SortParam> {
         PrincipalToken::default_sort()
     }
 
-    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+    fn tie_breaker_sort() -> Vec<SortParam> {
         PrincipalToken::tie_breaker_sort()
     }
 }
 
-impl crate::traits::CursorSqlMapping for PrincipalTokenRow {
-    fn sql_field(
-        field: &crate::models::search::FilterField,
-    ) -> Result<crate::traits::CursorSqlField, ApiError> {
-        use crate::models::search::FilterField;
-        use crate::traits::{CursorSqlField, CursorSqlType};
-
+impl CursorSqlMapping for PrincipalTokenRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id => CursorSqlField {
                 column: "tokens.id",
@@ -151,15 +147,14 @@ struct NewTokenObjectScope {
     object_id: i32,
 }
 
-pub(crate) async fn principal_token_metadata_db(
+pub(crate) async fn principal_token_metadata_by_ids_db(
     pool: &impl crate::storage::StorageContext,
-    tokens: &[PrincipalToken],
+    token_ids: Vec<i32>,
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
-    if tokens.is_empty() {
+    if token_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    let token_ids = tokens.iter().map(|token| token.id).collect::<Vec<_>>();
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         let locked = crate::schema::tokens::table
             .filter(crate::schema::tokens::id.eq_any(&token_ids))
@@ -389,16 +384,18 @@ pub async fn revoke_token_by_id_for_principal_db(
     .await
 }
 
-pub(crate) async fn create_principal_token_request_db(
+pub(crate) async fn create_principal_token_hashed_db(
     pool: &impl crate::storage::StorageContext,
-    request: PrincipalTokenCreateRequest,
+    request: PrincipalTokenCreateParts,
+    token_hash: String,
     issuance_policy: TokenIssuancePolicy,
     context: Option<&EventContext>,
-) -> Result<(Token, PrincipalToken), ApiError> {
+) -> Result<PrincipalToken, ApiError> {
     with_transaction(pool, async |conn| {
         create_principal_token_parts_conn(
             conn,
-            request.into_parts(),
+            request,
+            token_hash,
             issuance_policy,
             context,
             None,
@@ -409,14 +406,15 @@ pub(crate) async fn create_principal_token_request_db(
     .await
 }
 
-pub(crate) async fn renew_principal_token_db(
+pub(crate) async fn renew_principal_token_hashed_db(
     pool: &impl crate::storage::StorageContext,
     source_token_id: i32,
     principal: i32,
+    token_hash: String,
     expires_at: Option<chrono::NaiveDateTime>,
     issuance_policy: TokenIssuancePolicy,
     context: Option<&EventContext>,
-) -> Result<(Token, PrincipalToken), ApiError> {
+) -> Result<PrincipalToken, ApiError> {
     with_transaction(pool, async |conn| {
         // Service-account disable takes the same row lock before revoking its
         // tokens. Keeping that lock order here prevents renewal from racing a
@@ -448,6 +446,7 @@ pub(crate) async fn renew_principal_token_db(
         create_principal_token_parts_conn(
             conn,
             request,
+            token_hash,
             issuance_policy,
             context,
             Some(source.id),
@@ -487,11 +486,12 @@ async fn ensure_principal_can_mint_conn(
 async fn create_principal_token_parts_conn(
     conn: &mut PostgresConnection,
     request: PrincipalTokenCreateParts,
+    token_hash: String,
     issuance_policy: TokenIssuancePolicy,
     context: Option<&EventContext>,
     renewed_from_token_id: Option<i32>,
     principal_already_checked: bool,
-) -> Result<(Token, PrincipalToken), ApiError> {
+) -> Result<PrincipalToken, ApiError> {
     let PrincipalTokenCreateParts {
         principal_id,
         name,
@@ -501,8 +501,6 @@ async fn create_principal_token_parts_conn(
     } = request;
     let principal = principal_id.id();
     let scope = scope.as_ref();
-    let raw = crate::utilities::auth::generate_token();
-    let hash = raw.storage_hash();
     let permission_scoped = scope.is_some_and(TokenScope::is_permission_scoped);
     let resource_scoped = scope.is_some_and(TokenScope::is_resource_scoped);
     let scope_strings = scope
@@ -574,7 +572,7 @@ async fn create_principal_token_parts_conn(
 
     let token: PrincipalToken = diesel::insert_into(tokens::table)
         .values((
-            tokens::token.eq(&hash),
+            tokens::token.eq(&token_hash),
             tokens::principal_id.eq(principal),
             tokens::name.eq(&name),
             tokens::description.eq(&description),
@@ -656,5 +654,47 @@ async fn create_principal_token_parts_conn(
         emit_event(conn, &event).await?;
     }
 
-    Ok((raw, token))
+    Ok(token)
+}
+
+pub(crate) async fn revoke_token_by_hash_db(
+    pool: &impl crate::storage::StorageContext,
+    principal: Option<i32>,
+    token_hash: String,
+) -> Result<usize, ApiError> {
+    use crate::schema::tokens::dsl::{principal_id, revoked_at, token, tokens};
+
+    with_connection(pool, async |conn| {
+        if let Some(principal) = principal {
+            diesel::update(
+                tokens
+                    .filter(token.eq(token_hash))
+                    .filter(principal_id.eq(principal))
+                    .filter(revoked_at.is_null()),
+            )
+            .set(revoked_at.eq(diesel::dsl::now))
+            .execute(conn)
+            .await
+        } else {
+            diesel::update(
+                tokens
+                    .filter(token.eq(token_hash))
+                    .filter(revoked_at.is_null()),
+            )
+            .set(revoked_at.eq(diesel::dsl::now))
+            .execute(conn)
+            .await
+        }
+    })
+    .await
+}
+
+pub(crate) async fn revoke_all_tokens_for_principal_db(
+    pool: &impl crate::storage::StorageContext,
+    principal: PrincipalID,
+) -> Result<usize, ApiError> {
+    with_connection(pool, async |conn| {
+        revoke_all_tokens_for_principal_conn(conn, principal).await
+    })
+    .await
 }

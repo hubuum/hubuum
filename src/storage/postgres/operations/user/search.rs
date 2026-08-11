@@ -4547,8 +4547,7 @@ fn build_related_objects_clause(
 impl<T: ?Sized> UserSearchBackend for T where T: UserCollectionAccessors {}
 
 impl User {
-    pub async fn search_users(
-        &self,
+    pub(crate) async fn search_user_records(
         pool: &impl crate::storage::StorageContext,
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
@@ -4561,7 +4560,6 @@ impl User {
         debug!(
             message = "Searching users",
             stage = "Starting",
-            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
@@ -4650,8 +4648,15 @@ impl User {
             .collect())
     }
 
-    pub async fn count_users(
+    pub async fn search_users(
         &self,
+        pool: &impl crate::storage::StorageContext,
+        query_options: QueryOptions,
+    ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
+        Self::search_user_records(pool, query_options).await
+    }
+
+    pub(crate) async fn count_user_search_records(
         pool: &impl crate::storage::StorageContext,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
@@ -4704,6 +4709,14 @@ impl User {
                 .await
         })
         .await
+    }
+
+    pub async fn count_users(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        Self::count_user_search_records(pool, query_options).await
     }
 
     pub async fn search_groups(

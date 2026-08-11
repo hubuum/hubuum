@@ -11,7 +11,8 @@ use super::{
     ObjectAggregateStorage, ObjectRecordStorage, ObjectRelationStore, ObjectStore,
     OperationalStateStorage, PostgresStorage, PrincipalStorage, RelationQueryStorage,
     RemoteTargetStorage, RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
+    TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
+    observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -59,6 +60,8 @@ pub(crate) trait StorageBackend:
     LifecycleStorage
     + AuthenticationStorage
     + IdentityStorage
+    + UserStorage
+    + TokenStorage
     + AuthorizationStorage
     + CatalogStorage
     + ComputedFieldLifecycleStorage

@@ -1964,7 +1964,6 @@ mod tests {
     };
     use crate::storage::postgres::operations::event_record::emit_event;
     use crate::storage::postgres::operations::remote_target::NewRemoteCallResultRow;
-    use crate::storage::postgres::operations::user::DeleteUserRecord;
     use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
     use crate::tasks::TaskLeaseDuration;
     use crate::tests::{TestContext, create_test_user};
@@ -2799,7 +2798,7 @@ mod tests {
         .await
         .unwrap();
 
-        (task_owner.delete_user_record_without_events(&context.pool))
+        (task_owner.delete_without_events(&context.pool))
             .await
             .unwrap();
 

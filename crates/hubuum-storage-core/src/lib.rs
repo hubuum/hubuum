@@ -17,6 +17,8 @@ mod export_template_lifecycle;
 mod history;
 mod identity;
 mod identity_operations;
+mod identity_tokens;
+mod identity_users;
 mod inventory;
 mod object_aggregate;
 mod operational;
@@ -97,12 +99,20 @@ pub use identity::{
 pub use identity_operations::{
     IdentityStorage, StorageDefaultAdminBootstrap, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageExternalUserSyncBuilder,
-    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
-    StorageLocalPasswordReset, StoragePrincipalGroup, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenMetadataBuilder,
+    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, StorageTokenMetadataBuilder,
+};
+pub use identity_tokens::{
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenRenew,
+    StorageTokenRevoke, TokenStorage,
+};
+pub use identity_users::{
+    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, UserStorage,
 };
 pub use inventory::{InventoryStorage, StorageInventoryCounts, StorageObjectsByClassCount};
 pub use object_aggregate::{
@@ -182,7 +192,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 27;
+pub const STORAGE_CONTRACT_VERSION: u16 = 28;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -440,6 +450,7 @@ mod tests {
                 "relation_queries",
                 "identity_and_authorization_data",
                 "temporal_history",
+                "inventory_queries",
                 "unified_search",
                 "remote_targets",
                 "task_queue",

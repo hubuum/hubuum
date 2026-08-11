@@ -1,18 +1,13 @@
-use crate::models::token_scope::TokenScope;
-use std::iter::IntoIterator;
-
 use crate::models::search::QueryOptions;
+use crate::models::token_scope::TokenScope;
 use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, Permissions, RelatedObjectForRootRow,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, RelatedObjectForRootRow,
     RelatedObjectGraphRow, RelatedObjectIncludeRow, User, UserID,
 };
 
 use crate::errors::ApiError;
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::user::{
-    LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
 
@@ -524,7 +519,16 @@ pub trait GroupAccessors: AuthzSubject {
     where
         C: StorageContext,
     {
-        self.load_user_groups(backend).await
+        let options = QueryOptions {
+            filters: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            cursor: None,
+            include_total: false,
+        };
+        crate::services::identity::list_principal_groups(backend, self.principal_id(), options)
+            .await
+            .map(|(groups, _)| groups)
     }
 
     #[allow(async_fn_in_trait)]
@@ -536,40 +540,17 @@ pub trait GroupAccessors: AuthzSubject {
     where
         C: StorageContext,
     {
-        self.load_user_groups_paginated_with_total_count(backend, query_options)
-            .await
+        crate::services::identity::list_principal_groups(
+            backend,
+            self.principal_id(),
+            query_options.clone(),
+        )
+        .await
     }
 }
 
-/// Access collections that are visible to a user through direct or group-derived permissions.
-pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
-    /// Return all collections that the user has CollectionPermissions::ReadCollection on.
-    async fn collections_read<C>(&self, backend: &C) -> Result<Vec<Collection>, ApiError>
-    where
-        C: StorageContext,
-    {
-        self.collections(backend, &[Permissions::ReadCollection])
-            .await
-    }
-
-    /// Return all collections that the user has the given permissions on.
-    async fn collections<'a, C, I>(
-        &self,
-        backend: &C,
-        permissions_list: &'a I,
-    ) -> Result<Vec<Collection>, ApiError>
-    where
-        C: StorageContext,
-        &'a I: IntoIterator<Item = &'a Permissions>,
-    {
-        // NOTE: scopes are passed as `None` here (unscoped). Live token-scope
-        // threading through the collection/search visibility helpers is wired in
-        // the handler/search-scope pass; the admin fast path stays correct for
-        // the `None` case.
-        self.load_collections_with_permissions(backend, permissions_list, None)
-            .await
-    }
-}
+/// Marker for authorization subjects accepted by backend-owned resource queries.
+pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {}
 
 // Group/collection accessors are available to every authorization subject (human
 // users, service accounts, bare principals) via the identity-only contract.
@@ -611,7 +592,7 @@ impl InstanceAdapter<User> for UserID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<User, ApiError> {
-        self.load_user_record(pool).await
+        crate::services::identity::load_user(pool, self.id()).await
     }
 }
 

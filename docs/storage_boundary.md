@@ -148,10 +148,13 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 27 additionally requires principal point reads and the complete audited
-settings lifecycle to cross one mandatory, observed storage contract. Principal
-and principal-membership query rows, Diesel mappings, and SQL cursor mappings
-are adapter-owned. Version 26 additionally requires group point and lifecycle writes,
+Version 28 additionally requires complete human-user and bearer-token lifecycle
+traits, effective principal-group pages, secret-free token issuance, and
+identity-subtype persistence rows owned entirely by adapters. Version 27
+required principal point reads and the complete audited settings lifecycle to
+cross one mandatory, observed storage contract. Principal and
+principal-membership query rows, Diesel mappings, and SQL cursor mappings are
+adapter-owned. Version 26 additionally requires group point and lifecycle writes,
 identity-scope resolution, and complete membership mutation and query behavior
 to cross one mandatory, observed storage contract. Group, membership, update,
 and SQL cursor rows are adapter-owned. Version 25 required collection point and compatibility writes,
@@ -412,9 +415,15 @@ common `authentication` tracing and metric labels before dispatching to the
 selected adapter.
 
 `IdentityStorage` owns identity-scope reconciliation and lookup, effective
-principal-group membership reads, retained-token metadata pages, principal
+principal-group membership reads and pages, retained-token pages, principal
 disablement facts, complete service-account point/list/lifecycle behavior, and
-external-directory synchronization. It also owns initial local-administrator
+external-directory synchronization. `UserStorage` owns human point and list
+reads, scoped-name resolution, local lifecycle writes, password replacement,
+and anonymization. `TokenStorage` owns hash-free metadata reads and the complete
+issuance, renewal, and revocation lifecycle. The application generates each raw
+bearer secret and passes only its HMAC across the boundary; the backend
+materializes expiry from its authoritative issuance time and returns no stored
+credential hash. These traits also own initial local-administrator
 bootstrap: the application hashes the generated credential, while the backend
 rechecks empty-state eligibility under its native coordination primitive and
 creates at most one initial administrator atomically. Administrator-initiated
@@ -422,16 +431,16 @@ local-password replacement follows the same boundary: the application hashes
 the generated credential, and the backend resolves the local principal, writes
 the replacement, and revokes every active bearer token in one transaction.
 These operations are mandatory as one indivisible contract: a backend that can
-authenticate principals but cannot manage their scopes, memberships, service
-accounts, tokens, bootstrap, credential reset, and external identity state is
-not selectable. Lifecycle
+authenticate principals but cannot manage their scopes, memberships, humans,
+service accounts, tokens, bootstrap, credential reset, and external identity
+state is not selectable. Lifecycle
 requests carry the required event context so the adapter can keep identity
 mutations and audit events atomic. The application service converts the
 private-field storage DTOs into public domain and API models and maps
 `StorageError` into `ApiError`.
 
-The opaque handle observes every identity operation using bounded
-`identity/*` labels. Sensitive request DTOs and the few response DTOs that need
+The opaque handle observes these operations using bounded `identity/*`,
+`user/*`, and `token/*` labels. Sensitive request DTOs and the few response DTOs that need
 `Debug` expose only redacted implementations; the remaining response DTOs omit
 `Debug`. Neither credential material nor names, descriptions, IDs, group
 membership, or synchronized-user PII can be printed accidentally at this
@@ -766,7 +775,7 @@ The first workspace boundaries are now in place:
   inventory-query, unified-search, operational state, computed-object,
   computed-field lifecycle, object-aggregate, task-queue,
   task-execution, backup-snapshot, remote-target, export-template lifecycle,
-  relation-query, event-health, event-administration, event-fan-out,
+  relation-query, identity, user, token, event-health, event-administration, event-fan-out,
   event-retention, and token-retention traits without application, transport,
   or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection

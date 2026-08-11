@@ -13,8 +13,8 @@ use crate::models::traits::user::UserCollectionAccessors;
 use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedDirection, ExportIncludeRelatedQuery,
     ExportIncludeRelatedSort, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
-    HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList, PrincipalToken,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, Token, UpdateUser, User, UserID, UserWithName,
+    HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, UpdateUser, User, UserWithName,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};

@@ -285,7 +285,6 @@ mod tests {
     use crate::schema::{events, token_scopes, tokens};
     use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
     use crate::storage::postgres::operations::event_record::EventRow;
-    use crate::storage::postgres::operations::user::DeleteUserRecord;
     use crate::storage::postgres::with_connection;
     use crate::tests::{TestMutex, create_test_user, lock_test_mutex, test_mutex};
 
@@ -418,7 +417,7 @@ mod tests {
 
         assert_eq!(deleted, 1);
         assert!(!token_exists(&pool, &token).await);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -436,7 +435,7 @@ mod tests {
 
         assert_eq!(deleted, 1);
         assert!(!token_exists(&pool, &token).await);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -454,7 +453,7 @@ mod tests {
 
         assert_eq!(deleted, 0);
         assert!(token_exists(&pool, &token).await);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -471,7 +470,7 @@ mod tests {
 
         assert_eq!(deleted, 0);
         assert!(token_exists(&pool, &token).await);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -501,7 +500,7 @@ mod tests {
 
         assert_eq!(deleted, 1);
         assert!(!token_exists(&pool, &token).await);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -534,7 +533,7 @@ mod tests {
 
         assert_eq!(deleted, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE);
         assert_eq!(remaining, 1);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -583,7 +582,7 @@ mod tests {
         assert!(!token_exists(&pool, &explicit).await);
         assert!(!token_exists(&pool, &implicit).await);
         assert!(!token_exists(&pool, &revoked).await);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -643,7 +642,7 @@ mod tests {
         );
         assert_eq!(purge_event.metadata["retention_basis"], "explicit_expiry");
         assert!(purge_event.before.as_ref().unwrap().get("token").is_none());
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[rstest]
@@ -754,7 +753,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(deleted_after_read, 1);
-        user.delete_user_record_without_events(&pool).await.unwrap();
+        user.delete_without_events(&pool).await.unwrap();
     }
 
     #[rstest]

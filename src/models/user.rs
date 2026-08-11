@@ -3,12 +3,8 @@ use std::fmt;
 use crate::events::EventContext;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
-use crate::models::token::{IssuedToken, PrincipalToken, PrincipalTokenCreateRequest, Token};
+use crate::models::token::{IssuedToken, PrincipalTokenCreateRequest, Token};
 use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
-use crate::storage::postgres::operations::user::{
-    AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
-    SetUserPasswordRecord, UpdateUserRecord,
-};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -236,21 +232,12 @@ impl User {
         Ok(load_principal_by_id(backend, self.id).await?.name)
     }
 
-    /// Build a [`UserResponse`], resolving the name from the principal.
-    pub async fn to_response<C>(&self, backend: &C) -> Result<UserResponse, ApiError>
-    where
-        C: StorageContext,
-    {
-        crate::storage::postgres::operations::principal::load_user_response(backend, self.id).await
-    }
-
     /// Build the strongly tagged point representation in one database snapshot.
     pub async fn to_point_response<C>(&self, backend: &C) -> Result<UserPointResponse, ApiError>
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::load_user_point_response(backend, self.id)
-            .await
+        crate::services::identity::load_user_point(backend, self.id).await
     }
 
     /// Set a new local password and revoke every active bearer token for this
@@ -263,7 +250,8 @@ impl User {
         let password_hash = crate::utilities::auth::hash_password_async(new_password.to_string())
             .await
             .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
-        let revoked_tokens = self.set_password_record(backend, &password_hash).await?;
+        let revoked_tokens =
+            crate::services::identity::set_user_password(backend, self.id, password_hash).await?;
         debug!(
             message = "Password changed and active tokens revoked",
             user_id = self.id,
@@ -288,31 +276,23 @@ impl User {
             .await
     }
 
-    pub async fn token_is_mine<C>(
-        &self,
-        token_param: Token,
-        backend: &C,
-    ) -> Result<PrincipalToken, ApiError>
-    where
-        C: StorageContext,
-    {
-        self.load_owned_user_token_record(&token_param, backend)
-            .await
-    }
-
     pub async fn delete_token<C>(&self, token_param: Token, backend: &C) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
-        self.delete_owned_user_token_record(&token_param, backend)
-            .await
+        crate::services::identity::revoke_token_by_hash(
+            backend,
+            Some(self.id),
+            token_param.storage_hash(),
+        )
+        .await
     }
 
     pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
-        self.delete_all_user_tokens_record(backend).await
+        crate::services::identity::revoke_all_principal_tokens(backend, self.id).await
     }
 
     /// Delete this user without emitting domain events.
@@ -324,7 +304,7 @@ impl User {
     where
         C: StorageContext,
     {
-        self.delete_user_record_without_events(backend).await
+        crate::services::identity::delete_user(backend, self.id, None).await
     }
 
     pub async fn delete<C>(
@@ -335,14 +315,14 @@ impl User {
     where
         C: StorageContext,
     {
-        self.delete_user_record(backend, context).await
+        crate::services::identity::delete_user(backend, self.id, context).await
     }
 
     pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: StorageContext,
     {
-        self.anonymize_user_record(backend).await
+        crate::services::identity::anonymize_user(backend, self.id).await
     }
 }
 
@@ -398,10 +378,7 @@ impl UpdateUser {
     where
         C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed
-            .update_user_record_without_events(user_id.id(), backend)
-            .await
+        crate::services::identity::update_user(backend, user_id.id(), self, None).await
     }
 
     pub async fn save<C>(
@@ -413,10 +390,7 @@ impl UpdateUser {
     where
         C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed
-            .update_user_record(user_id.id(), backend, context)
-            .await
+        crate::services::identity::update_user(backend, user_id.id(), self, context).await
     }
 }
 
@@ -456,8 +430,7 @@ impl NewUser {
     where
         C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed.create_user_record_without_events(backend).await
+        crate::services::identity::create_user(backend, self, None).await
     }
 
     pub async fn save<C>(
@@ -468,8 +441,7 @@ impl NewUser {
     where
         C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed.create_user_record(backend, context).await
+        crate::services::identity::create_user(backend, self, context).await
     }
 
     pub async fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -491,8 +463,7 @@ impl UserID {
     where
         C: StorageContext,
     {
-        use crate::storage::postgres::operations::user::LoadUserRecord;
-        self.load_user_record(backend).await
+        crate::services::identity::load_user(backend, self.id()).await
     }
 
     pub async fn delete<C>(
@@ -503,14 +474,14 @@ impl UserID {
     where
         C: StorageContext,
     {
-        self.delete_user_record(backend, context).await
+        crate::services::identity::delete_user(backend, self.id(), context).await
     }
 
     pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: StorageContext,
     {
-        self.anonymize_user_record(backend).await
+        crate::services::identity::anonymize_user(backend, self.id()).await
     }
 }
 
@@ -553,17 +524,21 @@ impl LoginUser {
             .identity_scope
             .as_deref()
             .unwrap_or(LOCAL_IDENTITY_SCOPE);
-        let user = match User::get_by_name_in_scope(backend, identity_scope, &self.name).await {
-            Ok(user) => user,
-            Err(_) => {
-                // Keep unknown-user and wrong-password paths comparable: both execute
-                // one Argon2 verification before returning the same public error.
-                let _ = crate::utilities::auth::verify_dummy_password_async(self.password.clone())
-                    .await;
-                warn!(message = "Login failed (user not found)", user = self.name);
-                return Err(auth_failure());
-            }
-        };
+        let user =
+            match crate::services::identity::load_user_by_name(backend, identity_scope, &self.name)
+                .await
+            {
+                Ok(user) => user,
+                Err(_) => {
+                    // Keep unknown-user and wrong-password paths comparable: both execute
+                    // one Argon2 verification before returning the same public error.
+                    let _ =
+                        crate::utilities::auth::verify_dummy_password_async(self.password.clone())
+                            .await;
+                    warn!(message = "Login failed (user not found)", user = self.name);
+                    return Err(auth_failure());
+                }
+            };
 
         let plaintext_password = &self.password;
         let Some(hashed_password) = &user.password else {

@@ -4,7 +4,7 @@ use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, Principal, PrincipalID, PrincipalKind};
-use crate::models::search::{FilterField, QueryOptions};
+use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{
     NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TaskKind,
     TaskRecord, TaskStatus, UpdateServiceAccount,
@@ -23,9 +23,11 @@ use crate::storage::postgres::operations::task::{
 use crate::storage::postgres::operations::token::revoke_all_tokens_for_principal_conn;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::AuthzSubject;
 use crate::traits::accessors::InstanceAdapter;
 use crate::traits::crud::{DeleteAdapter, UpdateAdapter};
+use crate::traits::{
+    AuthzSubject, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 
 #[derive(Debug, Queryable, Selectable, Clone)]
 #[diesel(table_name = crate::schema::service_accounts)]
@@ -73,28 +75,26 @@ impl<'a> From<&'a UpdateServiceAccount> for UpdateServiceAccountRow<'a> {
 
 struct ServiceAccountWithNameQueryRow(ServiceAccountWithName);
 
-impl crate::traits::CursorPaginated for ServiceAccountWithNameQueryRow {
+impl CursorPaginated for ServiceAccountWithNameQueryRow {
     fn supports_sort(field: &FilterField) -> bool {
         ServiceAccountWithName::supports_sort(field)
     }
 
-    fn cursor_value(&self, field: &FilterField) -> Result<crate::traits::CursorValue, ApiError> {
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
         self.0.cursor_value(field)
     }
 
-    fn default_sort() -> Vec<crate::models::search::SortParam> {
+    fn default_sort() -> Vec<SortParam> {
         ServiceAccountWithName::default_sort()
     }
 
-    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+    fn tie_breaker_sort() -> Vec<SortParam> {
         ServiceAccountWithName::tie_breaker_sort()
     }
 }
 
-impl crate::traits::CursorSqlMapping for ServiceAccountWithNameQueryRow {
-    fn sql_field(field: &FilterField) -> Result<crate::traits::CursorSqlField, ApiError> {
-        use crate::traits::{CursorSqlField, CursorSqlType};
-
+impl CursorSqlMapping for ServiceAccountWithNameQueryRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id => CursorSqlField {
                 column: "service_accounts.id",

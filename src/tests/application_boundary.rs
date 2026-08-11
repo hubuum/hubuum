@@ -306,6 +306,87 @@ fn principal_domain_types_are_free_of_persistence_implementation_details() {
 }
 
 #[test]
+fn identity_subtype_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in [
+        "src/models/identity.rs",
+        "src/models/user.rs",
+        "src/models/service_account.rs",
+        "src/models/token.rs",
+        "src/models/traits/user.rs",
+    ] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    for (relative_path, required) in [
+        (
+            "src/storage/postgres/operations/identity.rs",
+            &["struct IdentityScopeRow"][..],
+        ),
+        (
+            "src/storage/postgres/operations/user/mod.rs",
+            &[
+                "struct UserRow",
+                "struct UpdateUserRow",
+                "impl From<UserRow> for User",
+                "CursorSqlMapping for UserWithNameQueryRow",
+            ][..],
+        ),
+        (
+            "src/storage/postgres/operations/service_account.rs",
+            &[
+                "struct ServiceAccountRow",
+                "struct UpdateServiceAccountRow",
+                "impl From<ServiceAccountRow> for ServiceAccount",
+                "CursorSqlMapping for ServiceAccountWithNameQueryRow",
+            ][..],
+        ),
+        (
+            "src/storage/postgres/operations/token.rs",
+            &[
+                "struct PrincipalTokenRow",
+                "impl From<PrincipalTokenRow> for PrincipalToken",
+                "CursorSqlMapping for PrincipalTokenRow",
+            ][..],
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for item in required {
+            assert!(
+                source.contains(item),
+                "PostgreSQL identity adapter is missing {item}"
+            );
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "identity subtype domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn permission_domain_types_are_free_of_persistence_implementation_details() {
     let root = repository_root();
     let mut violations = Vec::new();

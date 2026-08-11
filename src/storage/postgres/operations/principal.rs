@@ -8,7 +8,7 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     NewPrincipal, Principal, PrincipalKind, PrincipalMemberResponse, PrincipalSettings,
     PrincipalSettingsPatch, PrincipalSettingsResponse, ResourceRevision,
-    ServiceAccountPointResponse, UserPointResponse, UserResponse, UserWithName,
+    ServiceAccountPointResponse, UserPointResponse,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::service_account::ServiceAccountRow;
@@ -412,57 +412,6 @@ fn stored_principal_settings(
             "Principal '{principal_id_value}' has invalid settings in the database"
         ))
     })
-}
-
-/// Load the rich, untagged user representation in one database snapshot.
-pub(crate) async fn load_user_response(
-    pool: &impl crate::storage::StorageContext,
-    user_id_value: i32,
-) -> Result<UserResponse, ApiError> {
-    use crate::schema::{identity_scopes, principals, users};
-
-    let row = with_connection(pool, async |conn| {
-        users::table
-            .inner_join(principals::table.on(principals::id.eq(users::id)))
-            .inner_join(
-                identity_scopes::table.on(identity_scopes::id.eq(principals::identity_scope_id)),
-            )
-            .filter(users::id.eq(user_id_value))
-            .select((
-                UserRow::as_select(),
-                identity_scopes::name,
-                identity_scopes::provider_kind,
-                principals::name,
-                principals::provider_managed,
-                principals::last_sync_attempted_at,
-                principals::last_sync_success_at,
-                principals::revision,
-            ))
-            .first(conn)
-            .await
-    })
-    .await?;
-
-    let (
-        user,
-        identity_scope,
-        provider_kind,
-        name,
-        provider_managed,
-        attempted,
-        succeeded,
-        revision,
-    ) = row;
-    Ok(UserResponse::from(UserWithName::from_tuple((
-        user.into(),
-        identity_scope,
-        provider_kind,
-        name,
-        provider_managed,
-        attempted,
-        succeeded,
-        revision,
-    ))))
 }
 
 /// Load the user point body and its validator revision in one SQL statement.

@@ -5,9 +5,7 @@ use chrono::{Duration, Utc};
 use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
-use hubuum::models::{
-    NewExportTaskOutputRecord, NewTaskRecord, NewUser, TaskKind, TaskStatus, User,
-};
+use hubuum::models::{NewExportTaskOutputRecord, NewTaskRecord, NewUser, TaskKind, TaskStatus};
 use hubuum::schema::{collections, export_task_outputs, export_templates, tasks};
 use hubuum::storage::postgres::operations::identity::ensure_identity_scope;
 use hubuum::storage::postgres::prelude::*;
@@ -184,9 +182,10 @@ async fn reset_password_replaces_the_stored_credential() {
         .expect("generated password in stdout");
     assert_ne!(new_password, old_password);
 
-    let updated = User::get_by_name(&pool, &username)
-        .await
-        .expect("updated user");
+    let updated =
+        hubuum::services::identity::load_user_by_name(&pool, LOCAL_IDENTITY_SCOPE, &username)
+            .await
+            .expect("updated user");
     let password_hash = updated.password.expect("stored password hash");
     assert!(verify_password(new_password, &password_hash).expect("new password verification"));
     assert!(!verify_password(&old_password, &password_hash).expect("old password verification"));

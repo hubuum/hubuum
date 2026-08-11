@@ -1,23 +1,30 @@
 use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserProfile};
 use hubuum_storage_core::{
     AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityPage,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset,
-    StoragePrincipalGroup, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityGroup,
+    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenRenew,
+    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
 };
 
 use crate::errors::ApiError;
 use crate::models::{
-    GroupID, NewServiceAccount, PrincipalID, PrincipalTokenMetadata, ServiceAccount,
-    ServiceAccountID, ServiceAccountWithName, TokenListState, TokenResourceScope,
-    UpdateServiceAccount,
+    CollectionID, Group, GroupID, HubuumClassID, HubuumObjectID, NewServiceAccount, NewUser,
+    Permissions, PrincipalID, PrincipalTokenCreateParts, PrincipalTokenMetadata, ServiceAccount,
+    ServiceAccountID, ServiceAccountWithName, TokenIssuancePolicy, TokenListState,
+    TokenResourceScope, TokenScope, UpdateServiceAccount, UpdateUser, User, UserWithName,
 };
 use crate::pagination::count_query_options;
 use crate::storage::postgres::operations::service_account::{
     DisableServiceAccount, SaveServiceAccount,
+};
+use crate::storage::postgres::operations::user::{
+    CreateUserRecord, LoadUserGroupsPaginated, UpdateUserRecord,
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
@@ -34,10 +41,52 @@ fn storage_identity_scope(scope: crate::models::IdentityScope) -> StorageIdentit
     )
 }
 
+fn storage_user(user: User) -> StorageUser {
+    StorageUser::new(
+        user.id,
+        user.password,
+        user.proper_name,
+        user.email,
+        user.created_at,
+        user.updated_at,
+        user.anonymized_at,
+    )
+}
+
+fn storage_user_list_item(item: UserWithName) -> StorageUserListItem {
+    StorageUserListItem::builder(
+        storage_user(item.user),
+        item.identity_scope,
+        item.provider_kind,
+        item.name,
+        item.revision.get(),
+    )
+    .provider_managed(item.provider_managed)
+    .last_sync_attempted_at(item.last_sync_attempted_at)
+    .last_sync_success_at(item.last_sync_success_at)
+    .build()
+}
+
 fn storage_principal_group(group: crate::models::PrincipalGroup) -> StoragePrincipalGroup {
     StoragePrincipalGroup::new(
         group.principal_id,
         group.group_id,
+        group.created_at,
+        group.updated_at,
+        group.revision.get(),
+    )
+}
+
+fn storage_identity_group(group: Group) -> StorageIdentityGroup {
+    StorageIdentityGroup::new(
+        group.id,
+        group.groupname,
+        group.description,
+        group.identity_scope_id,
+        group.managed_by,
+        group.external_key,
+        group.last_sync_attempted_at,
+        group.last_sync_success_at,
         group.created_at,
         group.updated_at,
         group.revision.get(),
@@ -117,6 +166,38 @@ fn storage_token_metadata(metadata: PrincipalTokenMetadata) -> StorageTokenMetad
     .build()
 }
 
+fn token_scope_from_storage(scope: AuthenticationTokenScope) -> Result<TokenScope, ApiError> {
+    let (permissions, resources) = scope.into_parts();
+    let permissions = permissions
+        .map(|permissions| {
+            permissions
+                .into_iter()
+                .map(|permission| Permissions::from_string(&permission))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let resources = resources
+        .map(|resources| {
+            let (collections, classes, objects) = resources.into_parts();
+            collections
+                .into_iter()
+                .map(|id| CollectionID::new(id).map(TokenResourceScope::Collection))
+                .chain(
+                    classes
+                        .into_iter()
+                        .map(|id| HubuumClassID::new(id).map(TokenResourceScope::Class)),
+                )
+                .chain(
+                    objects
+                        .into_iter()
+                        .map(|id| HubuumObjectID::new(id).map(TokenResourceScope::Object)),
+                )
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    TokenScope::from_stored_parts(permissions, resources)
+}
+
 pub(crate) async fn reset_local_password(
     pool: &PostgresPool,
     request: StorageLocalPasswordReset,
@@ -174,6 +255,21 @@ pub(crate) async fn load_principal_group(
     )
     .await
     .map(storage_principal_group)
+}
+
+pub(crate) async fn list_principal_groups(
+    pool: &PostgresPool,
+    query: StoragePrincipalGroupListQuery,
+) -> Result<StorageIdentityPage<StorageIdentityGroup>, ApiError> {
+    let (principal_id, options) = query.into_parts();
+    let include_total = options.include_total;
+    let (groups, total) = PrincipalID::new(principal_id)?
+        .load_user_groups_paginated_with_total_count(pool, &options)
+        .await?;
+    Ok(StorageIdentityPage::new(
+        groups.into_iter().map(storage_identity_group).collect(),
+        include_total.then_some(total),
+    ))
 }
 
 pub(crate) async fn list_retained_tokens(
@@ -397,6 +493,227 @@ pub(crate) async fn sync_external_user(
         user.updated_at,
         user.anonymized_at,
     ))
+}
+
+pub(crate) async fn load_user(pool: &PostgresPool, id: i32) -> Result<StorageUser, ApiError> {
+    super::user::load_user_record(pool, id)
+        .await
+        .map(storage_user)
+}
+
+pub(crate) async fn load_user_by_name(
+    pool: &PostgresPool,
+    identity_scope: String,
+    name: String,
+) -> Result<StorageUser, ApiError> {
+    super::user::load_user_by_name_record(pool, &identity_scope, &name)
+        .await
+        .map(storage_user)
+}
+
+pub(crate) async fn load_user_point(
+    pool: &PostgresPool,
+    id: i32,
+) -> Result<StorageUserPoint, ApiError> {
+    let point = super::principal::load_user_point_response(pool, id).await?;
+    Ok(StorageUserPoint::builder(
+        point.id,
+        point.created_at,
+        point.updated_at,
+        point.identity_scope_id,
+        point.name,
+        point.revision.get(),
+    )
+    .proper_name(point.proper_name)
+    .email(point.email)
+    .provider_managed(point.provider_managed)
+    .build())
+}
+
+pub(crate) async fn list_users(
+    pool: &PostgresPool,
+    query: StorageUserListQuery,
+) -> Result<StorageIdentityPage<StorageUserListItem>, ApiError> {
+    let options = query.into_options();
+    let total = if options.include_total {
+        Some(User::count_user_search_records(pool, count_query_options(&options)).await?)
+    } else {
+        None
+    };
+    let rows = User::search_user_records(pool, options).await?;
+    Ok(StorageIdentityPage::new(
+        rows.into_iter().map(storage_user_list_item).collect(),
+        total,
+    ))
+}
+
+pub(crate) async fn create_user(
+    pool: &PostgresPool,
+    request: StorageUserCreate,
+) -> Result<StorageUser, ApiError> {
+    let (identity_scope, name, password, proper_name, email, context) = request.into_parts();
+    NewUser {
+        identity_scope,
+        name,
+        password,
+        proper_name,
+        email,
+    }
+    .create_user_record(pool, context.as_ref())
+    .await
+    .map(storage_user)
+}
+
+pub(crate) async fn update_user(
+    pool: &PostgresPool,
+    request: StorageUserUpdate,
+) -> Result<StorageUser, ApiError> {
+    let (id, password, proper_name, email, context) = request.into_parts();
+    UpdateUser {
+        password,
+        proper_name,
+        email,
+    }
+    .update_user_record(id, pool, context.as_ref())
+    .await
+    .map(storage_user)
+}
+
+pub(crate) async fn set_user_password(
+    pool: &PostgresPool,
+    request: StorageUserPasswordUpdate,
+) -> Result<usize, ApiError> {
+    let (id, password_hash) = request.into_parts();
+    super::user::set_user_password_record(pool, PrincipalID::new(id)?, &password_hash).await
+}
+
+pub(crate) async fn delete_user(
+    pool: &PostgresPool,
+    request: StorageUserDelete,
+) -> Result<usize, ApiError> {
+    let (id, context) = request.into_parts();
+    super::user::delete_user_record(pool, id, context.as_ref()).await
+}
+
+pub(crate) async fn anonymize_user(pool: &PostgresPool, id: i32) -> Result<(), ApiError> {
+    super::user::anonymize_user_record(pool, id).await
+}
+
+fn token_policy(
+    policy: hubuum_storage_core::StorageTokenIssuancePolicy,
+) -> Result<TokenIssuancePolicy, ApiError> {
+    let (default_hours, maximum_hours) = policy.into_parts();
+    Ok(TokenIssuancePolicy::from_hours(
+        default_hours,
+        maximum_hours,
+    )?)
+}
+
+async fn storage_metadata_for_token(
+    pool: &PostgresPool,
+    token_id: i32,
+) -> Result<StorageTokenMetadata, ApiError> {
+    let metadata = super::token::principal_token_metadata_by_ids_db(pool, vec![token_id])
+        .await?
+        .pop()
+        .ok_or_else(|| {
+            ApiError::InternalServerError("Token metadata projection returned no token".to_string())
+        })?;
+    Ok(storage_token_metadata(metadata))
+}
+
+pub(crate) async fn create_token(
+    pool: &PostgresPool,
+    request: StorageTokenCreate,
+) -> Result<StorageTokenMetadata, ApiError> {
+    let (principal_id, token_hash, name, description, expires_at, scope, policy, context) =
+        request.into_parts();
+    let token = super::token::create_principal_token_hashed_db(
+        pool,
+        PrincipalTokenCreateParts {
+            principal_id: PrincipalID::new(principal_id)?,
+            name,
+            description,
+            expires_at,
+            scope: scope.map(token_scope_from_storage).transpose()?,
+        },
+        token_hash,
+        token_policy(policy)?,
+        context.as_ref(),
+    )
+    .await?;
+    storage_metadata_for_token(pool, token.id).await
+}
+
+pub(crate) async fn renew_token(
+    pool: &PostgresPool,
+    request: StorageTokenRenew,
+) -> Result<StorageTokenMetadata, ApiError> {
+    let (source_token_id, principal_id, token_hash, expires_at, policy, context) =
+        request.into_parts();
+    let token = super::token::renew_principal_token_hashed_db(
+        pool,
+        source_token_id,
+        principal_id,
+        token_hash,
+        expires_at,
+        token_policy(policy)?,
+        context.as_ref(),
+    )
+    .await?;
+    storage_metadata_for_token(pool, token.id).await
+}
+
+pub(crate) async fn load_token_metadata(
+    pool: &PostgresPool,
+    principal_id: i32,
+    token_id: i32,
+) -> Result<StorageTokenMetadata, ApiError> {
+    super::token::principal_token_metadata_by_id_for_principal_db(pool, token_id, principal_id)
+        .await
+        .map(storage_token_metadata)
+}
+
+pub(crate) async fn load_token_metadata_batch(
+    pool: &PostgresPool,
+    token_ids: Vec<i32>,
+) -> Result<Vec<StorageTokenMetadata>, ApiError> {
+    Ok(
+        super::token::principal_token_metadata_by_ids_db(pool, token_ids)
+            .await?
+            .into_iter()
+            .map(storage_token_metadata)
+            .collect(),
+    )
+}
+
+pub(crate) async fn revoke_token(
+    pool: &PostgresPool,
+    request: StorageTokenRevoke,
+) -> Result<usize, ApiError> {
+    let (token_id, principal_id, context) = request.into_parts();
+    super::token::revoke_token_by_id_for_principal_db(
+        pool,
+        token_id,
+        principal_id,
+        context.as_ref(),
+    )
+    .await
+}
+
+pub(crate) async fn revoke_token_by_hash(
+    pool: &PostgresPool,
+    request: StorageTokenHashRevoke,
+) -> Result<usize, ApiError> {
+    let (principal_id, token_hash) = request.into_parts();
+    super::token::revoke_token_by_hash_db(pool, principal_id, token_hash).await
+}
+
+pub(crate) async fn revoke_all_principal_tokens(
+    pool: &PostgresPool,
+    principal_id: i32,
+) -> Result<usize, ApiError> {
+    super::token::revoke_all_tokens_for_principal_db(pool, PrincipalID::new(principal_id)?).await
 }
 
 #[cfg(test)]

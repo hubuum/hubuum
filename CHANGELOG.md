@@ -53,6 +53,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `28`.
+  Human-user point/list/lifecycle behavior, effective principal-group pages,
+  and complete bearer-token issuance, metadata, renewal, and revocation now
+  cross mandatory `UserStorage`, `IdentityStorage`, and `TokenStorage`
+  contracts. Raw bearer secrets remain in the application; adapters receive
+  only their HMAC and return hash-free metadata. Identity-scope, user,
+  service-account, and token Diesel rows and SQL cursor mappings are owned by
+  the PostgreSQL adapter, while application models and handlers use
+  private-field backend-neutral DTOs. Required capability labels and public
+  HTTP shapes are unchanged. Administration and monitoring clients matching
+  contract version `27` must accept version `28`.
 - **Breaking (administrator API):** the storage contract version is now `27`.
   Principal point reads and the complete audited settings lifecycle now cross a
   mandatory, uniformly observed backend contract. Principal and
