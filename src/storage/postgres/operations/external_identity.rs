@@ -8,6 +8,7 @@ use crate::models::{
     EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, Principal, PrincipalKind, User,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::identity::ensure_identity_scope;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};
@@ -235,7 +236,7 @@ pub async fn sync_external_user(
                     groups_table::last_sync_attempted_at.eq(sync_time),
                     groups_table::last_sync_success_at.eq(sync_time),
                 ))
-                .get_result::<crate::models::Group>(conn)
+                .get_result::<GroupRow>(conn)
                 .await?;
             synced_group_ids.push(saved.id);
 

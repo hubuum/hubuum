@@ -7,6 +7,7 @@ mod context;
 mod contract;
 mod execution;
 mod factory;
+mod groups;
 mod imports;
 #[cfg(test)]
 mod memory;
@@ -40,6 +41,7 @@ pub use execution::{
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::run_storage_migrations;
 pub(crate) use factory::{StorageSettings, initialize_storage};
+pub(crate) use groups::GroupStorage;
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationCredential, AuthenticationHuman, AuthenticationIdentity,
     AuthenticationPrincipal, AuthenticationResourceScope, AuthenticationStorage,

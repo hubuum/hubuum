@@ -4,8 +4,9 @@ use crate::errors::ApiError;
 use crate::models::identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE,
 };
-use crate::models::{Group, NewPrincipal, PrincipalKind, User};
+use crate::models::{NewPrincipal, PrincipalKind, User};
 use crate::storage::StorageDefaultAdminBootstrap;
+use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::identity::identity_scope_id_by_name_conn;
 use crate::storage::postgres::operations::principal::InsertPrincipalRecord;
 use crate::storage::postgres::prelude::*;
@@ -88,7 +89,7 @@ pub async fn bootstrap_default_admin(
                 crate::schema::groups::description.eq("Default admin group."),
                 crate::schema::groups::managed_by.eq(LOCAL_PROVIDER_KIND),
             ))
-            .get_result::<Group>(conn)
+            .get_result::<GroupRow>(conn)
             .await?;
         let principal = NewPrincipal {
             identity_scope_id: local_scope_id,

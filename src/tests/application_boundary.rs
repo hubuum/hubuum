@@ -214,6 +214,55 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
 }
 
 #[test]
+fn group_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in ["src/models/group.rs", "src/models/principal_group.rs"] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    let adapter_path = root.join("src/storage/postgres/operations/group.rs");
+    let adapter_source = fs::read_to_string(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "struct GroupRow",
+        "struct PrincipalGroupRow",
+        "struct UpdateGroupRow",
+        "impl From<GroupRow> for Group",
+        "impl From<PrincipalGroupRow> for PrincipalGroup",
+        "impl CursorSqlMapping for GroupRow",
+    ] {
+        assert!(
+            adapter_source.contains(required),
+            "PostgreSQL group adapter is missing {required}"
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "group domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn permission_domain_types_are_free_of_persistence_implementation_details() {
     let root = repository_root();
     let mut violations = Vec::new();
@@ -544,6 +593,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "CollectionPermissionStorage",
         "CollectionRecordStorage",
         "ClassRecordStorage",
+        "GroupStorage",
         "ObjectRecordStorage",
         "RemoteTargetStorage",
         "TaskQueueStorage",
@@ -585,13 +635,31 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "catalog operation {operation} must use the common storage observer"
         );
     }
+    let compact_context = context_source.split_whitespace().collect::<String>();
+    for operation in [
+        "load",
+        "identity_scope",
+        "create",
+        "update",
+        "delete",
+        "members",
+        "members_page",
+        "members_count",
+        "member_principal",
+        "member_add",
+        "member_remove",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"groups\",\"{operation}\"")),
+            "group operation {operation} must use the common storage observer"
+        );
+    }
     for operation in ["list", "enrich"] {
         assert!(
             context_source.contains(&format!("\"computed_objects\", \"{operation}\"")),
             "computed-object operation {operation} must use the common storage observer"
         );
     }
-    let compact_context = context_source.split_whitespace().collect::<String>();
     for operation in [
         "state",
         "list_shared",

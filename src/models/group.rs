@@ -3,25 +3,15 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::principal::Principal;
-use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
-use crate::schema::groups;
-use crate::storage::postgres::operations::group::{
-    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord,
-    SavePrincipalGroupRecord, UpdateGroupRecord, group_identity_scope_name,
-};
-
-use crate::storage::StorageContext;
-use crate::storage::postgres::prelude::*;
+use crate::storage::{GroupStorage, StorageContext, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 crate::int_id_newtype! {
     /// Identifier wrapper for a [`Group`].
@@ -49,7 +39,10 @@ impl GroupID {
     where
         C: StorageContext,
     {
-        self.load_group_record(backend).await
+        storage_handle(backend)
+            .load_group(self.id())
+            .await
+            .map_err(ApiError::from)
     }
 
     /// Delete this group without emitting domain events.
@@ -61,7 +54,10 @@ impl GroupID {
     where
         C: StorageContext,
     {
-        self.delete_group_record_without_events(backend).await
+        storage_handle(backend)
+            .delete_group(self.id(), None)
+            .await
+            .map_err(ApiError::from)
     }
 
     pub async fn delete<C>(
@@ -72,14 +68,14 @@ impl GroupID {
     where
         C: StorageContext,
     {
-        self.delete_group_record(backend, context).await
+        storage_handle(backend)
+            .delete_group(self.id(), context)
+            .await
+            .map_err(ApiError::from)
     }
 }
 
-#[derive(
-    Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
-)]
-#[diesel(table_name = groups)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Group {
     pub id: i32,
     pub groupname: String,
@@ -252,7 +248,10 @@ impl Group {
     where
         C: StorageContext,
     {
-        let identity_scope = group_identity_scope_name(backend, self.id).await?;
+        let identity_scope = storage_handle(backend)
+            .group_identity_scope_name(self.id)
+            .await
+            .map_err(ApiError::from)?;
         Ok(GroupResponse::from_parts(self, identity_scope))
     }
 
@@ -267,7 +266,10 @@ impl Group {
     where
         C: StorageContext,
     {
-        self.load_group_members(backend).await
+        storage_handle(backend)
+            .group_members(self.id)
+            .await
+            .map_err(ApiError::from)
     }
 
     pub async fn members_paginated<C>(
@@ -278,8 +280,10 @@ impl Group {
     where
         C: StorageContext,
     {
-        self.load_group_members_paginated(backend, query_options)
+        storage_handle(backend)
+            .group_members_page(self.id, query_options)
             .await
+            .map_err(ApiError::from)
     }
 
     pub async fn count_members_paginated<C>(
@@ -290,8 +294,10 @@ impl Group {
     where
         C: StorageContext,
     {
-        self.count_group_members_paginated(backend, query_options)
+        storage_handle(backend)
+            .count_group_members(self.id, query_options)
             .await
+            .map_err(ApiError::from)
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.
@@ -319,12 +325,10 @@ impl Group {
         C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        NewPrincipalGroup {
-            principal_id: member.principal_id(),
-            group_id: self.id,
-        }
-        .save_principal_group_record_without_events(backend)
-        .await?;
+        storage_handle(backend)
+            .add_group_member(member.principal_id(), self.id, None)
+            .await
+            .map_err(ApiError::from)?;
 
         Ok(())
     }
@@ -339,12 +343,10 @@ impl Group {
         C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        NewPrincipalGroup {
-            principal_id: member.principal_id(),
-            group_id: self.id,
-        }
-        .save_principal_group_record(backend, context)
-        .await
+        storage_handle(backend)
+            .add_group_member(member.principal_id(), self.id, context)
+            .await
+            .map_err(ApiError::from)
     }
 
     /// Remove a member from this group without emitting domain events.
@@ -361,8 +363,10 @@ impl Group {
         C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend_without_events(member.principal_id(), backend)
+        storage_handle(backend)
+            .remove_group_member(member.principal_id(), self.id, None)
             .await
+            .map_err(ApiError::from)
     }
 
     pub async fn remove_member<C, P>(
@@ -375,8 +379,10 @@ impl Group {
         C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend(member.principal_id(), backend, context)
+        storage_handle(backend)
+            .remove_group_member(member.principal_id(), self.id, context)
             .await
+            .map_err(ApiError::from)
     }
 
     /// Delete this group without emitting domain events.
@@ -388,7 +394,10 @@ impl Group {
     where
         C: StorageContext,
     {
-        self.delete_group_record_without_events(backend).await
+        storage_handle(backend)
+            .delete_group(self.id, None)
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -410,7 +419,10 @@ impl NewGroup {
     where
         C: StorageContext,
     {
-        self.save_group_record_without_events(backend).await
+        storage_handle(backend)
+            .create_group(self, None)
+            .await
+            .map_err(ApiError::from)
     }
 
     pub async fn save<C>(
@@ -421,13 +433,15 @@ impl NewGroup {
     where
         C: StorageContext,
     {
-        self.save_group_record(backend, context).await
+        storage_handle(backend)
+            .create_group(self, context)
+            .await
+            .map_err(ApiError::from)
     }
 }
 
-#[derive(Deserialize, Serialize, AsChangeset, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 #[schema(example = update_group_example)]
-#[diesel(table_name = groups)]
 pub struct UpdateGroup {
     pub groupname: Option<String>,
 }
@@ -455,8 +469,10 @@ impl UpdateGroup {
     where
         C: StorageContext,
     {
-        self.update_group_record_without_events(group_id.id(), backend)
+        storage_handle(backend)
+            .update_group(group_id.id(), self, None)
             .await
+            .map_err(ApiError::from)
     }
 
     pub async fn save<C>(
@@ -468,8 +484,10 @@ impl UpdateGroup {
     where
         C: StorageContext,
     {
-        self.update_group_record(group_id.id(), backend, context)
+        storage_handle(backend)
+            .update_group(group_id.id(), self, context)
             .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -529,48 +547,5 @@ impl CursorPaginated for Group {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for Group {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "groups.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Groupname => CursorSqlField {
-                column: "groups.groupname",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "groups.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "groups.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "groups.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "groups.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for groups",
-                    field
-                )));
-            }
-        })
     }
 }

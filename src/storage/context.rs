@@ -12,8 +12,9 @@ use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::{
     ClassIdSet, Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
-    NewCollectionWithAssignee, NewHubuumClass, NewHubuumObject, TokenRetentionSettings,
-    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    NewCollectionWithAssignee, NewGroup, NewHubuumClass, NewHubuumObject, Principal,
+    PrincipalGroup, TokenRetentionSettings, UpdateCollection, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 use crate::models::{Group, Permission};
 use crate::permissions::{AppContext, PermissionBackend};
@@ -38,9 +39,9 @@ use crate::storage::{
     EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
     EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
     EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
-    ExportQueryStorage, ExportTemplateHistoryRecord, ExportTemplateStorage, HistoryAsOfQuery,
-    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
-    ImportStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
+    ExportQueryStorage, ExportTemplateHistoryRecord, ExportTemplateStorage, GroupStorage,
+    HistoryAsOfQuery, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
+    IdentityStorage, ImportStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
     ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRecordStorage,
     ObjectRelationsTouchingIdsQuery, OperationalExportTemplateAuditEntry,
@@ -2692,6 +2693,161 @@ impl InventoryStorage for StorageHandle {
         observe_storage_call(self.backend_name(), "inventory", "counts", async {
             match &self.implementation {
                 BackendImplementation::Postgresql(backend) => backend.inventory_counts().await,
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl GroupStorage for StorageHandle {
+    async fn load_group(&self, group_id: i32) -> Result<Group, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "load", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.load_group(group_id).await,
+            }
+        })
+        .await
+    }
+
+    async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "identity_scope", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.group_identity_scope_name(group_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn create_group(
+        &self,
+        command: &NewGroup,
+        context: Option<&EventContext>,
+    ) -> Result<Group, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.create_group(command, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn update_group(
+        &self,
+        group_id: i32,
+        update: &UpdateGroup,
+        context: Option<&EventContext>,
+    ) -> Result<Group, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "update", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.update_group(group_id, update, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_group(
+        &self,
+        group_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<usize, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.delete_group(group_id, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn group_members(&self, group_id: i32) -> Result<Vec<Principal>, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "members", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.group_members(group_id).await,
+            }
+        })
+        .await
+    }
+
+    async fn group_members_page(
+        &self,
+        group_id: i32,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<(PrincipalGroup, Principal)>, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "members_page", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.group_members_page(group_id, query_options).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn count_group_members(
+        &self,
+        group_id: i32,
+        query_options: &QueryOptions,
+    ) -> Result<i64, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "members_count", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.count_group_members(group_id, query_options).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn group_member_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "member_principal", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.group_member_principal(principal_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn add_group_member(
+        &self,
+        principal_id: i32,
+        group_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<PrincipalGroup, StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "member_add", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .add_group_member(principal_id, group_id, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn remove_group_member(
+        &self,
+        principal_id: i32,
+        group_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "groups", "member_remove", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .remove_group_member(principal_id, group_id, context)
+                        .await
+                }
             }
         })
         .await

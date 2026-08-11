@@ -2,6 +2,7 @@ use super::*;
 use crate::models::token_scope::TokenScope;
 use crate::storage::postgres::operations::authz::{AuthzSubject, scope_allows};
 use crate::storage::postgres::operations::collection::CollectionRow;
+use crate::storage::postgres::operations::group::GroupRow;
 use diesel_async::RunQueryDsl;
 
 pub trait LoadUserGroups: AuthzSubject {
@@ -28,10 +29,11 @@ where
                 .inner_join(groups.on(id.eq(group_id)))
                 .filter(principal_id.eq(principal_id_value))
                 .select(groups::all_columns())
-                .load::<Group>(conn)
+                .load::<GroupRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 }
 
@@ -101,9 +103,12 @@ where
         .await?;
 
         let mut base_query = build_query()?.select(groups::all_columns());
-        crate::apply_query_options!(base_query, query_options, Group);
-        let items =
-            with_connection(pool, async |conn| base_query.load::<Group>(conn).await).await?;
+        crate::apply_query_options!(base_query, query_options, GroupRow);
+        let items = with_connection(pool, async |conn| base_query.load::<GroupRow>(conn).await)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
 
         Ok((items, total_count))
     }

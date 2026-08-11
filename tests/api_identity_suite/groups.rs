@@ -6,11 +6,11 @@ mod tests {
     use chrono::SubsecRound;
     use rstest::rstest;
 
-    use crate::models::group::{Group, GroupResponse, NewGroup, UpdateGroup};
+    use crate::models::group::{Group, GroupID, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
     use crate::models::{
         IdentityScope, LDAP_PROVIDER_KIND, MembershipPrincipalResponse, NewIdentityScope,
-        Principal, PrincipalGroup, PrincipalID, PrincipalKind, PrincipalMemberResponse,
+        Principal, PrincipalID, PrincipalKind, PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::storage::postgres::operations::identity::ensure_identity_scope;
@@ -179,7 +179,7 @@ mod tests {
         .await
         .unwrap();
         let groupname = context.scoped_name("external_group");
-        let group = with_connection(&context.pool, async |conn| {
+        let group_id = with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -190,11 +190,17 @@ mod tests {
                     groups::managed_by.eq(crate::models::LDAP_PROVIDER_KIND),
                     groups::external_key.eq(context.scoped_name("external_group_key")),
                 ))
-                .get_result::<Group>(conn)
+                .returning(groups::id)
+                .get_result::<i32>(conn)
                 .await
         })
         .await
         .unwrap();
+        let group = GroupID::new(group_id)
+            .unwrap()
+            .group(&context.pool)
+            .await
+            .unwrap();
         let group_url = format!("{GROUPS_ENDPOINT}/{}", group.id);
 
         let resp = get_request(&context.pool, &context.normal_token, &group_url).await;
@@ -237,7 +243,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let external_group = with_connection(&context.pool, async |conn| {
+        let external_group_id = with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -248,11 +254,17 @@ mod tests {
                     groups::managed_by.eq(crate::models::LDAP_PROVIDER_KIND),
                     groups::external_key.eq(context.scoped_name("batch_external_group_key")),
                 ))
-                .get_result::<Group>(conn)
+                .returning(groups::id)
+                .get_result::<i32>(conn)
                 .await
         })
         .await
         .unwrap();
+        let external_group = GroupID::new(external_group_id)
+            .unwrap()
+            .group(&context.pool)
+            .await
+            .unwrap();
 
         let responses =
             GroupResponse::from_groups(&context.pool, vec![local_group, external_group])
@@ -591,16 +603,23 @@ mod tests {
         let context = test_context;
         let group = create_test_group(&context.pool).await;
         let user = create_test_user(&context.pool).await;
-        let initial = with_connection(&context.pool, async |conn| {
+        with_connection(&context.pool, async |conn| {
             use crate::schema::group_memberships;
             diesel::insert_into(group_memberships::table)
                 .values((
                     group_memberships::principal_id.eq(user.id),
                     group_memberships::group_id.eq(group.id),
                 ))
-                .get_result::<PrincipalGroup>(conn)
+                .execute(conn)
                 .await
         })
+        .await
+        .unwrap();
+        let initial = crate::storage::postgres::operations::group::principal_group_by_ids(
+            &context.pool,
+            user.id,
+            group.id,
+        )
         .await
         .unwrap();
 

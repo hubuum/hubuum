@@ -14,6 +14,7 @@ use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
+use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::permissions::PermissionFilter;
 use crate::storage::postgres::operations::relation_rows::{
@@ -4737,7 +4738,7 @@ impl User {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, Group);
+        crate::apply_query_options!(base_query, query_options, GroupRow);
 
         trace_query!(base_query, "Searching groups");
 
@@ -4745,12 +4746,12 @@ impl User {
             base_query
                 .select(groups::all_columns())
                 .distinct()
-                .load::<Group>(conn)
+                .load::<GroupRow>(conn)
                 .await
         })
         .await?;
 
-        Ok(result)
+        Ok(result.into_iter().map(Into::into).collect())
     }
 
     pub async fn count_groups(
