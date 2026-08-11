@@ -1,10 +1,7 @@
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
-use crate::models::{
-    CollectionHistory, HubuumClassHistory, HubuumObjectHistory, RemoteTargetHistory,
-    ResourceRevision,
-};
+use crate::models::{CollectionHistory, HubuumClassHistory, HubuumObjectHistory, ResourceRevision};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
 use crate::storage::{
@@ -52,6 +49,37 @@ pub(crate) struct ExportTemplateHistoryRow {
 }
 
 crate::impl_history_pagination!(ExportTemplateHistoryRow, "export_templates_history");
+
+#[derive(Queryable)]
+#[diesel(table_name = crate::schema::remote_targets_history)]
+pub(crate) struct RemoteTargetHistoryRow {
+    id: i32,
+    collection_id: i32,
+    class_id: Option<i32>,
+    name: String,
+    description: String,
+    method: String,
+    url_template: String,
+    headers_template: serde_json::Value,
+    body_template: Option<String>,
+    auth_config: serde_json::Value,
+    allowed_subject_types: serde_json::Value,
+    timeout_ms: i32,
+    enabled: bool,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    op: String,
+    valid_from: chrono::DateTime<chrono::Utc>,
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    actor_id: Option<i32>,
+    history_id: i64,
+    actor_kind: Option<String>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    revision: ResourceRevision,
+}
+
+crate::impl_history_pagination!(RemoteTargetHistoryRow, "remote_targets_history");
 
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
@@ -170,7 +198,7 @@ pub(crate) fn export_template_history_to_storage(
 }
 
 pub(crate) fn remote_target_history_to_storage(
-    row: RemoteTargetHistory,
+    row: RemoteTargetHistoryRow,
 ) -> RemoteTargetHistoryRecord {
     RemoteTargetHistoryRecord::new(
         row.id,
@@ -315,7 +343,7 @@ history_db_fns!(
     remote_target_as_of,
     crate::schema::remote_targets_history,
     collection_id,
-    crate::models::RemoteTargetHistory
+    RemoteTargetHistoryRow
 );
 
 pub async fn object_history_paginated_with_total_count(

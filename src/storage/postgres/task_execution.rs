@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{
-    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewRemoteCallResult, NewTaskEventRecord,
-    TaskKind, TaskResultCounts, TaskStatus,
+    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewTaskEventRecord, TaskKind,
+    TaskResultCounts, TaskStatus,
 };
 use crate::storage::{
     StorageBackupTaskArtifact, StorageError, StorageExportTaskArtifact,
@@ -23,11 +23,12 @@ use crate::tasks::TaskLeaseDuration;
 use super::PostgresStorage;
 use super::error::map_postgres_error;
 use super::operations::computed_field::mark_computed_reindex_failed_conn;
+use super::operations::remote_target::NewRemoteCallResultRow;
 use super::operations::task::{
-    TaskBackend, TaskIdentifier, TaskStateUpdate, append_task_event_while_claimed,
-    claim_next_queued_task, finalize_terminal_conn, live_claimed_task_conn,
-    purge_expired_backup_outputs, purge_expired_export_outputs, record_task_terminal,
-    recover_expired_task_leases, renew_task_lease,
+    RemoteCallTaskBackend, TaskBackend, TaskIdentifier, TaskStateUpdate,
+    append_task_event_while_claimed, claim_next_queued_task, finalize_terminal_conn,
+    live_claimed_task_conn, purge_expired_backup_outputs, purge_expired_export_outputs,
+    record_task_terminal, recover_expired_task_leases, renew_task_lease,
 };
 use super::task_queue::task_to_storage;
 use super::{
@@ -185,12 +186,12 @@ fn backup_artifact_from_storage(
 fn remote_call_artifact_from_storage(
     task_id: i32,
     artifact: StorageRemoteCallTaskArtifact,
-) -> NewRemoteCallResult {
+) -> NewRemoteCallResultRow {
     let (target, response, outcome) = artifact.into_parts();
     let (target_id, subject_type, subject_id, method, rendered_url) = target.into_parts();
     let (response_status, response_headers, response_body_preview) = response.into_parts();
     let (duration_ms, success, error) = outcome.into_parts();
-    NewRemoteCallResult {
+    NewRemoteCallResultRow {
         task_id,
         target_id,
         subject_type,

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::errors::ApiError;
-use crate::models::{NewRemoteTargetRow, RemoteTargetID, RemoteTargetRow, UpdateRemoteTargetRow};
+use crate::models::RemoteTargetID;
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
     RemoteTargetStorage, StorageError, StorageRecordMetadata, StorageRemoteTarget,
@@ -14,8 +14,9 @@ use crate::storage::{
 use super::PostgresStorage;
 use super::error::map_postgres_error;
 use super::operations::remote_target::{
-    DeleteRemoteTargetRecord, LoadRemoteTargetRecord, SaveRemoteTargetRecord,
-    UpdateRemoteTargetRecord, emit_remote_target_invoked_event, list_rows_with_total_count,
+    DeleteRemoteTargetRecord, LoadRemoteTargetRecord, NewRemoteTargetRow, RemoteTargetRow,
+    SaveRemoteTargetRecord, UpdateRemoteTargetRecord, UpdateRemoteTargetRow,
+    emit_remote_target_invoked_event, list_rows_with_total_count,
 };
 
 fn target_to_storage(row: RemoteTargetRow) -> Result<StorageRemoteTarget, ApiError> {

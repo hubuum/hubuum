@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::postgres::prelude::*;
     use actix_rt::time::sleep;
     use actix_web::{
         http::{StatusCode, header},
@@ -25,7 +24,6 @@ mod tests {
         NewHubuumObject, NewHubuumObjectRelation, Permissions, PermissionsList, RemoteCallResult,
         RemoteTarget, TaskResponse, TaskStatus,
     };
-    use crate::storage::postgres::with_connection;
     use crate::tests::TestContext;
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, post_request_with_headers,
@@ -348,16 +346,9 @@ mod tests {
     }
 
     async fn remote_call_result(context: &TestContext, task_id_value: i32) -> RemoteCallResult {
-        use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
-
-        with_connection(&context.pool, async |conn| {
-            remote_call_results
-                .filter(task_id.eq(task_id_value))
-                .first::<RemoteCallResult>(conn)
-                .await
-        })
-        .await
-        .unwrap()
+        crate::test_support::remote_call_result(&context.pool, task_id_value)
+            .await
+            .unwrap()
     }
 
     #[actix_web::test]

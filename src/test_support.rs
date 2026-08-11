@@ -14,13 +14,14 @@ use crate::errors::ApiError;
 use crate::models::user::User;
 use crate::models::{
     CollectionID, NewEventSink, NewEventSinkRow, NewEventSubscription, NewEventSubscriptionRow,
-    TaskKind, validate_sink_parts, validate_subscription_parts,
+    RemoteCallResult, TaskKind, validate_sink_parts, validate_subscription_parts,
 };
 use crate::services::Services;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::event_subscription::{
     SaveEventSinkRecord, SaveEventSubscriptionRecord,
 };
+use crate::storage::postgres::operations::remote_target::load_remote_call_result_for_task;
 use crate::storage::{DynLifecycleStorage, PostgresStorage};
 
 pub use crate::logger::test_support::JsonLogWriter;
@@ -107,6 +108,14 @@ pub fn services_for_postgres(pool: PostgresPool) -> Services {
     Services::from_lifecycle_storage(DynLifecycleStorage::from_backend(PostgresStorage::new(
         pool,
     )))
+}
+
+/// Load the adapter-owned remote-call result projection for request-level tests.
+pub async fn remote_call_result(
+    pool: &PostgresPool,
+    task_id: i32,
+) -> Result<RemoteCallResult, ApiError> {
+    load_remote_call_result_for_task(pool, task_id).await
 }
 
 pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<i32, ApiError> {

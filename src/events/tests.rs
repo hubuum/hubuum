@@ -28,10 +28,10 @@ use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSinkKind,
     ExportContentType, ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID,
     HubuumClassRelationID, HubuumObjectID, NewEventSinkRow, NewEventSubscriptionRow,
-    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
-    NewUser, ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
+    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
+    ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
     PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
-    UpdateRemoteTargetRow, UpdateUser, UserID,
+    UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::storage::postgres::operations::event_delivery::{
@@ -51,8 +51,8 @@ use crate::storage::postgres::operations::events::{
     EventListFilters, list_events_with_total_count,
 };
 use crate::storage::postgres::operations::remote_target::{
-    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-    emit_remote_target_invoked_event,
+    DeleteRemoteTargetRecord, NewRemoteTargetRow, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
+    UpdateRemoteTargetRow, emit_remote_target_invoked_event,
 };
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::storage::{EventDeliverySink, EventDeliverySubscription};

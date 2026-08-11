@@ -757,8 +757,10 @@ fn export_template_consumers_use_only_the_backend_neutral_lifecycle_contract() {
 fn remote_target_consumers_use_the_backend_neutral_application_service() {
     let root = repository_root();
     for file in [
+        "src/models/remote_target.rs",
         "src/api/v1/handlers/remote_targets.rs",
         "src/tasks/remote_call.rs",
+        "tests/api_jobs_suite/remote_targets.rs",
     ] {
         let path = root.join(file);
         let source = fs::read_to_string(&path)
@@ -772,6 +774,16 @@ fn remote_target_consumers_use_the_backend_neutral_application_service() {
             ".instance(&context)",
             ".instance(backend)",
             "RemoteTarget::list_with_total_count",
+            "storage::postgres",
+            "diesel::",
+            "diesel_async",
+            "crate::schema",
+            "CursorSql",
+            "impl_history_pagination!",
+            "RemoteTargetRow",
+            "NewRemoteTargetRow",
+            "UpdateRemoteTargetRow",
+            "NewRemoteCallResult",
         ] {
             assert!(
                 !source.contains(forbidden),
