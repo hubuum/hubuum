@@ -37,7 +37,7 @@ mod tests {
         let serialized = serde_json::to_string(&body).unwrap();
 
         assert_eq!(body["database"]["backend"], "postgresql");
-        assert_eq!(body["database"]["contract_version"], 14);
+        assert_eq!(body["database"]["contract_version"], 15);
         assert_eq!(
             body["database"]["capabilities"],
             serde_json::json!([
@@ -56,12 +56,18 @@ mod tests {
                 "backup_snapshots",
                 "restores",
                 "imports",
-                "workflows",
+                "export_queries",
                 "operations"
             ])
         );
         assert_eq!(body["database"]["url"]["configured"], true);
         assert!(body["database"]["pool_size"].is_number());
+        assert!(body["exports"]["storage_query_budget_ms"].is_number());
+        assert!(
+            body["exports"]
+                .get("database_statement_timeout_ms")
+                .is_none()
+        );
         assert!(!serialized.contains("postgres://"));
     }
 

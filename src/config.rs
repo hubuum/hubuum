@@ -903,6 +903,18 @@ pub struct AppConfig {
     pub client_allowlist: ClientAllowlist,
 }
 
+impl AppConfig {
+    /// Backend-neutral export read budget used by the application boundary.
+    ///
+    /// The legacy PostgreSQL-named configuration field remains the operator
+    /// compatibility input. Only configuration and the selected adapter know
+    /// how the budget is implemented.
+    #[must_use]
+    pub const fn export_storage_query_budget_ms(&self) -> u64 {
+        self.export_db_statement_timeout_ms
+    }
+}
+
 impl std::fmt::Debug for AppConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

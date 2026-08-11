@@ -1,3 +1,4 @@
+pub(crate) mod authorization_resources;
 pub(crate) mod backups;
 pub(crate) mod catalog;
 mod class_relations;

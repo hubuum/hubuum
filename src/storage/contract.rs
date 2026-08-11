@@ -4,10 +4,10 @@ use super::{
     AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage, CatalogStorage,
     ClassRelationStore, ClassStore, CollectionStore, ComputedFieldLifecycleStorage,
     ComputedObjectStorage, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventRetentionStorage, HistoryStorage, ImportStorage, MetricsStorage, ObjectAggregateStorage,
-    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
-    RelationQueryStorage, RemoteTargetStorage, RestoreStorage, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
+    EventRetentionStorage, ExportQueryStorage, HistoryStorage, ImportStorage, MetricsStorage,
+    ObjectAggregateStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
+    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
+    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
     observed::ObservedLifecycleStorage,
 };
 
@@ -44,14 +44,13 @@ impl<T> LifecycleStorage for T where
 {
 }
 
-/// Temporary migration gates for capability families whose operation-shaped
-/// traits have not yet been extracted.
+/// Temporary migration gate for the operational capability family whose
+/// operation-shaped traits have not yet been fully extracted.
 ///
 /// These gates prevent another implementation from becoming selectable during
 /// the refactor, but they do not certify behavior. Each one must be replaced by
 /// mandatory operation-shaped traits and shared compatibility tests, as the
 /// authentication gate has been in this layer.
-pub(crate) trait WorkflowStorage: Send + Sync {}
 pub(crate) trait OperationalStorage: Send + Sync {}
 
 mod sealed {
@@ -86,14 +85,13 @@ pub(crate) trait StorageBackend:
     + BackupSnapshotStorage
     + RestoreStorage
     + ImportStorage
-    + WorkflowStorage
+    + ExportQueryStorage
     + OperationalStorage
     + sealed::CertifiedStorageBackend
 {
     fn descriptor(&self) -> StorageBackendDescriptor;
 }
 
-impl WorkflowStorage for PostgresStorage {}
 impl OperationalStorage for PostgresStorage {}
 impl sealed::CertifiedStorageBackend for PostgresStorage {}
 
@@ -161,7 +159,7 @@ mod tests {
                 "backup_snapshots",
                 "restores",
                 "imports",
-                "workflows",
+                "export_queries",
                 "operations",
             ]
         );

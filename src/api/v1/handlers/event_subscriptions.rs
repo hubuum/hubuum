@@ -13,11 +13,11 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::event_subscription::{
     DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
 };
 use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::traits::UserPermissions;
 
 #[utoipa::path(
     post,

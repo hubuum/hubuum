@@ -489,8 +489,8 @@ mod tests {
 
     use crate::models::group::{GroupID, NewGroup};
     use crate::models::permissions::PermissionsList;
-    use crate::storage::postgres::operations::UserPermissions;
     use crate::tests::{TestScope, create_test_user, generate_all_subsets};
+    use crate::traits::UserPermissions;
     use crate::traits::{CanDelete, CanSave, PermissionController};
 
     async fn assign_to_groups(

@@ -21273,14 +21273,9 @@
           "template_max_objects",
           "max_output_bytes",
           "stage_timeout_ms",
-          "database_statement_timeout_ms"
+          "storage_query_budget_ms"
         ],
         "properties": {
-          "database_statement_timeout_ms": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
           "max_output_bytes": {
             "type": "integer",
             "minimum": 0
@@ -21297,6 +21292,12 @@
           "stage_timeout_ms": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          },
+          "storage_query_budget_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Backend-neutral budget applied to each export storage read stage.",
             "minimum": 0
           },
           "template_fuel": {

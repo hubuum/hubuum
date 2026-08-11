@@ -21,9 +21,8 @@ use crate::services::catalog as catalog_service;
 use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::traits::{UserPermissions, scope_allows};
 use actix_web::{
     Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };

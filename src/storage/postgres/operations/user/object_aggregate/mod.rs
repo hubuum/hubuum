@@ -8,7 +8,7 @@ mod sql;
 
 use std::str::FromStr;
 
-use super::{UserCollectionAccessors, UserPermissions};
+use super::UserCollectionAccessors;
 use crate::errors::ApiError;
 use crate::models::object::HubuumObject;
 use crate::models::object_aggregate::{
@@ -32,6 +32,7 @@ use crate::storage::{
     StorageObjectAggregateMeasureState, StorageObjectAggregateMeasureValue,
     StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSort,
 };
+use crate::traits::UserPermissions;
 
 use self::accumulator::{
     ExternalAggregateAccumulator, create_aggregate_accumulator, merge_aggregate_rows,

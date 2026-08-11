@@ -17,21 +17,19 @@ use crate::models::{
     RelatedObjectGraphRow, RelatedObjectIncludeRow, Token, UpdateUser, User, UserID,
 };
 use crate::storage::postgres::{with_connection, with_transaction};
-use crate::traits::{ClassAccessors, CollectionAccessors, GroupAccessors, SelfAccessors};
+use crate::traits::{ClassAccessors, GroupAccessors, SelfAccessors};
 
 use crate::{date_search, numeric_search, revision_search, string_search, trace_query};
 
 mod auth;
 mod membership;
 mod object_aggregate;
-mod permissions;
 pub(crate) mod search;
 mod unified_search;
 
 pub use auth::*;
 pub use membership::*;
 pub(crate) use object_aggregate::aggregate_objects;
-pub use permissions::*;
 pub use search::*;
 pub use unified_search::*;
 
@@ -42,8 +40,7 @@ mod tests {
 
     use crate::models::{GroupID, Permissions as P, PermissionsList as PL};
     use crate::tests::{TestScope, create_test_group, create_user_with_params};
-    use crate::traits::AuthzSubject;
-    use crate::traits::PermissionController;
+    use crate::traits::{AuthzSubject, PermissionController, UserPermissions};
 
     // user_idx, collections_idx, permissions, expected
     #[rstest]

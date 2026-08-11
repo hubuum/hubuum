@@ -14,9 +14,9 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::events::{list_events_with_total_count, parse_event_filters};
 use crate::traits::AuthzSubject;
+use crate::traits::scope_allows;
 
 #[utoipa::path(
     get,

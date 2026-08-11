@@ -16,7 +16,7 @@ use crate::pagination::count_query_options;
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::services::history::resolve_principal_names;
-use crate::storage::capabilities::authz::scope_allows;
+use crate::traits::scope_allows;
 use crate::traits::{AuthzSubject, CursorPaginated};
 
 /// A serialized history row plus the resolved username of its actor (if any).

@@ -39,10 +39,9 @@ use tracing::{debug, warn};
 use crate::api::etag::RevisionPrecondition;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::events::MutationProvenance;
-use crate::models::search::StatementTimeoutMs;
 use crate::observability::metrics::{self, ResultKind};
-use crate::storage::StorageContext;
 use crate::storage::context::postgres_pool;
+use crate::storage::{StorageContext, StorageQueryBudget};
 
 /// Bounded attribution for database pool checkouts and helper operations.
 ///
@@ -237,11 +236,11 @@ tokio::task_local! {
 tokio::task_local! {
     /// The per-query Postgres `statement_timeout` in effect for the current
     /// async task, if any. Set for the duration of a scope via
-    /// [`with_statement_timeout_scope`] and consulted by [`with_connection`] /
+    /// [`with_export_query_budget_scope`] and consulted by [`with_connection`] /
     /// [`with_transaction`] so that all DB work inside the scope is bounded
     /// without threading a timeout through every caller. Outside any scope the
     /// lookup yields `None`, so behavior is unchanged.
-    static AMBIENT_STATEMENT_TIMEOUT: Option<StatementTimeoutMs>;
+    static AMBIENT_STATEMENT_TIMEOUT: Option<StorageQueryBudget>;
 }
 
 tokio::task_local! {
@@ -281,8 +280,8 @@ where
 /// This is how the export execution path bounds its queries independently of
 /// the pool-global `db_statement_timeout_ms`, without threading the timeout
 /// through the search layer. A `statement_timeout` of `None` is a no-op scope.
-pub async fn with_statement_timeout_scope<F, R>(
-    statement_timeout: Option<StatementTimeoutMs>,
+pub(super) async fn with_export_query_budget_scope<F, R>(
+    statement_timeout: Option<StorageQueryBudget>,
     future: F,
 ) -> R
 where
@@ -294,9 +293,9 @@ where
 }
 
 /// The ambient per-query `statement_timeout` for the current task, or `None`
-/// when not running inside a [`with_statement_timeout_scope`] (including from
+/// when not running inside a [`with_export_query_budget_scope`] (including from
 /// synchronous, non-task contexts).
-fn ambient_statement_timeout() -> Option<StatementTimeoutMs> {
+fn ambient_statement_timeout() -> Option<StorageQueryBudget> {
     AMBIENT_STATEMENT_TIMEOUT
         .try_with(|timeout| *timeout)
         .unwrap_or(None)
@@ -462,7 +461,7 @@ async fn set_local_mutation_provenance(
 /// automatically at COMMIT/ROLLBACK and never leaks back to the shared pool.
 async fn set_local_statement_timeout(
     conn: &mut PostgresConnection,
-    statement_timeout: StatementTimeoutMs,
+    statement_timeout: StorageQueryBudget,
 ) -> Result<(), diesel::result::Error> {
     diesel::sql_query("SELECT set_config('statement_timeout', $1, true)")
         .bind::<diesel::sql_types::Text, _>(statement_timeout.as_millis().to_string())
@@ -472,7 +471,7 @@ async fn set_local_statement_timeout(
 }
 
 struct TransactionLocalContext {
-    statement_timeout: Option<StatementTimeoutMs>,
+    statement_timeout: Option<StorageQueryBudget>,
     provenance: Option<MutationProvenance>,
     revision_precondition: Option<RevisionPrecondition>,
 }
@@ -482,7 +481,7 @@ impl TransactionLocalContext {
         Self::with_statement_timeout(ambient_statement_timeout())
     }
 
-    fn with_statement_timeout(statement_timeout: Option<StatementTimeoutMs>) -> Self {
+    fn with_statement_timeout(statement_timeout: Option<StorageQueryBudget>) -> Self {
         Self {
             statement_timeout,
             provenance: ambient_mutation_provenance(),
@@ -521,7 +520,7 @@ impl TransactionLocalContext {
 /// In practice this means the closure can return either Diesel errors directly or higher-level
 /// domain errors that already map into `ApiError`.
 ///
-/// If a [`with_statement_timeout_scope`] is in effect on the current task, the
+/// If a [`with_export_query_budget_scope`] is in effect on the current task, the
 /// work is automatically bounded by that per-query `statement_timeout` (see
 /// [`with_connection_timeout`]). Otherwise no timeout is applied.
 ///
@@ -617,7 +616,7 @@ pub async fn updated_or_current<T, E>(
 /// pool-global `db_statement_timeout_ms`.
 ///
 /// Most callers should use [`with_connection`] and set the timeout ambiently via
-/// [`with_statement_timeout_scope`]; this explicit variant exists for callers
+/// [`with_export_query_budget_scope`]; this explicit variant exists for callers
 /// (and tests) that want to pass the timeout directly.
 ///
 /// Note: this intentionally wraps a (possibly read-only) closure in a
@@ -627,7 +626,7 @@ pub async fn updated_or_current<T, E>(
 /// this one helper rather than imposed on callers.
 pub async fn with_connection_timeout<C, F, R, E>(
     backend: &C,
-    statement_timeout: Option<StatementTimeoutMs>,
+    statement_timeout: Option<StorageQueryBudget>,
     f: F,
 ) -> Result<R, ApiError>
 where
@@ -658,7 +657,7 @@ where
 /// - read/modify/write sequences that must be atomic
 /// - permission mutations that must not leave partial state behind
 ///
-/// If a [`with_statement_timeout_scope`] is in effect on the current task, a
+/// If a [`with_export_query_budget_scope`] is in effect on the current task, a
 /// transaction-local `SET LOCAL statement_timeout` is applied at the start of
 /// the transaction so this work is bounded too.
 ///
@@ -946,9 +945,9 @@ mod tests {
 
     #[tokio::test]
     async fn statement_timeout_ms_new_treats_zero_as_disabled() {
-        assert_eq!(StatementTimeoutMs::new(0), None);
+        assert_eq!(StorageQueryBudget::from_millis(0), None);
         assert_eq!(
-            StatementTimeoutMs::new(50).map(StatementTimeoutMs::as_millis),
+            StorageQueryBudget::from_millis(50).map(StorageQueryBudget::as_millis),
             Some(50)
         );
     }
@@ -961,10 +960,11 @@ mod tests {
         let pool = init_postgres_pool_with_statement_timeout(&config.database_url, 1, 0);
 
         // A tiny explicit timeout cancels a query that sleeps past the budget.
-        let slow = with_connection_timeout(&pool, StatementTimeoutMs::new(50), async |conn| {
-            diesel::sql_query("SELECT pg_sleep(1)").execute(conn).await
-        })
-        .await;
+        let slow =
+            with_connection_timeout(&pool, StorageQueryBudget::from_millis(50), async |conn| {
+                diesel::sql_query("SELECT pg_sleep(1)").execute(conn).await
+            })
+            .await;
         assert!(
             slow.is_err(),
             "pg_sleep(1) should be cancelled by a 50ms per-query statement_timeout"
@@ -985,11 +985,11 @@ mod tests {
     async fn ambient_statement_timeout_scope_bounds_with_connection() {
         let config = get_config().expect("Failed to load config for test");
         // Pool-global timeout disabled; the only possible cancel is the ambient
-        // scope applied via `with_statement_timeout_scope`.
+        // scope applied via `with_export_query_budget_scope`.
         let pool = init_postgres_pool_with_statement_timeout(&config.database_url, 1, 0);
 
         // Inside the scope, a plain `with_connection` call is bounded.
-        let bounded = with_statement_timeout_scope(StatementTimeoutMs::new(50), async {
+        let bounded = with_export_query_budget_scope(StorageQueryBudget::from_millis(50), async {
             with_connection(&pool, async |conn| {
                 diesel::sql_query("SELECT pg_sleep(1)").execute(conn).await
             })

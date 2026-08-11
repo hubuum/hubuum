@@ -45,8 +45,6 @@ pub mod token_retention;
 pub mod user;
 mod visibility;
 
-pub use user::UserPermissions;
-
 use super::with_connection;
 use crate::bind_transitive_filter_params;
 use crate::errors::ApiError;
