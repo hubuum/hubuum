@@ -25,15 +25,17 @@ use crate::storage::{
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageBackupSnapshot, StorageClass, StorageClassComputationState, StorageClassGraphRow,
-    StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    RemoteTargetStorage, StorageBackend, StorageBackendDescriptor, StorageBackupOutput,
+    StorageBackupOutputSummary, StorageBackupSnapshot, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
     StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
     StorageComputedObject, StorageError, StorageExportOutput, StorageExportOutputSummary,
     StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
     StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
     StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskClaim,
     StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage,
@@ -1426,6 +1428,95 @@ impl UnifiedSearchStorage for StorageHandle {
                 }
             }
         })
+        .await
+    }
+}
+
+#[async_trait]
+impl RemoteTargetStorage for StorageHandle {
+    async fn get_remote_target(&self, target_id: i32) -> Result<StorageRemoteTarget, StorageError> {
+        observe_storage_call(self.backend_name(), "remote_targets", "get", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_remote_target(target_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_remote_targets(
+        &self,
+        query: StorageRemoteTargetListQuery,
+    ) -> Result<StorageRemoteTargetPage, StorageError> {
+        observe_storage_call(self.backend_name(), "remote_targets", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_remote_targets(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn create_remote_target(
+        &self,
+        request: StorageRemoteTargetCreate,
+    ) -> Result<StorageRemoteTarget, StorageError> {
+        observe_storage_call(self.backend_name(), "remote_targets", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.create_remote_target(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn update_remote_target(
+        &self,
+        request: StorageRemoteTargetUpdate,
+    ) -> Result<StorageRemoteTarget, StorageError> {
+        observe_storage_call(self.backend_name(), "remote_targets", "update", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.update_remote_target(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_remote_target(
+        &self,
+        request: StorageRemoteTargetDelete,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "remote_targets", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.delete_remote_target(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn record_remote_target_invocation(
+        &self,
+        request: StorageRemoteTargetInvocation,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "remote_targets",
+            "record_invocation",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.record_remote_target_invocation(request).await
+                    }
+                }
+            },
+        )
         .await
     }
 }

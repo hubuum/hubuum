@@ -242,6 +242,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "TokenRetentionStorage",
         "HistoryStorage",
         "UnifiedSearchStorage",
+        "RemoteTargetStorage",
         "TaskQueueStorage",
         "TaskExecutionStorage",
         "BackupSnapshotStorage",
@@ -302,6 +303,19 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         compact_context.contains("\"backup_snapshots\",\"snapshot\""),
         "backup snapshot creation must use the common storage observer"
     );
+    for operation in [
+        "get",
+        "list",
+        "create",
+        "update",
+        "delete",
+        "record_invocation",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"remote_targets\",\"{operation}\"")),
+            "remote-target operation {operation} must use the common storage observer"
+        );
+    }
     for operation in [
         "claim",
         "renew_lease",
@@ -389,6 +403,35 @@ fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
             assert!(
                 !source.contains(forbidden),
                 "{} still imports PostgreSQL task state helper {forbidden}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn remote_target_consumers_use_the_backend_neutral_application_service() {
+    let root = repository_root();
+    for file in [
+        "src/api/v1/handlers/remote_targets.rs",
+        "src/tasks/remote_call.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "storage::capabilities::remote_target",
+            "save_remote_target_record",
+            "update_remote_target_record",
+            "delete_remote_target_record",
+            "emit_remote_target_invoked_event",
+            ".instance(&context)",
+            ".instance(backend)",
+            "RemoteTarget::list_with_total_count",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} still uses PostgreSQL remote-target helper {forbidden}",
                 path.display()
             );
         }

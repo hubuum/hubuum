@@ -11,6 +11,7 @@ mod object_relations;
 mod objects;
 pub(crate) mod related_filter_authorization;
 pub(crate) mod relation_queries;
+pub(crate) mod remote_targets;
 mod storage_boundary;
 pub(crate) mod tasks;
 pub(crate) mod unified_search;

@@ -24,14 +24,11 @@ use crate::permissions::{AppContext, PrincipalRef};
 use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
 };
+use crate::services::remote_targets as remote_target_service;
 use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
 use crate::storage::StorageTaskScopeSnapshot;
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::remote_target::{
-    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-    emit_remote_target_invoked_event,
-};
 use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
@@ -78,11 +75,8 @@ pub async fn create_remote_target(
     .await?;
 
     let event_context = requestor.event_context(&req);
-    let created: RemoteTarget = target
-        .into_row()?
-        .save_remote_target_record(&context, Some(&event_context))
-        .await?
-        .try_into()?;
+    let created =
+        remote_target_service::create_remote_target(&context, target, event_context).await?;
     let location = api_locations::remote_target(created.id)?;
     ApiResponse::created_revisioned(created, location)
 }
@@ -137,7 +131,7 @@ pub async fn get_remote_targets(
         scope.retain_allowed_collection_ids(&mut allowed_collection_ids);
     }
     let (targets, total_count) =
-        RemoteTarget::list_with_total_count(&context, &allowed_collection_ids, &query_options)
+        remote_target_service::list_remote_targets(&context, allowed_collection_ids, query_options)
             .await?;
 
     ApiResponse::paginated(targets, total_count, &params)
@@ -163,7 +157,8 @@ pub async fn get_remote_target(
     target_id: web::Path<RemoteTargetID>,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
-    let target = target_id.into_inner().instance(&context).await?;
+    let target =
+        remote_target_service::get_remote_target(&context, target_id.into_inner().id()).await?;
     can!(
         &context,
         user,
@@ -207,7 +202,7 @@ pub async fn patch_remote_target(
         ));
     }
 
-    let existing = target_id.instance(&context).await?;
+    let existing = remote_target_service::get_remote_target(&context, target_id.id()).await?;
     can!(
         &context,
         user.clone(),
@@ -237,14 +232,18 @@ pub async fn patch_remote_target(
         .await?;
 
     let precondition = revision_precondition(&req, &existing)?;
-    let row = update.into_row(&existing)?;
     let event_context = requestor.event_context(&req);
     let updated: RemoteTarget = with_revision_precondition_scope(
         precondition,
-        row.update_remote_target_record(&context, existing.id, Some(&event_context)),
+        remote_target_service::update_remote_target(
+            &context,
+            existing.id,
+            update,
+            &existing,
+            event_context,
+        ),
     )
-    .await?
-    .try_into()?;
+    .await?;
     ApiResponse::ok_revisioned(updated)
 }
 
@@ -282,7 +281,7 @@ pub async fn delete_remote_target(
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
-    let existing = target_id.instance(&context).await?;
+    let existing = remote_target_service::get_remote_target(&context, target_id.id()).await?;
     can!(
         &context,
         user,
@@ -295,7 +294,7 @@ pub async fn delete_remote_target(
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,
-        target_id.delete_remote_target_record(&context, Some(&event_context)),
+        remote_target_service::delete_remote_target(&context, target_id.id(), event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
@@ -331,7 +330,7 @@ pub async fn invoke_remote_target(
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
-    let target = target_id.instance(&context).await?;
+    let target = remote_target_service::get_remote_target(&context, target_id.id()).await?;
     let resolved =
         authorize_remote_invocation(&context, user, requestor.scopes(), &target, &invoke.subject)
             .await?;
@@ -355,13 +354,13 @@ pub async fn invoke_remote_target(
     )
     .await?;
     let event_context = requestor.event_context(&req);
-    emit_remote_target_invoked_event(
+    remote_target_service::record_remote_target_invocation(
         &context,
-        &target,
-        &event_context,
+        target.id,
         task.id,
-        resolved.subject_type.as_str(),
+        resolved.subject_type,
         resolved.subject_id,
+        event_context,
     )
     .await?;
     kick_task_worker(context.clone());
@@ -445,29 +444,30 @@ pub async fn get_remote_target_history(
 
     let user = &requestor.principal;
     let remote_target_id = remote_target_id.into_inner();
-    let (entity_id, require_history) = match remote_target_id.instance(&context).await {
-        Ok(instance) => {
-            can!(
-                &context,
-                user,
-                requestor.scopes(),
-                [Permissions::ReadRemoteTarget],
-                CollectionID::new(instance.collection_id)?
-            );
-            (instance.id, false)
-        }
-        Err(ApiError::NotFound(_))
-            if can_read_deleted_history(
-                &context,
-                &requestor.principal,
-                requestor.scopes().is_some(),
-            )
-            .await? =>
-        {
-            (remote_target_id.id(), true)
-        }
-        Err(err) => return Err(err),
-    };
+    let (entity_id, require_history) =
+        match remote_target_service::get_remote_target(&context, remote_target_id.id()).await {
+            Ok(instance) => {
+                can!(
+                    &context,
+                    user,
+                    requestor.scopes(),
+                    [Permissions::ReadRemoteTarget],
+                    CollectionID::new(instance.collection_id)?
+                );
+                (instance.id, false)
+            }
+            Err(ApiError::NotFound(_))
+                if can_read_deleted_history(
+                    &context,
+                    &requestor.principal,
+                    requestor.scopes().is_some(),
+                )
+                .await? =>
+            {
+                (remote_target_id.id(), true)
+            }
+            Err(err) => return Err(err),
+        };
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<RemoteTargetHistory>(&params)?;
@@ -563,29 +563,30 @@ pub async fn get_remote_target_as_of(
 
     let user = &requestor.principal;
     let remote_target_id = remote_target_id.into_inner();
-    let (entity_id, deleted) = match remote_target_id.instance(&context).await {
-        Ok(instance) => {
-            can!(
-                &context,
-                user,
-                requestor.scopes(),
-                [Permissions::ReadRemoteTarget],
-                CollectionID::new(instance.collection_id)?
-            );
-            (instance.id, false)
-        }
-        Err(ApiError::NotFound(_))
-            if can_read_deleted_history(
-                &context,
-                &requestor.principal,
-                requestor.scopes().is_some(),
-            )
-            .await? =>
-        {
-            (remote_target_id.id(), true)
-        }
-        Err(err) => return Err(err),
-    };
+    let (entity_id, deleted) =
+        match remote_target_service::get_remote_target(&context, remote_target_id.id()).await {
+            Ok(instance) => {
+                can!(
+                    &context,
+                    user,
+                    requestor.scopes(),
+                    [Permissions::ReadRemoteTarget],
+                    CollectionID::new(instance.collection_id)?
+                );
+                (instance.id, false)
+            }
+            Err(ApiError::NotFound(_))
+                if can_read_deleted_history(
+                    &context,
+                    &requestor.principal,
+                    requestor.scopes().is_some(),
+                )
+                .await? =>
+            {
+                (remote_target_id.id(), true)
+            }
+            Err(err) => return Err(err),
+        };
 
     let at = parse_as_of(req.query_string())?;
     let row = remote_target_as_of(entity_id, at, &context)

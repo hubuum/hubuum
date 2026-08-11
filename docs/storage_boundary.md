@@ -70,10 +70,11 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
+| Remote targets | Point and list reads, atomic audited lifecycle mutations, redacted transport policy, and invocation provenance |
 | Task queue | Idempotent task submission, access facts, task/event/result paging, and retained export and backup output reads |
 | Task execution | Opaque claims, lease renewal and recovery, claim-checked events and state changes, atomic terminal artifacts, failure accounting, and output retention |
 | Backup snapshots | Canonical state and optional history sections read from one consistent backend snapshot |
-| Workflows | Remaining import, restore, export-hydration, and remote-target operations with backend-owned atomic entity mutations |
+| Workflows | Remaining import, restore, and export-hydration operations with backend-owned atomic mutations |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
 
 The families are not feature flags and the admin configuration does not report
@@ -92,9 +93,10 @@ now been replaced by the real `AuthenticationStorage`,
 contracts. `TaskQueueStorage` replaces task submission and reads, while
 `TaskExecutionStorage` owns the complete worker claim and state machine.
 `BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
-execution is part of `ComputedFieldLifecycleStorage`. Remaining import,
-restore, export-hydration, and remote-target workflow operations stay behind
-the workflow gate until their complete contracts and compatibility tests land.
+execution is part of `ComputedFieldLifecycleStorage`. `RemoteTargetStorage`
+owns target reads, lifecycle mutations, and invocation provenance. Remaining
+import, restore, and export-hydration workflow operations stay behind the
+workflow gate until their complete contracts and compatibility tests land.
 No family is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -223,6 +225,16 @@ the application service alone reconstructs API/domain models. Each entry point
 is observed with a bounded `unified_search/{collections,classes,objects}` label,
 and the available-backend compatibility test exercises every operation with
 real matching rows.
+
+`RemoteTargetStorage` owns remote-target point and list reads, atomic audited
+create/update/delete behavior, and invocation provenance. Transport templates,
+authentication configuration, and subject policy cross the boundary only in
+private-field, redacted-debug storage DTOs; Diesel rows stay in the PostgreSQL
+adapter. The application service performs public-model validation and converts
+between API/domain models and storage DTOs. Handlers and remote-call workers do
+not import adapter operations or recover a pool. Every entry point is observed
+under bounded `remote_targets/*` labels, and the available-backend compatibility
+test exercises all six operations.
 
 `CatalogStorage` owns the ordinary collection, class, and object query surface.
 Each operation applies backend-neutral filters, stable cursor state, local
@@ -441,9 +453,9 @@ The first workspace boundaries are now in place:
   DTOs, operational snapshot DTOs, and the extracted authentication,
   authorization, catalog-query, temporal-history, unified-search, operational
   state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
-  task-execution, backup-snapshot, relation-query, event-health, event-fan-out,
-  event-retention, and token-retention traits without application, transport,
-  or driver dependencies.
+  task-execution, backup-snapshot, remote-target, relation-query, event-health,
+  event-fan-out, event-retention, and token-retention traits without application,
+  transport, or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
