@@ -46,7 +46,7 @@ impl ObjectRelationService {
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         self.storage
             .inner()
-            .create_object_relation(prepared, context)
+            .create_object_relation(prepared, Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -58,7 +58,7 @@ impl ObjectRelationService {
     ) -> Result<(), ApiError> {
         self.storage
             .inner()
-            .delete_object_relation(target, context)
+            .delete_object_relation(target, Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -386,6 +386,54 @@ mod tests {
         assert_eq!(resolved.relation().revision, ResourceRevision::INITIAL);
         assert_eq!(resolved.from_object(), prepared.from_object());
         assert_eq!(resolved.to_object(), prepared.to_object());
+        harness.finish().await;
+    }
+
+    #[rstest]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
+    #[actix_web::test]
+    async fn object_relation_contract_supports_event_suppressed_compatibility_writes(
+        #[case] backend: ContractImplementation,
+    ) {
+        let harness = ContractHarness::new(backend, "event_suppressed").await;
+        let fixture = harness.fixture("event_suppressed").await;
+        let lifecycle = &harness.services.object_relations().storage;
+        let created = lifecycle
+            .inner()
+            .create_object_relation_from_command(
+                NewHubuumObjectRelation {
+                    from_hubuum_object_id: fixture.from_object.id,
+                    to_hubuum_object_id: fixture.to_object.id,
+                    class_relation_id: fixture.class_relation.relation().id,
+                },
+                None,
+            )
+            .await
+            .expect("event-suppressed relation should create");
+        let relation_id =
+            HubuumObjectRelationID::new(created.id).expect("valid object relation id");
+        lifecycle
+            .inner()
+            .resolve_object_relation(ObjectRelationSelector::by_id(relation_id))
+            .await
+            .expect("event-suppressed relation should resolve");
+        lifecycle
+            .inner()
+            .delete_object_relation_by_id(relation_id, None)
+            .await
+            .expect("event-suppressed relation should delete");
+
+        assert!(
+            lifecycle
+                .inner()
+                .resolve_object_relation(ObjectRelationSelector::by_id(relation_id))
+                .await
+                .is_err()
+        );
+        if let Some(storage) = harness.storage.as_ref() {
+            assert!(storage.object_relation_events().await.is_empty());
+        }
         harness.finish().await;
     }
 

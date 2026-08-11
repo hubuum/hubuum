@@ -16,6 +16,10 @@ use crate::models::{
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
+use crate::storage::postgres::operations::relation_rows::{
+    HubuumClassRelationRow, HubuumClassRelationTransitiveRow, HubuumObjectRelationRow,
+    HubuumObjectTransitiveLinkRow, NewHubuumClassRelationRow, NewHubuumObjectRelationRow,
+};
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::{
     apply_query_options, bind_transitive_filter_params, date_search, numeric_search,
@@ -25,6 +29,12 @@ use crate::{
 use crate::traits::{GroupAccessors, SelfAccessors};
 
 use super::{ObjectRelationsFromUser, Relations, SelfRelations};
+
+fn class_relations_from_rows(
+    rows: Vec<HubuumClassRelationRow>,
+) -> Result<Vec<HubuumClassRelation>, ApiError> {
+    rows.into_iter().map(TryInto::try_into).collect()
+}
 
 fn class_relation_snapshot(relation: &HubuumClassRelation) -> serde_json::Value {
     serde_json::json!({
@@ -243,8 +253,8 @@ where
         use diesel::sql_query;
         use diesel::sql_types::Integer;
 
-        with_connection(pool, async |conn| {
-            diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitive>(
+        let rows = with_connection(pool, async |conn| {
+            diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitiveRow>(
                 sql_query(
                     "SELECT ancestor_class_id, descendant_class_id, depth, path
                      FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
@@ -257,7 +267,8 @@ where
             )
             .await
         })
-        .await
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn relations_from_backend(
@@ -266,14 +277,15 @@ where
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::*;
 
-        with_connection(pool, async |conn| {
+        let rows = with_connection(pool, async |conn| {
             hubuumclass_relation
                 .or_filter(from_hubuum_class_id.eq(self.id()))
                 .or_filter(to_hubuum_class_id.eq(self.id()))
-                .load::<HubuumClassRelation>(conn)
+                .load::<HubuumClassRelationRow>(conn)
                 .await
         })
-        .await
+        .await?;
+        class_relations_from_rows(rows)
     }
 
     async fn search_relations_from_backend(
@@ -315,18 +327,19 @@ where
             }
         }
 
-        apply_query_options!(base_query, query_options, HubuumClassRelation);
+        apply_query_options!(base_query, query_options, HubuumClassRelationRow);
 
         trace_query!(base_query, "Searching relations");
 
-        with_connection(pool, async |conn| {
+        let rows = with_connection(pool, async |conn| {
             base_query
                 .select(hubuumclass_relation::all_columns())
                 .distinct()
-                .load::<HubuumClassRelation>(conn)
+                .load::<HubuumClassRelationRow>(conn)
                 .await
         })
-        .await
+        .await?;
+        class_relations_from_rows(rows)
     }
 }
 
@@ -407,8 +420,8 @@ where
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
-    with_connection(pool, async |conn| {
-        diesel_async::RunQueryDsl::first::<HubuumClassRelation>(
+    let row = with_connection(pool, async |conn| {
+        diesel_async::RunQueryDsl::first::<HubuumClassRelationRow>(
             hubuumclass_relation
                 .filter(from_hubuum_class_id.eq(from))
                 .filter(to_hubuum_class_id.eq(to)),
@@ -416,7 +429,8 @@ where
         )
         .await
     })
-    .await
+    .await?;
+    row.try_into()
 }
 
 async fn fetch_relations<C1, C2>(
@@ -434,8 +448,8 @@ where
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
-    with_connection(pool, async |conn| {
-        diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitive>(
+    let rows = with_connection(pool, async |conn| {
+        diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitiveRow>(
             sql_query(
                 "SELECT ancestor_class_id, descendant_class_id, depth, path
                  FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
@@ -450,7 +464,8 @@ where
         )
         .await
     })
-    .await
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
 }
 
 async fn fetch_relations_paginated<C1, C2>(
@@ -471,7 +486,7 @@ where
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
     let filter = parse_transitive_filter_params(query_options)?;
-    let sorts = normalized_sorts::<HubuumClassRelationTransitive>(&query_options.sort)?;
+    let sorts = normalized_sorts::<HubuumClassRelationTransitiveRow>(&query_options.sort)?;
     let mut raw_sql = String::from(
         "SELECT ancestor_class_id, descendant_class_id, depth, path
          FROM get_bidirectionally_related_classes(
@@ -480,16 +495,17 @@ where
          WHERE ancestor_class_id = $9 AND descendant_class_id = $10",
     );
 
-    if let Some(cursor_sql) =
-        cursor_filter_sql::<HubuumClassRelationTransitive>(&sorts, query_options.cursor.as_deref())?
-    {
+    if let Some(cursor_sql) = cursor_filter_sql::<HubuumClassRelationTransitiveRow>(
+        &sorts,
+        query_options.cursor.as_deref(),
+    )? {
         raw_sql.push_str("\n  AND ");
         raw_sql.push_str(&cursor_sql);
     }
 
     let order_by = sorts
         .iter()
-        .map(order_sql_clause::<HubuumClassRelationTransitive>)
+        .map(order_sql_clause::<HubuumClassRelationTransitiveRow>)
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     raw_sql.push_str(&format!("\nORDER BY {order_by}"));
@@ -498,7 +514,7 @@ where
         raw_sql.push_str(&format!("\nLIMIT {limit}"));
     }
 
-    with_connection(pool, async |conn| {
+    let rows = with_connection(pool, async |conn| {
         let query = bind_transitive_filter_params!(
             sql_query(raw_sql.clone())
                 .bind::<Integer, _>(from)
@@ -506,13 +522,14 @@ where
             filter
         );
 
-        diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitive>(
+        diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitiveRow>(
             query.bind::<Integer, _>(from).bind::<Integer, _>(to),
             conn,
         )
         .await
     })
-    .await
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
 }
 
 impl<U> ObjectRelationsFromUser for U
@@ -538,8 +555,8 @@ where
         // object endpoints go through the scope-aware `objects_related_to_page`),
         // so this runs with full principal authority.
         let collections = user_can_on_any(pool, self, Permissions::ReadObject, None).await?;
-        with_connection(pool, async |conn| {
-            diesel_async::RunQueryDsl::load::<HubuumObjectTransitiveLink>(
+        let rows = with_connection(pool, async |conn| {
+            diesel_async::RunQueryDsl::load::<HubuumObjectTransitiveLinkRow>(
                 sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
                     .bind::<Integer, _>(source_object.id())
                     .bind::<Integer, _>(target_class.id())
@@ -551,7 +568,8 @@ where
             )
             .await
         })
-        .await
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 }
 
@@ -642,10 +660,11 @@ where
                         .or(class_rel::to_hubuum_class_id.eq(class.id())),
                 )
                 .select(obj_rel::hubuumobject_relation::all_columns())
-                .first::<HubuumObjectRelation>(conn)
+                .first::<HubuumObjectRelationRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
     }
 
     async fn related_objects_from_backend<C>(
@@ -739,13 +758,14 @@ impl LoadClassRelationRecord for HubuumClassRelationID {
     ) -> Result<HubuumClassRelation, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
-        with_connection(pool, async |conn| {
+        let row = with_connection(pool, async |conn| {
             hubuumclass_relation
                 .filter(id.eq(self.id()))
-                .first::<HubuumClassRelation>(conn)
+                .first::<HubuumClassRelationRow>(conn)
                 .await
         })
-        .await
+        .await?;
+        row.try_into()
     }
 }
 
@@ -811,10 +831,11 @@ async fn load_resolved_class_relation_target_on_connection(
 ) -> Result<ResolvedClassRelationTarget, ApiError> {
     use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
-    let relation = hubuumclass_relation
+    let relation: HubuumClassRelation = hubuumclass_relation
         .filter(id.eq(relation_id))
-        .first::<HubuumClassRelation>(conn)
-        .await?;
+        .first::<HubuumClassRelationRow>(conn)
+        .await?
+        .try_into()?;
     let (from_class, to_class) = load_class_relation_endpoint_records(
         conn,
         relation.from_hubuum_class_id,
@@ -881,11 +902,12 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let relation = hubuumclass_relation
+            let relation: HubuumClassRelation = hubuumclass_relation
                 .filter(id.eq(self.id))
                 .for_update()
-                .first::<HubuumClassRelation>(conn)
-                .await?;
+                .first::<HubuumClassRelationRow>(conn)
+                .await?
+                .try_into()?;
             let from_class = hubuumclass
                 .filter(class_id.eq(relation.from_hubuum_class_id))
                 .first::<HubuumClass>(conn)
@@ -947,11 +969,12 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let relation = hubuumclass_relation
+            let relation: HubuumClassRelation = hubuumclass_relation
                 .filter(id.eq(self.id()))
                 .for_update()
-                .first::<HubuumClassRelation>(conn)
-                .await?;
+                .first::<HubuumClassRelationRow>(conn)
+                .await?
+                .try_into()?;
             let from_class = hubuumclass
                 .filter(class_id.eq(relation.from_hubuum_class_id))
                 .first::<HubuumClass>(conn)
@@ -1009,13 +1032,14 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
 
         let normalized = self.clone().normalized()?;
 
-        with_connection(pool, async |conn| {
+        let row = with_connection(pool, async |conn| {
             diesel::insert_into(hubuumclass_relation)
-                .values(&normalized)
-                .get_result(conn)
+                .values(NewHubuumClassRelationRow::from(&normalized))
+                .get_result::<HubuumClassRelationRow>(conn)
                 .await
         })
-        .await
+        .await?;
+        row.try_into()
     }
 
     async fn save_class_relation_record(
@@ -1035,10 +1059,11 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
         with_transaction(
             pool,
             async |conn| -> Result<HubuumClassRelation, ApiError> {
-                let relation = diesel::insert_into(hubuumclass_relation)
-                    .values(&normalized)
-                    .get_result::<HubuumClassRelation>(conn)
-                    .await?;
+                let relation: HubuumClassRelation = diesel::insert_into(hubuumclass_relation)
+                    .values(NewHubuumClassRelationRow::from(&normalized))
+                    .get_result::<HubuumClassRelationRow>(conn)
+                    .await?
+                    .try_into()?;
                 let from_class = hubuumclass
                     .filter(id.eq(relation.from_hubuum_class_id))
                     .first::<HubuumClass>(conn)
@@ -1072,7 +1097,7 @@ pub(crate) trait CreatePreparedClassRelationRecord {
     async fn create_prepared_class_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError>;
 }
 
@@ -1080,7 +1105,7 @@ impl CreatePreparedClassRelationRecord for PreparedClassRelation {
     async fn create_prepared_class_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
@@ -1104,24 +1129,27 @@ impl CreatePreparedClassRelationRecord for PreparedClassRelation {
                     ));
                 }
 
-                let relation = diesel::insert_into(hubuumclass_relation)
-                    .values(self.command())
-                    .get_result::<HubuumClassRelation>(conn)
-                    .await?;
-                let event = NewEvent::new(
-                    EntityType::ClassRelation,
-                    Action::Created,
-                    context.actor_kind(),
-                    format!(
-                        "Class relation {} -> {} created",
-                        relation.from_hubuum_class_id, relation.to_hubuum_class_id
-                    ),
-                )?
-                .with_context(context)
-                .with_entity_id(relation.id)
-                .with_after(class_relation_snapshot(&relation))
-                .with_metadata(class_relation_metadata(&from_class, &to_class));
-                emit_event(conn, &event).await?;
+                let relation: HubuumClassRelation = diesel::insert_into(hubuumclass_relation)
+                    .values(NewHubuumClassRelationRow::from(self.command()))
+                    .get_result::<HubuumClassRelationRow>(conn)
+                    .await?
+                    .try_into()?;
+                if let Some(context) = context {
+                    let event = NewEvent::new(
+                        EntityType::ClassRelation,
+                        Action::Created,
+                        context.actor_kind(),
+                        format!(
+                            "Class relation {} -> {} created",
+                            relation.from_hubuum_class_id, relation.to_hubuum_class_id
+                        ),
+                    )?
+                    .with_context(context)
+                    .with_entity_id(relation.id)
+                    .with_after(class_relation_snapshot(&relation))
+                    .with_metadata(class_relation_metadata(&from_class, &to_class));
+                    emit_event(conn, &event).await?;
+                }
                 Ok(relation)
             },
         )
@@ -1133,7 +1161,7 @@ pub(crate) trait DeleteResolvedClassRelationRecord {
     async fn delete_resolved_class_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), ApiError>;
 }
 
@@ -1141,17 +1169,18 @@ impl DeleteResolvedClassRelationRecord for ResolvedClassRelationTarget {
     async fn delete_resolved_class_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let relation = hubuumclass_relation
+            let relation: HubuumClassRelation = hubuumclass_relation
                 .filter(id.eq(self.relation().id))
                 .for_update()
-                .first::<HubuumClassRelation>(conn)
-                .await?;
+                .first::<HubuumClassRelationRow>(conn)
+                .await?
+                .try_into()?;
             let from_class = hubuumclass
                 .filter(class_id.eq(relation.from_hubuum_class_id))
                 .for_update()
@@ -1174,20 +1203,22 @@ impl DeleteResolvedClassRelationRecord for ResolvedClassRelationTarget {
             diesel::delete(hubuumclass_relation.filter(id.eq(relation.id)))
                 .execute(conn)
                 .await?;
-            let event = NewEvent::new(
-                EntityType::ClassRelation,
-                Action::Deleted,
-                context.actor_kind(),
-                format!(
-                    "Class relation {} -> {} deleted",
-                    relation.from_hubuum_class_id, relation.to_hubuum_class_id
-                ),
-            )?
-            .with_context(context)
-            .with_entity_id(relation.id)
-            .with_before(class_relation_snapshot(&relation))
-            .with_metadata(class_relation_metadata(&from_class, &to_class));
-            emit_event(conn, &event).await?;
+            if let Some(context) = context {
+                let event = NewEvent::new(
+                    EntityType::ClassRelation,
+                    Action::Deleted,
+                    context.actor_kind(),
+                    format!(
+                        "Class relation {} -> {} deleted",
+                        relation.from_hubuum_class_id, relation.to_hubuum_class_id
+                    ),
+                )?
+                .with_context(context)
+                .with_entity_id(relation.id)
+                .with_before(class_relation_snapshot(&relation))
+                .with_metadata(class_relation_metadata(&from_class, &to_class));
+                emit_event(conn, &event).await?;
+            }
             Ok(())
         })
         .await
@@ -1231,7 +1262,7 @@ async fn load_direct_class_relation_target_on_connection(
     let relation = hubuumclass_relation
         .filter(from_hubuum_class_id.eq(lower_class_id))
         .filter(to_hubuum_class_id.eq(higher_class_id))
-        .first::<HubuumClassRelation>(conn)
+        .first::<HubuumClassRelationRow>(conn)
         .await
         .map_err(|error| match error {
             diesel::result::Error::NotFound => ApiError::NotFound(format!(
@@ -1239,6 +1270,7 @@ async fn load_direct_class_relation_target_on_connection(
             )),
             error => ApiError::from(error),
         })?;
+    let relation: HubuumClassRelation = relation.try_into()?;
     let (from_class, to_class) = load_class_relation_endpoint_records(
         conn,
         relation.from_hubuum_class_id,
@@ -1350,10 +1382,11 @@ impl ResolveObjectRelationTargetRecord for ObjectRelationSelector {
         with_connection(pool, async |conn| {
             let (relation, from_object, to_object) = match self.kind() {
                 ObjectRelationSelectorKind::ById(relation_id) => {
-                    let relation = hubuumobject_relation
+                    let relation: HubuumObjectRelation = hubuumobject_relation
                         .filter(id.eq(relation_id.id()))
-                        .first::<HubuumObjectRelation>(conn)
-                        .await?;
+                        .first::<HubuumObjectRelationRow>(conn)
+                        .await?
+                        .into();
                     let (from_object, to_object) = load_object_relation_endpoint_records(
                         conn,
                         relation.from_hubuum_object_id,
@@ -1379,11 +1412,12 @@ impl ResolveObjectRelationTargetRecord for ObjectRelationSelector {
                     }
                     let lower_object_id = from.object_id().id().min(to.object_id().id());
                     let higher_object_id = from.object_id().id().max(to.object_id().id());
-                    let relation = hubuumobject_relation
+                    let relation: HubuumObjectRelation = hubuumobject_relation
                         .filter(from_hubuum_object_id.eq(lower_object_id))
                         .filter(to_hubuum_object_id.eq(higher_object_id))
-                        .first::<HubuumObjectRelation>(conn)
-                        .await?;
+                        .first::<HubuumObjectRelationRow>(conn)
+                        .await?
+                        .into();
                     let command = NewHubuumObjectRelation {
                         from_hubuum_object_id: relation.from_hubuum_object_id,
                         to_hubuum_object_id: relation.to_hubuum_object_id,
@@ -1416,7 +1450,7 @@ pub(crate) trait CreatePreparedObjectRelationRecord {
     async fn create_prepared_object_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError>;
 }
 
@@ -1424,7 +1458,7 @@ impl CreatePreparedObjectRelationRecord for PreparedObjectRelation {
     async fn create_prepared_object_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{
             hubuumclass_relation, id as class_relation_id,
@@ -1447,39 +1481,43 @@ impl CreatePreparedObjectRelationRecord for PreparedObjectRelation {
                         "Object relation endpoints no longer match the prepared target".to_string(),
                     ));
                 }
-                let class_relation = hubuumclass_relation
+                let class_relation: HubuumClassRelation = hubuumclass_relation
                     .filter(class_relation_id.eq(self.command().class_relation_id))
                     .for_share()
-                    .first::<HubuumClassRelation>(conn)
-                    .await?;
+                    .first::<HubuumClassRelationRow>(conn)
+                    .await?
+                    .try_into()?;
                 if &class_relation != self.class_relation().relation() {
                     return Err(ApiError::NotFound(
                         "Class relation no longer matches the prepared object relation".to_string(),
                     ));
                 }
 
-                let relation = diesel::insert_into(hubuumobject_relation)
-                    .values(self.command())
-                    .get_result::<HubuumObjectRelation>(conn)
-                    .await?;
-                let event = NewEvent::new(
-                    EntityType::ObjectRelation,
-                    Action::Created,
-                    context.actor_kind(),
-                    format!(
-                        "Object relation {} -> {} created",
-                        relation.from_hubuum_object_id, relation.to_hubuum_object_id
-                    ),
-                )?
-                .with_context(context)
-                .with_entity_id(relation.id)
-                .with_after(object_relation_snapshot(&relation))
-                .with_metadata(object_relation_metadata(
-                    &relation,
-                    &from_object,
-                    &to_object,
-                ));
-                emit_event(conn, &event).await?;
+                let relation: HubuumObjectRelation = diesel::insert_into(hubuumobject_relation)
+                    .values(NewHubuumObjectRelationRow::from(self.command()))
+                    .get_result::<HubuumObjectRelationRow>(conn)
+                    .await?
+                    .into();
+                if let Some(context) = context {
+                    let event = NewEvent::new(
+                        EntityType::ObjectRelation,
+                        Action::Created,
+                        context.actor_kind(),
+                        format!(
+                            "Object relation {} -> {} created",
+                            relation.from_hubuum_object_id, relation.to_hubuum_object_id
+                        ),
+                    )?
+                    .with_context(context)
+                    .with_entity_id(relation.id)
+                    .with_after(object_relation_snapshot(&relation))
+                    .with_metadata(object_relation_metadata(
+                        &relation,
+                        &from_object,
+                        &to_object,
+                    ));
+                    emit_event(conn, &event).await?;
+                }
                 Ok(relation)
             },
         )
@@ -1491,7 +1529,7 @@ pub(crate) trait DeleteResolvedObjectRelationRecord {
     async fn delete_resolved_object_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), ApiError>;
 }
 
@@ -1499,16 +1537,17 @@ impl DeleteResolvedObjectRelationRecord for ResolvedObjectRelationTarget {
     async fn delete_resolved_object_relation_record(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let relation = hubuumobject_relation
+            let relation: HubuumObjectRelation = hubuumobject_relation
                 .filter(id.eq(self.relation().id))
                 .for_update()
-                .first::<HubuumObjectRelation>(conn)
-                .await?;
+                .first::<HubuumObjectRelationRow>(conn)
+                .await?
+                .into();
             let (from_object, to_object) = load_object_relation_endpoint_records(
                 conn,
                 relation.from_hubuum_object_id,
@@ -1527,24 +1566,26 @@ impl DeleteResolvedObjectRelationRecord for ResolvedObjectRelationTarget {
             diesel::delete(hubuumobject_relation.filter(id.eq(relation.id)))
                 .execute(conn)
                 .await?;
-            let event = NewEvent::new(
-                EntityType::ObjectRelation,
-                Action::Deleted,
-                context.actor_kind(),
-                format!(
-                    "Object relation {} -> {} deleted",
-                    relation.from_hubuum_object_id, relation.to_hubuum_object_id
-                ),
-            )?
-            .with_context(context)
-            .with_entity_id(relation.id)
-            .with_before(object_relation_snapshot(&relation))
-            .with_metadata(object_relation_metadata(
-                &relation,
-                &from_object,
-                &to_object,
-            ));
-            emit_event(conn, &event).await?;
+            if let Some(context) = context {
+                let event = NewEvent::new(
+                    EntityType::ObjectRelation,
+                    Action::Deleted,
+                    context.actor_kind(),
+                    format!(
+                        "Object relation {} -> {} deleted",
+                        relation.from_hubuum_object_id, relation.to_hubuum_object_id
+                    ),
+                )?
+                .with_context(context)
+                .with_entity_id(relation.id)
+                .with_before(object_relation_snapshot(&relation))
+                .with_metadata(object_relation_metadata(
+                    &relation,
+                    &from_object,
+                    &to_object,
+                ));
+                emit_event(conn, &event).await?;
+            }
             Ok(())
         })
         .await
@@ -1568,10 +1609,11 @@ impl LoadObjectRelationRecord for HubuumObjectRelationID {
         with_connection(pool, async |conn| {
             hubuumobject_relation
                 .filter(id.eq(self.id()))
-                .first::<HubuumObjectRelation>(conn)
+                .first::<HubuumObjectRelationRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
     }
 }
 
@@ -1623,11 +1665,12 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let relation = hubuumobject_relation
+            let relation: HubuumObjectRelation = hubuumobject_relation
                 .filter(id.eq(self.id))
                 .for_update()
-                .first::<HubuumObjectRelation>(conn)
-                .await?;
+                .first::<HubuumObjectRelationRow>(conn)
+                .await?
+                .into();
             let from_object = hubuumobject
                 .filter(object_id.eq(relation.from_hubuum_object_id))
                 .first::<HubuumObjectRow>(conn)
@@ -1696,11 +1739,12 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let relation = hubuumobject_relation
+            let relation: HubuumObjectRelation = hubuumobject_relation
                 .filter(id.eq(self.id()))
                 .for_update()
-                .first::<HubuumObjectRelation>(conn)
-                .await?;
+                .first::<HubuumObjectRelationRow>(conn)
+                .await?
+                .into();
             let from_object = hubuumobject
                 .filter(object_id.eq(relation.from_hubuum_object_id))
                 .first::<HubuumObjectRow>(conn)
@@ -1800,11 +1844,12 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
 
         with_connection(pool, async |conn| {
             diesel::insert_into(hubuumobject_relation)
-                .values(self)
-                .get_result(conn)
+                .values(NewHubuumObjectRelationRow::from(self))
+                .get_result::<HubuumObjectRelationRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
     }
 
     async fn save_object_relation_record(
@@ -1858,10 +1903,11 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
         with_transaction(
             pool,
             async |conn| -> Result<HubuumObjectRelation, ApiError> {
-                let relation = diesel::insert_into(hubuumobject_relation)
-                    .values(self)
-                    .get_result::<HubuumObjectRelation>(conn)
-                    .await?;
+                let relation: HubuumObjectRelation = diesel::insert_into(hubuumobject_relation)
+                    .values(NewHubuumObjectRelationRow::from(self))
+                    .get_result::<HubuumObjectRelationRow>(conn)
+                    .await?
+                    .into();
                 let event = NewEvent::new(
                     EntityType::ObjectRelation,
                     Action::Created,

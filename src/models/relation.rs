@@ -1,11 +1,4 @@
-use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
-use diesel::deserialize::{self, FromSql, FromSqlRow};
-use diesel::expression::AsExpression;
-use diesel::pg::{Pg, PgValue};
-use diesel::serialize::{self, Output, ToSql};
-use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
-
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa::openapi::schema::{Schema, Type};
@@ -19,7 +12,6 @@ use crate::models::{
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
 use crate::utilities::aliases::normalize_template_alias;
-use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 crate::int_id_newtype! {
     /// Identifier wrapper for a [`HubuumClassRelation`].
@@ -29,8 +21,7 @@ crate::int_id_newtype! {
 
 /// Maximum number of object relations allowed for one object on one side of a
 /// class relation.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, AsExpression, FromSqlRow)]
-#[diesel(sql_type = Integer)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct ObjectRelationLimit(i32);
 
 impl ObjectRelationLimit {
@@ -60,19 +51,6 @@ impl<'de> Deserialize<'de> for ObjectRelationLimit {
     }
 }
 
-impl FromSql<Integer, Pg> for ObjectRelationLimit {
-    fn from_sql(value: PgValue<'_>) -> deserialize::Result<Self> {
-        let value = i32::from_sql(value)?;
-        Self::new(value).map_err(|error| error.to_string().into())
-    }
-}
-
-impl ToSql<Integer, Pg> for ObjectRelationLimit {
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
-        <i32 as ToSql<Integer, Pg>>::to_sql(&self.0, out)
-    }
-}
-
 impl utoipa::PartialSchema for ObjectRelationLimit {
     fn schema() -> RefOr<Schema> {
         ObjectBuilder::new()
@@ -88,8 +66,7 @@ impl utoipa::PartialSchema for ObjectRelationLimit {
 
 impl ToSchema for ObjectRelationLimit {}
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, PartialEq, Eq, ToSchema)]
-#[diesel(table_name = hubuumclass_relation)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumClassRelation {
     pub id: i32,
     pub from_hubuum_class_id: i32,
@@ -107,9 +84,8 @@ pub struct HubuumClassRelation {
     pub revision: ResourceRevision,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_class_relation_example)]
-#[diesel(table_name = hubuumclass_relation)]
 pub struct NewHubuumClassRelation {
     pub from_hubuum_class_id: i32,
     pub to_hubuum_class_id: i32,
@@ -317,8 +293,7 @@ crate::int_id_newtype! {
     noun = "object relation id";
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq, ToSchema)]
-#[diesel(table_name = hubuumobject_relation)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, ToSchema)]
 pub struct HubuumObjectRelation {
     pub id: i32,
     pub from_hubuum_object_id: i32,
@@ -329,9 +304,8 @@ pub struct HubuumObjectRelation {
     pub revision: ResourceRevision,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_object_relation_example)]
-#[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelation {
     pub from_hubuum_object_id: i32,
     pub to_hubuum_object_id: i32,
@@ -605,77 +579,59 @@ impl ResolvedObjectRelationTarget {
 /// To create new relations between objects from within a
 /// path where we already provide the class and object IDs
 /// we only need the destination object ID.
-#[derive(Debug, Serialize, Deserialize, Insertable, Clone, ToSchema)]
-#[diesel(table_name = hubuumobject_relation)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct NewHubuumObjectRelationFromClassAndObject {
     pub to_hubuum_object_id: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, QueryableByName, Clone, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumClassRelationTransitive {
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Nullable<Integer>>)]
     pub path: Vec<Option<i32>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, QueryableByName, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HubuumObjectTransitiveLink {
-    #[diesel(sql_type = Integer)]
     target_object_id: i32,
-    #[diesel(sql_type = Array<Integer>)]
     path: Vec<i32>,
 }
 
-#[derive(Debug, Queryable, QueryableByName, Serialize, Deserialize, Clone)]
+impl HubuumObjectTransitiveLink {
+    pub(crate) fn new(target_object_id: i32, path: Vec<i32>) -> Self {
+        Self {
+            target_object_id,
+            path,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClassGraphRow {
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub ancestor_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Nullable<Jsonb>)]
     pub ancestor_json_schema: Option<serde_json::Value>,
-    #[diesel(sql_type = Nullable<Jsonb>)]
     pub descendant_json_schema: Option<serde_json::Value>,
-    #[diesel(sql_type = Bool)]
     pub ancestor_validate_schema: bool,
-    #[diesel(sql_type = Bool)]
     pub descendant_validate_schema: bool,
-    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub ancestor_revision: ResourceRevision,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, Queryable, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ObjectGraphRow {
     pub ancestor_object_id: i32,
     pub descendant_object_id: i32,
@@ -699,121 +655,68 @@ pub struct ObjectGraphRow {
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelatedObjectGraphRow {
-    #[diesel(sql_type = Integer)]
     pub ancestor_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub ancestor_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Jsonb)]
     pub ancestor_data: serde_json::Value,
-    #[diesel(sql_type = Jsonb)]
     pub descendant_data: serde_json::Value,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub ancestor_revision: ResourceRevision,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelatedObjectIncludeRow {
-    #[diesel(sql_type = Integer)]
     pub root_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub ancestor_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub ancestor_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Jsonb)]
     pub ancestor_data: serde_json::Value,
-    #[diesel(sql_type = Jsonb)]
     pub descendant_data: serde_json::Value,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub ancestor_revision: ResourceRevision,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelatedObjectForRootRow {
-    #[diesel(sql_type = Integer)]
     pub root_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Jsonb)]
     pub descendant_data: serde_json::Value,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 

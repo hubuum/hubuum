@@ -261,6 +261,65 @@ fn object_domain_types_are_free_of_persistence_implementation_details() {
 }
 
 #[test]
+fn relation_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in [
+        "src/models/relation.rs",
+        "src/models/traits/class_relation.rs",
+        "src/models/traits/object_relation.rs",
+    ] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    let adapter_path = root.join("src/storage/postgres/operations/relation_rows.rs");
+    let adapter_source = fs::read_to_string(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "struct HubuumClassRelationRow",
+        "struct NewHubuumClassRelationRow",
+        "struct HubuumObjectRelationRow",
+        "struct NewHubuumObjectRelationRow",
+        "struct HubuumClassRelationTransitiveRow",
+        "struct ClassGraphQueryRow",
+        "struct RelatedObjectGraphQueryRow",
+        "impl CursorSqlMapping for HubuumClassRelationRow",
+        "impl CursorSqlMapping for HubuumObjectRelationRow",
+        "impl CursorSqlMapping for HubuumClassRelationTransitiveRow",
+        "impl CursorSqlMapping for ClassGraphQueryRow",
+        "impl CursorSqlMapping for RelatedObjectGraphQueryRow",
+    ] {
+        assert!(
+            adapter_source.contains(required),
+            "PostgreSQL relation adapter is missing {required}"
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "relation domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable() {
     let root = repository_root();
     let contract_path = root.join("src/storage/contract.rs");

@@ -1020,10 +1020,17 @@ mod tests {
 
         let held_insert = actix_web::rt::spawn(async move {
             with_transaction(&insert_pool, async move |conn| -> Result<(), ApiError> {
-                use crate::schema::hubuumobject_relation;
+                use crate::schema::hubuumobject_relation::dsl::{
+                    class_relation_id, from_hubuum_object_id, hubuumobject_relation,
+                    to_hubuum_object_id,
+                };
 
-                diesel::insert_into(hubuumobject_relation::table)
-                    .values(&held_relation)
+                diesel::insert_into(hubuumobject_relation)
+                    .values((
+                        from_hubuum_object_id.eq(held_relation.from_hubuum_object_id),
+                        to_hubuum_object_id.eq(held_relation.to_hubuum_object_id),
+                        class_relation_id.eq(held_relation.class_relation_id),
+                    ))
                     .execute(conn)
                     .await?;
                 inserted_tx

@@ -57,6 +57,7 @@ use crate::models::{
     HubuumObjectID, HubuumObjectRelation, HubuumObjectTransitiveLink, PrincipalToken,
     TokenListState, User,
 };
+use crate::storage::postgres::operations::relation_rows::HubuumClassRelationTransitiveRow;
 use crate::storage::postgres::operations::relations::{
     ObjectRelationMembershipsBackend, SelfRelationsBackend, max_transitive_depth_from_config,
     parse_transitive_filter_params,
@@ -194,7 +195,7 @@ where
         use diesel::sql_types::Integer;
 
         let filter = parse_transitive_filter_params(query_options)?;
-        let sorts = normalized_sorts::<HubuumClassRelationTransitive>(&query_options.sort)?;
+        let sorts = normalized_sorts::<HubuumClassRelationTransitiveRow>(&query_options.sort)?;
 
         let mut raw_sql = String::from(
             "SELECT ancestor_class_id, descendant_class_id, depth, path
@@ -204,7 +205,7 @@ where
              WHERE (ancestor_class_id = $1 OR descendant_class_id = $1)",
         );
 
-        if let Some(cursor_sql) = cursor_filter_sql::<HubuumClassRelationTransitive>(
+        if let Some(cursor_sql) = cursor_filter_sql::<HubuumClassRelationTransitiveRow>(
             &sorts,
             query_options.cursor.as_deref(),
         )? {
@@ -214,7 +215,7 @@ where
 
         let order_by = sorts
             .iter()
-            .map(order_sql_clause::<HubuumClassRelationTransitive>)
+            .map(order_sql_clause::<HubuumClassRelationTransitiveRow>)
             .collect::<Result<Vec<_>, _>>()?
             .join(", ");
         raw_sql.push_str(&format!("\nORDER BY {order_by}"));
@@ -223,7 +224,7 @@ where
             raw_sql.push_str(&format!("\nLIMIT {limit}"));
         }
 
-        with_connection(pool, async |conn| {
+        let rows = with_connection(pool, async |conn| {
             let query = bind_transitive_filter_params!(
                 sql_query(raw_sql)
                     .bind::<Integer, _>(self.id())
@@ -231,9 +232,10 @@ where
                 filter
             );
 
-            diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitive>(query, conn).await
+            diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitiveRow>(query, conn).await
         })
-        .await
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     // We typically end up searching, so this interface is rarely used.

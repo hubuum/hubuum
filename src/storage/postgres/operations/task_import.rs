@@ -20,6 +20,10 @@ use crate::storage::postgres::operations::collection::CollectionRowInsert;
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
 };
+use crate::storage::postgres::operations::relation_rows::{
+    HubuumClassRelationRow, HubuumObjectRelationRow, NewHubuumClassRelationRow,
+    NewHubuumObjectRelationRow,
+};
 use crate::storage::postgres::{SendAsyncFn, with_connection};
 
 fn assert_import_revision(
@@ -204,15 +208,16 @@ pub async fn lookup_direct_class_relation(
     };
     let pair = normalize_pair(left, right);
 
-    with_connection(pool, async |conn| {
+    let row = with_connection(pool, async |conn| {
         hubuumclass_relation
             .filter(from_hubuum_class_id.eq(pair.0))
             .filter(to_hubuum_class_id.eq(pair.1))
-            .first::<HubuumClassRelation>(conn)
+            .first::<HubuumClassRelationRow>(conn)
             .await
             .optional()
     })
-    .await
+    .await?;
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn lookup_object_relation(
@@ -225,15 +230,16 @@ pub async fn lookup_object_relation(
     };
     let pair = normalize_pair(left, right);
 
-    with_connection(pool, async |conn| {
+    let row = with_connection(pool, async |conn| {
         hubuumobject_relation
             .filter(from_hubuum_object_id.eq(pair.0))
             .filter(to_hubuum_object_id.eq(pair.1))
-            .first::<HubuumObjectRelation>(conn)
+            .first::<HubuumObjectRelationRow>(conn)
             .await
             .optional()
     })
-    .await
+    .await?;
+    Ok(row.map(Into::into))
 }
 
 pub async fn lookup_group_by_name(
@@ -1755,22 +1761,23 @@ pub async fn create_class_relation_db(
     use crate::schema::hubuumclass_relation::dsl::{created_at, hubuumclass_relation, updated_at};
     let new_relation = new_relation.normalized()?;
 
-    match timestamps {
+    let row = match timestamps {
         Some(timestamps) => diesel::insert_into(hubuumclass_relation)
             .values((
-                &new_relation,
+                NewHubuumClassRelationRow::from(&new_relation),
                 created_at.eq(timestamps.created_at()),
                 updated_at.eq(timestamps.updated_at()),
             ))
-            .get_result::<HubuumClassRelation>(conn)
+            .get_result::<HubuumClassRelationRow>(conn)
             .await
             .map_err(ApiError::from),
         None => diesel::insert_into(hubuumclass_relation)
-            .values(&new_relation)
-            .get_result::<HubuumClassRelation>(conn)
+            .values(NewHubuumClassRelationRow::from(&new_relation))
+            .get_result::<HubuumClassRelationRow>(conn)
             .await
             .map_err(ApiError::from),
-    }
+    }?;
+    row.try_into()
 }
 
 pub async fn update_class_relation_timestamps_db(
@@ -1786,7 +1793,7 @@ pub async fn update_class_relation_timestamps_db(
     let pair = normalize_pair(left, right);
     check_class_relation_import_condition_db(conn, pair.0, pair.1, condition).await?;
 
-    with_imported_timestamp_override(conn, async |conn| {
+    let row = with_imported_timestamp_override(conn, async |conn| {
         crate::storage::postgres::updated_or_current(
             diesel::update(
                 hubuumclass_relation
@@ -1797,21 +1804,22 @@ pub async fn update_class_relation_timestamps_db(
                 created_at.eq(timestamps.created_at()),
                 updated_at.eq(timestamps.updated_at()),
             ))
-            .get_result::<HubuumClassRelation>(conn)
+            .get_result::<HubuumClassRelationRow>(conn)
             .await
             .optional(),
             async || {
                 hubuumclass_relation
                     .filter(from_hubuum_class_id.eq(pair.0))
                     .filter(to_hubuum_class_id.eq(pair.1))
-                    .first(conn)
+                    .first::<HubuumClassRelationRow>(conn)
                     .await
             },
         )
         .await
         .map_err(ApiError::from)
     })
-    .await
+    .await?;
+    row.try_into()
 }
 
 pub async fn check_class_relation_import_condition_db(
@@ -1851,11 +1859,12 @@ pub async fn create_object_relation_db(
         created_at, hubuumobject_relation, updated_at,
     };
     let class_pair = normalize_pair(from_object.hubuum_class_id, to_object.hubuum_class_id);
-    let relation = hubuumclass_relation
+    let relation: HubuumClassRelation = hubuumclass_relation
         .filter(from_hubuum_class_id.eq(class_pair.0))
         .filter(to_hubuum_class_id.eq(class_pair.1))
-        .first::<HubuumClassRelation>(conn)
-        .await?;
+        .first::<HubuumClassRelationRow>(conn)
+        .await?
+        .try_into()?;
 
     let object_pair = normalize_pair(from_object.id, to_object.id);
     let new_relation = NewHubuumObjectRelation {
@@ -1864,22 +1873,23 @@ pub async fn create_object_relation_db(
         class_relation_id: relation.id,
     };
 
-    match timestamps {
+    let row = match timestamps {
         Some(timestamps) => diesel::insert_into(hubuumobject_relation)
             .values((
-                &new_relation,
+                NewHubuumObjectRelationRow::from(&new_relation),
                 created_at.eq(timestamps.created_at()),
                 updated_at.eq(timestamps.updated_at()),
             ))
-            .get_result::<HubuumObjectRelation>(conn)
+            .get_result::<HubuumObjectRelationRow>(conn)
             .await
             .map_err(ApiError::from),
         None => diesel::insert_into(hubuumobject_relation)
-            .values(&new_relation)
-            .get_result::<HubuumObjectRelation>(conn)
+            .values(NewHubuumObjectRelationRow::from(&new_relation))
+            .get_result::<HubuumObjectRelationRow>(conn)
             .await
             .map_err(ApiError::from),
-    }
+    }?;
+    Ok(row.into())
 }
 
 pub async fn update_object_relation_timestamps_db(
@@ -1895,7 +1905,7 @@ pub async fn update_object_relation_timestamps_db(
     let pair = normalize_pair(from_object.id, to_object.id);
     check_object_relation_import_condition_db(conn, from_object, to_object, condition).await?;
 
-    with_imported_timestamp_override(conn, async |conn| {
+    let row = with_imported_timestamp_override(conn, async |conn| {
         crate::storage::postgres::updated_or_current(
             diesel::update(
                 hubuumobject_relation
@@ -1906,21 +1916,22 @@ pub async fn update_object_relation_timestamps_db(
                 created_at.eq(timestamps.created_at()),
                 updated_at.eq(timestamps.updated_at()),
             ))
-            .get_result::<HubuumObjectRelation>(conn)
+            .get_result::<HubuumObjectRelationRow>(conn)
             .await
             .optional(),
             async || {
                 hubuumobject_relation
                     .filter(from_hubuum_object_id.eq(pair.0))
                     .filter(to_hubuum_object_id.eq(pair.1))
-                    .first(conn)
+                    .first::<HubuumObjectRelationRow>(conn)
                     .await
             },
         )
         .await
         .map_err(ApiError::from)
     })
-    .await
+    .await?;
+    Ok(row.into())
 }
 
 pub async fn check_object_relation_import_condition_db(

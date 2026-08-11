@@ -53,6 +53,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `23`.
+  Class- and object-relation point operations, lifecycle writes, and deliberately
+  event-suppressed compatibility writes now cross the same mandatory, uniformly
+  observed backend contract. Relation persistence rows, graph query rows,
+  Diesel mappings, and SQL cursor mappings are owned by the PostgreSQL adapter;
+  domain models and application adapters exchange backend-neutral values.
+  Required capability labels and public HTTP request and response shapes are
+  unchanged. Administration and monitoring clients matching contract version
+  `22` must accept version `23`.
 - **Breaking (administrator API):** the storage contract version is now `22`
   and the required capability list includes `inventory_queries`. Inventory
   totals and per-class object counts are now a mandatory, compatibility-tested

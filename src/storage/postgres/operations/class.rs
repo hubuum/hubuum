@@ -10,6 +10,7 @@ use crate::models::{
 };
 use crate::storage::postgres::operations::GetClass;
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::storage::postgres::operations::relation_rows::HubuumClassRelationRow;
 use crate::storage::postgres::{with_connection, with_transaction};
 
 fn class_snapshot(class: &HubuumClass) -> serde_json::Value {
@@ -118,7 +119,7 @@ impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelationID {
             async |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
                 let relation = hubuumclass_relation
                     .filter(rel_id.eq(self.id()))
-                    .first::<HubuumClassRelation>(conn)
+                    .first::<HubuumClassRelationRow>(conn)
                     .await?;
 
                 let from_class = hubuumclass
