@@ -50,33 +50,33 @@ use crate::storage::{
     RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
     StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
-    StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecution, StorageExportTaskArtifact,
-    StorageImportOperation, StorageImportPlanItem, StorageImportResult, StorageObject,
-    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
-    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StorageQueryBudget,
-    StorageRelatedDirection, StorageRelatedSort, StorageRemoteCallArtifactOutcome,
-    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
-    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
-    StorageRevisionPrecondition, StorageServiceAccountCreate, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
-    StorageTaskStateUpdate, StorageTaskStatus, StorageTokenListQuery, StorageTokenListState,
-    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
+    StorageDefaultAdminBootstrap, StorageError, StorageEventDeliveryListQuery,
+    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
+    StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
+    StorageExportTaskArtifact, StorageImportOperation, StorageImportPlanItem, StorageImportResult,
+    StorageLocalPasswordReset, StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageQueryBudget, StorageRelatedDirection,
+    StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
+    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageServiceAccountCreate,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
+    StorageTokenListQuery, StorageTokenListState, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -196,12 +196,9 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
 async fn every_available_storage_backend_supplies_complete_identity_operations() {
     let _permit = postgres_permit().await;
     let pool = pool();
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("identity_contract_user"),
-        "testpassword",
-    )
-    .await;
+    let username = prefix("identity_contract_user");
+    let user =
+        crate::tests::create_user_with_params(pool.get_ref(), &username, "testpassword").await;
     let _token = user
         .create_token(pool.get_ref())
         .await
@@ -216,6 +213,21 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         match kind {
             StorageBackendKind::Postgresql => {
                 let backend = StorageHandle::postgres(pool.get_ref().clone());
+                assert!(
+                    !backend
+                        .default_admin_bootstrap_required()
+                        .await
+                        .expect("seeded certified backend should report bootstrap state")
+                );
+                assert!(
+                    !backend
+                        .bootstrap_default_admin(StorageDefaultAdminBootstrap::new(
+                            "unused-contract-admin-group",
+                            "unused-contract-password-hash",
+                        ))
+                        .await
+                        .expect("certified backend should coordinate administrator bootstrap")
+                );
                 let local_scope = backend
                     .ensure_identity_scope(crate::storage::StorageIdentityScopeEnsure::new(
                         LOCAL_IDENTITY_SCOPE,
@@ -270,6 +282,16 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                     .into_parts();
                 assert_eq!(token_total, Some(1));
                 assert_eq!(tokens[0].principal_id(), user.id);
+                assert_eq!(
+                    backend
+                        .reset_local_password(StorageLocalPasswordReset::new(
+                            &username,
+                            "identity-contract-password-hash",
+                        ))
+                        .await
+                        .expect("certified backend should reset local credentials"),
+                    1
+                );
 
                 let event_context = EventContext::user(user.id, None, None);
                 let service_account_name = prefix("identity_contract_sa");
@@ -2735,6 +2757,19 @@ async fn every_available_storage_backend_supplies_operational_state() {
                     .expect("certified backend should expose task queue diagnostics");
                 assert!(task_queue.statuses().total() >= 0);
                 assert!(task_queue.total_task_events() >= 0);
+                let export_health = backend
+                    .export_template_health()
+                    .await
+                    .expect("certified backend should aggregate export-template health");
+                assert!(export_health.iter().all(|row| row.runs() > 0));
+                let audit_entries = backend
+                    .export_templates_for_audit()
+                    .await
+                    .expect("certified backend should supply the template audit set");
+                assert!(audit_entries.windows(2).all(|entries| {
+                    (entries[0].collection_id(), entries[0].id())
+                        <= (entries[1].collection_id(), entries[1].id())
+                }));
             }
         }
     }

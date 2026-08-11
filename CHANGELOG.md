@@ -53,6 +53,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `20`.
+  Initial local-administrator bootstrap, atomic local-password replacement with
+  token revocation, the complete export-template audit set, and
+  backend-aggregated export-template health are now mandatory identity and
+  operations behavior. Server and admin entry points construct an opaque
+  backend through validated storage settings; they no longer import PostgreSQL
+  pools, Diesel, schemas, or adapter operations.
+  Backend identity, non-sensitive effective pool settings, and contract version
+  remain visible in structured startup diagnostics and the redacted running
+  configuration. Required capability labels and public HTTP response shapes
+  are unchanged. Administration and monitoring clients matching contract
+  version `19` must accept version `20`.
 - **Breaking (administrator API):** the storage contract version is now `19`.
   Revisioned collection permission sets, atomic event-aware local grant
   mutations, persisted storage diagnostics, and task-queue diagnostics are now

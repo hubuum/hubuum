@@ -40,9 +40,7 @@ use crate::middlewares::rate_limit::{
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use crate::services::event_administration::enabled_event_sink_count;
-use crate::storage::StorageHandle;
-use crate::storage::postgres;
-use crate::storage::postgres::{PostgresPoolSettings, init_postgres_pool_with_settings};
+use crate::storage::{OperationalStateStorage, StorageSettings, initialize_storage};
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
@@ -103,21 +101,26 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
-    let database_settings = PostgresPoolSettings::builder(config.database_url.clone())
-        .max_size(config.db_pool_size)
+    let storage_settings = StorageSettings::builder(config.database_url.clone())
+        .max_connections(config.db_pool_size)
         .statement_timeout_ms(config.db_statement_timeout_ms)
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
-    let pool = init_postgres_pool_with_settings(&database_settings);
-    postgres::ensure_postgres_schema_ready(&pool)
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Database schema is not ready: {error}"),
-                EXIT_CODE_DATABASE_ERROR,
-            )
-        });
+    let storage = initialize_storage(&storage_settings)
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+    let readiness = storage.readiness_snapshot().await.unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Storage backend is not ready: {error}"),
+            EXIT_CODE_DATABASE_ERROR,
+        )
+    });
+    if !readiness.schema_is_ready() {
+        fatal_error(
+            "Storage backend schema is not ready",
+            EXIT_CODE_DATABASE_ERROR,
+        );
+    }
 
     let backup_settings = BackupSettings::new(
         config.backup_output_retention_hours,
@@ -140,14 +143,13 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     let initialization_settings =
         utilities::init::InitializationSettings::new(config.admin_groupname.clone())
             .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    if let Err(e) = utilities::init::init(pool.clone(), &initialization_settings).await {
+    if let Err(e) = utilities::init::init(&storage, &initialization_settings).await {
         fatal_error(
-            &format!("Critical database initialization failed: {}", e),
+            &format!("Critical storage initialization failed: {}", e),
             EXIT_CODE_INIT_ERROR,
         );
     }
 
-    let storage = StorageHandle::postgres(pool.clone());
     let permission_backend = build_permission_backend(&config, storage.clone())
         .await
         .unwrap_or_else(|error| {
@@ -209,7 +211,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(app_context);
-        drop(pool);
         supervision_result?;
         return Ok(());
     }
@@ -348,7 +349,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     };
     shutdown_background_workers(Duration::from_secs(30)).await;
     drop(app_context);
-    drop(pool);
     result
 }
 
@@ -509,10 +509,13 @@ mod tests {
 
     use crate::permissions::LocalPermissionBackend;
     use crate::storage::StorageHandle;
+    use crate::storage::postgres::{
+        PostgresPool, PostgresPoolSettings, init_postgres_pool_with_settings,
+    };
 
     use super::*;
 
-    fn unreachable_pool() -> postgres::PostgresPool {
+    fn unreachable_pool() -> PostgresPool {
         let settings = PostgresPoolSettings::builder(
             "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_worker_metrics_unreachable",
         )

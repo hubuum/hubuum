@@ -125,22 +125,57 @@ pub(crate) trait SetUserPasswordRecord {
     ) -> Result<usize, ApiError>;
 }
 
+async fn set_local_password_conn(
+    conn: &mut crate::storage::postgres::PostgresConnection,
+    principal_id: PrincipalID,
+    password_hash: &str,
+) -> Result<usize, ApiError> {
+    use crate::schema::users::dsl::{id, password, users};
+
+    ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
+    diesel::update(users.filter(id.eq(principal_id.id())))
+        .set(password.eq(Some(password_hash)))
+        .execute(conn)
+        .await?;
+    revoke_all_tokens_for_principal_conn(conn, principal_id).await
+}
+
+/// Resolve one local human by name, replace its pre-hashed credential, and
+/// revoke all active bearer tokens in one transaction.
+pub(crate) async fn reset_local_password_record(
+    pool: &impl crate::storage::StorageContext,
+    principal_name: &str,
+    password_hash: &str,
+) -> Result<usize, ApiError> {
+    use crate::schema::{identity_scopes, principals, users};
+
+    let principal_name = principal_name.to_string();
+    let password_hash = password_hash.to_string();
+    with_transaction(pool, async move |conn| -> Result<usize, ApiError> {
+        let principal_id = users::table
+            .inner_join(principals::table.on(users::id.eq(principals::id)))
+            .inner_join(
+                identity_scopes::table.on(principals::identity_scope_id.eq(identity_scopes::id)),
+            )
+            .filter(principals::name.eq(principal_name))
+            .filter(identity_scopes::name.eq(LOCAL_IDENTITY_SCOPE))
+            .select(users::id)
+            .first::<i32>(conn)
+            .await?;
+        set_local_password_conn(conn, PrincipalID::new(principal_id)?, &password_hash).await
+    })
+    .await
+}
+
 impl SetUserPasswordRecord for User {
     async fn set_password_record(
         &self,
         pool: &impl crate::storage::StorageContext,
         password_hash: &str,
     ) -> Result<usize, ApiError> {
-        use crate::schema::users::dsl::{id, password, users};
-
         let principal_id = PrincipalID::new(self.id)?;
         with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
-            diesel::update(users.filter(id.eq(principal_id.id())))
-                .set(password.eq(Some(password_hash)))
-                .execute(conn)
-                .await?;
-            revoke_all_tokens_for_principal_conn(conn, principal_id).await
+            set_local_password_conn(conn, principal_id, password_hash).await
         })
         .await
     }

@@ -59,10 +59,15 @@ for package classifications, publishing policy, and promotion requirements.
   traits. These crates cannot depend on Actix, Diesel, global application
   configuration, or `ApiError`.
 - `src/storage/*`:
-  Remaining backend-neutral capabilities plus PostgreSQL adapter composition.
-  The test-only memory contract model exercises focused logical behavior. It
-  is not a selectable backend and does not represent partial application
-  support.
+  Complete backend composition, adapter implementations, and the opaque
+  application handle. `src/storage/factory.rs` is the only process-composition
+  path allowed to select a backend or inspect its connection settings. The
+  test-only memory contract model exercises focused logical behavior. It is not
+  a selectable backend and does not represent partial application support.
+- `crates/hubuum-storage-postgres`:
+  PostgreSQL-owned pool construction, TLS setup, endpoint parsing, and other
+  runtime primitives. It exposes private-field settings and backend-specific
+  initialization errors to the root adapter, never to application consumers.
 - `src/models/*`:
   Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
@@ -77,6 +82,14 @@ for package classifications, publishing policy, and promotion requirements.
 - `src/storage/postgres/operations/*`:
   Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
+
+Server, administration, and bootstrap entry points build validated
+`StorageSettings` and receive an opaque `StorageHandle`. They must not import
+PostgreSQL pools, Diesel, generated schemas, or adapter operations. Initial
+administrator creation, local-password reset with token revocation, complete
+template-audit reads, and export-template health aggregation are mandatory
+identity and operational contract methods, so a selectable backend cannot omit
+any process-lifecycle behavior.
 
 The collection, class, object, class-relation, and object-relation point and
 lifecycle operations are the first backend-neutral service/storage ports.

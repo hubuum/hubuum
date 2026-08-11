@@ -5,6 +5,7 @@ use crate::models::identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE,
 };
 use crate::models::{Group, NewPrincipal, PrincipalKind, User};
+use crate::storage::StorageDefaultAdminBootstrap;
 use crate::storage::postgres::operations::identity::identity_scope_id_by_name_conn;
 use crate::storage::postgres::operations::principal::InsertPrincipalRecord;
 use crate::storage::postgres::prelude::*;
@@ -60,9 +61,10 @@ pub async fn default_admin_bootstrap_required(
 /// returns `false` instead of racing the unique group or principal constraints.
 pub async fn bootstrap_default_admin(
     pool: &impl crate::storage::StorageContext,
-    admin_groupname: &str,
-    hashed_password: &str,
+    request: StorageDefaultAdminBootstrap,
 ) -> Result<bool, ApiError> {
+    let admin_groupname = request.admin_group_name().to_string();
+    let hashed_password = request.password_hash().to_string();
     with_transaction(pool, async |conn| -> Result<bool, ApiError> {
         let lock = diesel::sql_query("SELECT TRUE AS locked FROM pg_advisory_xact_lock($1)")
             .bind::<BigInt, _>(DEFAULT_ADMIN_BOOTSTRAP_LOCK_KEY)
@@ -82,7 +84,7 @@ pub async fn bootstrap_default_admin(
         let group = diesel::insert_into(crate::schema::groups::table)
             .values((
                 crate::schema::groups::identity_scope_id.eq(local_scope_id),
-                crate::schema::groups::groupname.eq(admin_groupname),
+                crate::schema::groups::groupname.eq(&admin_groupname),
                 crate::schema::groups::description.eq("Default admin group."),
                 crate::schema::groups::managed_by.eq(LOCAL_PROVIDER_KIND),
             ))
@@ -98,7 +100,7 @@ pub async fn bootstrap_default_admin(
         let user = diesel::insert_into(crate::schema::users::table)
             .values((
                 crate::schema::users::id.eq(principal.id),
-                crate::schema::users::password.eq(Some(hashed_password)),
+                crate::schema::users::password.eq(Some(&hashed_password)),
                 crate::schema::users::proper_name.eq(Some("Administrator")),
             ))
             .get_result::<User>(conn)

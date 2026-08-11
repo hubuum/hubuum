@@ -128,8 +128,34 @@ pub(crate) fn validate_template_sources(
     collection_templates: &[(String, String)],
     content_type: ExportContentType,
 ) -> Result<(), ApiError> {
-    validate_template_syntax(template_name, template_source)?;
     let (recursion_limit, fuel) = template_limits_from_config();
+    validate_template_sources_with_limits(
+        template_name,
+        template_source,
+        collection_templates,
+        content_type,
+        recursion_limit,
+        fuel,
+    )
+}
+
+pub(crate) fn validate_template_sources_with_limits(
+    template_name: &str,
+    template_source: &str,
+    collection_templates: &[(String, String)],
+    content_type: ExportContentType,
+    recursion_limit: usize,
+    fuel: u64,
+) -> Result<(), ApiError> {
+    prepare_template(template_source)
+        .limit_recursion(recursion_limit)
+        .limit_fuel(fuel)
+        .validate()
+        .map_err(|error| {
+            ApiError::BadRequest(format!(
+                "Invalid export template '{template_name}': {error}"
+            ))
+        })?;
     let mut template_map = collection_templates
         .iter()
         .cloned()

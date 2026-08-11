@@ -1,9 +1,10 @@
 use crate::storage::postgres::prelude::*;
-use diesel::sql_types::{BigInt, Nullable, Timestamp};
+use diesel::sql_types::{BigInt, Integer, Nullable, Text, Timestamp};
 
 use crate::errors::ApiError;
 use crate::storage::postgres::with_connection;
 use crate::storage::{
+    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth,
     OperationalStorageSnapshot, OperationalTaskActiveCounts, OperationalTaskKindCounts,
     OperationalTaskQueueSnapshot, OperationalTaskStatusCounts, OperationalTaskTerminalCounts,
 };
@@ -50,6 +51,36 @@ struct TaskQueueStateRow {
     pub oldest_queued_at: Option<chrono::NaiveDateTime>,
     #[diesel(sql_type = Nullable<Timestamp>)]
     pub oldest_active_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(QueryableByName, Debug)]
+struct ExportTemplateHealthRow {
+    #[diesel(sql_type = Nullable<Text>)]
+    template_name: Option<String>,
+    #[diesel(sql_type = BigInt)]
+    runs: i64,
+    #[diesel(sql_type = BigInt)]
+    warning_total: i64,
+    #[diesel(sql_type = Integer)]
+    warning_max: i32,
+    #[diesel(sql_type = BigInt)]
+    total_duration_ms_total: i64,
+    #[diesel(sql_type = Integer)]
+    total_duration_ms_max: i32,
+}
+
+#[derive(QueryableByName, Debug)]
+struct ExportTemplateAuditRow {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+    #[diesel(sql_type = Integer)]
+    collection_id: i32,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    template: String,
+    #[diesel(sql_type = Text)]
+    content_type: String,
 }
 
 pub(crate) async fn load_storage_snapshot(
@@ -129,5 +160,73 @@ pub(crate) async fn load_task_queue_snapshot(
             row.oldest_queued_at,
             row.oldest_active_at,
         )
+    })
+}
+
+pub(crate) async fn load_export_template_health(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<Vec<OperationalExportTemplateHealth>, ApiError> {
+    const QUERY: &str = r#"
+        SELECT
+          template_name,
+          COUNT(*)::bigint AS runs,
+          SUM(warning_count)::bigint AS warning_total,
+          MAX(warning_count)::integer AS warning_max,
+          SUM(total_duration_ms)::bigint AS total_duration_ms_total,
+          MAX(total_duration_ms)::integer AS total_duration_ms_max
+        FROM export_task_outputs
+        GROUP BY template_name
+        ORDER BY template_name ASC NULLS FIRST
+    "#;
+
+    with_connection(pool, async |connection| {
+        diesel::sql_query(QUERY)
+            .load::<ExportTemplateHealthRow>(connection)
+            .await
+    })
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                OperationalExportTemplateHealth::new(
+                    row.template_name,
+                    row.runs,
+                    row.warning_total,
+                    row.warning_max,
+                    row.total_duration_ms_total,
+                    row.total_duration_ms_max,
+                )
+            })
+            .collect()
+    })
+}
+
+pub(crate) async fn load_export_templates_for_audit(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<Vec<OperationalExportTemplateAuditEntry>, ApiError> {
+    const QUERY: &str = r#"
+        SELECT id, collection_id, name, template, content_type
+        FROM export_templates
+        ORDER BY collection_id, id
+    "#;
+
+    with_connection(pool, async |connection| {
+        diesel::sql_query(QUERY)
+            .load::<ExportTemplateAuditRow>(connection)
+            .await
+    })
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                OperationalExportTemplateAuditEntry::new(
+                    row.id,
+                    row.collection_id,
+                    row.name,
+                    row.template,
+                    row.content_type,
+                )
+            })
+            .collect()
     })
 }
