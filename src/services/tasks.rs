@@ -1,11 +1,14 @@
 use hubuum_task_core::IdempotencyKey;
+use std::ops::Deref;
+use std::time::Duration;
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutput, BackupTaskOutputSummary, ExportOutputLookup,
-    ExportTaskOutput, ExportTaskOutputSummary, ImportTaskResultRecord, PrincipalID,
-    TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskStatus, TokenID, TokenScope,
+    ExportTaskOutput, ExportTaskOutputSummary, ImportTaskResultRecord, NewTaskEventRecord,
+    PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+    TokenID, TokenScope,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
@@ -14,8 +17,11 @@ use crate::permissions::{
 use crate::storage::{
     AuthenticationStorage, StorageBackupOutput, StorageBackupOutputSummary, StorageContext,
     StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult, StorageTask,
-    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskKind, StorageTaskListQuery,
-    StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskClaim, StorageTaskCompletion, StorageTaskCompletionArtifact,
+    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskResultCounts,
+    StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus, TaskExecutionStorage,
     TaskQueueStorage, storage_handle,
 };
 use crate::traits::AuthzSubject;
@@ -29,6 +35,236 @@ pub(crate) struct TaskSubmission {
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
+}
+
+/// Application-owned task projection paired with an opaque backend claim.
+pub(crate) struct ClaimedTask {
+    task: TaskRecord,
+    lease: StorageTaskLease,
+}
+
+impl ClaimedTask {
+    fn from_storage(claim: StorageTaskClaim) -> Result<Self, ApiError> {
+        let (task, lease) = claim.into_parts();
+        Ok(Self {
+            task: task_from_storage(task)?,
+            lease,
+        })
+    }
+
+    pub(crate) const fn lease(&self) -> &StorageTaskLease {
+        &self.lease
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_record(task: TaskRecord) -> Result<Self, ApiError> {
+        let token = task.lease_token.ok_or_else(|| {
+            ApiError::InternalServerError("Test task does not carry a claim token".to_string())
+        })?;
+        Ok(Self {
+            lease: StorageTaskLease::new(
+                task.id,
+                crate::storage::StorageTaskClaimToken::new(token.to_string()),
+            ),
+            task,
+        })
+    }
+}
+
+impl Deref for ClaimedTask {
+    type Target = TaskRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.task
+    }
+}
+
+pub(crate) struct TaskStateChange {
+    status: TaskStatus,
+    counts: TaskResultCounts,
+    summary: Option<String>,
+    started_at: Option<chrono::NaiveDateTime>,
+}
+
+impl TaskStateChange {
+    pub(crate) const fn new(status: TaskStatus, counts: TaskResultCounts) -> Self {
+        Self {
+            status,
+            counts,
+            summary: None,
+            started_at: None,
+        }
+    }
+
+    pub(crate) fn summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
+
+    pub(crate) const fn started_at(mut self, started_at: Option<chrono::NaiveDateTime>) -> Self {
+        self.started_at = started_at;
+        self
+    }
+}
+
+fn storage_lease_duration(duration: Duration) -> Result<StorageTaskLeaseDuration, ApiError> {
+    let milliseconds = i64::try_from(duration.as_millis()).map_err(|_| {
+        ApiError::BadRequest("Task lease duration is too large for storage".to_string())
+    })?;
+    StorageTaskLeaseDuration::from_milliseconds(milliseconds).ok_or_else(|| {
+        ApiError::BadRequest("Task lease duration must be greater than zero".to_string())
+    })
+}
+
+fn storage_task_state_update(
+    task: &ClaimedTask,
+    change: TaskStateChange,
+) -> StorageTaskStateUpdate {
+    let (processed, succeeded, failed) = change.counts.into();
+    StorageTaskStateUpdate::new(
+        task.lease.clone(),
+        task_status_to_storage(change.status),
+        StorageTaskResultCounts::new(processed, succeeded, failed),
+    )
+    .summary(change.summary)
+    .started_at(change.started_at)
+}
+
+fn storage_task_event(event: NewTaskEventRecord) -> StorageTaskEventInput {
+    StorageTaskEventInput::new(event.event_type, event.message).with_data(event.data)
+}
+
+pub(crate) async fn claim_next_task(
+    backend: &impl StorageContext,
+    lease_duration: Duration,
+) -> Result<Option<ClaimedTask>, ApiError> {
+    storage_handle(backend)
+        .claim_next_task(storage_lease_duration(lease_duration)?)
+        .await?
+        .map(ClaimedTask::from_storage)
+        .transpose()
+}
+
+pub(crate) async fn renew_task_lease(
+    backend: &impl StorageContext,
+    lease: StorageTaskLease,
+    lease_duration: Duration,
+) -> Result<bool, ApiError> {
+    storage_handle(backend)
+        .renew_task_lease(lease, storage_lease_duration(lease_duration)?)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub(crate) async fn recover_expired_task_leases(
+    backend: &impl StorageContext,
+    batch_size: usize,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    storage_handle(backend)
+        .recover_expired_task_leases(batch_size)
+        .await?
+        .into_iter()
+        .map(task_from_storage)
+        .collect()
+}
+
+pub(crate) async fn append_task_event(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+    event: NewTaskEventRecord,
+) -> Result<(), ApiError> {
+    if event.task_id != task.id {
+        return Err(ApiError::InternalServerError(format!(
+            "Task lifecycle event id {} does not match claimed task {}",
+            event.task_id, task.id
+        )));
+    }
+    storage_handle(backend)
+        .append_task_event(StorageTaskEventAppend::new(
+            task.lease.clone(),
+            storage_task_event(event),
+        ))
+        .await
+        .map_err(ApiError::from)
+}
+
+pub(crate) async fn update_task_state(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+    change: TaskStateChange,
+) -> Result<TaskRecord, ApiError> {
+    storage_handle(backend)
+        .update_task_state(storage_task_state_update(task, change))
+        .await
+        .map_err(ApiError::from)
+        .and_then(task_from_storage)
+}
+
+pub(crate) async fn complete_task(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+    change: TaskStateChange,
+    event: NewTaskEventRecord,
+    artifact: StorageTaskCompletionArtifact,
+) -> Result<TaskRecord, ApiError> {
+    if event.task_id != task.id {
+        return Err(ApiError::InternalServerError(format!(
+            "Task completion event id {} does not match claimed task {}",
+            event.task_id, task.id
+        )));
+    }
+    let completion = StorageTaskCompletion::new(
+        storage_task_state_update(task, change),
+        storage_task_event(event),
+    )
+    .artifact(artifact);
+    storage_handle(backend)
+        .complete_task(completion)
+        .await
+        .map_err(ApiError::from)
+        .and_then(task_from_storage)
+}
+
+pub(crate) async fn fail_task(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+    summary: impl Into<String>,
+    event: NewTaskEventRecord,
+) -> Result<TaskRecord, ApiError> {
+    if event.task_id != task.id {
+        return Err(ApiError::InternalServerError(format!(
+            "Task failure event id {} does not match claimed task {}",
+            event.task_id, task.id
+        )));
+    }
+    let summary = summary.into();
+    storage_handle(backend)
+        .fail_task(StorageTaskFailure::new(
+            task.lease.clone(),
+            summary,
+            storage_task_event(event),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(task_from_storage)
+}
+
+pub(crate) async fn purge_expired_export_outputs(
+    backend: &impl StorageContext,
+) -> Result<usize, ApiError> {
+    storage_handle(backend)
+        .purge_expired_export_outputs()
+        .await
+        .map_err(ApiError::from)
+}
+
+pub(crate) async fn purge_expired_backup_outputs(
+    backend: &impl StorageContext,
+) -> Result<usize, ApiError> {
+    storage_handle(backend)
+        .purge_expired_backup_outputs()
+        .await
+        .map_err(ApiError::from)
 }
 
 impl TaskSubmission {

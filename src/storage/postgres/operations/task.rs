@@ -1310,6 +1310,33 @@ impl NewTaskEventRecord {
     }
 }
 
+/// Append an in-flight lifecycle event only while the supplied worker still
+/// owns the task's live lease.
+pub(crate) async fn append_task_event_while_claimed(
+    pool: &impl crate::storage::StorageContext,
+    task_id_value: i32,
+    claim_token: Uuid,
+    event: NewTaskEventRecord,
+) -> Result<TaskEventRecord, ApiError> {
+    with_transaction(pool, async |conn| -> Result<TaskEventRecord, ApiError> {
+        use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
+
+        let active_statuses = TaskStatus::ACTIVE.map(TaskStatus::as_str);
+        let task = tasks
+            .filter(id.eq(task_id_value))
+            .filter(lease_token.eq(Some(claim_token)))
+            .filter(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
+            .filter(status.eq_any(active_statuses))
+            .for_update()
+            .first::<TaskRecord>(conn)
+            .await?;
+        emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance())
+            .await?
+            .try_into()
+    })
+    .await
+}
+
 pub async fn insert_import_results(
     pool: &impl crate::storage::StorageContext,
     entries: &[NewImportTaskResultRecord],

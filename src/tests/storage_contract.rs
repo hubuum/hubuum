@@ -45,10 +45,12 @@ use crate::storage::{
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskCreateRequest, StorageTaskKind,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskScopeSnapshot,
-    StorageTaskStatus, StorageVisibility, TaskQueueStorage, TokenRetentionStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageSharedComputedFieldUpdate, StorageTaskCompletion, StorageTaskCompletionArtifact,
+    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
+    StorageTaskKind, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -282,6 +284,161 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("task queue compatibility user should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_the_complete_task_state_machine() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("task_execution_user"),
+        "testpassword",
+    )
+    .await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let mut fixture_ids = Vec::new();
+                for task_kind in StorageTaskKind::ALL {
+                    let task = backend
+                        .create_task(
+                            StorageTaskCreateRequest::builder(
+                                task_kind,
+                                user.id,
+                                serde_json::json!({"compatibility": true}),
+                                1,
+                            )
+                            .idempotency_key(Some(
+                                IdempotencyKey::new(prefix(&format!(
+                                    "task_execution_{}",
+                                    task_kind.as_str()
+                                )))
+                                .expect("compatibility idempotency key should be valid"),
+                            ))
+                            .request_hash(Some(prefix(&format!(
+                                "task_execution_hash_{}",
+                                task_kind.as_str()
+                            ))))
+                            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+                            .build(10),
+                        )
+                        .await
+                        .expect("certified backend should create an executable task");
+                    fixture_ids.push(task.id());
+                }
+                crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+                    use crate::schema::tasks::dsl::{created_at, id, tasks};
+                    diesel::update(tasks.filter(id.eq_any(&fixture_ids)))
+                        .set(
+                            created_at.eq(chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
+                                .expect("compatibility date")
+                                .and_hms_opt(0, 0, 0)
+                                .expect("compatibility time")),
+                        )
+                        .execute(conn)
+                        .await
+                })
+                .await
+                .expect("compatibility tasks should be made claim-first");
+
+                let lease_duration = StorageTaskLeaseDuration::from_milliseconds(60_000)
+                    .expect("compatibility lease duration should be valid");
+                assert!(
+                    backend
+                        .recover_expired_task_leases(0)
+                        .await
+                        .expect("certified backend should recover expired claims")
+                        .is_empty()
+                );
+
+                let first = backend
+                    .claim_next_task(lease_duration)
+                    .await
+                    .expect("certified backend should claim the next task")
+                    .expect("a compatibility task should be claimable");
+                assert!(fixture_ids.contains(&first.task().id()));
+                assert!(
+                    backend
+                        .renew_task_lease(first.lease().clone(), lease_duration)
+                        .await
+                        .expect("certified backend should renew a live claim")
+                );
+                backend
+                    .append_task_event(StorageTaskEventAppend::new(
+                        first.lease().clone(),
+                        StorageTaskEventInput::new("running", "Compatibility event"),
+                    ))
+                    .await
+                    .expect("certified backend should append a claim-owned event");
+                backend
+                    .update_task_state(StorageTaskStateUpdate::new(
+                        first.lease().clone(),
+                        StorageTaskStatus::Running,
+                        StorageTaskResultCounts::new(0, 0, 0),
+                    ))
+                    .await
+                    .expect("certified backend should update claimed task state");
+                backend
+                    .complete_task(
+                        StorageTaskCompletion::new(
+                            StorageTaskStateUpdate::new(
+                                first.lease().clone(),
+                                StorageTaskStatus::Succeeded,
+                                StorageTaskResultCounts::new(1, 1, 0),
+                            ),
+                            StorageTaskEventInput::new("succeeded", "Compatibility completed"),
+                        )
+                        .artifact(StorageTaskCompletionArtifact::None),
+                    )
+                    .await
+                    .expect("certified backend should complete a claimed task");
+
+                let second = backend
+                    .claim_next_task(lease_duration)
+                    .await
+                    .expect("certified backend should claim another task")
+                    .expect("another compatibility task should be claimable");
+                assert!(fixture_ids.contains(&second.task().id()));
+                backend
+                    .fail_task(StorageTaskFailure::new(
+                        second.lease().clone(),
+                        "Compatibility failure",
+                        StorageTaskEventInput::new("failed", "Compatibility failure"),
+                    ))
+                    .await
+                    .expect("certified backend should fail a claimed task");
+
+                backend
+                    .purge_expired_export_outputs()
+                    .await
+                    .expect("certified backend should purge expired export outputs");
+                backend
+                    .purge_expired_backup_outputs()
+                    .await
+                    .expect("certified backend should purge expired backup outputs");
+
+                crate::storage::postgres::with_transaction(
+                    pool.get_ref(),
+                    async |conn| -> Result<(), crate::errors::ApiError> {
+                        use crate::schema::tasks::dsl::{id, tasks};
+                        diesel::delete(tasks.filter(id.eq_any(&fixture_ids)))
+                            .execute(conn)
+                            .await?;
+                        Ok(())
+                    },
+                )
+                .await
+                .expect("task execution compatibility fixtures should be removed");
+            }
+        }
+    }
+
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("task execution compatibility user should be removed");
 }
 
 #[actix_web::test]

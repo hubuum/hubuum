@@ -19,20 +19,19 @@ use crate::events::{TASK_QUEUE_CHANNEL, spawn_postgres_notification_listener};
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
-use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
+use crate::models::{NewTaskEventRecord, TaskKind};
 use crate::observability::metrics;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
-use crate::storage::postgres::operations::service_account::principal_is_disabled;
-use crate::storage::postgres::operations::task::{
-    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_backup_outputs,
+use crate::services::tasks::{
+    ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
+use crate::storage::postgres::operations::service_account::principal_is_disabled;
 use crate::storage::postgres::{
-    PostgresPool, PostgresPoolSettings, StorageCallSite, init_postgres_pool_with_settings,
-    with_mutation_provenance_scope, with_storage_call_site,
+    StorageCallSite, with_mutation_provenance_scope, with_storage_call_site,
 };
 
 use super::TaskWorkerSettings;
@@ -47,8 +46,6 @@ static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::new();
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
-#[cfg(not(test))]
-static TASK_LEASE_POOL: OnceLock<PostgresPool> = OnceLock::new();
 static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -57,8 +54,6 @@ static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| 
         .build()
         .expect("task lease heartbeat runtime must start")
 });
-
-const TASK_LEASE_POOL_SIZE: u32 = 1;
 
 pub fn initialize_task_worker_settings(settings: TaskWorkerSettings) -> Result<(), String> {
     TASK_WORKER_SETTINGS
@@ -106,29 +101,6 @@ fn configured_task_worker_count() -> usize {
 
 fn configured_task_poll_interval() -> Duration {
     task_worker_settings().poll_interval()
-}
-
-fn new_task_lease_pool() -> PostgresPool {
-    let config = get_config().expect("task lease renewal requires database configuration");
-    let settings = PostgresPoolSettings::builder(config.database_url.clone())
-        .max_size(TASK_LEASE_POOL_SIZE)
-        .statement_timeout_ms(config.db_statement_timeout_ms)
-        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-        .build()
-        .expect("task lease pool settings must be valid");
-    init_postgres_pool_with_settings(&settings)
-}
-
-#[cfg(not(test))]
-fn task_lease_pool() -> PostgresPool {
-    TASK_LEASE_POOL.get_or_init(new_task_lease_pool).clone()
-}
-
-// Test runtimes are short-lived, so do not retain async Postgres connections in
-// a process-global pool after the runtime that established them has stopped.
-#[cfg(test)]
-fn task_lease_pool() -> PostgresPool {
-    new_task_lease_pool()
 }
 
 pub(super) fn background_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction {
@@ -327,7 +299,7 @@ async fn process_one_task_with_settings(
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
-    let task = match claim_next_queued_task(context, settings.validated_lease_duration()).await {
+    let task = match claim_next_task(context, settings.lease_duration()).await {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -353,7 +325,7 @@ async fn process_one_task_with_settings(
     let provenance = task.worker_provenance();
     with_mutation_provenance_scope(Some(provenance), async {
         let mut heartbeat = start_task_lease_heartbeat(
-            task_lease_pool(),
+            context.backend().clone(),
             &task,
             claim_started_at + settings.lease_duration(),
         );
@@ -475,28 +447,24 @@ impl TaskLeaseHeartbeat {
 }
 
 fn start_task_lease_heartbeat(
-    pool: PostgresPool,
-    task: &TaskRecord,
+    storage: crate::storage::StorageHandle,
+    task: &ClaimedTask,
     initial_confirmed_expiry: TokioInstant,
 ) -> Option<TaskLeaseHeartbeat> {
-    let claim_token = task.lease_token?;
     let settings = task_worker_settings();
     let task_id = task.id;
+    let lease = task.lease().clone();
     Some(spawn_task_lease_monitor(
         task_id,
         settings,
         initial_confirmed_expiry,
         move || {
-            let pool = pool.clone();
+            let storage = storage.clone();
+            let lease = lease.clone();
             async move {
                 with_storage_call_site(
                     StorageCallSite::TaskLease,
-                    renew_task_lease(
-                        &pool,
-                        task_id,
-                        claim_token,
-                        settings.validated_lease_duration(),
-                    ),
+                    renew_task_lease(&storage, lease, settings.lease_duration()),
                 )
                 .await
             }
@@ -681,25 +649,24 @@ async fn maybe_cleanup_expired_task_outputs(
     };
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
-    match purge_expired_export_outputs(pool).await {
-        Ok(deleted) => {
-            metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Export, deleted.len())
-        }
+    let deleted_exports = match purge_expired_export_outputs(pool).await {
+        Ok(deleted) => deleted,
         Err(error) => {
             metrics::task_output_cleanup_failed(metrics::TaskOutputKind::Export);
             return Err(error);
         }
-    }
+    };
+    metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Export, deleted_exports);
+
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Backup);
-    match purge_expired_backup_outputs(pool).await {
-        Ok(deleted) => {
-            metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Backup, deleted.len())
-        }
+    let deleted_backups = match purge_expired_backup_outputs(pool).await {
+        Ok(deleted) => deleted,
         Err(error) => {
             metrics::task_output_cleanup_failed(metrics::TaskOutputKind::Backup);
             return Err(error);
         }
-    }
+    };
+    metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Backup, deleted_backups);
     reservation.commit()?;
 
     Ok(())
@@ -715,7 +682,7 @@ fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
 
 async fn process_claimed_task(
     context: &AppContext,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     backup_settings: &BackupSettings,
 ) -> Result<(), ApiError> {
     let pool = context;
@@ -776,48 +743,23 @@ async fn process_claimed_task(
 
 pub(super) async fn mark_claimed_task_failed(
     pool: &impl crate::storage::StorageContext,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     err: &ApiError,
 ) -> Result<(), ApiError> {
-    let task_kind = TaskKind::from_db(&task.kind)?;
-    let task = if task_kind == TaskKind::Reindex {
-        task.find_record(pool).await?
-    } else {
-        task.clone()
-    };
     let summary = sanitize_error_for_storage(err);
-    if task_kind == TaskKind::Reindex {
-        crate::storage::postgres::operations::computed_field::mark_computed_reindex_failed(
-            pool, &task, &summary,
-        )
-        .await?;
-    }
-    let counts = match task_kind {
-        TaskKind::Import => task.count_import_results(pool).await?,
-        TaskKind::Export => TaskResultCounts::from_outcomes(0, 1)?,
-        TaskKind::RemoteCall => TaskResultCounts::from_outcomes(0, 1)?,
-        TaskKind::Backup => TaskResultCounts::from_outcomes(0, 1)?,
-        TaskKind::Reindex => {
-            TaskResultCounts::from_stored(task.processed_items, task.success_items, 1)?
-        }
-    };
 
     warn!(
         message = "Claimed task failed",
         task_id = task.id,
         task_kind = task.kind.as_str(),
         status = task.status.as_str(),
-        processed_items = counts.processed(),
-        success_items = counts.success(),
-        failed_items = counts.failed(),
         error = %err
     );
 
-    task.finalize_terminal(
+    fail_task(
         pool,
-        TaskStateUpdate::new(TaskStatus::Failed, counts)
-            .with_summary(summary.clone())
-            .with_started_at(task.started_at),
+        task,
+        summary.clone(),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: "failed".to_string(),
@@ -916,17 +858,6 @@ mod lease_heartbeat_tests {
             .unwrap()
     }
 
-    fn new_single_connection_execution_pool() -> PostgresPool {
-        let config = get_config().expect("test requires database configuration");
-        let settings = PostgresPoolSettings::builder(config.database_url.clone())
-            .max_size(1)
-            .statement_timeout_ms(config.db_statement_timeout_ms)
-            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-            .build()
-            .unwrap();
-        init_postgres_pool_with_settings(&settings)
-    }
-
     #[test]
     fn heartbeat_progresses_while_task_runtime_thread_is_blocked() {
         let renewal_attempts = Arc::new(AtomicUsize::new(0));
@@ -1007,18 +938,6 @@ mod lease_heartbeat_tests {
         assert!(finalized);
         heartbeat.unwrap().stop().await;
         assert!(stopped.load(Ordering::Acquire));
-    }
-
-    #[tokio::test]
-    async fn lease_pool_remains_available_when_execution_pool_is_exhausted() {
-        let execution_pool = new_single_connection_execution_pool();
-        let _execution_connection = execution_pool.get().await.unwrap();
-
-        let lease_pool = new_task_lease_pool();
-        timeout(Duration::from_secs(5), lease_pool.get())
-            .await
-            .expect("lease checkout must not wait for the execution pool")
-            .expect("lease pool should connect to the test database");
     }
 
     #[tokio::test]

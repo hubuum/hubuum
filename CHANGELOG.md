@@ -27,13 +27,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking (administrator API):** the storage contract version is now `9`,
+- **Breaking (administrator API):** the storage contract version is now `10`,
   and the redacted administrator configuration reports independently enforced
   `catalog_queries`, `computed_object_queries`, `computed_field_lifecycle`,
   `object_aggregates`, `relation_queries`, `temporal_history`, and
-  `unified_search`, and `task_queue` capabilities instead of the broader provisional
-  `queries_and_history` label. Monitoring or administration clients matching
-  the version or capability list must accept the new contract and labels.
+  `unified_search`, `task_queue`, and `task_execution` capabilities instead of
+  the broader provisional `queries_and_history` label. Monitoring or
+  administration clients matching the version or capability list must accept
+  the new contract and labels. Task workers now carry opaque backend claims and
+  use the mandatory execution contract for lease management, lifecycle events,
+  state changes, terminal artifacts, failure accounting, and output retention.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

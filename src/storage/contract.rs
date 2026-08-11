@@ -5,8 +5,8 @@ use super::{
     CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectStorage, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryStorage, MetricsStorage,
     ObjectAggregateStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, RelationQueryStorage, TaskQueueStorage, TokenRetentionStorage,
-    UnifiedSearchStorage, observed::ObservedLifecycleStorage,
+    PostgresStorage, RelationQueryStorage, TaskExecutionStorage, TaskQueueStorage,
+    TokenRetentionStorage, UnifiedSearchStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -79,6 +79,7 @@ pub(crate) trait StorageBackend:
     + TokenRetentionStorage
     + UnifiedSearchStorage
     + TaskQueueStorage
+    + TaskExecutionStorage
     + WorkflowStorage
     + OperationalStorage
     + sealed::CertifiedStorageBackend
@@ -149,6 +150,7 @@ mod tests {
                 "temporal_history",
                 "unified_search",
                 "task_queue",
+                "task_execution",
                 "workflows",
                 "operations",
             ]

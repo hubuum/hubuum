@@ -8,12 +8,12 @@ use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
-    CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, TaskRecord,
-    TaskResultCounts, TaskStatus,
+    CURRENT_BACKUP_VERSION, NewTaskEventRecord, TaskResultCounts, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
 use crate::storage::capabilities::backup::snapshot_backup_db;
-use crate::storage::capabilities::task::{TaskBackend, TaskStateUpdate};
+use crate::storage::{StorageBackupTaskArtifact, StorageTaskCompletionArtifact};
 use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
@@ -109,9 +109,9 @@ pub async fn create_backup_document(
     })
 }
 
-pub async fn execute_backup_task(
+pub(crate) async fn execute_backup_task(
     context: &AppContext,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     user: &impl AuthzSubject,
     scopes: Option<&TokenScope>,
     settings: &BackupSettings,
@@ -144,14 +144,15 @@ pub async fn execute_backup_task(
         total_items,
         bytes.len()
     );
-    task.finalize_backup_with_output(
+    complete_task(
         context,
-        TaskStateUpdate::new(
+        task,
+        TaskStateChange::new(
             TaskStatus::Succeeded,
             TaskResultCounts::from_outcomes(total_items, 0)?,
         )
-        .with_summary(summary.clone())
-        .with_started_at(task.started_at),
+        .summary(summary.clone())
+        .started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),
@@ -163,13 +164,9 @@ pub async fn execute_backup_task(
                 "include_history": request.include_history,
             })),
         },
-        NewBackupTaskOutputRecord {
-            task_id: task.id,
-            document: bytes,
-            byte_size,
-            sha256,
-            output_expires_at: expires_at,
-        },
+        StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::new(
+            bytes, byte_size, sha256, expires_at,
+        )),
     )
     .await?;
     Ok(())

@@ -14,6 +14,7 @@ mod identity;
 mod object_aggregate;
 mod operational;
 mod relation_query;
+mod task_execution;
 mod task_queue;
 mod unified_search;
 
@@ -80,6 +81,14 @@ pub use relation_query::{
     StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRelatedSort,
 };
+pub use task_execution::{
+    StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
+    StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
+    StorageExportTaskArtifactReport, StorageTaskClaim, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskResultCounts, StorageTaskStateUpdate, TaskExecutionStorage,
+};
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
     StorageExportOutputBuilder, StorageExportOutputSummary, StorageImportTaskResult,
@@ -108,7 +117,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 9;
+pub const STORAGE_CONTRACT_VERSION: u16 = 10;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,12 +150,13 @@ pub enum StorageCapability {
     TemporalHistory,
     UnifiedSearch,
     TaskQueue,
+    TaskExecution,
     Workflows,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -157,6 +167,7 @@ impl StorageCapability {
         Self::TemporalHistory,
         Self::UnifiedSearch,
         Self::TaskQueue,
+        Self::TaskExecution,
         Self::Workflows,
         Self::Operations,
     ];
@@ -174,6 +185,7 @@ impl StorageCapability {
             Self::TemporalHistory => "temporal_history",
             Self::UnifiedSearch => "unified_search",
             Self::TaskQueue => "task_queue",
+            Self::TaskExecution => "task_execution",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -340,6 +352,7 @@ mod tests {
                 "temporal_history",
                 "unified_search",
                 "task_queue",
+                "task_execution",
                 "workflows",
                 "operations",
             ]
