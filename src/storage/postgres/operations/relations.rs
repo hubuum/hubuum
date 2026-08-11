@@ -15,6 +15,7 @@ use crate::models::{
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget, User, user_can_on_any,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::{
     apply_query_options, bind_transitive_filter_params, date_search, numeric_search,
@@ -716,10 +717,11 @@ where
                 .filter(obj::id.ne(self.id()))
                 .select(obj::hubuumobject::all_columns())
                 .distinct()
-                .load::<HubuumObject>(conn)
+                .load::<HubuumObjectRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 }
 
@@ -1201,7 +1203,7 @@ async fn load_object_relation_endpoint_records(
 
     let objects = hubuumobject
         .filter(id.eq_any([from_object_id, to_object_id]))
-        .load::<HubuumObject>(conn)
+        .load::<HubuumObjectRow>(conn)
         .await?;
     let from_object = objects
         .iter()
@@ -1212,7 +1214,7 @@ async fn load_object_relation_endpoint_records(
         .into_iter()
         .find(|object| object.id == to_object_id)
         .ok_or_else(|| ApiError::NotFound(format!("Object {to_object_id} was not found")))?;
-    Ok((from_object, to_object))
+    Ok((from_object.into(), to_object.into()))
 }
 
 async fn load_direct_class_relation_target_on_connection(
@@ -1628,12 +1630,14 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
                 .await?;
             let from_object = hubuumobject
                 .filter(object_id.eq(relation.from_hubuum_object_id))
-                .first::<HubuumObject>(conn)
-                .await?;
+                .first::<HubuumObjectRow>(conn)
+                .await?
+                .into();
             let to_object = hubuumobject
                 .filter(object_id.eq(relation.to_hubuum_object_id))
-                .first::<HubuumObject>(conn)
-                .await?;
+                .first::<HubuumObjectRow>(conn)
+                .await?
+                .into();
             diesel::delete(hubuumobject_relation.filter(id.eq(self.id)))
                 .execute(conn)
                 .await?;
@@ -1699,12 +1703,14 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
                 .await?;
             let from_object = hubuumobject
                 .filter(object_id.eq(relation.from_hubuum_object_id))
-                .first::<HubuumObject>(conn)
-                .await?;
+                .first::<HubuumObjectRow>(conn)
+                .await?
+                .into();
             let to_object = hubuumobject
                 .filter(object_id.eq(relation.to_hubuum_object_id))
-                .first::<HubuumObject>(conn)
-                .await?;
+                .first::<HubuumObjectRow>(conn)
+                .await?
+                .into();
             diesel::delete(hubuumobject_relation.filter(id.eq(self.id())))
                 .execute(conn)
                 .await?;

@@ -254,7 +254,8 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
         let history = history::hubuumobject_history
             .filter(history::id.eq(before.id))
             .order(history::history_id.asc())
-            .load::<HubuumObjectHistory>(conn)
+            .select((history::data, history::op, history::actor_id))
+            .load::<(serde_json::Value, String, Option<i32>)>(conn)
             .await?;
         Ok::<_, diesel::result::Error>((computed, history))
     })
@@ -276,12 +277,9 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
             .unwrap()
     );
     assert_eq!(history.len() as i64, history_before + 1);
-    assert_eq!(history.last().unwrap().data, updated.data);
-    assert_eq!(history.last().unwrap().op, "U");
-    assert_eq!(
-        history.last().unwrap().actor_id,
-        Some(test_context.admin_user.id)
-    );
+    assert_eq!(history.last().unwrap().0, updated.data);
+    assert_eq!(history.last().unwrap().1, "U");
+    assert_eq!(history.last().unwrap().2, Some(test_context.admin_user.id));
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].before.as_ref().unwrap()["data"], before.data);
     assert_eq!(events[0].after.as_ref().unwrap()["data"], updated.data);
@@ -364,7 +362,8 @@ async fn concurrent_patches_compose_from_the_latest_row_locked_data(
         hubuumobject
             .filter(id.eq(object_id))
             .for_update()
-            .first::<HubuumObject>(conn)
+            .select(id)
+            .first::<i32>(conn)
             .await?;
 
         let first = tokio::spawn(async move {
@@ -572,7 +571,8 @@ async fn object_data_patch_holds_the_class_schema_lock_until_commit(
         hubuumobject
             .filter(id.eq(object.id))
             .for_update()
-            .first::<HubuumObject>(conn)
+            .select(id)
+            .first::<i32>(conn)
             .await?;
         let transaction_id = diesel::sql_query("SELECT txid_current()::bigint AS id")
             .get_result::<TransactionId>(conn)

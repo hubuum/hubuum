@@ -214,6 +214,53 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
 }
 
 #[test]
+fn object_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in ["src/models/object.rs", "src/models/traits/object.rs"] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+        ] {
+            if source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    let adapter_path = root.join("src/storage/postgres/operations/object.rs");
+    let adapter_source = fs::read_to_string(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "struct HubuumObjectRow",
+        "struct NewHubuumObjectRow",
+        "struct UpdateHubuumObjectRow",
+        "impl From<HubuumObjectRow> for HubuumObject",
+        "impl CursorSqlMapping for HubuumObjectRow",
+    ] {
+        assert!(
+            adapter_source.contains(required),
+            "PostgreSQL object adapter is missing {required}"
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "object domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable() {
     let root = repository_root();
     let contract_path = root.join("src/storage/contract.rs");
@@ -249,7 +296,9 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "OperationalStateStorage",
         "TokenRetentionStorage",
         "HistoryStorage",
+        "InventoryStorage",
         "UnifiedSearchStorage",
+        "ObjectRecordStorage",
         "RemoteTargetStorage",
         "TaskQueueStorage",
         "TaskExecutionStorage",
@@ -410,6 +459,27 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         compact_context.contains("\"object_aggregates\",\"aggregate\""),
         "object aggregation must use the common storage observer"
     );
+    assert!(
+        compact_context.contains("\"inventory\",\"counts\""),
+        "inventory counts must use the common storage observer"
+    );
+    for operation in [
+        "validate",
+        "validate_new",
+        "validate_update",
+        "save",
+        "create",
+        "update",
+        "delete",
+        "load",
+        "collection",
+        "class",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"object_records\",\"{operation}\"")),
+            "object record operation {operation} must use the common storage observer"
+        );
+    }
     for operation in [
         "create",
         "get_access",

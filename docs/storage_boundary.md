@@ -69,6 +69,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Relation queries | Relation filtering and paging, endpoint-set queries, graph traversal, and export-oriented multi-root expansion |
 | Identity and authorization data | Principals, credentials, memberships, single- and multi-collection grant decisions, and class/object projections needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
+| Inventory queries | One consistent administrative snapshot of collection, class, object, and per-class object counts |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
 | Remote targets | Point and list reads, atomic audited lifecycle mutations, redacted transport policy, and invocation provenance |
 | Task queue | Idempotent task submission, access facts, task/event/result paging, and retained export and backup output reads |
@@ -91,8 +92,11 @@ responsibilities are enforced by operation-shaped traits and shared tests. The
 complete contract includes `AuthenticationStorage`, `IdentityStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
-`ObjectAggregateStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
-contracts. `TaskQueueStorage` replaces task submission and reads, while
+`ObjectAggregateStorage`, `RelationQueryStorage`, `InventoryStorage`, and
+`UnifiedSearchStorage` contracts. `ObjectRecordStorage` keeps transitional
+point-load, validation, and event-suppressed fixture operations behind the same
+mandatory backend boundary; it does not expose rows or connections.
+`TaskQueueStorage` replaces task submission and reads, while
 `TaskExecutionStorage` owns the complete worker claim and state machine.
 `BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
 execution is part of `ComputedFieldLifecycleStorage`. `RemoteTargetStorage`
@@ -115,10 +119,13 @@ considered complete merely because a marker exists.
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Export-template, remote-target, event,
 event-sink, event-subscription, and event-delivery lifecycle rows are
-adapter-owned, as are remote-target history and remote-call result persistence
-rows. Remaining mixed persistence rows move there as their backend-neutral DTOs
-are extracted. Their current locations are implementation details, not partial
-backend support.
+adapter-owned, as are object lifecycle and object-history rows, remote-target
+history, and remote-call result persistence rows. Domain object, create, update,
+history, and per-class count values contain no Diesel derives, schema bindings,
+or SQL cursor mappings. Those mappings and explicit conversions live in the
+PostgreSQL adapter. Remaining mixed persistence rows move there as their
+backend-neutral DTOs are extracted. Their current locations are implementation
+details, not partial backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
@@ -128,7 +135,9 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 21 additionally requires the complete export-template lifecycle and a
+Version 22 additionally requires consistent administrative inventory queries,
+the `inventory_queries` capability label, and mandatory object point-operation
+abstraction. Version 21 required the complete export-template lifecycle and a
 new `export_template_lifecycle` capability label. Version 20 required
 coordinated initial-administrator bootstrap,
 atomic local-password replacement with token revocation, the complete stored
@@ -331,7 +340,10 @@ Inputs and results crossing the boundary are storage-owned, backend-neutral
 DTOs. They may contain domain types, but they do not derive Diesel traits or
 expose SQL rows, query builders, connections, pools, or driver errors. Each
 adapter keeps its persistence rows private and explicitly converts them into
-the contract DTOs. Metrics use this pattern today: `MetricsStorage` returns
+the contract DTOs. `InventoryStorage` returns one snapshot whose total-object
+count and ordered per-class counts come from one native query, so handlers do
+not compose several backend reads or observe a torn inventory. Metrics use this
+pattern today: `MetricsStorage` returns
 neutral inventory, task, event, and pool snapshots while PostgreSQL keeps its
 queryable row structs inside the adapter. `OperationalStateStorage` does the
 same for readiness, maintenance, persisted storage diagnostics, and task-queue
@@ -721,8 +733,8 @@ The first workspace boundaries are now in place:
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
   authorization, storage-execution, catalog-query, temporal-history,
-  unified-search, operational
-  state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
+  inventory-query, unified-search, operational state, computed-object,
+  computed-field lifecycle, object-aggregate, task-queue,
   task-execution, backup-snapshot, remote-target, export-template lifecycle,
   relation-query, event-health, event-administration, event-fan-out,
   event-retention, and token-retention traits without application, transport,

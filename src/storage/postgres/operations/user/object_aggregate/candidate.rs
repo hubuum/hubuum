@@ -7,12 +7,13 @@ use serde::Serialize;
 use super::bounded_json::ObjectAggregateJsonBound;
 use super::filters::apply_object_aggregate_source_filters;
 use crate::errors::ApiError;
+use crate::models::TokenScope;
 use crate::models::object_aggregate::ObjectAggregateSpec;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SortParam};
-use crate::models::{HubuumObject, TokenScope};
 use crate::pagination::{Page, finalize_page, finalize_partial_page};
 use crate::storage::postgres::PostgresConnection;
 use crate::storage::postgres::operations::computed_field::ComputedQuerySnapshot;
+use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::resource_scope::{
     object_scope_predicate, resource_scope_ids,
 };
@@ -140,7 +141,7 @@ pub(super) async fn load_aggregate_candidate_batch(
         query = query.filter(object_scope_predicate(scope));
     }
     apply_object_aggregate_source_filters!(query, query_options, computed_filter_snapshot);
-    crate::apply_query_options!(query, query_options, HubuumObject);
+    crate::apply_query_options!(query, query_options, HubuumObjectRow);
     let data_projection = if include_object_data {
         "data"
     } else {

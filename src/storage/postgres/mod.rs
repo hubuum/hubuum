@@ -27,11 +27,12 @@ use crate::events::{
 use crate::models::search::QueryOptions;
 use crate::models::{
     ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
-    MaintenanceState, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationSelector,
-    ObjectSelector, PreparedClassRelation, PreparedObjectRelation, ResolvedClassRelationTarget,
-    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget,
-    TokenRetentionSettings, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    HubuumObjectID, MaintenanceState, NewCollectionWithAssignee, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumObject, ObjectDataPatchDocument, ObjectRelationCreateSelector,
+    ObjectRelationSelector, ObjectSelector, PreparedClassRelation, PreparedObjectRelation,
+    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
+    ResolvedObjectTarget, TokenRetentionSettings, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::class::{
@@ -44,8 +45,10 @@ use crate::storage::postgres::operations::collection::{
     move_collection_record_from_backend,
 };
 use crate::storage::postgres::operations::object::{
-    CreateObjectInResolvedClassRecord, DeleteResolvedObjectRecord, PatchObjectDataRecord,
-    ResolveObjectSelectorRecord, UpdateResolvedObjectRecord,
+    CreateObjectInResolvedClassRecord, DeleteObjectRecord, DeleteResolvedObjectRecord,
+    LoadObjectRecord, ObjectClassLookup, ObjectCollectionLookup, PatchObjectDataRecord,
+    ResolveObjectSelectorRecord, SaveObjectRecord, UpdateObjectRecord, UpdateResolvedObjectRecord,
+    ValidateObjectRecord,
 };
 use crate::storage::postgres::operations::relations::{
     CreatePreparedClassRelationRecord, CreatePreparedObjectRelationRecord,
@@ -72,22 +75,23 @@ use super::{
     EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
     ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope,
     HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
-    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
-    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    StorageAuditEvent, StorageAuditEventListQuery, StorageCallSite, StorageClass,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedObject,
-    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
-    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentity, StorageIdentityPage,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset, StorageObject,
+    InventoryGaugeSnapshot, InventoryStorage, MetricsStorage, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRecordStorage, ObjectRelationStore,
+    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalExportTemplateAuditEntry,
+    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
+    OperationalTaskQueueSnapshot, ReadinessSnapshot, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, StorageAuditEvent,
+    StorageAuditEventListQuery, StorageCallSite, StorageClass, StorageClassGraphRow,
+    StorageClassRelation, StorageCollection, StorageComputedObject, StorageDefaultAdminBootstrap,
+    StorageError, StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventPage,
+    StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
+    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecution, StorageExternalPrincipalState,
+    StorageExternalUserSync, StorageIdentity, StorageIdentityPage, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StorageInventoryCounts, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
     StoragePrincipalGroup, StorageQueryBudget, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRevisionPrecondition, StorageServiceAccount,
@@ -995,6 +999,15 @@ impl MetricsStorage for PostgresStorage {
 }
 
 #[async_trait]
+impl InventoryStorage for PostgresStorage {
+    async fn inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
+        operations::inventory::load_inventory_counts(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
 impl OperationalStateStorage for PostgresStorage {
     async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
         operations::probe::load_readiness_snapshot(&self.pool)
@@ -1541,6 +1554,103 @@ impl ObjectStore for PostgresStorage {
     ) -> Result<(), StorageError> {
         target
             .delete_resolved_object_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl ObjectRecordStorage for PostgresStorage {
+    async fn validate_object(&self, object: &HubuumObject) -> Result<(), StorageError> {
+        object
+            .validate_object_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn validate_new_object(&self, object: &NewHubuumObject) -> Result<(), StorageError> {
+        object
+            .validate_object_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn validate_object_update(
+        &self,
+        update: &UpdateHubuumObject,
+        object_id: i32,
+    ) -> Result<(), StorageError> {
+        (update, object_id)
+            .validate_object_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn save_object_record(
+        &self,
+        object: &HubuumObject,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, StorageError> {
+        object
+            .save_object_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_object_record(
+        &self,
+        object: &NewHubuumObject,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, StorageError> {
+        object
+            .save_object_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_object_record(
+        &self,
+        update: &UpdateHubuumObject,
+        object_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, StorageError> {
+        update
+            .update_object_record(&self.pool, object_id, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_object_record(
+        &self,
+        object: &HubuumObject,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        object
+            .delete_object_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_object_record(&self, object_id: i32) -> Result<HubuumObject, StorageError> {
+        HubuumObjectID::new(object_id)
+            .map_err(map_postgres_error)?
+            .load_object_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn object_collection(&self, object_id: i32) -> Result<Collection, StorageError> {
+        HubuumObjectID::new(object_id)
+            .map_err(map_postgres_error)?
+            .lookup_object_collection(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn object_class(&self, object_id: i32) -> Result<HubuumClass, StorageError> {
+        HubuumObjectID::new(object_id)
+            .map_err(map_postgres_error)?
+            .lookup_object_class(&self.pool)
             .await
             .map_err(map_postgres_error)
     }

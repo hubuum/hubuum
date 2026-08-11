@@ -208,7 +208,8 @@ pub(crate) fn object_cursor_sql_fields(
         .iter()
         .map(|sort| {
             if sort.field.computed_query().is_none() {
-                return <HubuumObject as CursorSqlMapping>::sql_field(&sort.field).map(Into::into);
+                return <HubuumObjectRow as CursorSqlMapping>::sql_field(&sort.field)
+                    .map(Into::into);
             }
             object_computed_sql_field(&sort.field, snapshot)
         })

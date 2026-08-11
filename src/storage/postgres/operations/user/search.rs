@@ -13,6 +13,7 @@ use crate::storage::postgres::operations::authz::{
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
+use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::resource_scope::{
     class_scope_predicate, collection_scope_predicate, object_scope_predicate, resource_scope_ids,
 };
@@ -973,7 +974,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             let sql_fields = object_cursor_sql_fields(&query_options.sort, snapshot)?;
             crate::apply_query_options_with_fields!(base_query, query_options, sql_fields);
         } else {
-            crate::apply_query_options!(base_query, query_options, HubuumObject);
+            crate::apply_query_options!(base_query, query_options, HubuumObjectRow);
         }
 
         trace_query!(base_query, "Searching objects");
@@ -982,19 +983,21 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             with_connection(pool, async |conn| {
                 base_query
                     .select(hubuumobject::all_columns())
-                    .load::<HubuumObject>(conn)
+                    .load::<HubuumObjectRow>(conn)
                     .await
             })
             .await
+            .map(|rows| rows.into_iter().map(Into::into).collect())
         } else {
             with_connection(pool, async |conn| {
                 base_query
                     .select(hubuumobject::all_columns())
                     .distinct()
-                    .load::<HubuumObject>(conn)
+                    .load::<HubuumObjectRow>(conn)
                     .await
             })
             .await
+            .map(|rows| rows.into_iter().map(Into::into).collect())
         }
     }
 

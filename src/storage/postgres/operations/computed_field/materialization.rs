@@ -471,8 +471,11 @@ async fn repair_stale_materializations(
             .filter(id.eq_any(&object_ids))
             .order(id.asc())
             .for_update()
-            .load::<HubuumObject>(conn)
-            .await?;
+            .load::<HubuumObjectRow>(conn)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<HubuumObject>>();
 
         // Object writes lock their row before taking the class advisory lock.
         // Repairs and rebuild batches use the same order so an exclusive

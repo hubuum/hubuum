@@ -4,10 +4,8 @@ use crate::config::{get_config, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::middlewares::rate_limit;
-use crate::models::class::total_class_count;
-use crate::models::collection::total_collection_count;
-use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::permissions::AppContext;
+use crate::services::inventory as inventory_service;
 use crate::services::operational_administration as operational_service;
 use crate::storage::MetricsStorage;
 use actix_web::{Responder, delete, get, http::StatusCode, web};
@@ -150,11 +148,12 @@ pub async fn get_object_and_class_count(
         requestor = requestor.user.id,
     );
 
+    let counts = inventory_service::counts(context.backend()).await?;
     let response = CountsResponse {
-        total_objects: total_object_count(&context).await?,
-        total_classes: total_class_count(&context).await?,
-        total_collections: total_collection_count(&context).await?,
-        objects_per_class: objects_per_class_count(&context).await?,
+        total_objects: counts.total_objects,
+        total_classes: counts.total_classes,
+        total_collections: counts.total_collections,
+        objects_per_class: counts.objects_by_class,
     };
 
     Ok(ApiResponse::new(response, StatusCode::OK))

@@ -23,6 +23,7 @@ pub mod group;
 pub mod history;
 pub mod identity;
 pub(crate) mod identity_operations;
+pub(crate) mod inventory;
 pub(crate) mod maintenance;
 pub mod meta;
 pub mod metrics;
