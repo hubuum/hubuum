@@ -1,7 +1,7 @@
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
+use crate::models::ResourceRevision;
 use crate::models::search::QueryOptions;
-use crate::models::{CollectionHistory, ResourceRevision};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
 use crate::storage::{
@@ -16,6 +16,35 @@ use std::num::NonZeroI64;
 pub enum HistoryCollectionFilter<'a> {
     All,
     Visible(&'a [i32]),
+}
+
+#[derive(Queryable)]
+#[diesel(table_name = crate::schema::collections_history)]
+pub(crate) struct CollectionHistoryRow {
+    id: i32,
+    name: String,
+    description: String,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    parent_collection_id: Option<i32>,
+    op: String,
+    valid_from: chrono::DateTime<chrono::Utc>,
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    actor_id: Option<i32>,
+    history_id: i64,
+    actor_kind: Option<String>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    revision: ResourceRevision,
+}
+
+crate::impl_history_pagination!(CollectionHistoryRow, "collections_history");
+
+#[cfg(test)]
+impl CollectionHistoryRow {
+    pub(crate) fn principal_ids(&self) -> [Option<i32>; 2] {
+        [self.actor_id, self.initiator_user_id]
+    }
 }
 
 #[derive(Queryable)]
@@ -181,7 +210,7 @@ macro_rules! metadata_to_storage {
     };
 }
 
-pub(crate) fn collection_history_to_storage(row: CollectionHistory) -> CollectionHistoryRecord {
+pub(crate) fn collection_history_to_storage(row: CollectionHistoryRow) -> CollectionHistoryRecord {
     CollectionHistoryRecord::new(
         row.id,
         row.name,
@@ -367,7 +396,7 @@ history_db_fns!(
     collection_as_of,
     crate::schema::collections_history,
     id,
-    crate::models::CollectionHistory
+    CollectionHistoryRow
 );
 
 history_db_fns!(

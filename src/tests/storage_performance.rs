@@ -1326,7 +1326,7 @@ async fn collection_history_query_count_is_constant_with_page_size() {
             .await?;
             let principal_ids = rows
                 .iter()
-                .flat_map(|row| [row.actor_id, row.initiator_user_id])
+                .flat_map(|row| row.principal_ids())
                 .flatten()
                 .collect();
             let principal_names = resolve_principal_names(&pool, principal_ids).await?;

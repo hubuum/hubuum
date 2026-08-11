@@ -2,8 +2,137 @@ use super::*;
 use crate::api::etag::RevisionOwner;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::traits::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 use chrono::NaiveDateTime;
 use diesel_async::RunQueryDsl;
+
+/// PostgreSQL representation of a collection row.
+///
+/// The domain value is persistence-neutral; schema bindings and physical
+/// cursor columns remain private to the adapter.
+#[derive(Clone, Queryable, QueryableByName, Selectable)]
+#[diesel(table_name = crate::schema::collections)]
+pub(crate) struct CollectionRow {
+    pub(crate) id: i32,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) parent_collection_id: Option<i32>,
+    pub(crate) revision: crate::models::ResourceRevision,
+}
+
+impl From<CollectionRow> for Collection {
+    fn from(row: CollectionRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            parent_collection_id: row.parent_collection_id,
+            revision: row.revision,
+        }
+    }
+}
+
+impl CursorPaginated for CollectionRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        Collection::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id.into()),
+            FilterField::Name => CursorValue::String(self.name.clone()),
+            FilterField::Description => CursorValue::String(self.description.clone()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for collections"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        Collection::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Collection::tie_breaker_sort()
+    }
+}
+
+impl CursorSqlMapping for CollectionRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "collections.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "collections.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "collections.description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "collections.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "collections.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "collections.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for collections"
+                )));
+            }
+        })
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::collections)]
+struct NewCollectionRow<'a> {
+    name: &'a str,
+    description: &'a str,
+    parent_collection_id: Option<i32>,
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = crate::schema::collections)]
+pub(crate) struct UpdateCollectionRow<'a> {
+    name: Option<&'a str>,
+    description: Option<&'a str>,
+}
+
+impl<'a> From<&'a UpdateCollection> for UpdateCollectionRow<'a> {
+    fn from(update: &'a UpdateCollection) -> Self {
+        Self {
+            name: update.name.as_deref(),
+            description: update.description.as_deref(),
+        }
+    }
+}
 
 fn collection_snapshot(collection: &Collection) -> serde_json::Value {
     serde_json::json!({
@@ -92,10 +221,11 @@ async fn lock_and_validate_collection_for_delete(
     let collection = collections
         .filter(id.eq(collection_id))
         .for_update()
-        .first::<Collection>(conn)
+        .first::<CollectionRow>(conn)
         .await
-        .optional()?;
-    let collection =
+        .optional()?
+        .map(Into::into);
+    let collection: Collection =
         crate::storage::postgres::require_existing_revision_target(collection, &owner_key)?;
     crate::storage::postgres::assert_locked_revision_precondition(
         conn,
@@ -164,35 +294,33 @@ pub(crate) async fn insert_collection_row_with_closure(
     conn: &mut crate::storage::postgres::PostgresConnection,
     input: CollectionRowInsert<'_>,
 ) -> Result<Collection, ApiError> {
-    use crate::schema::collections::dsl::{
-        collections, created_at, description, name, parent_collection_id, updated_at,
-    };
+    use crate::schema::collections::dsl::{collections, created_at, updated_at};
 
     let resolved_parent_id = resolve_parent_collection_id(conn, input.parent_collection_id).await?;
 
-    let collection = match input.timestamps {
-        Some((created, updated)) => {
-            diesel::insert_into(collections)
-                .values((
-                    name.eq(input.name),
-                    description.eq(input.description),
-                    parent_collection_id.eq(resolved_parent_id),
-                    created_at.eq(created),
-                    updated_at.eq(updated),
-                ))
-                .get_result::<Collection>(conn)
-                .await?
-        }
-        None => {
-            diesel::insert_into(collections)
-                .values((
-                    name.eq(input.name),
-                    description.eq(input.description),
-                    parent_collection_id.eq(resolved_parent_id),
-                ))
-                .get_result::<Collection>(conn)
-                .await?
-        }
+    let collection: Collection = match input.timestamps {
+        Some((created, updated)) => diesel::insert_into(collections)
+            .values((
+                NewCollectionRow {
+                    name: input.name,
+                    description: input.description,
+                    parent_collection_id: Some(resolved_parent_id),
+                },
+                created_at.eq(created),
+                updated_at.eq(updated),
+            ))
+            .get_result::<CollectionRow>(conn)
+            .await?
+            .into(),
+        None => diesel::insert_into(collections)
+            .values(NewCollectionRow {
+                name: input.name,
+                description: input.description,
+                parent_collection_id: Some(resolved_parent_id),
+            })
+            .get_result::<CollectionRow>(conn)
+            .await?
+            .into(),
     };
 
     insert_collection_closure_rows(conn, collection.id, resolved_parent_id).await?;
@@ -400,15 +528,21 @@ impl UpdateCollectionRecord for UpdateCollection {
             crate::storage::postgres::updated_or_current(
                 diesel::update(collections)
                     .filter(id.eq(collection_id))
-                    .set(self)
-                    .get_result::<Collection>(conn)
+                    .set(UpdateCollectionRow::from(self))
+                    .get_result::<CollectionRow>(conn)
                     .await
                     .optional(),
-                async || collections.filter(id.eq(collection_id)).first(conn).await,
+                async || {
+                    collections
+                        .filter(id.eq(collection_id))
+                        .first::<CollectionRow>(conn)
+                        .await
+                },
             )
             .await
         })
         .await
+        .map(Into::into)
     }
 
     async fn update_collection_record(
@@ -430,10 +564,11 @@ impl UpdateCollectionRecord for UpdateCollection {
             let before = collections
                 .filter(id.eq(collection_id))
                 .for_update()
-                .first::<Collection>(conn)
+                .first::<CollectionRow>(conn)
                 .await
-                .optional()?;
-            let before =
+                .optional()?
+                .map(Into::into);
+            let before: Collection =
                 crate::storage::postgres::require_existing_revision_target(before, &owner_key)?;
             crate::storage::postgres::assert_locked_revision_precondition(
                 conn,
@@ -445,9 +580,10 @@ impl UpdateCollectionRecord for UpdateCollection {
                 return Ok(before);
             }
             let updated = diesel::update(collections.filter(id.eq(collection_id)))
-                .set(self)
-                .get_result::<Collection>(conn)
-                .await?;
+                .set(UpdateCollectionRow::from(self))
+                .get_result::<CollectionRow>(conn)
+                .await?
+                .into();
             let event = collection_event(
                 &updated,
                 Action::Updated,
@@ -586,10 +722,11 @@ pub async fn collection_children_from_backend<T: CollectionAccessors>(
         collections
             .filter(parent_collection_id.eq(target_collection_id))
             .order(crate::schema::collections::name.asc())
-            .load::<Collection>(conn)
+            .load::<CollectionRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
@@ -609,10 +746,11 @@ pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
             .filter(depth.gt(0))
             .order(depth.asc())
             .select(collections::all_columns())
-            .load::<Collection>(conn)
+            .load::<CollectionRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn move_collection_record_from_backend(
@@ -627,11 +765,12 @@ pub async fn move_collection_record_from_backend(
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
 
     with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
-        let before = collections
+        let before: Collection = collections
             .filter(id.eq(target_collection_id))
             .for_update()
-            .first::<Collection>(conn)
-            .await?;
+            .first::<CollectionRow>(conn)
+            .await?
+            .into();
 
         if before.parent_collection_id.is_none() {
             return Err(ApiError::Conflict(
@@ -678,8 +817,9 @@ pub async fn move_collection_record_from_backend(
 
         let updated = collections
             .filter(id.eq(target_collection_id))
-            .first::<Collection>(conn)
-            .await?;
+            .first::<CollectionRow>(conn)
+            .await?
+            .into();
 
         if let Some(context) = context {
             let event = collection_event(

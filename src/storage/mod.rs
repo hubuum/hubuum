@@ -20,7 +20,11 @@ pub mod postgres;
 
 pub(crate) use class_relations::ClassRelationStore;
 pub(crate) use classes::{ClassRecordStorage, ClassStore};
-pub(crate) use collections::CollectionStore;
+pub(crate) use collections::{
+    CollectionGrantListQuery, CollectionGroupPermissionQuery, CollectionGroupsPageQuery,
+    CollectionGroupsQuery, CollectionPermissionStorage, CollectionPrincipalPageQuery,
+    CollectionPrincipalQuery, CollectionRecordStorage, CollectionStore, CollectionVisibilityQuery,
+};
 pub use context::StorageContext;
 pub(crate) use context::{StorageHandle, storage_handle};
 #[cfg(test)]

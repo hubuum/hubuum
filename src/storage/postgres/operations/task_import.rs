@@ -19,7 +19,9 @@ use crate::models::{
 use crate::storage::postgres::operations::class::{
     HubuumClassRow, NewHubuumClassRow, UpdateHubuumClassRow,
 };
-use crate::storage::postgres::operations::collection::CollectionRowInsert;
+use crate::storage::postgres::operations::collection::{
+    CollectionRow, CollectionRowInsert, UpdateCollectionRow,
+};
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
 };
@@ -83,10 +85,11 @@ pub async fn lookup_collections_by_name(
         collections
             .filter(name.eq(value))
             .order(crate::schema::collections::id.asc())
-            .load::<Collection>(conn)
+            .load::<CollectionRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn lookup_root_collection(
@@ -114,11 +117,12 @@ pub async fn lookup_collection_by_id(
     with_connection(pool, async |conn| {
         collections
             .filter(id.eq(collection_id))
-            .first::<Collection>(conn)
+            .first::<CollectionRow>(conn)
             .await
             .optional()
     })
     .await
+    .map(|row| row.map(Into::into))
 }
 
 pub async fn lookup_class_by_collection_and_name(
@@ -290,8 +294,9 @@ pub async fn lookup_collections_by_name_db(
     collections
         .filter(name.eq(value))
         .order(crate::schema::collections::id.asc())
-        .load::<Collection>(conn)
+        .load::<CollectionRow>(conn)
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
         .map_err(ApiError::from)
 }
 
@@ -302,8 +307,9 @@ pub async fn lookup_root_collection_db(
 
     collections
         .filter(parent_collection_id.is_null())
-        .first::<Collection>(conn)
+        .first::<CollectionRow>(conn)
         .await
+        .map(Into::into)
         .map_err(ApiError::from)
 }
 
@@ -317,9 +323,10 @@ pub async fn lookup_collection_child_by_name_db(
     collections
         .filter(parent_collection_id.eq(parent_id_value))
         .filter(name.eq(child_name))
-        .first::<Collection>(conn)
+        .first::<CollectionRow>(conn)
         .await
         .optional()
+        .map(|row| row.map(Into::into))
         .map_err(ApiError::from)
 }
 
@@ -514,21 +521,22 @@ pub async fn update_collection_db(
             crate::storage::postgres::updated_or_current(
                 diesel::update(collections.filter(id.eq(collection_id_value)))
                     .set((
-                        &update,
+                        UpdateCollectionRow::from(&update),
                         created_at.eq(timestamps.created_at()),
                         updated_at.eq(timestamps.updated_at()),
                     ))
-                    .get_result::<Collection>(conn)
+                    .get_result::<CollectionRow>(conn)
                     .await
                     .optional(),
                 async || {
                     collections
                         .filter(id.eq(collection_id_value))
-                        .first(conn)
+                        .first::<CollectionRow>(conn)
                         .await
                 },
             )
             .await
+            .map(Into::into)
             .map_err(ApiError::from)
         })
         .await;
@@ -536,18 +544,19 @@ pub async fn update_collection_db(
 
     crate::storage::postgres::updated_or_current(
         diesel::update(collections.filter(id.eq(collection_id_value)))
-            .set(&update)
-            .get_result::<Collection>(conn)
+            .set(UpdateCollectionRow::from(&update))
+            .get_result::<CollectionRow>(conn)
             .await
             .optional(),
         async || {
             collections
                 .filter(id.eq(collection_id_value))
-                .first(conn)
+                .first::<CollectionRow>(conn)
                 .await
         },
     )
     .await
+    .map(Into::into)
     .map_err(ApiError::from)
 }
 

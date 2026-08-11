@@ -19,10 +19,13 @@ impl GetCollection<(Collection, Collection)> for HubuumClassRelation {
                 .filter(class_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(class_collection_id)))
                 .select(collections::all_columns())
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<Collection>>();
 
         if from_id == to_id && collection_list.len() == 1 {
             trace!("Found same collection for class relation, returning same collection twice");
@@ -60,10 +63,13 @@ impl GetCollection<(Collection, Collection)> for NewHubuumClassRelation {
                 .filter(class_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(class_collection_id)))
                 .select(collections::all_columns())
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<Collection>>();
 
         if collection_list.len() == 1 {
             trace!("Found same collection for class relation, returning same collection twice");
@@ -101,10 +107,13 @@ impl GetCollection<(Collection, Collection)> for HubuumObjectRelation {
                 .filter(object_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(object_collection_id)))
                 .select(collections::all_columns())
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<Collection>>();
 
         if collection_list.len() == 1 {
             trace!("Found same collection for object relation, returning same collection twice");
@@ -142,10 +151,13 @@ impl GetCollection<(Collection, Collection)> for NewHubuumObjectRelation {
                 .filter(object_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(object_collection_id)))
                 .select(collections::all_columns())
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<Collection>>();
 
         if collection_list.len() == 1 {
             trace!("Found same collection for object relation, returning same collection twice");
@@ -183,10 +195,13 @@ impl GetCollection<(Collection, Collection)> for HubuumObjectRelationID {
                 .filter(object_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(object_collection_id)))
                 .select(collections::all_columns())
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<Collection>>();
 
         if collection_list.len() == 1 {
             trace!("Found same collection for object relation, returning same collection twice");
@@ -218,10 +233,11 @@ where
         let collection = with_connection(pool, async |conn| {
             collections
                 .filter(id.eq(self.id()))
-                .first::<Collection>(conn)
+                .first::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into();
 
         Ok(collection)
     }

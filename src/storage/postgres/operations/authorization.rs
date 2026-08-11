@@ -7,6 +7,7 @@ use crate::models::{
     PrincipalID,
 };
 use crate::storage::postgres::operations::collection as collection_backend;
+use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::permissions as permission_backend;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
@@ -330,11 +331,15 @@ pub(crate) async fn local_authorized_collections(
             collections::table
                 .filter(collections::id.eq_any(collection_ids))
                 .distinct()
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
         .await?;
-        return Ok(rows.into_iter().map(collection_to_storage).collect());
+        return Ok(rows
+            .into_iter()
+            .map(Into::into)
+            .map(collection_to_storage)
+            .collect());
     }
 
     let principal_id = PrincipalID::new(query.principal_id())?;
@@ -365,11 +370,15 @@ pub(crate) async fn local_authorized_collections(
     let rows = with_connection(pool, async |conn| {
         collections::table
             .filter(collections::id.eq_any(ids))
-            .load::<Collection>(conn)
+            .load::<CollectionRow>(conn)
             .await
     })
     .await?;
-    Ok(rows.into_iter().map(collection_to_storage).collect())
+    Ok(rows
+        .into_iter()
+        .map(Into::into)
+        .map(collection_to_storage)
+        .collect())
 }
 
 pub(crate) async fn list_authorization_collection_candidates(
@@ -380,11 +389,15 @@ pub(crate) async fn list_authorization_collection_candidates(
     let rows = with_connection(pool, async |conn| {
         collections::table
             .order_by(collections::id.asc())
-            .load::<Collection>(conn)
+            .load::<CollectionRow>(conn)
             .await
     })
     .await?;
-    Ok(rows.into_iter().map(collection_to_storage).collect())
+    Ok(rows
+        .into_iter()
+        .map(Into::into)
+        .map(collection_to_storage)
+        .collect())
 }
 
 pub(crate) async fn list_authorization_group_candidates(
@@ -434,7 +447,7 @@ pub(crate) async fn authorization_policy_snapshot(
                 permissions::collection_id.asc(),
                 permissions::group_id.asc(),
             ))
-            .load::<(Permission, Group, Collection)>(conn)
+            .load::<(Permission, Group, CollectionRow)>(conn)
             .await
     })
     .await?;
@@ -444,7 +457,7 @@ pub(crate) async fn authorization_policy_snapshot(
             AuthorizationPolicySnapshotRow::new(
                 grant_to_storage(grant),
                 group_to_storage(group),
-                collection_to_storage(collection),
+                collection_to_storage(collection.into()),
             )
         })
         .collect())

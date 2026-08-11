@@ -6,6 +6,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::models::{Collection, UserWithName};
+use crate::storage::postgres::operations::collection::CollectionRow;
 
 #[derive(Clone, Debug)]
 struct JsonCursorItem {
@@ -148,7 +149,7 @@ fn test_paginate_collections_with_cursor() {
     .unwrap();
 
     let cursor_sql =
-        cursor_filter_sql::<Collection>(&prepared_query.sort, prepared_query.cursor.as_deref())
+        cursor_filter_sql::<CollectionRow>(&prepared_query.sort, prepared_query.cursor.as_deref())
             .unwrap();
 
     assert_eq!(cursor_sql, Some("((collections.id > 2))".to_string()));

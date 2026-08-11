@@ -1,6 +1,7 @@
 use super::*;
 use crate::models::token_scope::TokenScope;
 use crate::storage::postgres::operations::authz::{AuthzSubject, scope_allows};
+use crate::storage::postgres::operations::collection::CollectionRow;
 use diesel_async::RunQueryDsl;
 
 pub trait LoadUserGroups: AuthzSubject {
@@ -186,10 +187,11 @@ where
             return with_connection(pool, async |conn| {
                 collections
                     .select(collections::all_columns())
-                    .load::<Collection>(conn)
+                    .load::<CollectionRow>(conn)
                     .await
             })
-            .await;
+            .await
+            .map(|rows| rows.into_iter().map(Into::into).collect());
         }
 
         let groups_id_subquery = self.group_ids_subquery();
@@ -210,9 +212,10 @@ where
                 .inner_join(collections.on(descendant_collection_id.eq(collections_table_id)))
                 .select(collections::all_columns())
                 .distinct()
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 }

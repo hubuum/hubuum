@@ -214,6 +214,65 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
 }
 
 #[test]
+fn collection_domain_types_are_free_of_persistence_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for relative_path in [
+        "src/models/collection.rs",
+        "src/models/traits/collection.rs",
+    ] {
+        let path = root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "diesel::",
+            "diesel(",
+            "crate::schema",
+            "storage::postgres",
+            "CursorSqlMapping",
+            "CursorSqlField",
+            "CursorSqlType",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    let adapter_path = root.join("src/storage/postgres/operations/collection/records.rs");
+    let adapter_source = fs::read_to_string(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "struct CollectionRow",
+        "struct NewCollectionRow",
+        "struct UpdateCollectionRow",
+        "impl From<CollectionRow> for Collection",
+        "impl CursorSqlMapping for CollectionRow",
+    ] {
+        assert!(
+            adapter_source.contains(required),
+            "PostgreSQL collection adapter is missing {required}"
+        );
+    }
+
+    let history_path = root.join("src/storage/postgres/operations/history.rs");
+    let history_source = fs::read_to_string(&history_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
+    assert!(
+        history_source.contains("struct CollectionHistoryRow"),
+        "PostgreSQL history adapter must own the collection-history row"
+    );
+
+    assert!(
+        violations.is_empty(),
+        "collection domain types crossed into persistence details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn class_domain_types_are_free_of_persistence_implementation_details() {
     let root = repository_root();
     let mut violations = Vec::new();
@@ -421,6 +480,8 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "HistoryStorage",
         "InventoryStorage",
         "UnifiedSearchStorage",
+        "CollectionPermissionStorage",
+        "CollectionRecordStorage",
         "ClassRecordStorage",
         "ObjectRecordStorage",
         "RemoteTargetStorage",
@@ -587,6 +648,31 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         compact_context.contains("\"inventory\",\"counts\""),
         "inventory counts must use the common storage observer"
     );
+    for operation in ["create", "update", "delete", "move"] {
+        assert!(
+            compact_context.contains(&format!("\"collection_records\",\"{operation}\"")),
+            "collection record operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "principal",
+        "principal_all",
+        "principal_page",
+        "effective_principal",
+        "visible",
+        "group_has",
+        "effective_group",
+        "groups",
+        "groups_page",
+        "grants",
+        "grants_page",
+        "group_grant",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"collection_permissions\",\"{operation}\"")),
+            "collection permission operation {operation} must use the common storage observer"
+        );
+    }
     for operation in ["create", "update", "delete", "load", "collection", "names"] {
         assert!(
             compact_context.contains(&format!("\"class_records\",\"{operation}\"")),

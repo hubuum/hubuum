@@ -11,6 +11,7 @@ use crate::storage::postgres::operations::authz::{
     AuthzSubject as PostgresAuthzSubject, scope_allows,
 };
 use crate::storage::postgres::operations::class::HubuumClassRow;
+use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
@@ -465,15 +466,16 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, Collection);
+        crate::apply_query_options!(base_query, query_options, CollectionRow);
 
         with_connection(pool, async |conn| {
             base_query
                 .select(collections::all_columns())
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 
     async fn count_collections_from_backend_with_admin_status(
