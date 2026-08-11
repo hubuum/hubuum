@@ -82,13 +82,6 @@ pub(crate) mod relations {
     };
 }
 
-pub(crate) mod remote_target {
-    pub(crate) use crate::storage::postgres::operations::remote_target::{
-        DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-        emit_remote_target_invoked_event,
-    };
-}
-
 pub(crate) mod restore {
     pub(crate) use crate::storage::postgres::operations::restore::{
         RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,

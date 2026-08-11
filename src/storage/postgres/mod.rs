@@ -3,6 +3,7 @@ mod computed_fields;
 mod error;
 #[doc(hidden)]
 pub mod operations;
+mod remote_targets;
 mod runtime;
 mod task_execution;
 mod task_queue;

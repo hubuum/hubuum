@@ -49,10 +49,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `9`,
 - **Breaking (administrator API):** the storage contract version is now `10`,
 - **Breaking (administrator API):** the storage contract version is now `11`,
+- **Breaking (administrator API):** the storage contract version is now `12`,
   and the redacted administrator configuration reports independently enforced
   `catalog_queries`, `computed_object_queries`, `computed_field_lifecycle`,
   `object_aggregates`, `relation_queries`, `temporal_history`, and
-  `unified_search`, `task_queue`, `task_execution`, and `backup_snapshots`
+  `unified_search`, `remote_targets`, `task_queue`, `task_execution`, and
+  `backup_snapshots`
   capabilities instead of
   the broader provisional `queries_and_history` label. Monitoring or
   administration clients matching the version or capability list must accept
@@ -61,7 +63,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   state changes, terminal artifacts (including remote-call results), failure
   accounting, and output retention. Backup snapshots and computed-field rebuild
   execution now also cross mandatory backend contracts instead of exposing
-  PostgreSQL operations to application workers.
+  PostgreSQL operations to application workers. Remote-target reads, audited
+  lifecycle writes, and invocation provenance now use backend-neutral DTOs and
+  a mandatory compatibility-tested trait rather than PostgreSQL helpers in
+  handlers and workers.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

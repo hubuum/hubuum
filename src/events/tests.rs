@@ -2264,11 +2264,9 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
-    let target = updated.clone().try_into().unwrap();
-
     emit_remote_target_invoked_event(
         &scope.pool,
-        &target,
+        updated.id,
         &context,
         12345,
         "collection",

@@ -709,60 +709,6 @@ impl_redacted_remote_call_result_debug!(
     success,
 );
 
-impl TryFrom<RemoteTargetRow> for RemoteTarget {
-    type Error = ApiError;
-
-    fn try_from(row: RemoteTargetRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.id,
-            collection_id: row.collection_id,
-            class_id: row.class_id,
-            name: row.name,
-            description: row.description,
-            method: RemoteHttpMethod::from_str(&row.method)?,
-            url_template: row.url_template,
-            headers_template: row.headers_template,
-            body_template: row.body_template,
-            auth_config: serde_json::from_value(row.auth_config)?,
-            allowed_subject_types: serde_json::from_value(row.allowed_subject_types)?,
-            timeout_ms: row.timeout_ms,
-            enabled: row.enabled,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            revision: row.revision,
-        })
-    }
-}
-
-impl NewRemoteTarget {
-    pub(crate) fn into_row(self) -> Result<NewRemoteTargetRow, ApiError> {
-        validate_target_parts(
-            self.class_id.map(HubuumClassID::id),
-            &self.url_template,
-            &self.headers_template,
-            self.body_template.as_deref(),
-            &self.auth_config,
-            &self.allowed_subject_types,
-            self.timeout_ms,
-        )?;
-
-        Ok(NewRemoteTargetRow {
-            collection_id: self.collection_id.id(),
-            class_id: self.class_id.map(HubuumClassID::id),
-            name: self.name,
-            description: self.description,
-            method: self.method.as_str().to_string(),
-            url_template: self.url_template,
-            headers_template: self.headers_template,
-            body_template: self.body_template,
-            auth_config: serde_json::to_value(self.auth_config)?,
-            allowed_subject_types: serde_json::to_value(self.allowed_subject_types)?,
-            timeout_ms: self.timeout_ms,
-            enabled: self.enabled,
-        })
-    }
-}
-
 impl UpdateRemoteTarget {
     pub fn is_empty(&self) -> bool {
         self.collection_id.is_none()
@@ -777,68 +723,6 @@ impl UpdateRemoteTarget {
             && self.allowed_subject_types.is_none()
             && self.timeout_ms.is_none()
             && self.enabled.is_none()
-    }
-
-    pub(crate) fn into_row(
-        self,
-        existing: &RemoteTarget,
-    ) -> Result<UpdateRemoteTargetRow, ApiError> {
-        let url_template = self
-            .url_template
-            .clone()
-            .unwrap_or_else(|| existing.url_template.clone());
-        let headers_template = self
-            .headers_template
-            .clone()
-            .unwrap_or_else(|| existing.headers_template.clone());
-        let body_template = self
-            .body_template
-            .clone()
-            .unwrap_or_else(|| existing.body_template.clone());
-        let auth_config = self
-            .auth_config
-            .clone()
-            .unwrap_or_else(|| existing.auth_config.clone());
-        let allowed_subject_types = self
-            .allowed_subject_types
-            .clone()
-            .unwrap_or_else(|| existing.allowed_subject_types.clone());
-        let timeout_ms = self.timeout_ms.unwrap_or(existing.timeout_ms);
-        let class_id = match self.class_id {
-            Some(Some(class_id)) => Some(class_id.id()),
-            Some(None) => None,
-            None => existing.class_id,
-        };
-
-        validate_target_parts(
-            class_id,
-            &url_template,
-            &headers_template,
-            body_template.as_deref(),
-            &auth_config,
-            &allowed_subject_types,
-            timeout_ms,
-        )?;
-
-        Ok(UpdateRemoteTargetRow {
-            collection_id: self.collection_id.map(CollectionID::id),
-            class_id: self
-                .class_id
-                .map(|class_id| class_id.map(HubuumClassID::id)),
-            name: self.name,
-            description: self.description,
-            method: self.method.map(|method| method.as_str().to_string()),
-            url_template: self.url_template,
-            headers_template: self.headers_template,
-            body_template: self.body_template,
-            auth_config: self.auth_config.map(serde_json::to_value).transpose()?,
-            allowed_subject_types: self
-                .allowed_subject_types
-                .map(serde_json::to_value)
-                .transpose()?,
-            timeout_ms: self.timeout_ms,
-            enabled: self.enabled,
-        })
     }
 }
 

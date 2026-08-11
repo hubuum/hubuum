@@ -273,13 +273,18 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
 
 pub(crate) async fn emit_remote_target_invoked_event(
     pool: &impl crate::storage::StorageContext,
-    target: &RemoteTarget,
+    target_id: i32,
     context: &EventContext,
     task_id: i32,
     subject_type: &str,
     subject_id: i32,
 ) -> Result<(), ApiError> {
     with_connection(pool, async |conn| -> Result<(), ApiError> {
+        use crate::schema::remote_targets::dsl::{id, remote_targets};
+        let target = remote_targets
+            .filter(id.eq(target_id))
+            .first::<RemoteTargetRow>(conn)
+            .await?;
         let event = NewEvent::new(
             EntityType::RemoteTarget,
             Action::Invoked,
@@ -388,29 +393,4 @@ pub(crate) async fn upsert_remote_call_result_conn(
         ))
         .get_result::<RemoteCallResult>(conn)
         .await?)
-}
-
-impl RemoteTargetID {
-    pub async fn instance(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<RemoteTarget, ApiError> {
-        self.load_remote_target_record(pool).await?.try_into()
-    }
-}
-
-impl RemoteTarget {
-    pub async fn list_with_total_count(
-        pool: &impl crate::storage::StorageContext,
-        allowed_collection_ids: &[i32],
-        query_options: &QueryOptions,
-    ) -> Result<(Vec<RemoteTarget>, i64), ApiError> {
-        let (rows, total) =
-            list_rows_with_total_count(pool, allowed_collection_ids, query_options).await?;
-        let targets = rows
-            .into_iter()
-            .map(RemoteTarget::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok((targets, total))
-    }
 }

@@ -37,8 +37,8 @@ use crate::storage::{
     ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
     OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
+    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
+    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
     StorageExportTaskArtifact, StorageObject, StorageObjectAggregateAuthorizationCandidate,
@@ -47,15 +47,17 @@ use crate::storage::{
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -596,6 +598,128 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
             }
         }
     }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let owner = crate::tests::create_test_user(pool.get_ref()).await;
+    let fixture = crate::tests::create_collection_fixture(
+        pool.get_ref(),
+        &prefix("remote_target_collection"),
+    )
+    .await;
+    let collection_id = fixture.collection.id;
+    let event_context = EventContext::user(owner.id, None, None);
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let name = prefix("remote_target");
+                let created = backend
+                    .create_remote_target(StorageRemoteTargetCreate::new(
+                        collection_id,
+                        name.clone(),
+                        StorageRemoteTargetDefinition::new(
+                            "Compatibility remote target",
+                            StorageRemoteTargetTransport::new(
+                                "get",
+                                "https://compatibility.invalid/collections/{{ collection.id }}",
+                                serde_json::json!({}),
+                                None,
+                                serde_json::json!({"type": "none"}),
+                                1_000,
+                            ),
+                            StorageRemoteTargetPolicy::new(
+                                None,
+                                vec!["collection".to_string()],
+                                true,
+                            ),
+                        ),
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should create a remote target");
+                let target_id = created.metadata().id();
+                assert_eq!(created.collection_id(), collection_id);
+
+                let loaded = backend
+                    .get_remote_target(target_id)
+                    .await
+                    .expect("certified backend should load a remote target");
+                assert_eq!(loaded.metadata().id(), target_id);
+
+                let (targets, total) = backend
+                    .list_remote_targets(StorageRemoteTargetListQuery::new(
+                        vec![collection_id],
+                        QueryOptions {
+                            filters: Vec::new(),
+                            sort: Vec::new(),
+                            limit: Some(10),
+                            cursor: None,
+                            include_total: true,
+                        },
+                    ))
+                    .await
+                    .expect("certified backend should list remote targets")
+                    .into_parts();
+                assert_eq!(total, Some(1));
+                assert!(
+                    targets
+                        .iter()
+                        .any(|target| target.metadata().id() == target_id)
+                );
+
+                let updated = backend
+                    .update_remote_target(StorageRemoteTargetUpdate::new(
+                        target_id,
+                        StorageRemoteTargetPatch::new()
+                            .with_name(Some(format!("{name}_updated")))
+                            .with_enabled(Some(false)),
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should update a remote target");
+                let (metadata, _, updated_name, definition) = updated.into_parts();
+                let (_, _, policy) = definition.into_parts();
+                let (_, allowed_subject_types, enabled) = policy.into_parts();
+                assert_eq!(metadata.id(), target_id);
+                assert_eq!(updated_name, format!("{name}_updated"));
+                assert_eq!(allowed_subject_types, ["collection"]);
+                assert!(!enabled);
+
+                backend
+                    .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
+                        target_id,
+                        12345,
+                        "collection",
+                        collection_id,
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should record remote-target invocation provenance");
+                backend
+                    .delete_remote_target(StorageRemoteTargetDelete::new(
+                        target_id,
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should delete a remote target");
+                assert!(backend.get_remote_target(target_id).await.is_err());
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("remote-target compatibility fixture should be removed");
+    owner
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("remote-target compatibility user should be removed");
 }
 
 #[actix_web::test]

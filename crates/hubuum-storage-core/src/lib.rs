@@ -15,6 +15,7 @@ mod identity;
 mod object_aggregate;
 mod operational;
 mod relation_query;
+mod remote_target;
 mod task_execution;
 mod task_queue;
 mod unified_search;
@@ -83,6 +84,13 @@ pub use relation_query::{
     StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRelatedSort,
 };
+pub use remote_target::{
+    RemoteTargetStorage, StorageRemoteTarget, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetPatch,
+    StorageRemoteTargetPatchParts, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate,
+};
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
@@ -121,7 +129,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 11;
+pub const STORAGE_CONTRACT_VERSION: u16 = 12;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,6 +161,7 @@ pub enum StorageCapability {
     IdentityAndAuthorizationData,
     TemporalHistory,
     UnifiedSearch,
+    RemoteTargets,
     TaskQueue,
     TaskExecution,
     BackupSnapshots,
@@ -161,7 +170,7 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -171,6 +180,7 @@ impl StorageCapability {
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
         Self::UnifiedSearch,
+        Self::RemoteTargets,
         Self::TaskQueue,
         Self::TaskExecution,
         Self::BackupSnapshots,
@@ -190,6 +200,7 @@ impl StorageCapability {
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
             Self::UnifiedSearch => "unified_search",
+            Self::RemoteTargets => "remote_targets",
             Self::TaskQueue => "task_queue",
             Self::TaskExecution => "task_execution",
             Self::BackupSnapshots => "backup_snapshots",
@@ -358,6 +369,7 @@ mod tests {
                 "identity_and_authorization_data",
                 "temporal_history",
                 "unified_search",
+                "remote_targets",
                 "task_queue",
                 "task_execution",
                 "backup_snapshots",

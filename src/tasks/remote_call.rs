@@ -135,7 +135,8 @@ async fn execute_remote_call<C>(
 where
     C: StorageContext,
 {
-    let target = request.target_id.instance(backend).await?;
+    let target =
+        crate::services::remote_targets::get_remote_target(backend, request.target_id.id()).await?;
     let resolved =
         authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;
 
