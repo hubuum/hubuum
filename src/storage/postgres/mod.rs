@@ -4,6 +4,7 @@ mod error;
 #[doc(hidden)]
 pub mod operations;
 mod remote_targets;
+mod restores;
 mod runtime;
 mod task_execution;
 mod task_queue;

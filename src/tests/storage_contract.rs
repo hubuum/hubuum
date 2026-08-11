@@ -38,26 +38,29 @@ use crate::storage::{
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
     OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
     RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
-    StorageExportTaskArtifact, StorageObject, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
-    StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
+    RestoreStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
+    StorageBackupTaskArtifact, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageError, StorageExportTaskArtifact, StorageObject,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StorageRelatedDirection, StorageRelatedSort, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
+    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -720,6 +723,149 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
         .delete_without_events(pool.get_ref())
         .await
         .expect("remote-target compatibility user should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordination() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let now = chrono::Utc::now().naive_utc();
+    let instance_id = uuid::Uuid::new_v4();
+    let mut staged_ids = Vec::new();
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let label = prefix("restore");
+                let job = backend
+                    .stage_restore(StorageRestoreStageCreate::new(
+                        StorageRestoreInitiator::new(None, "compatibility", label.clone()),
+                        b"{}".to_vec(),
+                        StorageRestoreArtifactSummary::new(2, "a".repeat(64)),
+                        "b".repeat(64),
+                        serde_json::json!({"compatible": true}),
+                        now + chrono::Duration::try_hours(1).expect("valid duration"),
+                    ))
+                    .await
+                    .expect("certified backend should stage a restore artifact");
+                let job_id = job.summary().id();
+                staged_ids.push(job_id);
+                assert_eq!(job.summary().status(), StorageRestoreJobStatus::Validated);
+
+                let loaded = backend
+                    .get_restore_job(job_id)
+                    .await
+                    .expect("certified backend should load staged restore bytes");
+                let (loaded_summary, document, capability_hash) = loaded.into_parts();
+                assert_eq!(loaded_summary.id(), job_id);
+                assert_eq!(document, b"{}".to_vec());
+                assert_eq!(capability_hash, "b".repeat(64));
+
+                let status = backend
+                    .get_restore_status(job_id)
+                    .await
+                    .expect("certified backend should load document-free restore status");
+                let (status_summary, status_capability_hash, validation) = status.into_parts();
+                assert_eq!(status_summary.status(), StorageRestoreJobStatus::Validated);
+                assert_eq!(status_capability_hash, "b".repeat(64));
+                assert_eq!(validation, serde_json::json!({"compatible": true}));
+
+                let snapshot = backend
+                    .restore_coordinator_snapshot()
+                    .await
+                    .expect("certified backend should read restore coordination state");
+                assert!(snapshot.maintenance_state().is_normal());
+                assert_eq!(snapshot.restore_job_id(), None);
+
+                let local_idle = || true;
+                let tick = backend
+                    .tick_restore_coordinator(instance_id, &local_idle, false)
+                    .await
+                    .expect("certified backend should publish a coordinator heartbeat");
+                assert!(tick.maintenance_state().is_normal());
+                let (generation, instances) = backend
+                    .restore_drain_state(
+                        tick.backend_now()
+                            - chrono::Duration::try_minutes(1).expect("valid duration"),
+                    )
+                    .await
+                    .expect("certified backend should report live restore coordinators")
+                    .into_parts();
+                let instance = instances
+                    .into_iter()
+                    .find(|instance| instance.instance_id() == instance_id)
+                    .expect("compatibility coordinator should be visible");
+                assert_eq!(instance.maintenance_generation(), generation);
+                assert!(!instance.is_drained());
+                backend
+                    .remove_restore_instance(instance_id)
+                    .await
+                    .expect("certified backend should remove coordinator membership");
+
+                backend
+                    .fail_restore_and_resume(StorageRestoreFailure::new(
+                        job_id,
+                        "compatibility failure",
+                    ))
+                    .await
+                    .expect("certified backend should atomically fail a restore");
+                let failed = backend
+                    .get_restore_job(job_id)
+                    .await
+                    .expect("failed restore should remain queryable");
+                let (failed_summary, failed_document, _) = failed.into_parts();
+                assert_eq!(failed_summary.status(), StorageRestoreJobStatus::Failed);
+                assert!(failed_document.is_empty());
+
+                backend
+                    .resume_maintenance_without_restore()
+                    .await
+                    .expect("orphaned-maintenance recovery should be idempotent");
+                backend
+                    .resume_terminal_restore(job_id)
+                    .await
+                    .expect("terminal-restore recovery should be idempotent");
+
+                let expired_label = prefix("expired_restore");
+                let expired = backend
+                    .stage_restore(StorageRestoreStageCreate::new(
+                        StorageRestoreInitiator::new(None, "compatibility", expired_label.clone()),
+                        b"{}".to_vec(),
+                        StorageRestoreArtifactSummary::new(2, "c".repeat(64)),
+                        "d".repeat(64),
+                        serde_json::json!({"compatible": true}),
+                        now - chrono::Duration::try_minutes(1).expect("valid duration"),
+                    ))
+                    .await
+                    .expect("certified backend should stage an expiring restore artifact");
+                let expired_id = expired.summary().id();
+                staged_ids.push(expired_id);
+                assert!(
+                    backend
+                        .expire_restore_stage(expired_id)
+                        .await
+                        .expect("certified backend should expire a validated restore")
+                );
+                let expired_status = backend
+                    .get_restore_status(expired_id)
+                    .await
+                    .expect("expired restore should remain queryable");
+                let (expired_summary, _, _) = expired_status.into_parts();
+                assert_eq!(expired_summary.status(), StorageRestoreJobStatus::Expired);
+            }
+        }
+    }
+
+    crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+        use crate::schema::restore_jobs::dsl::{id, restore_jobs};
+
+        diesel::delete(restore_jobs.filter(id.eq_any(staged_ids)))
+            .execute(conn)
+            .await
+    })
+    .await
+    .expect("restore compatibility fixtures should be removed");
 }
 
 #[actix_web::test]

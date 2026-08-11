@@ -16,6 +16,7 @@ mod object_aggregate;
 mod operational;
 mod relation_query;
 mod remote_target;
+mod restore;
 mod task_execution;
 mod task_queue;
 mod unified_search;
@@ -91,6 +92,13 @@ pub use remote_target::{
     StorageRemoteTargetPatchParts, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
     StorageRemoteTargetUpdate,
 };
+pub use restore::{
+    RestoreStorage, StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
+    StorageRestoreCoordinatorSnapshot, StorageRestoreDocument, StorageRestoreDocumentMetadata,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
+    StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreStageCreate, StorageRestoreStatus, StorageRestoreTimestamps,
+};
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
@@ -129,7 +137,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 12;
+pub const STORAGE_CONTRACT_VERSION: u16 = 13;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,12 +173,13 @@ pub enum StorageCapability {
     TaskQueue,
     TaskExecution,
     BackupSnapshots,
+    Restores,
     Workflows,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -184,6 +193,7 @@ impl StorageCapability {
         Self::TaskQueue,
         Self::TaskExecution,
         Self::BackupSnapshots,
+        Self::Restores,
         Self::Workflows,
         Self::Operations,
     ];
@@ -204,6 +214,7 @@ impl StorageCapability {
             Self::TaskQueue => "task_queue",
             Self::TaskExecution => "task_execution",
             Self::BackupSnapshots => "backup_snapshots",
+            Self::Restores => "restores",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -373,6 +384,7 @@ mod tests {
                 "task_queue",
                 "task_execution",
                 "backup_snapshots",
+                "restores",
                 "workflows",
                 "operations",
             ]

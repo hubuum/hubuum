@@ -1,4 +1,6 @@
 use actix_web::web::Data;
+use chrono::NaiveDateTime;
+use uuid::Uuid;
 
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::search::QueryOptions;
@@ -25,18 +27,21 @@ use crate::storage::{
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    RemoteTargetStorage, StorageBackend, StorageBackendDescriptor, StorageBackupOutput,
-    StorageBackupOutputSummary, StorageBackupSnapshot, StorageClass, StorageClassComputationState,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StorageComputedObject, StorageError, StorageExportOutput, StorageExportOutputSummary,
-    StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    RemoteTargetStorage, RestoreStorage, StorageBackend, StorageBackendDescriptor,
+    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageClass,
+    StorageClassComputationState, StorageClassGraphRow, StorageClassRelation, StorageCollection,
+    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
+    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageError, StorageExportOutput,
+    StorageExportOutputSummary, StorageImportTaskResultPage, StorageObject,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
     StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
     StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
     StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskClaim,
     StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage,
     StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
@@ -1517,6 +1522,181 @@ impl RemoteTargetStorage for StorageHandle {
                 }
             },
         )
+        .await
+    }
+}
+
+#[async_trait]
+impl RestoreStorage for StorageHandle {
+    async fn stage_restore(
+        &self,
+        request: StorageRestoreStageCreate,
+    ) -> Result<StorageRestoreJob, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "stage", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.stage_restore(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn get_restore_job(&self, job_id: i64) -> Result<StorageRestoreJob, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "get_job", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.get_restore_job(job_id).await,
+            }
+        })
+        .await
+    }
+
+    async fn get_restore_status(&self, job_id: i64) -> Result<StorageRestoreStatus, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "get_status", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_restore_status(job_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn expire_restore_stage(&self, job_id: i64) -> Result<bool, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "expire", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.expire_restore_stage(job_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn start_restore_draining(&self, job_id: i64) -> Result<NaiveDateTime, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "start_draining", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.start_restore_draining(job_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn apply_restore(
+        &self,
+        request: StorageRestoreApply,
+    ) -> Result<StorageRestoreCompletion, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "apply", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.apply_restore(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn fail_restore_and_resume(
+        &self,
+        request: StorageRestoreFailure,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "fail_and_resume", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.fail_restore_and_resume(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn restore_coordinator_snapshot(
+        &self,
+    ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "restores",
+            "coordinator_snapshot",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.restore_coordinator_snapshot().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "restores",
+            "resume_without_job",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.resume_maintenance_without_restore().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn resume_terminal_restore(&self, job_id: i64) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "resume_terminal", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.resume_terminal_restore(job_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn tick_restore_coordinator(
+        &self,
+        instance_id: Uuid,
+        local_work_is_idle: &(dyn Fn() -> bool + Send + Sync),
+        expire_validated_jobs: bool,
+    ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "tick", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .tick_restore_coordinator(
+                            instance_id,
+                            local_work_is_idle,
+                            expire_validated_jobs,
+                        )
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn restore_drain_state(
+        &self,
+        heartbeat_cutoff: NaiveDateTime,
+    ) -> Result<StorageRestoreDrainState, StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "drain_state", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.restore_drain_state(heartbeat_cutoff).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "restores", "remove_instance", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.remove_restore_instance(instance_id).await
+                }
+            }
+        })
         .await
     }
 }

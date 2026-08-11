@@ -74,7 +74,8 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Task queue | Idempotent task submission, access facts, task/event/result paging, and retained export and backup output reads |
 | Task execution | Opaque claims, lease renewal and recovery, claim-checked events and state changes, atomic terminal artifacts, failure accounting, and output retention |
 | Backup snapshots | Canonical state and optional history sections read from one consistent backend snapshot |
-| Workflows | Remaining import, restore, and export-hydration operations with backend-owned atomic mutations |
+| Restores | Durable artifact staging, lifecycle transitions, global drain coordination, rollback-safe snapshot replacement, provenance, and recovery |
+| Workflows | Remaining import and export-hydration operations with backend-owned atomic mutations |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
 
 The families are not feature flags and the admin configuration does not report
@@ -94,10 +95,11 @@ contracts. `TaskQueueStorage` replaces task submission and reads, while
 `TaskExecutionStorage` owns the complete worker claim and state machine.
 `BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
 execution is part of `ComputedFieldLifecycleStorage`. `RemoteTargetStorage`
-owns target reads, lifecycle mutations, and invocation provenance. Remaining
-import, restore, and export-hydration workflow operations stay behind the
-workflow gate until their complete contracts and compatibility tests land.
-No family is considered complete merely because a marker exists.
+owns target reads, lifecycle mutations, and invocation provenance.
+`RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
+Remaining import and export-hydration workflow operations stay behind the
+workflow gate until their complete contracts and compatibility tests land. No
+family is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -111,6 +113,42 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
+
+## Restore Semantics
+
+Every selectable backend implements `RestoreStorage`; restore support cannot be
+omitted or advertised as partial. The backend must provide all of these
+behaviors:
+
+- durably stage validated artifact bytes, a document digest, redacted initiator
+  identity, validation results, an expiry, and a capability proof;
+- expose a complete artifact only to confirmation and recovery paths while
+  providing a document-free status projection for ordinary status reads;
+- use compare-and-set lifecycle transitions so expiration and confirmation
+  cannot both win;
+- atomically couple confirmation to global draining maintenance ownership;
+- publish coordinator heartbeats against the maintenance generation and mark an
+  instance drained only after the backend has observed non-normal maintenance
+  and application-local work is idle;
+- re-check drain ownership before destructive work, then replace canonical
+  state, reset backend-owned identifiers and derived state, emit restore
+  provenance, resume operation, and clear staging in one rollback-safe apply;
+- erase artifact bytes when jobs fail or expire; and
+- recover orphaned, terminal, and interrupted maintenance states idempotently.
+
+The application validates and decodes Hubuum's backup document. It passes
+backend-neutral `StorageRestore*` DTOs through `RestoreStorage`; it does not
+construct SQL, handle Diesel records, manage a PostgreSQL transaction, or emit
+the backend-owned success event. `StorageHandle` observes every contract entry
+under the bounded `restores/*` capability labels. The PostgreSQL adapter keeps
+the narrower database-operation attribution used by the restore coordinator.
+
+The shared available-backend suite verifies staging, safe projections,
+expiration, failure cleanup, recovery idempotence, heartbeat publication, live
+instance filtering, and membership removal for every selectable backend. The
+isolated destructive restore round-trip additionally proves drain, atomic
+apply, provenance, state replacement, and restart recovery. Adapter unit tests
+cover PostgreSQL transaction/query mechanics.
 
 ## Lifecycle Semantics
 

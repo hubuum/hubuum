@@ -5,17 +5,17 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
-use crate::events::{NewEvent, emit_event};
+use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
 use crate::models::backup::{
     BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
     backup_history_sections,
 };
-use crate::models::{
-    BackupDocument, MaintenanceState, NewRestoreJobRecord, RestoreJobRecord, RestoreJobStatus,
-    ServerInstanceRecord,
-};
+use crate::models::{MaintenanceState, RestoreJobStatus};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
+use crate::storage::{
+    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDocument,
+};
 
 const TRUNCATE_TABLES: &[&str] = &[
     "object_computed_data",
@@ -95,6 +95,51 @@ const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::restore_jobs)]
+pub(crate) struct RestoreJobRow {
+    pub(crate) id: i64,
+    pub(crate) status: String,
+    pub(crate) requested_by: Option<i32>,
+    pub(crate) requested_by_identity_scope: String,
+    pub(crate) requested_by_name: String,
+    pub(crate) document: Vec<u8>,
+    pub(crate) byte_size: i64,
+    pub(crate) sha256: String,
+    pub(crate) capability_hash: String,
+    pub(crate) error: Option<String>,
+    pub(crate) expires_at: NaiveDateTime,
+    pub(crate) confirmed_at: Option<NaiveDateTime>,
+    pub(crate) finished_at: Option<NaiveDateTime>,
+    pub(crate) created_at: NaiveDateTime,
+    pub(crate) updated_at: NaiveDateTime,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::restore_jobs)]
+pub(crate) struct NewRestoreJobRow {
+    pub(crate) status: String,
+    pub(crate) requested_by: Option<i32>,
+    pub(crate) requested_by_identity_scope: String,
+    pub(crate) requested_by_name: String,
+    pub(crate) document: Vec<u8>,
+    pub(crate) byte_size: i64,
+    pub(crate) sha256: String,
+    pub(crate) capability_hash: String,
+    pub(crate) validation_summary: serde_json::Value,
+    pub(crate) expires_at: NaiveDateTime,
+}
+
+#[derive(Clone, Queryable, Selectable, Insertable)]
+#[diesel(table_name = crate::schema::server_instances)]
+pub(crate) struct ServerInstanceRow {
+    pub(crate) instance_id: Uuid,
+    pub(crate) maintenance_generation: i64,
+    pub(crate) drained: bool,
+    pub(crate) last_heartbeat_at: NaiveDateTime,
+    pub(crate) started_at: NaiveDateTime,
+}
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = crate::schema::restore_jobs)]
 pub(crate) struct RestoreJobStatusRecord {
     pub(crate) id: i64,
     pub(crate) status: String,
@@ -111,32 +156,6 @@ pub(crate) struct RestoreJobStatusRecord {
     pub(crate) finished_at: Option<NaiveDateTime>,
     pub(crate) created_at: NaiveDateTime,
     pub(crate) updated_at: NaiveDateTime,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RestoreCompletion {
-    pub(crate) started_at: NaiveDateTime,
-    pub(crate) finished_at: NaiveDateTime,
-}
-
-pub(crate) struct RestoreCoordinatorSnapshot {
-    maintenance_state: MaintenanceState,
-    restore_job_id: Option<i64>,
-    database_now: NaiveDateTime,
-}
-
-impl RestoreCoordinatorSnapshot {
-    pub(crate) fn maintenance_state(&self) -> MaintenanceState {
-        self.maintenance_state
-    }
-
-    pub(crate) fn restore_job_id(&self) -> Option<i64> {
-        self.restore_job_id
-    }
-
-    pub(crate) fn database_now(&self) -> NaiveDateTime {
-        self.database_now
-    }
 }
 
 fn validate_restore_identifier(table: &str, column: Option<&str>) -> Result<(), ApiError> {
@@ -192,15 +211,15 @@ async fn reset_sequence(
 
 pub(crate) async fn insert_restore_job_db(
     pool: &impl crate::storage::StorageContext,
-    input: NewRestoreJobRecord,
-) -> Result<RestoreJobRecord, ApiError> {
+    input: NewRestoreJobRow,
+) -> Result<RestoreJobRow, ApiError> {
     with_connection(pool, async |conn| {
         use crate::schema::restore_jobs::dsl::restore_jobs;
 
         diesel::insert_into(restore_jobs)
             .values(input)
-            .returning(RestoreJobRecord::as_returning())
-            .get_result::<RestoreJobRecord>(conn)
+            .returning(RestoreJobRow::as_returning())
+            .get_result::<RestoreJobRow>(conn)
             .await
     })
     .await
@@ -209,14 +228,14 @@ pub(crate) async fn insert_restore_job_db(
 pub(crate) async fn load_restore_job_db(
     pool: &impl crate::storage::StorageContext,
     job_id: i64,
-) -> Result<RestoreJobRecord, ApiError> {
+) -> Result<RestoreJobRow, ApiError> {
     with_connection(pool, async |conn| {
         use crate::schema::restore_jobs::dsl::{id, restore_jobs};
 
         restore_jobs
             .filter(id.eq(job_id))
-            .select(RestoreJobRecord::as_select())
-            .first::<RestoreJobRecord>(conn)
+            .select(RestoreJobRow::as_select())
+            .first::<RestoreJobRow>(conn)
             .await
             .optional()
     })
@@ -315,23 +334,27 @@ pub(crate) async fn start_restore_draining_db(
 
 pub(crate) async fn apply_restore_db(
     pool: &impl crate::storage::StorageContext,
-    job: &RestoreJobRecord,
-    document: &BackupDocument,
-    provenance: &NewEvent,
-) -> Result<RestoreCompletion, ApiError> {
-    with_transaction(pool, async |conn| -> Result<RestoreCompletion, ApiError> {
+    job_id: i64,
+    document: StorageRestoreDocument,
+) -> Result<StorageRestoreCompletion, ApiError> {
+    let (metadata, snapshot) = document.into_parts();
+    let (backup_version, backup_created_at, backup_source_version) = metadata.into_parts();
+    let (state_sections, history_sections) = snapshot.into_parts();
+    let includes_history = history_sections.is_some();
+    with_transaction(pool, async move |conn| -> Result<StorageRestoreCompletion, ApiError> {
         diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
             .execute(conn)
             .await?;
 
-        use crate::schema::restore_jobs::dsl::{id as restore_id, restore_jobs, status};
+        use crate::schema::restore_jobs::dsl::{id as restore_id, restore_jobs};
         use crate::schema::system_maintenance::dsl::{
             id as maintenance_id, restore_job_id, state, system_maintenance,
         };
-        let current_status = restore_jobs
-            .filter(restore_id.eq(job.id))
-            .select(status)
-            .first::<String>(conn)
+        let job = restore_jobs
+            .filter(restore_id.eq(job_id))
+            .for_update()
+            .select(RestoreJobRow::as_select())
+            .first::<RestoreJobRow>(conn)
             .await?;
         let (maintenance_state_value, maintenance_restore_job_id) = system_maintenance
             .filter(maintenance_id.eq(1_i16))
@@ -340,7 +363,7 @@ pub(crate) async fn apply_restore_db(
             .await?;
         let maintenance_state = MaintenanceState::try_from(maintenance_state_value.as_str())
             .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-        if current_status != RestoreJobStatus::Confirmed.as_str()
+        if job.status != RestoreJobStatus::Confirmed.as_str()
             || maintenance_state != MaintenanceState::Draining
             || maintenance_restore_job_id != Some(job.id)
         {
@@ -375,18 +398,15 @@ pub(crate) async fn apply_restore_db(
         .await?;
 
         for table in BACKUP_STATE_SECTIONS {
-            let rows = document
-                .state
-                .sections
+            let rows = state_sections
                 .get(*table)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
             insert_rows(conn, table, rows).await?;
         }
-        if let Some(history) = &document.history {
+        if let Some(history) = &history_sections {
             for table in backup_history_sections() {
                 let rows = history
-                    .sections
                     .get(table)
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
@@ -414,7 +434,27 @@ pub(crate) async fn apply_restore_db(
         diesel::sql_query("SELECT set_config('hubuum.restore_events', 'off', true)")
             .execute(conn)
             .await?;
-        emit_event(conn, provenance).await?;
+        let provenance = NewEvent::new(
+            EntityType::Restore,
+            Action::Succeeded,
+            ActorKind::System,
+            "System restore completed",
+        )?
+        .with_entity_name(job.sha256.clone())
+        .with_metadata(serde_json::json!({
+            "restore_job_id": job.id,
+            "backup_sha256": job.sha256,
+            "backup_version": backup_version,
+            "backup_source_version": backup_source_version,
+            "backup_created_at": backup_created_at,
+            "includes_history": includes_history,
+            "initiated_by": {
+                "principal_id": job.requested_by,
+                "identity_scope": job.requested_by_identity_scope,
+                "name": job.requested_by_name,
+            },
+        }));
+        emit_event(conn, &provenance).await?;
 
         let finished_at = Utc::now().naive_utc();
         diesel::sql_query(
@@ -435,10 +475,7 @@ pub(crate) async fn apply_restore_db(
         diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
             .execute(conn)
             .await?;
-        Ok(RestoreCompletion {
-            started_at,
-            finished_at,
-        })
+        Ok(StorageRestoreCompletion::new(started_at, finished_at))
     })
     .await
 }
@@ -476,7 +513,7 @@ pub(crate) async fn fail_restore_and_resume_db(
 
 pub(crate) async fn load_restore_coordinator_snapshot_db(
     pool: &impl crate::storage::StorageContext,
-) -> Result<RestoreCoordinatorSnapshot, ApiError> {
+) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
     with_connection(pool, async |conn| {
         use crate::schema::system_maintenance::dsl::{
             id, restore_job_id, state, system_maintenance,
@@ -491,12 +528,12 @@ pub(crate) async fn load_restore_coordinator_snapshot_db(
             ))
             .first::<(String, Option<i64>, NaiveDateTime)>(conn)
             .await?;
-        Ok::<_, ApiError>(RestoreCoordinatorSnapshot {
-            maintenance_state: MaintenanceState::try_from(maintenance_state_value.as_str())
+        Ok::<_, ApiError>(StorageRestoreCoordinatorSnapshot::new(
+            MaintenanceState::try_from(maintenance_state_value.as_str())
                 .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
-            restore_job_id: restore_job_id_value,
+            restore_job_id_value,
             database_now,
-        })
+        ))
     })
     .await
 }
@@ -546,7 +583,7 @@ pub(crate) async fn restore_coordinator_tick_db(
     instance_id_value: Uuid,
     local_work_is_idle: impl FnOnce() -> bool + Send,
     expire_validated_jobs: bool,
-) -> Result<RestoreCoordinatorSnapshot, ApiError> {
+) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
     with_transaction(pool, async move |conn| -> Result<_, ApiError> {
         if expire_validated_jobs {
             diesel::sql_query(
@@ -579,7 +616,7 @@ pub(crate) async fn restore_coordinator_tick_db(
         let maintenance_state = MaintenanceState::try_from(state_value.as_str())
             .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         let drained_value = !maintenance_state.is_normal() && local_work_is_idle();
-        let record = ServerInstanceRecord {
+        let record = ServerInstanceRow {
             instance_id: instance_id_value,
             maintenance_generation: generation_value,
             drained: drained_value,
@@ -603,11 +640,11 @@ pub(crate) async fn restore_coordinator_tick_db(
             .execute(conn)
             .await?;
 
-        Ok(RestoreCoordinatorSnapshot {
+        Ok(StorageRestoreCoordinatorSnapshot::new(
             maintenance_state,
-            restore_job_id: restore_job_id_value,
+            restore_job_id_value,
             database_now,
-        })
+        ))
     })
     .await
 }
@@ -615,7 +652,7 @@ pub(crate) async fn restore_coordinator_tick_db(
 pub(crate) async fn maintenance_generation_and_instances_db(
     pool: &impl crate::storage::StorageContext,
     heartbeat_cutoff: NaiveDateTime,
-) -> Result<(i64, Vec<ServerInstanceRecord>), ApiError> {
+) -> Result<(i64, Vec<ServerInstanceRow>), ApiError> {
     with_connection(pool, async |conn| {
         use crate::schema::server_instances::dsl::{last_heartbeat_at, server_instances};
         use crate::schema::system_maintenance::dsl::{
@@ -629,7 +666,7 @@ pub(crate) async fn maintenance_generation_and_instances_db(
             .await?;
         let instances = server_instances
             .filter(last_heartbeat_at.gt(heartbeat_cutoff))
-            .load::<ServerInstanceRecord>(conn)
+            .load::<ServerInstanceRow>(conn)
             .await?;
         Ok::<_, diesel::result::Error>((current_generation, instances))
     })
