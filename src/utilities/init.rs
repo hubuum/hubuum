@@ -4,10 +4,10 @@
 use crate::storage::postgres::PostgresPool;
 
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
+use crate::services::identity::ensure_identity_scope;
 use crate::storage::postgres::operations::bootstrap::{
     bootstrap_default_admin, default_admin_bootstrap_required,
 };
-use crate::storage::postgres::operations::identity::ensure_identity_scope;
 use crate::utilities::auth::{generate_random_password, hash_password_async};
 
 use tracing::{error, warn};

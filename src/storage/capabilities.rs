@@ -9,10 +9,6 @@
 ///
 /// Keep this list explicit: adding a database module wholesale would make the
 /// boundary cosmetic and allow consumers to select arbitrary SQL adapters.
-pub(crate) mod active_tokens {
-    pub(crate) use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-}
-
 pub(crate) mod collection {
     pub(crate) use crate::storage::postgres::operations::collection::collection_permission_set_from_backend;
 }
@@ -42,23 +38,6 @@ pub(crate) mod events {
     };
 }
 
-pub(crate) mod external_identity {
-    pub(crate) use crate::storage::postgres::operations::external_identity::{
-        ExternalPrincipalState, external_principal_state, mark_external_sync_attempted,
-        sync_external_user,
-    };
-}
-
-pub(crate) mod group {
-    pub(crate) use crate::storage::postgres::operations::group::principal_group_by_ids;
-}
-
-pub(crate) mod identity {
-    pub(crate) use crate::storage::postgres::operations::identity::{
-        ensure_identity_scope, identity_scope_name_by_id,
-    };
-}
-
 pub(crate) mod meta {
     pub(crate) use crate::storage::postgres::operations::meta::{
         load_database_state, load_task_queue_state,
@@ -67,12 +46,4 @@ pub(crate) mod meta {
 
 pub(crate) mod permissions {
     pub(crate) use crate::storage::postgres::operations::permissions::PermissionControllerBackend;
-}
-
-pub(crate) mod service_account {
-    pub(crate) use crate::storage::postgres::operations::service_account::{
-        DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
-        is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
-        search_manageable_service_accounts,
-    };
 }

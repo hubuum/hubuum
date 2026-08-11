@@ -309,11 +309,8 @@ impl MembershipPrincipalResponse {
         C: StorageContext,
     {
         let identity_scope =
-            crate::storage::postgres::operations::identity::identity_scope_name_by_id(
-                backend,
-                principal.identity_scope_id,
-            )
-            .await?;
+            crate::services::identity::identity_scope_name(backend, principal.identity_scope_id)
+                .await?;
         Ok(Self {
             principal_id: principal.id,
             identity_scope,
@@ -365,10 +362,7 @@ impl PrincipalMemberResponse {
             .map(|(_, principal)| principal.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
-            crate::storage::postgres::operations::identity::identity_scope_names_by_ids(
-                backend, &scope_ids,
-            )
-            .await?;
+            crate::services::identity::identity_scope_names(backend, &scope_ids).await?;
 
         memberships
             .into_iter()

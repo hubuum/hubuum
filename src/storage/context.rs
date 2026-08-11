@@ -30,36 +30,41 @@ use crate::storage::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
     EventRetentionSummary, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, ImportStorage,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage,
-    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage, StorageBackend,
-    StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
+    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
+    ImportStorage, InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery,
+    OperationalStateStorage, PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
+    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
     StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
     StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
     StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
     StorageComputedObject, StorageError, StorageExecution, StorageExportOutput,
-    StorageExportOutputSummary, StorageImportApply, StorageImportPlanItem, StorageImportPreflight,
-    StorageImportResult, StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage,
-    StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePoolState, StorageQueryBudget,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
-    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
-    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageRevisionPrecondition, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
-    StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion, StorageTaskCreateRequest,
-    StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
-    StorageTaskPageQuery, StorageTaskStateUpdate, TaskExecutionStorage, TaskGaugeSnapshot,
-    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageExportOutputSummary, StorageExternalPrincipalState, StorageExternalUserSync,
+    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure, StorageImportApply,
+    StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
+    StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
+    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
+    StoragePrincipalGroup, StorageQueryBudget, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPage, StorageRemoteTargetUpdate, StorageRestoreApply,
+    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
+    StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
+    StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenListQuery,
+    StorageTokenMetadata, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
+    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -256,6 +261,302 @@ impl AuthenticationStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.load_authentication_token_scope(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl IdentityStorage for StorageHandle {
+    async fn ensure_identity_scope(
+        &self,
+        request: StorageIdentityScopeEnsure,
+    ) -> Result<StorageIdentityScope, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "ensure_scope", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.ensure_identity_scope(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "load_scope_name", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.identity_scope_name(scope_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn identity_scope_names(
+        &self,
+        scope_ids: Vec<i32>,
+    ) -> Result<Vec<(i32, String)>, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "load_scope_names", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.identity_scope_names(scope_ids).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn load_principal_group(
+        &self,
+        principal_id: i32,
+        group_id: i32,
+    ) -> Result<StoragePrincipalGroup, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "load_membership", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.load_principal_group(principal_id, group_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_retained_tokens(
+        &self,
+        query: StorageTokenListQuery,
+    ) -> Result<StorageIdentityPage<StorageTokenMetadata>, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "list_tokens", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_retained_tokens(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn is_human_owner_group_member(
+        &self,
+        principal_id: i32,
+        owner_group_id: i32,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "human_owner_group_member",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .is_human_owner_group_member(principal_id, owner_group_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn principal_is_disabled(&self, principal_id: i32) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "principal_is_disabled",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.principal_is_disabled(principal_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_service_account(
+        &self,
+        service_account_id: i32,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "load_service_account",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_service_account(service_account_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_service_account_point(
+        &self,
+        service_account_id: i32,
+    ) -> Result<StorageServiceAccountPoint, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "load_service_account_point",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_service_account_point(service_account_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_manageable_service_accounts(
+        &self,
+        query: StorageServiceAccountListQuery,
+    ) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "list_service_accounts",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_manageable_service_accounts(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn create_service_account(
+        &self,
+        request: StorageServiceAccountCreate,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "create_service_account",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.create_service_account(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn update_service_account(
+        &self,
+        request: StorageServiceAccountUpdate,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "update_service_account",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.update_service_account(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn disable_service_account(
+        &self,
+        request: StorageServiceAccountMutation,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "disable_service_account",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.disable_service_account(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn delete_service_account(
+        &self,
+        request: StorageServiceAccountMutation,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "delete_service_account",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.delete_service_account(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn external_principal_state(
+        &self,
+        principal_id: i32,
+    ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "load_external_state",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.external_principal_state(principal_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn mark_external_sync_attempted(&self, principal_id: i32) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "mark_external_sync_attempted",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.mark_external_sync_attempted(principal_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn sync_external_user(
+        &self,
+        request: StorageExternalUserSync,
+    ) -> Result<StorageSyncedHuman, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "sync_external_user",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.sync_external_user(request).await
                     }
                 }
             },

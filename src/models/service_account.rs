@@ -43,10 +43,7 @@ impl ServiceAccount {
     where
         C: StorageContext,
     {
-        crate::storage::postgres::operations::principal::load_service_account_point_response(
-            backend, self.id,
-        )
-        .await
+        crate::services::identity::load_service_account_point(backend, self.id).await
     }
 }
 

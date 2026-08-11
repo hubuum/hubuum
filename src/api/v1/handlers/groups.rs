@@ -13,6 +13,7 @@ use crate::models::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
+use crate::services::identity::load_principal_group;
 use crate::storage::with_revision_precondition;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
@@ -295,12 +296,7 @@ pub async fn get_group_member(
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&context).await?;
     let principal = user_group_ids.principal_id.principal(&context).await?;
-    let membership = crate::storage::capabilities::group::principal_group_by_ids(
-        &context,
-        principal.id,
-        group.id,
-    )
-    .await?;
+    let membership = load_principal_group(&context, principal.id, group.id).await?;
 
     debug!(
         message = "Group membership requested",
@@ -347,12 +343,7 @@ pub async fn add_group_member(
     );
 
     let condition = IfMatchCondition::from_request(&req)?;
-    let current = crate::storage::capabilities::group::principal_group_by_ids(
-        &context,
-        principal.id,
-        group.id,
-    )
-    .await;
+    let current = load_principal_group(&context, principal.id, group.id).await;
     let precondition = match current {
         Ok(current) => condition.database_precondition(&current.entity_tag()?)?,
         Err(ApiError::NotFound(_)) if matches!(condition, IfMatchCondition::Missing) => None,
@@ -409,12 +400,7 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
-    let membership = crate::storage::capabilities::group::principal_group_by_ids(
-        &context,
-        principal.id,
-        group.id,
-    )
-    .await?;
+    let membership = load_principal_group(&context, principal.id, group.id).await?;
     let precondition = revision_precondition(&req, &membership)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition(
@@ -423,13 +409,7 @@ pub async fn delete_group_member(
         group.remove_member(&principal, &context, Some(&event_context)),
     )
     .await?;
-    match crate::storage::capabilities::group::principal_group_by_ids(
-        &context,
-        principal.id,
-        group.id,
-    )
-    .await
-    {
+    match load_principal_group(&context, principal.id, group.id).await {
         Ok(surviving) => Ok(ApiResponse::no_content_with_etag(surviving.entity_tag()?)),
         Err(ApiError::NotFound(_)) => Ok(ApiResponse::no_content()),
         Err(error) => Err(error),

@@ -14,6 +14,7 @@ mod execution;
 mod export_query;
 mod history;
 mod identity;
+mod identity_operations;
 mod object_aggregate;
 mod operational;
 mod relation_query;
@@ -72,6 +73,15 @@ pub use identity::{
     AuthenticationIdentity, AuthenticationPrincipal, AuthenticationPrincipalKind,
     AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
     AuthenticationTokenScopeQuery,
+};
+pub use identity_operations::{
+    IdentityStorage, StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
+    StorageExternalUserSyncBuilder, StorageIdentityPage, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StoragePrincipalGroup, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageTokenMetadataBuilder,
 };
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
@@ -147,7 +157,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 16;
+pub const STORAGE_CONTRACT_VERSION: u16 = 17;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

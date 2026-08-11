@@ -25,11 +25,10 @@ use crate::models::{
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
-use crate::storage::StorageContext;
-use crate::storage::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-use crate::storage::capabilities::service_account::{
-    is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
+use crate::services::identity::{
+    is_human_owner_group_member, list_retained_tokens, load_service_account, principal_is_disabled,
 };
+use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
@@ -144,7 +143,7 @@ async fn ensure_can_manage_principal(
     let permitted = match principal.principal_kind()? {
         PrincipalKind::Human => requestor.user.id == principal.id,
         PrincipalKind::ServiceAccount => {
-            let sa = load_service_account_by_id(context, principal.id).await?;
+            let sa = load_service_account(context, principal.id).await?;
             is_human_owner_group_member(context, requestor.user.id, sa.owner_group_id).await?
         }
     };
@@ -217,7 +216,7 @@ pub async fn create_token(
     ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     // A disabled service account cannot mint credentials.
-    if principal_is_disabled(&context, &principal).await? {
+    if principal_is_disabled(&context, principal.id).await? {
         return Err(ApiError::Conflict(
             "Service account is disabled".to_string(),
         ));
@@ -272,13 +271,7 @@ pub async fn list_tokens(
     let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
     let (metadata, total_count) =
-        retained_token_metadata_by_principal_id_paginated_with_total_count(
-            pid,
-            &context,
-            &search_params,
-            state,
-        )
-        .await?;
+        list_retained_tokens(&context, pid.id(), search_params, state).await?;
     let page = finalize_page(metadata, &params)?;
 
     Ok(ApiResponse::paginated_items(

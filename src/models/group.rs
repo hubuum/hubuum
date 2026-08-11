@@ -179,10 +179,7 @@ impl GroupResponse {
             .map(|group| group.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
-            crate::storage::postgres::operations::identity::identity_scope_names_by_ids(
-                backend, &scope_ids,
-            )
-            .await?;
+            crate::services::identity::identity_scope_names(backend, &scope_ids).await?;
 
         groups
             .into_iter()

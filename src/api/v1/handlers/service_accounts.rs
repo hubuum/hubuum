@@ -12,15 +12,18 @@ use crate::models::{
     NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountPointResponse,
     ServiceAccountResponse, ServiceAccountWithName, UpdateServiceAccount,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::storage::StorageContext;
-use crate::storage::capabilities::service_account::{
-    DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
-    is_human_owner_group_member, search_manageable_service_accounts,
+use crate::services::identity::{
+    create_service_account as create_service_account_record,
+    delete_service_account as delete_service_account_record,
+    disable_service_account as disable_service_account_record, is_human_owner_group_member,
+    list_manageable_service_accounts, load_service_account,
+    update_service_account as update_service_account_record,
 };
+use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
-use crate::traits::{AuthzSubject, CanDelete, CanUpdate, SelfAccessors};
+use crate::traits::AuthzSubject;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_service_account)
@@ -92,9 +95,9 @@ pub async fn create_service_account(
     );
 
     let event_context = requestor.event_context(&req);
-    let sa = new_sa
-        .save(&context, Some(requestor.user.id), &event_context)
-        .await?;
+    let sa =
+        create_service_account_record(&context, &new_sa, Some(requestor.user.id), &event_context)
+            .await?;
     let response = sa.to_point_response(&context).await?;
 
     let location = api_locations::service_account(sa.id)?;
@@ -122,22 +125,11 @@ pub async fn list_service_accounts(
     let is_admin = requestor.user.is_admin(&context).await?;
     let params = parse_query_parameter(req.query_string())?;
 
-    // Authorization is applied in SQL (admin sees all; otherwise owner-group
-    // membership), so this is a single paginated query, not a per-row scan.
-    let total_count = if params.include_total {
-        count_manageable_service_accounts(
-            &context,
-            &requestor.user,
-            is_admin,
-            count_query_options(&params),
-        )
-        .await?
-    } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
+    // Authorization and the optional exact count are applied by the selected
+    // backend, not reconstructed as a per-row application scan.
     let search_params = prepare_db_pagination::<ServiceAccountWithName>(&params)?;
-    let accounts =
-        search_manageable_service_accounts(&context, &requestor.user, is_admin, search_params)
+    let (accounts, total_count) =
+        list_manageable_service_accounts(&context, requestor.user.id, is_admin, search_params)
             .await?;
 
     ApiResponse::mapped_paginated(accounts, total_count, &params, |accounts| {
@@ -167,7 +159,7 @@ pub async fn get_service_account(
     requestor: ManagementAccess,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
-    let sa = service_account_id.into_inner().instance(&context).await?;
+    let sa = load_service_account(&context, service_account_id.into_inner().id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
     ApiResponse::ok_revisioned(sa.to_point_response(&context).await?)
 }
@@ -195,7 +187,7 @@ pub async fn update_service_account(
     update: web::Json<UpdateServiceAccount>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.instance(&context).await?;
+    let sa = load_service_account(&context, id.id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
 
     let update = update.into_inner();
@@ -220,7 +212,7 @@ pub async fn update_service_account(
     let updated = with_revision_precondition(
         &context,
         precondition,
-        update.update(&context, id, &event_context),
+        update_service_account_record(&context, id.id(), &update, &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(updated.to_point_response(&context).await?)
@@ -247,15 +239,18 @@ pub async fn disable_service_account(
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.instance(&context).await?;
+    let sa = load_service_account(&context, id.id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
 
     let current = sa.to_point_response(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let disabled =
-        with_revision_precondition(&context, precondition, id.disable(&context, &event_context))
-            .await?;
+    let disabled = with_revision_precondition(
+        &context,
+        precondition,
+        disable_service_account_record(&context, id.id(), &event_context),
+    )
+    .await?;
 
     debug!(
         message = "Service account disabled",
@@ -287,12 +282,17 @@ pub async fn delete_service_account(
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.instance(&context).await?;
+    let sa = load_service_account(&context, id.id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
     let current = sa.to_point_response(&context).await?;
     let etag = current.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition(&context, precondition, id.delete(&context, &event_context)).await?;
+    with_revision_precondition(
+        &context,
+        precondition,
+        delete_service_account_record(&context, id.id(), &event_context),
+    )
+    .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }

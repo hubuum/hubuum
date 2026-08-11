@@ -16,11 +16,11 @@ use tokio::sync::Mutex;
 use crate::errors::ApiError;
 use crate::models::user::{LoginUser, User, auth_failure};
 use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
-use crate::storage::capabilities::external_identity::{
+use crate::services::identity::ensure_identity_scope;
+use crate::services::identity::{
     ExternalPrincipalState, external_principal_state, mark_external_sync_attempted,
     sync_external_user as sync_external_user_from_backend,
 };
-use crate::storage::capabilities::identity::ensure_identity_scope;
 
 const DEFAULT_REFRESH_TTL_SECONDS: i64 = 300;
 const DEFAULT_MAX_STALE_SECONDS: i64 = 3600;

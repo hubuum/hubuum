@@ -20,7 +20,7 @@ use crate::models::{
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
-use crate::storage::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
+use crate::services::identity::list_retained_tokens;
 use crate::storage::with_revision_precondition;
 use crate::traits::GroupAccessors;
 
@@ -105,13 +105,7 @@ pub async fn list_my_tokens(
     let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
     let (metadata, total_count) =
-        retained_token_metadata_by_principal_id_paginated_with_total_count(
-            PrincipalID::new(requestor.user.id)?,
-            &context,
-            &search_params,
-            state,
-        )
-        .await?;
+        list_retained_tokens(&context, requestor.user.id, search_params, state).await?;
     let page = finalize_page(metadata, &params)?;
 
     Ok(ApiResponse::paginated_items(

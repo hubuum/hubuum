@@ -53,6 +53,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `17`.
+  Identity-scope reconciliation, principal-group membership, retained-token
+  metadata, principal disablement, service-account reads and lifecycle, and
+  external-directory synchronization now form one mandatory `IdentityStorage`
+  contract. Application handlers and workers consume backend-neutral DTOs and
+  services instead of PostgreSQL facade modules, every entry point receives
+  common bounded storage tracing and metrics, and the shared available-backend
+  suite exercises the complete operation set. Public HTTP response shapes and
+  required capability labels are unchanged. Administration and monitoring
+  clients matching contract version `16` must accept version `17`.
 - **Breaking (administrator API):** the storage contract version is now `16`,
   and the redacted administrator configuration reports independently enforced
   `catalog_queries`, `computed_object_queries`, `computed_field_lifecycle`,
