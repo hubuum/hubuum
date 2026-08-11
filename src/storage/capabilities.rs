@@ -19,10 +19,6 @@ pub(crate) mod authz {
     pub use crate::traits::{scope_allows, scope_allows_resource, scope_allows_resources};
 }
 
-pub(crate) mod backup {
-    pub(crate) use crate::storage::postgres::operations::backup::snapshot_backup_db;
-}
-
 pub(crate) mod collection {
     pub(crate) use crate::storage::postgres::operations::collection::collection_permission_set_from_backend;
 }
@@ -89,7 +85,7 @@ pub(crate) mod relations {
 pub(crate) mod remote_target {
     pub(crate) use crate::storage::postgres::operations::remote_target::{
         DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-        emit_remote_target_invoked_event, insert_remote_call_result,
+        emit_remote_target_invoked_event,
     };
 }
 

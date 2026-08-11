@@ -64,7 +64,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
 | Catalog queries | Permission- and resource-scoped collection, class, and object filtering, cursor paging, and optional exact counts |
 | Computed object queries | Computed filtering and sorting, exact counts, cursor-boundary snapshots, and computed-value enrichment |
-| Computed-field lifecycle | Shared and personal definition CRUD, class computation state, rebuild scheduling, and atomic audit behavior |
+| Computed-field lifecycle | Shared and personal definition CRUD, class computation state, rebuild scheduling and claimed execution, and atomic audit behavior |
 | Object aggregates | Permission-scoped grouping, numeric measures, stable aggregate cursors, and bounded delegated-policy batching |
 | Relation queries | Relation filtering and paging, endpoint-set queries, graph traversal, and export-oriented multi-root expansion |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
@@ -72,7 +72,8 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
 | Task queue | Idempotent task submission, access facts, task/event/result paging, and retained export and backup output reads |
 | Task execution | Opaque claims, lease renewal and recovery, claim-checked events and state changes, atomic terminal artifacts, failure accounting, and output retention |
-| Workflows | Import, restore, backup, export, remote-call, and reindex execution with backend-owned atomic entity mutations |
+| Backup snapshots | Canonical state and optional history sections read from one consistent backend snapshot |
+| Workflows | Remaining import, restore, export-hydration, and remote-target operations with backend-owned atomic entity mutations |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
 
 The families are not feature flags and the admin configuration does not report
@@ -89,10 +90,12 @@ now been replaced by the real `AuthenticationStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
 `ObjectAggregateStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
 contracts. `TaskQueueStorage` replaces task submission and reads, while
-`TaskExecutionStorage` owns the complete worker claim and state machine. The
-remaining workflow-specific entity mutations stay behind the workflow gate
-until their complete contracts and compatibility tests land. No family is
-considered complete merely because a marker exists.
+`TaskExecutionStorage` owns the complete worker claim and state machine.
+`BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
+execution is part of `ComputedFieldLifecycleStorage`. Remaining import,
+restore, export-hydration, and remote-target workflow operations stay behind
+the workflow gate until their complete contracts and compatibility tests land.
+No family is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -246,28 +249,36 @@ both operations.
 
 `ComputedFieldLifecycleStorage` owns the complete application-facing
 definition lifecycle: class state, shared and personal listing, point lookup,
-shared and personal create/update/delete, and explicit rebuild scheduling.
+shared and personal create/update/delete, explicit rebuild scheduling, and
+execution of the backend-owned rebuild workflow under an opaque task lease.
 Requests and results cross the boundary as private-field DTOs; persistence
 rows, visibility strings, revisions, Diesel transactions, audit inserts, task
 cancellation, and rebuild enqueueing remain PostgreSQL adapter details. The
 application service validates API models, converts DTOs into response models,
 and owns the pure preview evaluator. Every opaque-handle entry point uses a
-bounded `computed_fields/*` observation label. Reindex task execution is a
-workflow responsibility and will cross the boundary with the complete task
-state machine rather than leaking worker persistence into this lifecycle
-trait.
+bounded `computed_fields/*` observation label. Each rebuild batch validates and
+locks the live task lease in the same transaction as its materialization
+writes, so a stale worker cannot commit computed data after losing its claim.
 
 `TaskExecutionStorage` owns every persistence transition needed by task
 workers. Claims cross the boundary as a task DTO plus an opaque, redacted token;
 the application can only return that token for renewal, events, state updates,
 completion, or failure. PostgreSQL's UUID representation, lease SQL, durable
 timestamps, row locks, task/output insert records, and workflow result counting
-remain adapter-private. Completion stores an optional export or backup artifact
-and the terminal lifecycle event in the same backend operation. Failure counts
+remain adapter-private. Completion stores an optional export, backup, or
+remote-call artifact and the terminal lifecycle event in the same backend
+operation. Failure counts
 are derived by the backend so the application never queries workflow result
 tables. The opaque handle observes all nine entry points with bounded
 `task_execution/*` labels, and every selectable backend must pass the shared
 state-machine compatibility test.
+
+`BackupSnapshotStorage` projects live backend state into Hubuum's canonical,
+versioned backup document sections. The application owns document metadata,
+serialization, hashing, and retention artifacts; adapters own consistent reads
+and the mapping from their private representation into those logical sections.
+Both state-only and history-inclusive snapshots cross private-field DTOs and
+are observed with the bounded `backup_snapshots/snapshot` label.
 
 `ObjectAggregateStorage` owns filtered grouping, numeric measures, computed
 aggregate snapshots, exact group counts, and stable aggregate cursors. The
@@ -430,9 +441,9 @@ The first workspace boundaries are now in place:
   DTOs, operational snapshot DTOs, and the extracted authentication,
   authorization, catalog-query, temporal-history, unified-search, operational
   state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
-  relation-query, event-health, event-fan-out, event-retention, and
-  token-retention traits without application, transport, or driver
-  dependencies.
+  task-execution, backup-snapshot, relation-query, event-health, event-fan-out,
+  event-retention, and token-retention traits without application, transport,
+  or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.

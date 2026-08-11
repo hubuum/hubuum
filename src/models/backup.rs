@@ -167,9 +167,11 @@ pub struct BackupManifest {
     pub exclusions: Vec<String>,
 }
 
-/// Privileged, restore-only table snapshots. In backup version 4, each section
-/// name and row shape corresponds to the PostgreSQL table restored from it.
-/// These are versioned disaster-recovery internals, not portable import data.
+/// Privileged, restore-only logical snapshots. Backup version 4 defines one
+/// canonical row shape per section; the PostgreSQL restore adapter maps those
+/// shapes to its tables. Other selectable adapters must project to and restore
+/// from the same format. These are versioned disaster-recovery internals, not
+/// portable import data.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
 pub struct BackupHistory {
     #[schema(value_type = Object)]
@@ -189,7 +191,7 @@ impl fmt::Debug for BackupHistory {
     }
 }
 
-/// Exact logical rows used by the destructive full-system restore path.
+/// Canonical logical rows used by the destructive full-system restore path.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
 pub struct BackupState {
     #[schema(value_type = Object)]

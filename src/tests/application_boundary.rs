@@ -244,6 +244,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "UnifiedSearchStorage",
         "TaskQueueStorage",
         "TaskExecutionStorage",
+        "BackupSnapshotStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
@@ -290,12 +291,17 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "update_personal",
         "delete_personal",
         "request_rebuild",
+        "execute_rebuild",
     ] {
         assert!(
             compact_context.contains(&format!("\"computed_fields\",\"{operation}\"")),
             "computed-field lifecycle operation {operation} must use the common storage observer"
         );
     }
+    assert!(
+        compact_context.contains("\"backup_snapshots\",\"snapshot\""),
+        "backup snapshot creation must use the common storage observer"
+    );
     for operation in [
         "claim",
         "renew_lease",
@@ -376,6 +382,9 @@ fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
             "storage::capabilities::task",
             "storage::postgres::operations::task::{",
             "storage::postgres::operations::task::purge_expired_",
+            "snapshot_backup_db",
+            "insert_remote_call_result",
+            "execute_computed_reindex_task",
         ] {
             assert!(
                 !source.contains(forbidden),

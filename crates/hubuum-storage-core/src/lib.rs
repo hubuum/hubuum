@@ -5,6 +5,7 @@
 //! these values without reversing the dependency from storage into the server.
 
 mod authorization;
+mod backup_snapshot;
 mod catalog;
 mod computed_field_lifecycle;
 mod computed_objects;
@@ -26,6 +27,7 @@ pub use authorization::{
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage,
 };
+pub use backup_snapshot::{BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot};
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
 pub use computed_field_lifecycle::{
     ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
@@ -84,10 +86,12 @@ pub use relation_query::{
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
-    StorageExportTaskArtifactReport, StorageTaskClaim, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskResultCounts, StorageTaskStateUpdate, TaskExecutionStorage,
+    StorageExportTaskArtifactReport, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskResultCounts,
+    StorageTaskStateUpdate, TaskExecutionStorage,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
@@ -117,7 +121,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 10;
+pub const STORAGE_CONTRACT_VERSION: u16 = 11;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,12 +155,13 @@ pub enum StorageCapability {
     UnifiedSearch,
     TaskQueue,
     TaskExecution,
+    BackupSnapshots,
     Workflows,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -168,6 +173,7 @@ impl StorageCapability {
         Self::UnifiedSearch,
         Self::TaskQueue,
         Self::TaskExecution,
+        Self::BackupSnapshots,
         Self::Workflows,
         Self::Operations,
     ];
@@ -186,6 +192,7 @@ impl StorageCapability {
             Self::UnifiedSearch => "unified_search",
             Self::TaskQueue => "task_queue",
             Self::TaskExecution => "task_execution",
+            Self::BackupSnapshots => "backup_snapshots",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -353,6 +360,7 @@ mod tests {
                 "unified_search",
                 "task_queue",
                 "task_execution",
+                "backup_snapshots",
                 "workflows",
                 "operations",
             ]

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc, LazyLock};
 
 use actix_web::web::Data;
@@ -27,30 +28,34 @@ use crate::storage::{
     AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
-    AuthorizationStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
-    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
-    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
-    RelationTouchingQuery, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
+    AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
+    CatalogListQuery, CatalogStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
+    ComputedObjectVisibility, EventArchive, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope,
+    HistoryListQuery, HistoryStorage, MetricsStorage, ObjectAggregateAuthorizationMode,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
+    OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
-    StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageExportTaskArtifact, StorageObject, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
     StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
+    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskCompletion, StorageTaskCompletionArtifact,
-    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
-    StorageTaskKind, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
-    StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
+    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -354,57 +359,123 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         .is_empty()
                 );
 
-                let first = backend
-                    .claim_next_task(lease_duration)
-                    .await
-                    .expect("certified backend should claim the next task")
-                    .expect("a compatibility task should be claimable");
-                assert!(fixture_ids.contains(&first.task().id()));
-                assert!(
-                    backend
-                        .renew_task_lease(first.lease().clone(), lease_duration)
+                let mut completed_ids = HashSet::new();
+                let mut completed_kinds = HashSet::new();
+                for completed_index in 0..StorageTaskKind::ALL.len() {
+                    let claimed = backend
+                        .claim_next_task(lease_duration)
                         .await
-                        .expect("certified backend should renew a live claim")
-                );
-                backend
-                    .append_task_event(StorageTaskEventAppend::new(
-                        first.lease().clone(),
-                        StorageTaskEventInput::new("running", "Compatibility event"),
-                    ))
-                    .await
-                    .expect("certified backend should append a claim-owned event");
-                backend
-                    .update_task_state(StorageTaskStateUpdate::new(
-                        first.lease().clone(),
-                        StorageTaskStatus::Running,
-                        StorageTaskResultCounts::new(0, 0, 0),
-                    ))
-                    .await
-                    .expect("certified backend should update claimed task state");
-                backend
-                    .complete_task(
-                        StorageTaskCompletion::new(
-                            StorageTaskStateUpdate::new(
-                                first.lease().clone(),
-                                StorageTaskStatus::Succeeded,
-                                StorageTaskResultCounts::new(1, 1, 0),
-                            ),
-                            StorageTaskEventInput::new("succeeded", "Compatibility completed"),
+                        .expect("certified backend should claim the next task")
+                        .expect("a compatibility task should be claimable");
+                    assert!(fixture_ids.contains(&claimed.task().id()));
+                    assert!(completed_ids.insert(claimed.task().id()));
+                    assert!(completed_kinds.insert(claimed.task().kind()));
+                    if completed_index == 0 {
+                        assert!(
+                            backend
+                                .renew_task_lease(claimed.lease().clone(), lease_duration)
+                                .await
+                                .expect("certified backend should renew a live claim")
+                        );
+                        backend
+                            .append_task_event(StorageTaskEventAppend::new(
+                                claimed.lease().clone(),
+                                StorageTaskEventInput::new("running", "Compatibility event"),
+                            ))
+                            .await
+                            .expect("certified backend should append a claim-owned event");
+                    }
+                    backend
+                        .update_task_state(StorageTaskStateUpdate::new(
+                            claimed.lease().clone(),
+                            StorageTaskStatus::Running,
+                            StorageTaskResultCounts::new(0, 0, 0),
+                        ))
+                        .await
+                        .expect("certified backend should update claimed task state");
+                    let artifact = compatibility_completion_artifact(claimed.task().kind());
+                    backend
+                        .complete_task(
+                            StorageTaskCompletion::new(
+                                StorageTaskStateUpdate::new(
+                                    claimed.lease().clone(),
+                                    StorageTaskStatus::Succeeded,
+                                    StorageTaskResultCounts::new(1, 1, 0),
+                                ),
+                                StorageTaskEventInput::new("succeeded", "Compatibility completed"),
+                            )
+                            .artifact(artifact),
                         )
-                        .artifact(StorageTaskCompletionArtifact::None),
-                    )
-                    .await
-                    .expect("certified backend should complete a claimed task");
+                        .await
+                        .expect("certified backend should complete a claimed task");
+                    match claimed.task().kind() {
+                        StorageTaskKind::Export => assert!(matches!(
+                            backend.get_export_output(claimed.task().id()).await,
+                            Ok(StorageTaskOutputLookup::Available(_))
+                        )),
+                        StorageTaskKind::Backup => assert!(matches!(
+                            backend.get_backup_output(claimed.task().id()).await,
+                            Ok(StorageTaskOutputLookup::Available(_))
+                        )),
+                        StorageTaskKind::Import
+                        | StorageTaskKind::Reindex
+                        | StorageTaskKind::RemoteCall => {}
+                    }
+                }
+                assert_eq!(completed_kinds.len(), StorageTaskKind::ALL.len());
 
-                let second = backend
+                let mut failure_fixture_ids = Vec::new();
+                for task_kind in StorageTaskKind::ALL {
+                    let task = backend
+                        .create_task(
+                            StorageTaskCreateRequest::builder(
+                                task_kind,
+                                user.id,
+                                serde_json::json!({"compatibility_failure": true}),
+                                1,
+                            )
+                            .idempotency_key(Some(
+                                IdempotencyKey::new(prefix(&format!(
+                                    "task_execution_failure_{}",
+                                    task_kind.as_str()
+                                )))
+                                .expect("compatibility idempotency key should be valid"),
+                            ))
+                            .request_hash(Some(prefix(&format!(
+                                "task_execution_failure_hash_{}",
+                                task_kind.as_str()
+                            ))))
+                            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+                            .build(10),
+                        )
+                        .await
+                        .expect("certified backend should create a failure fixture");
+                    failure_fixture_ids.push(task.id());
+                    fixture_ids.push(task.id());
+                }
+                crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+                    use crate::schema::tasks::dsl::{created_at, id, tasks};
+                    diesel::update(tasks.filter(id.eq_any(&failure_fixture_ids)))
+                        .set(
+                            created_at.eq(chrono::NaiveDate::from_ymd_opt(1999, 1, 1)
+                                .expect("compatibility date")
+                                .and_hms_opt(0, 0, 0)
+                                .expect("compatibility time")),
+                        )
+                        .execute(conn)
+                        .await
+                })
+                .await
+                .expect("failure fixtures should be made claim-first");
+                let failed = backend
                     .claim_next_task(lease_duration)
                     .await
-                    .expect("certified backend should claim another task")
-                    .expect("another compatibility task should be claimable");
-                assert!(fixture_ids.contains(&second.task().id()));
+                    .expect("certified backend should claim a failure fixture")
+                    .expect("a compatibility failure fixture should be claimable");
+                assert!(failure_fixture_ids.contains(&failed.task().id()));
                 backend
                     .fail_task(StorageTaskFailure::new(
-                        second.lease().clone(),
+                        failed.lease().clone(),
                         "Compatibility failure",
                         StorageTaskEventInput::new("failed", "Compatibility failure"),
                     ))
@@ -439,6 +510,92 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
     user.delete_without_events(pool.get_ref())
         .await
         .expect("task execution compatibility user should be removed");
+}
+
+fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskCompletionArtifact {
+    let output_expires_at =
+        chrono::Utc::now().naive_utc() + chrono::Duration::try_hours(1).expect("valid duration");
+    match kind {
+        StorageTaskKind::Import | StorageTaskKind::Reindex => StorageTaskCompletionArtifact::None,
+        StorageTaskKind::Export => StorageTaskCompletionArtifact::Export(
+            StorageExportTaskArtifact::builder(
+                "application/json",
+                serde_json::json!({"compatibility": true}),
+                serde_json::json!([]),
+                output_expires_at,
+            )
+            .output(Some(serde_json::json!({"compatible": true})), None)
+            .build(),
+        ),
+        StorageTaskKind::Backup => StorageTaskCompletionArtifact::Backup(
+            StorageBackupTaskArtifact::new(b"{}".to_vec(), 2, "0".repeat(64), output_expires_at),
+        ),
+        StorageTaskKind::RemoteCall => {
+            StorageTaskCompletionArtifact::RemoteCall(StorageRemoteCallTaskArtifact::new(
+                StorageRemoteCallArtifactTarget::new(
+                    None,
+                    "collection",
+                    1,
+                    "GET",
+                    "https://compatibility.invalid",
+                ),
+                StorageRemoteCallArtifactResponse::new(
+                    Some(200),
+                    Some(serde_json::json!({})),
+                    Some("compatible".to_string()),
+                ),
+                StorageRemoteCallArtifactOutcome::new(1, true, None),
+            ))
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_backup_snapshots() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let (state, history) = backend
+                    .snapshot_backup(false)
+                    .await
+                    .expect("certified backend should supply a state-only backup snapshot")
+                    .into_parts();
+                assert_eq!(
+                    state.len(),
+                    crate::models::backup::BACKUP_STATE_SECTIONS.len()
+                );
+                for section in crate::models::backup::BACKUP_STATE_SECTIONS {
+                    assert!(state.contains_key(*section));
+                }
+                assert!(history.is_none());
+
+                let (state, history) = backend
+                    .snapshot_backup(true)
+                    .await
+                    .expect("certified backend should supply a history-inclusive backup snapshot")
+                    .into_parts();
+                assert_eq!(
+                    state.len(),
+                    crate::models::backup::BACKUP_STATE_SECTIONS.len()
+                );
+                for section in crate::models::backup::BACKUP_STATE_SECTIONS {
+                    assert!(state.contains_key(*section));
+                }
+                let history = history.expect("history was requested");
+                assert_eq!(
+                    history.len(),
+                    crate::models::backup::backup_history_sections().count()
+                );
+                for section in crate::models::backup::backup_history_sections() {
+                    assert!(history.contains_key(section));
+                }
+            }
+        }
+    }
 }
 
 #[actix_web::test]
@@ -1087,6 +1244,43 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
                     .await
                     .expect("certified backend should request a computed-field rebuild");
                 assert_eq!(rebuild_state.class_id(), class_id);
+                let rebuild_task_id = rebuild_state
+                    .active_task_id()
+                    .expect("rebuild request should identify its task");
+                let claim_token = uuid::Uuid::new_v4();
+                crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+                    use crate::schema::tasks::dsl::{
+                        id, lease_expires_at, lease_token, status, tasks,
+                    };
+                    diesel::update(tasks.filter(id.eq(rebuild_task_id)))
+                        .set((
+                            status.eq(StorageTaskStatus::Validating.as_str()),
+                            lease_token.eq(Some(claim_token)),
+                            lease_expires_at.eq(Some(
+                                chrono::Utc::now().naive_utc()
+                                    + chrono::Duration::try_minutes(1)
+                                        .expect("valid compatibility lease"),
+                            )),
+                        ))
+                        .execute(conn)
+                        .await
+                })
+                .await
+                .expect("compatibility rebuild should receive a live backend claim");
+                let rebuilt = backend
+                    .execute_computed_field_rebuild(StorageTaskLease::new(
+                        rebuild_task_id,
+                        StorageTaskClaimToken::new(claim_token.to_string()),
+                    ))
+                    .await
+                    .expect("certified backend should execute a claimed computed-field rebuild");
+                assert_eq!(rebuilt.status(), StorageTaskStatus::Succeeded);
+                let ready_state = backend
+                    .computed_field_state(class_id)
+                    .await
+                    .expect("certified backend should expose the completed rebuild state");
+                assert_eq!(ready_state.rebuild_status(), "ready");
+                assert_eq!(ready_state.active_task_id(), None);
 
                 let personal = backend
                     .create_personal_computed_field(StoragePersonalComputedFieldCreate::new(

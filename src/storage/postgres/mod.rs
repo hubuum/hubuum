@@ -1,3 +1,4 @@
+mod backup_snapshot;
 mod computed_fields;
 mod error;
 #[doc(hidden)]

@@ -69,6 +69,10 @@ async fn process_reindex_batch(
     cursor: i32,
 ) -> Result<ReindexBatch, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        let claim_token = task.lease_token.ok_or_else(|| {
+            ApiError::BadRequest("Computed-field rebuild task has no claim token".to_string())
+        })?;
+        super::super::task::live_claimed_task_conn(conn, task.id, claim_token).await?;
         use crate::schema::hubuumobject::dsl::{hubuum_class_id, hubuumobject, id};
         let objects = hubuumobject
             .filter(hubuum_class_id.eq(payload.class_id))
@@ -106,6 +110,7 @@ async fn process_reindex_batch(
                 upsert_materialized(conn, object, payload.target_revision, result).await?;
             }
         }
+        super::super::task::live_claimed_task_conn(conn, task.id, claim_token).await?;
         Ok(ReindexBatch::Rows {
             last_id: objects.last().expect("non-empty batch").id,
             count: objects.len() as i32,
@@ -177,7 +182,11 @@ pub async fn execute_computed_reindex_task(
         }
     }
 
-    let ready = with_transaction(pool, async |conn| -> Result<bool, ApiError> {
+    let (status, finalized) = with_transaction(pool, async |conn| {
+        let claim_token = task.lease_token.ok_or_else(|| {
+            ApiError::BadRequest("Computed-field rebuild task has no claim token".to_string())
+        })?;
+        super::super::task::live_claimed_task_conn(conn, task.id, claim_token).await?;
         acquire_computed_class_shared_lock(conn, payload.class_id).await?;
         use crate::schema::class_computation_state::dsl::{
             active_task_id, class_computation_state, class_id, evaluation_revision, last_error,
@@ -197,33 +206,36 @@ pub async fn execute_computed_reindex_task(
         ))
         .execute(conn)
         .await?;
-        Ok(changed == 1)
+        let (status, summary) = if changed == 1 {
+            (
+                TaskStatus::Succeeded,
+                format!("Computed-field rebuild completed for {processed} objects"),
+            )
+        } else {
+            (
+                TaskStatus::Cancelled,
+                "Computed-field rebuild superseded before completion".to_string(),
+            )
+        };
+        let finalized = super::super::task::finalize_terminal_conn(
+            conn,
+            task.id,
+            Some(claim_token),
+            TaskStateUpdate::new(status, TaskResultCounts::from_outcomes(processed, 0)?)
+                .with_summary(summary.clone())
+                .with_started_at(task.started_at),
+            NewTaskEventRecord {
+                task_id: task.id,
+                event_type: status.as_str().to_string(),
+                message: summary,
+                data: None,
+            },
+        )
+        .await?;
+        Ok::<_, ApiError>((status, finalized))
     })
     .await?;
-    let (status, summary) = if ready {
-        (
-            TaskStatus::Succeeded,
-            format!("Computed-field rebuild completed for {processed} objects"),
-        )
-    } else {
-        (
-            TaskStatus::Cancelled,
-            "Computed-field rebuild superseded before completion".to_string(),
-        )
-    };
-    task.finalize_terminal(
-        pool,
-        TaskStateUpdate::new(status, TaskResultCounts::from_outcomes(processed, 0)?)
-            .with_summary(summary.clone())
-            .with_started_at(task.started_at),
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: status.as_str().to_string(),
-            message: summary,
-            data: None,
-        },
-    )
-    .await?;
+    super::super::task::record_task_terminal(&finalized);
     crate::observability::metrics::computed_rebuild_finished(status.as_str(), started.elapsed());
     info!(
         message = "Computed-field rebuild finished",
@@ -235,8 +247,8 @@ pub async fn execute_computed_reindex_task(
     Ok(())
 }
 
-pub async fn mark_computed_reindex_failed(
-    pool: &impl crate::storage::StorageContext,
+pub(crate) async fn mark_computed_reindex_failed_conn(
+    conn: &mut PostgresConnection,
     task: &TaskRecord,
     stored_error: &str,
 ) -> Result<(), ApiError> {
@@ -247,28 +259,24 @@ pub async fn mark_computed_reindex_failed(
     else {
         return Ok(());
     };
-    with_connection(pool, async |conn| {
-        use crate::schema::class_computation_state::dsl::{
-            active_task_id, class_computation_state, class_id, evaluation_revision, last_error,
-            rebuild_status, updated_at,
-        };
-        diesel::update(
-            class_computation_state
-                .filter(class_id.eq(payload.class_id))
-                .filter(evaluation_revision.eq(payload.target_revision))
-                .filter(active_task_id.eq(Some(task.id))),
-        )
-        .set((
-            rebuild_status.eq("failed"),
-            active_task_id.eq::<Option<i32>>(None),
-            last_error.eq(Some(stored_error.chars().take(512).collect::<String>())),
-            updated_at.eq(diesel::dsl::now),
-        ))
-        .execute(conn)
-        .await
-    })
+    use crate::schema::class_computation_state::dsl::{
+        active_task_id, class_computation_state, class_id, evaluation_revision, last_error,
+        rebuild_status, updated_at,
+    };
+    diesel::update(
+        class_computation_state
+            .filter(class_id.eq(payload.class_id))
+            .filter(evaluation_revision.eq(payload.target_revision))
+            .filter(active_task_id.eq(Some(task.id))),
+    )
+    .set((
+        rebuild_status.eq("failed"),
+        active_task_id.eq::<Option<i32>>(None),
+        last_error.eq(Some(stored_error.chars().take(512).collect::<String>())),
+        updated_at.eq(diesel::dsl::now),
+    ))
+    .execute(conn)
     .await?;
-    crate::observability::metrics::computed_rebuild_finished("failed", std::time::Duration::ZERO);
     Ok(())
 }
 

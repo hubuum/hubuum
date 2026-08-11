@@ -15,14 +15,15 @@ use crate::permissions::{
     PermissionDecision, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
 use crate::storage::{
-    AuthenticationStorage, StorageBackupOutput, StorageBackupOutputSummary, StorageContext,
-    StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult, StorageTask,
-    StorageTaskClaim, StorageTaskCompletion, StorageTaskCompletionArtifact,
-    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskResultCounts,
-    StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus, TaskExecutionStorage,
-    TaskQueueStorage, storage_handle,
+    AuthenticationStorage, ComputedFieldLifecycleStorage, StorageBackupOutput,
+    StorageBackupOutputSummary, StorageContext, StorageExportOutput, StorageExportOutputSummary,
+    StorageImportTaskResult, StorageTask, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEvent,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, TaskExecutionStorage, TaskQueueStorage,
+    storage_handle,
 };
 use crate::traits::AuthzSubject;
 
@@ -265,6 +266,17 @@ pub(crate) async fn purge_expired_backup_outputs(
         .purge_expired_backup_outputs()
         .await
         .map_err(ApiError::from)
+}
+
+pub(crate) async fn execute_computed_field_rebuild(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+) -> Result<TaskRecord, ApiError> {
+    storage_handle(backend)
+        .execute_computed_field_rebuild(task.lease.clone())
+        .await
+        .map_err(ApiError::from)
+        .and_then(task_from_storage)
 }
 
 impl TaskSubmission {

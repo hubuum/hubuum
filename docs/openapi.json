@@ -19370,7 +19370,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only table snapshots. In backup version 4, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
+        "description": "Privileged, restore-only logical snapshots. Backup version 4 defines one\ncanonical row shape per section; the PostgreSQL restore adapter maps those\nshapes to its tables. Other selectable adapters must project to and restore\nfrom the same format. These are versioned disaster-recovery internals, not\nportable import data.",
         "required": [
           "sections"
         ],
@@ -19410,7 +19410,7 @@
       },
       "BackupState": {
         "type": "object",
-        "description": "Exact logical rows used by the destructive full-system restore path.",
+        "description": "Canonical logical rows used by the destructive full-system restore path.",
         "required": [
           "sections"
         ],

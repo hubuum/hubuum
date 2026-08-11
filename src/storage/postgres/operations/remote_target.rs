@@ -362,36 +362,32 @@ fn build_list_query<'a>(
     Ok(query)
 }
 
-pub async fn insert_remote_call_result(
-    pool: &impl crate::storage::StorageContext,
+pub(crate) async fn upsert_remote_call_result_conn(
+    conn: &mut crate::storage::postgres::PostgresConnection,
     entry: NewRemoteCallResult,
 ) -> Result<RemoteCallResult, ApiError> {
     use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
 
-    with_connection(pool, async |conn| {
-        diesel::insert_into(remote_call_results)
-            .values(&entry)
-            .on_conflict(task_id)
-            .do_update()
-            .set((
-                crate::schema::remote_call_results::target_id.eq(entry.target_id),
-                crate::schema::remote_call_results::subject_type.eq(entry.subject_type.clone()),
-                crate::schema::remote_call_results::subject_id.eq(entry.subject_id),
-                crate::schema::remote_call_results::method.eq(entry.method.clone()),
-                crate::schema::remote_call_results::rendered_url.eq(entry.rendered_url.clone()),
-                crate::schema::remote_call_results::response_status.eq(entry.response_status),
-                crate::schema::remote_call_results::response_headers
-                    .eq(entry.response_headers.clone()),
-                crate::schema::remote_call_results::response_body_preview
-                    .eq(entry.response_body_preview.clone()),
-                crate::schema::remote_call_results::duration_ms.eq(entry.duration_ms),
-                crate::schema::remote_call_results::success.eq(entry.success),
-                crate::schema::remote_call_results::error.eq(entry.error.clone()),
-            ))
-            .get_result::<RemoteCallResult>(conn)
-            .await
-    })
-    .await
+    Ok(diesel::insert_into(remote_call_results)
+        .values(&entry)
+        .on_conflict(task_id)
+        .do_update()
+        .set((
+            crate::schema::remote_call_results::target_id.eq(entry.target_id),
+            crate::schema::remote_call_results::subject_type.eq(entry.subject_type.clone()),
+            crate::schema::remote_call_results::subject_id.eq(entry.subject_id),
+            crate::schema::remote_call_results::method.eq(entry.method.clone()),
+            crate::schema::remote_call_results::rendered_url.eq(entry.rendered_url.clone()),
+            crate::schema::remote_call_results::response_status.eq(entry.response_status),
+            crate::schema::remote_call_results::response_headers.eq(entry.response_headers.clone()),
+            crate::schema::remote_call_results::response_body_preview
+                .eq(entry.response_body_preview.clone()),
+            crate::schema::remote_call_results::duration_ms.eq(entry.duration_ms),
+            crate::schema::remote_call_results::success.eq(entry.success),
+            crate::schema::remote_call_results::error.eq(entry.error.clone()),
+        ))
+        .get_result::<RemoteCallResult>(conn)
+        .await?)
 }
 
 impl RemoteTargetID {

@@ -8,30 +8,33 @@ use uuid::Uuid;
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{
-    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewTaskEventRecord, TaskKind,
-    TaskResultCounts, TaskStatus,
+    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewRemoteCallResult, NewTaskEventRecord,
+    TaskKind, TaskResultCounts, TaskStatus,
 };
 use crate::storage::{
-    StorageBackupTaskArtifact, StorageError, StorageExportTaskArtifact, StorageTask,
-    StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionArtifact,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus,
-    TaskExecutionStorage,
+    StorageBackupTaskArtifact, StorageError, StorageExportTaskArtifact,
+    StorageRemoteCallTaskArtifact, StorageTask, StorageTaskClaim, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus, TaskExecutionStorage,
 };
 use crate::tasks::TaskLeaseDuration;
 
 use super::PostgresStorage;
 use super::error::map_postgres_error;
-use super::operations::computed_field::mark_computed_reindex_failed;
+use super::operations::computed_field::mark_computed_reindex_failed_conn;
 use super::operations::task::{
     TaskBackend, TaskIdentifier, TaskStateUpdate, append_task_event_while_claimed,
-    claim_next_queued_task, purge_expired_backup_outputs, purge_expired_export_outputs,
+    claim_next_queued_task, finalize_terminal_conn, live_claimed_task_conn,
+    purge_expired_backup_outputs, purge_expired_export_outputs, record_task_terminal,
     recover_expired_task_leases, renew_task_lease,
 };
 use super::task_queue::task_to_storage;
-use super::{PostgresPool, PostgresPoolSettings, init_postgres_pool_with_settings};
+use super::{
+    PostgresPool, PostgresPoolSettings, init_postgres_pool_with_settings, with_transaction,
+};
 
-struct ClaimedTaskIdentifier {
+pub(super) struct ClaimedTaskIdentifier {
     task_id: i32,
     token: Uuid,
 }
@@ -89,7 +92,9 @@ fn claim_token_from_storage(token: &StorageTaskClaimToken) -> Result<Uuid, ApiEr
     })
 }
 
-fn claimed_identifier(lease: &StorageTaskLease) -> Result<ClaimedTaskIdentifier, ApiError> {
+pub(super) fn claimed_identifier(
+    lease: &StorageTaskLease,
+) -> Result<ClaimedTaskIdentifier, ApiError> {
     Ok(ClaimedTaskIdentifier {
         task_id: lease.task_id(),
         token: claim_token_from_storage(lease.token())?,
@@ -174,6 +179,30 @@ fn backup_artifact_from_storage(
         byte_size,
         sha256,
         output_expires_at,
+    }
+}
+
+fn remote_call_artifact_from_storage(
+    task_id: i32,
+    artifact: StorageRemoteCallTaskArtifact,
+) -> NewRemoteCallResult {
+    let (target, response, outcome) = artifact.into_parts();
+    let (target_id, subject_type, subject_id, method, rendered_url) = target.into_parts();
+    let (response_status, response_headers, response_body_preview) = response.into_parts();
+    let (duration_ms, success, error) = outcome.into_parts();
+    NewRemoteCallResult {
+        task_id,
+        target_id,
+        subject_type,
+        subject_id,
+        method,
+        rendered_url,
+        response_status,
+        response_headers,
+        response_body_preview,
+        duration_ms,
+        success,
+        error,
     }
 }
 
@@ -285,9 +314,15 @@ impl TaskExecutionStorage for PostgresStorage {
             .map_err(map_postgres_error)?;
         let artifact_matches_kind = matches!(
             (&artifact, stored_kind),
-            (StorageTaskCompletionArtifact::None, _)
-                | (StorageTaskCompletionArtifact::Export(_), TaskKind::Export)
+            (
+                StorageTaskCompletionArtifact::None,
+                TaskKind::Import | TaskKind::Reindex
+            ) | (StorageTaskCompletionArtifact::Export(_), TaskKind::Export)
                 | (StorageTaskCompletionArtifact::Backup(_), TaskKind::Backup)
+                | (
+                    StorageTaskCompletionArtifact::RemoteCall(_),
+                    TaskKind::RemoteCall
+                )
         );
         if !artifact_matches_kind {
             return Err(map_postgres_error(ApiError::BadRequest(format!(
@@ -315,6 +350,15 @@ impl TaskExecutionStorage for PostgresStorage {
                     update,
                     event,
                     backup_artifact_from_storage(task_id, artifact),
+                )
+                .await
+            }
+            StorageTaskCompletionArtifact::RemoteCall(artifact) => {
+                task.finalize_remote_call_with_result(
+                    self.pool(),
+                    update,
+                    event,
+                    remote_call_artifact_from_storage(task_id, artifact),
                 )
                 .await
             }
@@ -346,15 +390,26 @@ impl TaskExecutionStorage for PostgresStorage {
         let update = TaskStateUpdate::new(TaskStatus::Failed, counts)
             .with_summary(summary.clone())
             .with_started_at(record.started_at);
-        let finalized = task
-            .finalize_terminal(self.pool(), update, event_from_storage(record.id, event))
+        let event = event_from_storage(record.id, event);
+        let finalized = if kind == TaskKind::Reindex {
+            let finalized = with_transaction(self.pool(), async |conn| {
+                live_claimed_task_conn(conn, task.task_id, task.token).await?;
+                mark_computed_reindex_failed_conn(conn, &record, &summary).await?;
+                finalize_terminal_conn(conn, task.task_id, Some(task.token), update, event).await
+            })
             .await
             .map_err(map_postgres_error)?;
-        if kind == TaskKind::Reindex {
-            mark_computed_reindex_failed(self.pool(), &record, &summary)
+            record_task_terminal(&finalized);
+            crate::observability::metrics::computed_rebuild_finished(
+                "failed",
+                std::time::Duration::ZERO,
+            );
+            finalized
+        } else {
+            task.finalize_terminal(self.pool(), update, event)
                 .await
-                .map_err(map_postgres_error)?;
-        }
+                .map_err(map_postgres_error)?
+        };
         task_to_storage(finalized).map_err(map_postgres_error)
     }
 

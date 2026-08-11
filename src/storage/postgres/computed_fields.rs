@@ -15,10 +15,14 @@ use crate::storage::{
     StorageComputedFieldVisibility, StorageError, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StorageRecordMetadata, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
+    StorageTaskLease,
 };
 
 use super::error::map_postgres_error;
+use super::operations::task::TaskBackend;
+use super::task_execution::claimed_identifier;
+use super::task_queue::task_to_storage;
 use super::{PostgresStorage, operations};
 
 #[async_trait]
@@ -186,6 +190,24 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         .await
         .map(state_to_storage)
         .map_err(map_postgres_error)
+    }
+
+    async fn execute_computed_field_rebuild(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError> {
+        let task = claimed_identifier(&lease).map_err(map_postgres_error)?;
+        let record = task
+            .find_claimed_record(self.pool())
+            .await
+            .map_err(map_postgres_error)?;
+        operations::computed_field::execute_computed_reindex_task(self.pool(), &record)
+            .await
+            .map_err(map_postgres_error)?;
+        task.find_record(self.pool())
+            .await
+            .and_then(task_to_storage)
+            .map_err(map_postgres_error)
     }
 }
 
