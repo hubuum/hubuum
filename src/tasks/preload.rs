@@ -7,10 +7,7 @@ use super::resolution::{
 };
 use super::types::{CollectionResolution, PlanningState};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
-use crate::storage::capabilities::task_import::{
-    lookup_classes_by_collection_and_names, lookup_collections_by_name,
-    lookup_objects_by_class_and_names,
-};
+use crate::storage::{ImportStorage, storage_handle};
 
 fn collect_request_class_keys(request: &ImportRequest) -> Vec<ClassKey> {
     let mut keys = Vec::new();
@@ -92,7 +89,8 @@ async fn preload_collections_for_class_keys(
         .collect::<Vec<_>>();
 
     for name in names {
-        let collections = lookup_collections_by_name(pool, &name)
+        let collections = storage_handle(pool)
+            .import_collections_by_name(&name)
             .await
             .map_err(|err| err.to_string())?;
         if collections.is_empty() {
@@ -155,7 +153,8 @@ pub(super) async fn preload_existing_classes(
 
     for (collection_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let classes = lookup_classes_by_collection_and_names(pool, collection_id, &names)
+        let classes = storage_handle(pool)
+            .import_classes_by_names(collection_id, &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
@@ -237,7 +236,8 @@ pub(super) async fn preload_existing_objects(
 
     for (class_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let objects = lookup_objects_by_class_and_names(pool, class_id, &names)
+        let objects = storage_handle(pool)
+            .import_objects_by_names(class_id, &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = objects

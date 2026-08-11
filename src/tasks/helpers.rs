@@ -4,11 +4,13 @@ use sha2::{Digest, Sha256};
 use tracing::debug;
 
 use crate::errors::ApiError;
+#[cfg(test)]
+use crate::models::ImportMode;
 use crate::models::{
-    Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy, ImportMode,
+    Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy,
     ImportPermissionPolicy,
 };
-use crate::storage::capabilities::task::insert_import_results;
+use crate::storage::{ImportStorage, storage_handle};
 
 use super::types::{
     ClassResolution, CollectionResolution, ExecutionAccumulator, FailureKind,
@@ -95,6 +97,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
     }
 }
 
+#[cfg(test)]
 pub(super) fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMode) -> bool {
     match err {
         ApiError::Conflict(_) => matches!(
@@ -197,12 +200,12 @@ pub(super) async fn flush_import_result_batches(
             .results
             .drain(..IMPORT_RESULTS_BATCH_SIZE)
             .collect::<Vec<_>>();
-        insert_import_results(pool, &batch).await?;
+        storage_handle(pool).record_import_results(batch).await?;
     }
 
     if force && !accumulator.results.is_empty() {
         let batch = accumulator.results.drain(..).collect::<Vec<_>>();
-        insert_import_results(pool, &batch).await?;
+        storage_handle(pool).record_import_results(batch).await?;
     }
 
     Ok(())

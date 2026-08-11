@@ -51,6 +51,7 @@ impl From<PostgresStorageError> for StorageError {
                 Self::new(StorageErrorKind::PayloadTooLarge, message, None)
             }
             ApiError::Conflict(message) => Self::new(StorageErrorKind::Conflict, message, None),
+            ApiError::Forbidden(message) => Self::new(StorageErrorKind::Forbidden, message, None),
             ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
                 Self::new(StorageErrorKind::Database, message, None)
             }
@@ -65,6 +66,9 @@ impl From<PostgresStorageError> for StorageError {
             }
             ApiError::ServiceUnavailable(message) => {
                 Self::new(StorageErrorKind::Unavailable, message, None)
+            }
+            ApiError::Unauthorized(message) => {
+                Self::new(StorageErrorKind::Unauthorized, message, None)
             }
             error => Self::new(
                 StorageErrorKind::Internal,
@@ -106,6 +110,14 @@ mod tests {
         assert_eq!(
             map_postgres_error(ApiError::TooManyRequests("capacity reached".to_string())).kind(),
             StorageErrorKind::TooManyRequests
+        );
+        assert_eq!(
+            map_postgres_error(ApiError::Forbidden("access denied".to_string())).kind(),
+            StorageErrorKind::Forbidden
+        );
+        assert_eq!(
+            map_postgres_error(ApiError::Unauthorized("login required".to_string())).kind(),
+            StorageErrorKind::Unauthorized
         );
     }
 }

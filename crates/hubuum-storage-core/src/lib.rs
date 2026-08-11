@@ -137,7 +137,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 13;
+pub const STORAGE_CONTRACT_VERSION: u16 = 14;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,12 +174,13 @@ pub enum StorageCapability {
     TaskExecution,
     BackupSnapshots,
     Restores,
+    Imports,
     Workflows,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -194,6 +195,7 @@ impl StorageCapability {
         Self::TaskExecution,
         Self::BackupSnapshots,
         Self::Restores,
+        Self::Imports,
         Self::Workflows,
         Self::Operations,
     ];
@@ -215,6 +217,7 @@ impl StorageCapability {
             Self::TaskExecution => "task_execution",
             Self::BackupSnapshots => "backup_snapshots",
             Self::Restores => "restores",
+            Self::Imports => "imports",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -254,6 +257,7 @@ pub enum StorageErrorKind {
     BadRequest,
     Conflict,
     Database,
+    Forbidden,
     Internal,
     NotFound,
     NotAcceptable,
@@ -261,6 +265,7 @@ pub enum StorageErrorKind {
     PreconditionFailed,
     TooManyRequests,
     Unavailable,
+    Unauthorized,
     Validation,
 }
 
@@ -272,6 +277,7 @@ impl StorageErrorKind {
             Self::BadRequest => "bad_request",
             Self::Conflict => "conflict",
             Self::Database => "database",
+            Self::Forbidden => "forbidden",
             Self::Internal => "internal",
             Self::NotFound => "not_found",
             Self::NotAcceptable => "not_acceptable",
@@ -279,6 +285,7 @@ impl StorageErrorKind {
             Self::PreconditionFailed => "precondition_failed",
             Self::TooManyRequests => "too_many_requests",
             Self::Unavailable => "unavailable",
+            Self::Unauthorized => "unauthorized",
             Self::Validation => "validation",
         }
     }
@@ -385,6 +392,7 @@ mod tests {
                 "task_execution",
                 "backup_snapshots",
                 "restores",
+                "imports",
                 "workflows",
                 "operations",
             ]

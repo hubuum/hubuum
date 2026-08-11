@@ -27,12 +27,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking (administrator API):** the storage contract version is now `13`,
+- **Breaking (administrator API):** the storage contract version is now `14`,
   and the redacted administrator configuration reports independently enforced
   `catalog_queries`, `computed_object_queries`, `computed_field_lifecycle`,
   `object_aggregates`, `relation_queries`, `temporal_history`, and
   `unified_search`, `remote_targets`, `task_queue`, `task_execution`,
-  `backup_snapshots`, and `restores`
+  `backup_snapshots`, `restores`, and `imports`
   capabilities instead of
   the broader provisional `queries_and_history` label. Monitoring or
   administration clients matching the version or capability list must accept
@@ -48,8 +48,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   destructive apply, recovery, and provenance now form another mandatory
   compatibility-tested backend contract; restore application code no longer
   imports PostgreSQL/Diesel records or operations. Administration and monitoring
-  clients matching contract version `12` must upgrade to version `13` and
-  accept the required `restores` capability.
+  clients matching contract version `13` must upgrade to version `14` and
+  accept the required `imports` capability. Import planning lookups,
+  rollback-only preflight, strict atomic apply, best-effort per-item apply, and
+  result persistence now form one mandatory backend trait; application import
+  code no longer imports PostgreSQL connections, transactions, or query
+  operations.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

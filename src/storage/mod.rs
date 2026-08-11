@@ -4,6 +4,7 @@ mod classes;
 mod collections;
 mod context;
 mod contract;
+mod imports;
 #[cfg(test)]
 mod memory;
 mod metrics;
@@ -88,6 +89,10 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
+pub(crate) use imports::{
+    ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportOperation,
+    StorageImportPlanItem, StorageImportPreflight, StorageImportPreflightItem, StorageImportResult,
+};
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
 pub(crate) use metrics::{

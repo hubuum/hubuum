@@ -174,6 +174,7 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::BadRequest => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
             StorageErrorKind::Database => Self::DatabaseError(message),
+            StorageErrorKind::Forbidden => Self::Forbidden(message),
             StorageErrorKind::Internal => Self::InternalServerError(message),
             StorageErrorKind::NotFound => Self::NotFound(message),
             StorageErrorKind::NotAcceptable => Self::NotAcceptable(message),
@@ -181,6 +182,7 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::PreconditionFailed => Self::PreconditionFailed(message, current_etag),
             StorageErrorKind::TooManyRequests => Self::TooManyRequests(message),
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
+            StorageErrorKind::Unauthorized => Self::Unauthorized(message),
             StorageErrorKind::Validation => Self::ValidationError(message),
         }
     }
@@ -488,6 +490,10 @@ mod tests {
                 "conflict",
             ),
             (
+                StorageError::new(StorageErrorKind::Forbidden, "access denied", None),
+                "forbidden",
+            ),
+            (
                 StorageError::new(StorageErrorKind::NotFound, "collection missing", None),
                 "not_found",
             ),
@@ -518,6 +524,10 @@ mod tests {
                     None,
                 ),
                 "too_many_requests",
+            ),
+            (
+                StorageError::new(StorageErrorKind::Unauthorized, "login required", None),
+                "unauthorized",
             ),
         ] {
             assert_eq!(ApiError::from(error).class(), expected_class);

@@ -1,5 +1,5 @@
 use crate::models::token_scope::TokenScope;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use chrono::Utc;
@@ -11,8 +11,8 @@ use super::helpers::{
 };
 use super::preload::{preload_existing_classes, preload_existing_objects};
 use super::resolution::{
-    lookup_existing_collection_for_import_db, remember_class, remember_collection, remember_object,
-    resolve_class_planning, resolve_collection_by_id_planning, resolve_collection_parent_planning,
+    remember_class, remember_collection, remember_object, resolve_class_planning,
+    resolve_collection_by_id_planning, resolve_collection_parent_planning,
     resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
@@ -28,13 +28,8 @@ use crate::models::{
     ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
     Permissions, RestoreTimestamps,
 };
-use crate::storage::postgres::operations::UserPermissions;
-use crate::storage::postgres::operations::task_import::{
-    lookup_class_by_collection_and_name, lookup_direct_class_relation, lookup_group_by_name,
-    lookup_object_by_class_and_name, lookup_object_relation,
-};
-use crate::storage::postgres::prelude::AsyncConnection;
-use crate::storage::postgres::with_connection;
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::{ImportStorage, StorageImportPlanItem, storage_handle};
 
 fn import_item_allows_overwrite(
     condition: Option<ImportWriteCondition>,
@@ -145,8 +140,6 @@ fn plan_system_item(
     }
 }
 
-const DRY_RUN_ROLLBACK: &str = "hubuum import dry-run rollback";
-
 fn preflight_failure_kind(error: &ApiError) -> FailureKind {
     match error {
         ApiError::Forbidden(_) | ApiError::Unauthorized(_) => FailureKind::Permission,
@@ -175,96 +168,60 @@ async fn preflight_dry_run(
     mode: &ImportMode,
     planned_items: Vec<PlannedItem>,
 ) -> Result<PlanningOutcome, ApiError> {
-    let atomicity = mode.atomicity.unwrap_or(ImportAtomicity::Strict);
-    let permission_policy = mode
-        .permission_policy
-        .unwrap_or(ImportPermissionPolicy::Abort);
-    let collision_policy = mode
-        .collision_policy
-        .unwrap_or(ImportCollisionPolicy::Abort);
+    let plan = planned_items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            item.execution
+                .clone()
+                .map(|execution| StorageImportPlanItem::new(index, execution))
+        })
+        .collect();
+    let (preflight_items, aborted) = storage_handle(pool)
+        .preflight_import(plan, mode.clone())
+        .await?
+        .into_parts();
+    let cutoff = aborted
+        .then(|| preflight_items.last().map(|item| item.index()))
+        .flatten();
+    let mut outcomes = preflight_items
+        .into_iter()
+        .map(|item| {
+            let (index, revision, error) = item.into_parts();
+            (index, (revision, error))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut valid_items = Vec::with_capacity(planned_items.len());
+    let mut failures = Vec::new();
 
-    with_connection(
-        pool,
-        async move |conn| -> Result<PlanningOutcome, ApiError> {
-            let mut valid_items = Vec::with_capacity(planned_items.len());
-            let mut failures = Vec::new();
-            let mut aborted = false;
-            let mut runtime = super::types::RuntimeState::for_planned_items(&planned_items);
-
-            let transaction = conn
-                .transaction::<(), ApiError, _>(async |conn| {
-                    for mut item in planned_items {
-                        let observed_revision = match &item.execution {
-                            Some(execution) => {
-                                super::execution::observed_revision_for_planned_item(
-                                    conn, &runtime, execution,
-                                )
-                                .await
-                            }
-                            None => Ok(None),
-                        };
-                        let result = match observed_revision {
-                            Ok(observed_revision) => {
-                                item.result.set_observed_revision(observed_revision);
-                                match &item.execution {
-                                    Some(execution) => {
-                                        conn.transaction::<(), ApiError, _>(async |conn| {
-                                            super::execution::execute_planned_item(
-                                                conn,
-                                                &mut runtime,
-                                                execution,
-                                            )
-                                            .await
-                                        })
-                                        .await
-                                    }
-                                    None => Ok(()),
-                                }
-                            }
-                            Err(error) => Err(error),
-                        };
-                        match result {
-                            Ok(()) => valid_items.push(item),
-                            Err(error) => {
-                                let kind = preflight_failure_kind(&error);
-                                failures.push(PlanningFailure {
-                                    kind,
-                                    item: item.result,
-                                    message: sanitize_error_for_storage(&error),
-                                });
-                                if should_abort_import(
-                                    atomicity,
-                                    permission_policy,
-                                    collision_policy,
-                                    kind,
-                                ) {
-                                    aborted = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    Err(ApiError::InternalServerError(DRY_RUN_ROLLBACK.to_string()))
-                })
-                .await;
-
-            match transaction {
-                Err(ApiError::InternalServerError(message)) if message == DRY_RUN_ROLLBACK => {
-                    Ok(PlanningOutcome {
-                        planned_items: valid_items,
-                        failures,
-                        aborted,
-                    })
-                }
-                Err(error) => Err(error),
-                Ok(()) => Err(ApiError::InternalServerError(
-                    "Import dry run unexpectedly committed".to_string(),
-                )),
+    for (index, mut item) in planned_items.into_iter().enumerate() {
+        if cutoff.is_some_and(|cutoff| index > cutoff) {
+            break;
+        }
+        let Some((revision, error)) = outcomes.remove(&index) else {
+            if item.execution.is_none() {
+                valid_items.push(item);
             }
-        },
-    )
-    .await
+            continue;
+        };
+        item.result.set_observed_revision(revision);
+        if let Some(error) = error {
+            let error = ApiError::from(error);
+            failures.push(PlanningFailure {
+                kind: preflight_failure_kind(&error),
+                item: item.result,
+                message: sanitize_error_for_storage(&error),
+            });
+        } else {
+            valid_items.push(item);
+        }
+    }
+
+    Ok(PlanningOutcome {
+        planned_items: valid_items,
+        failures,
+        aborted,
+    })
 }
 
 async fn is_import_admin<C>(
@@ -347,10 +304,10 @@ async fn class_relation_exists_cached(
         return Ok(*exists);
     }
 
-    let exists = lookup_direct_class_relation(pool, pair.0, pair.1)
+    let exists = storage_handle(pool)
+        .import_class_relation_exists(pair.0, pair.1)
         .await
-        .map_err(|err| sanitize_error_for_storage(&err))?
-        .is_some();
+        .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.class_relation_exists_cache.insert(pair, exists);
     Ok(exists)
 }
@@ -369,10 +326,10 @@ async fn object_relation_exists_cached(
         return Ok(*exists);
     }
 
-    let exists = lookup_object_relation(pool, pair.0, pair.1)
+    let exists = storage_handle(pool)
+        .import_object_relation_exists(pair.0, pair.1)
         .await
-        .map_err(|err| sanitize_error_for_storage(&err))?
-        .is_some();
+        .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.object_relation_exists_cache.insert(pair, exists);
     Ok(exists)
 }
@@ -1008,20 +965,19 @@ where
                 revision: crate::models::ResourceRevision::INITIAL,
             })
         } else {
-            with_connection(pool, async |conn| {
-                lookup_existing_collection_for_import_db(conn, parent.id, &input.name).await
-            })
-            .await
-            .map_err(|message| PlanningFailure {
-                kind: FailureKind::Runtime,
-                item: planned_result(
-                    "collection",
-                    "lookup",
-                    input.ref_.clone(),
-                    Some(input.name.clone()),
-                ),
-                message: sanitize_error_for_storage(&message),
-            })?
+            storage_handle(pool)
+                .import_collection_child_by_name(parent.id, &input.name)
+                .await
+                .map_err(|message| PlanningFailure {
+                    kind: FailureKind::Runtime,
+                    item: planned_result(
+                        "collection",
+                        "lookup",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: sanitize_error_for_storage(&message.into()),
+                })?
         }
     } else {
         None
@@ -1237,7 +1193,8 @@ where
     } else if state.missing_class_keys.contains(&class_key) {
         None
     } else {
-        lookup_class_by_collection_and_name(pool, collection.id, &input.name)
+        storage_handle(pool)
+            .import_class_by_name(collection.id, &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1247,7 +1204,7 @@ where
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: sanitize_error_for_storage(&err),
+                message: sanitize_error_for_storage(&err.into()),
             })?
             .map(class_to_resolution)
     };
@@ -1464,7 +1421,8 @@ where
     } else if state.missing_object_keys.contains(&object_key) {
         None
     } else {
-        lookup_object_by_class_and_name(pool, class.id, &input.name)
+        storage_handle(pool)
+            .import_object_by_name(class.id, &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1474,7 +1432,7 @@ where
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: sanitize_error_for_storage(&err),
+                message: sanitize_error_for_storage(&err.into()),
             })?
             .map(object_to_resolution)
     };
@@ -1959,7 +1917,8 @@ where
     })?;
 
     let identity_scope = input.group_key.identity_scope_name();
-    let group = lookup_group_by_name(pool, identity_scope, &input.group_key.groupname)
+    let group_exists = storage_handle(pool)
+        .import_group_exists(identity_scope, &input.group_key.groupname)
         .await
         .map_err(|err| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1969,30 +1928,14 @@ where
                 input.ref_.clone(),
                 Some(input.group_key.groupname.clone()),
             ),
-            message: sanitize_error_for_storage(&err),
+            message: sanitize_error_for_storage(&err.into()),
         })?
-        .or_else(|| {
-            state
-                .planned_group_keys
-                .contains(&(
-                    identity_scope.to_string(),
-                    input.group_key.groupname.clone(),
-                ))
-                .then(|| crate::models::Group {
-                    id: state.next_temp_id,
-                    groupname: input.group_key.groupname.clone(),
-                    description: String::new(),
-                    created_at: Utc::now().naive_utc(),
-                    updated_at: Utc::now().naive_utc(),
-                    identity_scope_id: state.next_temp_id,
-                    managed_by: "local".to_string(),
-                    external_key: None,
-                    last_sync_attempted_at: None,
-                    last_sync_success_at: None,
-                    revision: crate::models::ResourceRevision::INITIAL,
-                })
-        })
-        .ok_or_else(|| PlanningFailure {
+        || state.planned_group_keys.contains(&(
+            identity_scope.to_string(),
+            input.group_key.groupname.clone(),
+        ));
+    if !group_exists {
+        return Err(PlanningFailure {
             kind: FailureKind::Resolution,
             item: planned_result(
                 "collection_permission",
@@ -2004,7 +1947,8 @@ where
                 "Group '{}/{}' not found",
                 identity_scope, input.group_key.groupname
             ),
-        })?;
+        });
+    }
 
     Ok(PlannedItem {
         result: planned_result(
@@ -2015,7 +1959,10 @@ where
                 "grant"
             },
             input.ref_.clone(),
-            Some(format!("{}::{}", collection.name, group.groupname)),
+            Some(format!(
+                "{}::{}",
+                collection.name, input.group_key.groupname
+            )),
         ),
         execution: Some(PlannedExecution::ApplyCollectionPermissions {
             input: input.clone(),

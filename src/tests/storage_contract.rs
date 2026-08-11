@@ -16,9 +16,10 @@ use crate::models::search::{
     parse_query_parameter_with_computed_filters_and_passthrough,
 };
 use crate::models::{
-    CollectionHistory, CollectionID, ExportTemplateHistory, HubuumClassHistory,
-    HubuumObjectHistory, NewComputedFieldDefinition, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, NewHubuumObjectRelation, RemoteTargetHistory,
+    CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, HubuumClassHistory,
+    HubuumObjectHistory, ImportAtomicity, ImportClassInput, ImportCollectionInput, ImportMode,
+    NewComputedFieldDefinition, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, RemoteTargetHistory,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -33,27 +34,28 @@ use crate::storage::{
     ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
     ComputedObjectVisibility, EventArchive, EventDeliveryStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, MetricsStorage, ObjectAggregateAuthorizationMode,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
-    OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
-    StorageBackupTaskArtifact, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
-    StorageComputedFieldVisibility, StorageError, StorageExportTaskArtifact, StorageObject,
-    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
-    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StorageRelatedDirection, StorageRelatedSort, StorageRemoteCallArtifactOutcome,
-    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
-    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    HistoryListQuery, HistoryStorage, ImportStorage, MetricsStorage,
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetStorage, RestoreStorage, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
+    StorageExportTaskArtifact, StorageImportOperation, StorageImportPlanItem, StorageImportResult,
+    StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
+    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
+    StorageRestoreStageCreate, StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
     StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
     StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
     StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
@@ -62,7 +64,7 @@ use crate::storage::{
     StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
     UnifiedSearchQuery, UnifiedSearchStorage,
 };
-use crate::traits::CanSave;
+use crate::traits::{CanDelete, CanSave};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LifecycleContractImplementation {
@@ -166,6 +168,234 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_supplies_the_complete_import_contract() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let preflight_name = prefix("import_preflight_collection");
+    let best_effort_name = prefix("import_best_effort_collection");
+    let rollback_name = prefix("import_rollback_collection");
+    let collection_input = |name: &str, reference: &str| ImportCollectionInput {
+        ref_: Some(reference.to_string()),
+        name: name.to_string(),
+        description: "storage compatibility import".to_string(),
+        parent_collection_ref: None,
+        parent_collection_key: None,
+        condition: None,
+        timestamps: None,
+    };
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let root = backend
+                    .import_root_collection()
+                    .await
+                    .expect("certified backend should resolve the import root");
+                assert_eq!(
+                    backend
+                        .import_collection_by_id(root.id)
+                        .await
+                        .expect("certified backend should look up import collections by id")
+                        .map(|collection| collection.id),
+                    Some(root.id)
+                );
+                assert!(
+                    backend
+                        .import_collection_by_key(&CollectionKey {
+                            name: root.name.clone(),
+                            path: Some(Vec::new()),
+                        })
+                        .await
+                        .expect("certified backend should look up import collections by path")
+                        .is_some()
+                );
+                assert!(
+                    backend
+                        .import_collections_by_name(&root.name)
+                        .await
+                        .expect("certified backend should look up import collections by name")
+                        .iter()
+                        .any(|collection| collection.id == root.id)
+                );
+                assert!(
+                    backend
+                        .import_collection_child_by_name(root.id, &preflight_name)
+                        .await
+                        .expect("certified backend should look up import children")
+                        .is_none()
+                );
+                assert!(
+                    backend
+                        .import_class_by_name(root.id, &prefix("missing_import_class"))
+                        .await
+                        .expect("certified backend should look up import classes")
+                        .is_none()
+                );
+                assert!(
+                    backend
+                        .import_classes_by_names(root.id, &[])
+                        .await
+                        .expect("certified backend should batch import class lookups")
+                        .is_empty()
+                );
+                assert!(
+                    backend
+                        .import_object_by_name(i32::MAX, &prefix("missing_import_object"))
+                        .await
+                        .expect("certified backend should look up import objects")
+                        .is_none()
+                );
+                assert!(
+                    backend
+                        .import_objects_by_names(i32::MAX, &[])
+                        .await
+                        .expect("certified backend should batch import object lookups")
+                        .is_empty()
+                );
+                assert!(
+                    !backend
+                        .import_class_relation_exists(i32::MAX - 1, i32::MAX)
+                        .await
+                        .expect("certified backend should look up import class relations")
+                );
+                assert!(
+                    !backend
+                        .import_object_relation_exists(i32::MAX - 1, i32::MAX)
+                        .await
+                        .expect("certified backend should look up import object relations")
+                );
+                assert!(
+                    !backend
+                        .import_group_exists(LOCAL_IDENTITY_SCOPE, &prefix("missing_import_group"),)
+                        .await
+                        .expect("certified backend should look up import groups")
+                );
+
+                let preflight_plan = vec![StorageImportPlanItem::new(
+                    0,
+                    StorageImportOperation::CreateCollection(collection_input(
+                        &preflight_name,
+                        "collection:preflight",
+                    )),
+                )];
+                let (preflight, aborted) = backend
+                    .preflight_import(preflight_plan.clone(), ImportMode::default())
+                    .await
+                    .expect("certified backend should preflight an import")
+                    .into_parts();
+                assert!(!aborted);
+                assert_eq!(preflight.len(), 1);
+                assert!(
+                    preflight
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                        .into_parts()
+                        .2
+                        .is_none()
+                );
+                assert!(
+                    backend
+                        .import_collection_child_by_name(root.id, &preflight_name)
+                        .await
+                        .expect("preflight rollback should remain queryable")
+                        .is_none(),
+                    "import preflight must roll back every mutation"
+                );
+
+                backend
+                    .apply_import_strict(preflight_plan)
+                    .await
+                    .expect("certified backend should atomically apply a strict import");
+
+                let rollback_plan = vec![
+                    StorageImportPlanItem::new(
+                        0,
+                        StorageImportOperation::CreateCollection(collection_input(
+                            &rollback_name,
+                            "collection:rollback",
+                        )),
+                    ),
+                    StorageImportPlanItem::new(
+                        1,
+                        StorageImportOperation::CreateClass(ImportClassInput {
+                            ref_: Some("class:rollback_failure".to_string()),
+                            name: prefix("import_rollback_class"),
+                            description: "must fail".to_string(),
+                            json_schema: None,
+                            validate_schema: Some(false),
+                            collection_ref: Some("collection:missing".to_string()),
+                            collection_key: None,
+                            condition: None,
+                            timestamps: None,
+                        }),
+                    ),
+                ];
+                assert!(backend.apply_import_strict(rollback_plan).await.is_err());
+                assert!(
+                    backend
+                        .import_collection_child_by_name(root.id, &rollback_name)
+                        .await
+                        .expect("strict rollback should remain queryable")
+                        .is_none(),
+                    "strict import must roll back earlier successful items"
+                );
+
+                let best_effort = backend
+                    .apply_import_best_effort(
+                        vec![
+                            StorageImportPlanItem::new(
+                                0,
+                                StorageImportOperation::CreateCollection(collection_input(
+                                    &best_effort_name,
+                                    "collection:best_effort",
+                                )),
+                            ),
+                            StorageImportPlanItem::new(
+                                1,
+                                StorageImportOperation::CreateClass(ImportClassInput {
+                                    ref_: Some("class:best_effort_failure".to_string()),
+                                    name: prefix("import_best_effort_class"),
+                                    description: "must fail".to_string(),
+                                    json_schema: None,
+                                    validate_schema: Some(false),
+                                    collection_ref: Some("collection:missing".to_string()),
+                                    collection_key: None,
+                                    condition: None,
+                                    timestamps: None,
+                                }),
+                            ),
+                        ],
+                        ImportMode {
+                            atomicity: Some(ImportAtomicity::BestEffort),
+                            ..ImportMode::default()
+                        },
+                    )
+                    .await
+                    .expect("certified backend should apply a best-effort import");
+                let (best_effort, aborted) = best_effort.into_parts();
+                assert!(!aborted);
+                assert_eq!(best_effort.len(), 2);
+                assert!(best_effort[0].error().is_none());
+                assert!(best_effort[1].error().is_some());
+
+                for name in [&preflight_name, &best_effort_name] {
+                    backend
+                        .import_collection_child_by_name(root.id, name)
+                        .await
+                        .expect("committed import collection should remain queryable")
+                        .expect("committed import collection should exist")
+                        .delete_without_events(pool.get_ref())
+                        .await
+                        .expect("import compatibility fixture should be removed");
+                }
+            }
+        }
+    }
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_the_complete_task_queue() {
     let _permit = postgres_permit().await;
     let pool = pool();
@@ -243,6 +473,27 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
                     .into_parts();
                 assert_eq!(result_total, Some(0));
                 assert!(results.is_empty());
+
+                backend
+                    .record_import_results(vec![
+                        StorageImportResult::builder(
+                            task_id,
+                            "compatibility",
+                            "verify",
+                            "succeeded",
+                        )
+                        .item_ref(Some("compatibility:item".to_string()))
+                        .build(),
+                    ])
+                    .await
+                    .expect("certified backend should persist import results");
+                let (results, result_total) = backend
+                    .list_import_task_results(StorageTaskPageQuery::new(task_id, options()))
+                    .await
+                    .expect("certified backend should return persisted import results")
+                    .into_parts();
+                assert_eq!(result_total, Some(1));
+                assert_eq!(results.len(), 1);
 
                 assert!(
                     backend

@@ -117,7 +117,10 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/exports/mod.rs",
         "src/restores/mod.rs",
         "src/tasks/helpers.rs",
+        "src/tasks/execution.rs",
+        "src/tasks/planning.rs",
         "src/tasks/preload.rs",
+        "src/tasks/resolution.rs",
         "src/tasks/remote_call.rs",
         "src/token_retention.rs",
         "src/traits/mod.rs",
@@ -247,6 +250,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "TaskExecutionStorage",
         "BackupSnapshotStorage",
         "RestoreStorage",
+        "ImportStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
@@ -322,6 +326,29 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         assert!(
             compact_context.contains(&format!("\"restores\",\"{operation}\"")),
             "restore operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "root_collection",
+        "collection_by_id",
+        "collection_by_key",
+        "collections_by_name",
+        "collection_child_by_name",
+        "class_by_name",
+        "classes_by_names",
+        "object_by_name",
+        "objects_by_names",
+        "class_relation_exists",
+        "object_relation_exists",
+        "group_exists",
+        "preflight",
+        "apply_strict",
+        "apply_best_effort",
+        "record_results",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"imports\",\"{operation}\"")),
+            "import operation {operation} must use the common storage observer"
         );
     }
     for operation in [

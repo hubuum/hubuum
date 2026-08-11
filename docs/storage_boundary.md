@@ -75,7 +75,8 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Task execution | Opaque claims, lease renewal and recovery, claim-checked events and state changes, atomic terminal artifacts, failure accounting, and output retention |
 | Backup snapshots | Canonical state and optional history sections read from one consistent backend snapshot |
 | Restores | Durable artifact staging, lifecycle transitions, global drain coordination, rollback-safe snapshot replacement, provenance, and recovery |
-| Workflows | Remaining import and export-hydration operations with backend-owned atomic mutations |
+| Imports | Planning lookups, rollback-only preflight, strict and best-effort application, and durable item results |
+| Workflows | Remaining export-hydration operations with backend-owned atomic reads |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
 
 The families are not feature flags and the admin configuration does not report
@@ -97,8 +98,9 @@ contracts. `TaskQueueStorage` replaces task submission and reads, while
 execution is part of `ComputedFieldLifecycleStorage`. `RemoteTargetStorage`
 owns target reads, lifecycle mutations, and invocation provenance.
 `RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
-Remaining import and export-hydration workflow operations stay behind the
-workflow gate until their complete contracts and compatibility tests land. No
+`ImportStorage` owns the complete import workflow. Remaining export-hydration
+operations stay behind the workflow gate until their complete contract and
+compatibility tests land. No
 family is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -113,6 +115,28 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
+
+## Import Semantics
+
+Every selectable backend implements the complete `ImportStorage` trait. Import
+support is indivisible: a backend must provide planning lookups for collections,
+classes, objects, relations, and groups; rollback-only dry-run preflight; strict
+atomic application; best-effort per-item transactions; and durable result
+recording. A lookup-only or write-only adapter cannot satisfy `StorageBackend`.
+
+The application owns request validation, authorization decisions, collision
+policy, result presentation, and task lifecycle. It produces an exhaustive,
+typed `StorageImportOperation` plan and receives indexed preflight or apply
+outcomes containing only `StorageError`. The adapter owns runtime reference
+resolution, row locking, optimistic-revision rechecks, savepoints, and commit or
+rollback behavior. Consequently task planning and execution never receive a
+connection or transaction object and cannot select PostgreSQL operations.
+
+The opaque handle observes every import entry point under bounded `imports/*`
+labels. Labels contain operation names only; imported identifiers, names,
+payloads, and errors are excluded. PostgreSQL-specific tests retain responsibility
+for transaction isolation, history triggers, and timestamp behavior, while the
+available-backend compatibility registry exercises the mandatory contract.
 
 ## Restore Semantics
 

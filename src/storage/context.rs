@@ -4,7 +4,10 @@ use uuid::Uuid;
 
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::search::QueryOptions;
-use crate::models::{MaintenanceState, TokenRetentionSettings};
+use crate::models::{
+    Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
+    TokenRetentionSettings,
+};
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
@@ -21,8 +24,8 @@ use crate::storage::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
     EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    HistoryPage, HistoryPrincipalName, HistoryStorage, ImportStorage, InventoryGaugeSnapshot,
+    MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
@@ -32,16 +35,17 @@ use crate::storage::{
     StorageClassComputationState, StorageClassGraphRow, StorageClassRelation, StorageCollection,
     StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
     StorageComputedFieldRebuildRequest, StorageComputedObject, StorageError, StorageExportOutput,
-    StorageExportOutputSummary, StorageImportTaskResultPage, StorageObject,
-    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
-    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
-    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageExportOutputSummary, StorageImportApply, StorageImportPlanItem, StorageImportPreflight,
+    StorageImportResult, StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage,
+    StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePoolState, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPage, StorageRemoteTargetUpdate, StorageRestoreApply,
+    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
+    StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
     StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskClaim,
     StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage,
     StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
@@ -1522,6 +1526,268 @@ impl RemoteTargetStorage for StorageHandle {
                 }
             },
         )
+        .await
+    }
+}
+
+#[async_trait]
+impl ImportStorage for StorageHandle {
+    async fn import_root_collection(&self) -> Result<Collection, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "root_collection", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_root_collection().await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_collection_by_id(
+        &self,
+        collection_id: i32,
+    ) -> Result<Option<Collection>, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "collection_by_id", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_collection_by_id(collection_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_collection_by_key(
+        &self,
+        key: &CollectionKey,
+    ) -> Result<Option<Collection>, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "collection_by_key", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_collection_by_key(key).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_collections_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Vec<Collection>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "imports",
+            "collections_by_name",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.import_collections_by_name(name).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn import_collection_child_by_name(
+        &self,
+        parent_collection_id: i32,
+        name: &str,
+    ) -> Result<Option<Collection>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "imports",
+            "collection_child_by_name",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .import_collection_child_by_name(parent_collection_id, name)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn import_class_by_name(
+        &self,
+        collection_id: i32,
+        name: &str,
+    ) -> Result<Option<HubuumClass>, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "class_by_name", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_class_by_name(collection_id, name).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_classes_by_names(
+        &self,
+        collection_id: i32,
+        names: &[String],
+    ) -> Result<Vec<HubuumClass>, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "classes_by_names", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_classes_by_names(collection_id, names).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_object_by_name(
+        &self,
+        class_id: i32,
+        name: &str,
+    ) -> Result<Option<HubuumObject>, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "object_by_name", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_object_by_name(class_id, name).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_objects_by_names(
+        &self,
+        class_id: i32,
+        names: &[String],
+    ) -> Result<Vec<HubuumObject>, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "objects_by_names", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.import_objects_by_names(class_id, names).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn import_class_relation_exists(
+        &self,
+        left_class_id: i32,
+        right_class_id: i32,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "imports",
+            "class_relation_exists",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .import_class_relation_exists(left_class_id, right_class_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn import_object_relation_exists(
+        &self,
+        left_object_id: i32,
+        right_object_id: i32,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "imports",
+            "object_relation_exists",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .import_object_relation_exists(left_object_id, right_object_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn import_group_exists(
+        &self,
+        identity_scope: &str,
+        group_name: &str,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "group_exists", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .import_group_exists(identity_scope, group_name)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn preflight_import(
+        &self,
+        items: Vec<StorageImportPlanItem>,
+        mode: ImportMode,
+    ) -> Result<StorageImportPreflight, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "preflight", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.preflight_import(items, mode).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn apply_import_strict(
+        &self,
+        items: Vec<StorageImportPlanItem>,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "apply_strict", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.apply_import_strict(items).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn apply_import_best_effort(
+        &self,
+        items: Vec<StorageImportPlanItem>,
+        mode: ImportMode,
+    ) -> Result<StorageImportApply, StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "apply_best_effort", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.apply_import_best_effort(items, mode).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn record_import_results(
+        &self,
+        results: Vec<StorageImportResult>,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "imports", "record_results", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.record_import_results(results).await
+                }
+            }
+        })
         .await
     }
 }
