@@ -187,6 +187,62 @@ impl fmt::Debug for AuthorizationCollectionAccessQuery {
     }
 }
 
+/// Batch permission lookup for a principal across a collection set.
+///
+/// The backend must return `true` only when every requested permission is
+/// available on every requested collection. Collection identifiers and
+/// permissions are normalized so adapters receive a deterministic query.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizationCollectionsAccessQuery {
+    principal_id: i32,
+    collection_ids: Vec<i32>,
+    permissions: Vec<AuthorizationPermission>,
+}
+
+impl AuthorizationCollectionsAccessQuery {
+    #[must_use]
+    pub fn new(
+        principal_id: i32,
+        collection_ids: impl IntoIterator<Item = i32>,
+        permissions: impl IntoIterator<Item = AuthorizationPermission>,
+    ) -> Self {
+        let mut collection_ids = collection_ids.into_iter().collect::<Vec<_>>();
+        collection_ids.sort_unstable();
+        collection_ids.dedup();
+        Self {
+            principal_id,
+            collection_ids,
+            permissions: normalized_permissions(permissions),
+        }
+    }
+
+    #[must_use]
+    pub const fn principal_id(&self) -> i32 {
+        self.principal_id
+    }
+
+    #[must_use]
+    pub fn collection_ids(&self) -> &[i32] {
+        &self.collection_ids
+    }
+
+    #[must_use]
+    pub fn permissions(&self) -> &[AuthorizationPermission] {
+        &self.permissions
+    }
+}
+
+impl fmt::Debug for AuthorizationCollectionsAccessQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationCollectionsAccessQuery")
+            .field("principal_id", &"[redacted]")
+            .field("collection_count", &self.collection_ids.len())
+            .field("permission_count", &self.permissions.len())
+            .finish()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationCollectionsQuery {
     principal_id: i32,
@@ -772,6 +828,123 @@ fn normalized_permissions(
     permissions
 }
 
+/// Deduplicated resource identifiers requested for authorization enrichment.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizationResourceIds {
+    ids: Vec<i32>,
+}
+
+impl AuthorizationResourceIds {
+    #[must_use]
+    pub fn new(ids: impl IntoIterator<Item = i32>) -> Self {
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        Self { ids }
+    }
+
+    #[must_use]
+    pub fn ids(&self) -> &[i32] {
+        &self.ids
+    }
+}
+
+impl fmt::Debug for AuthorizationResourceIds {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationResourceIds")
+            .field("resource_count", &self.ids.len())
+            .finish()
+    }
+}
+
+/// Class facts needed to construct an authorization resource.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizationClassResource {
+    id: i32,
+    collection_id: i32,
+}
+
+impl AuthorizationClassResource {
+    #[must_use]
+    pub const fn new(id: i32, collection_id: i32) -> Self {
+        Self { id, collection_id }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> i32 {
+        self.collection_id
+    }
+}
+
+impl fmt::Debug for AuthorizationClassResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationClassResource")
+            .field("id", &"[redacted]")
+            .field("collection_id", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Object facts needed to construct an authorization resource.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizationObjectResource {
+    id: i32,
+    collection_id: i32,
+    class_id: i32,
+    name: String,
+}
+
+impl AuthorizationObjectResource {
+    #[must_use]
+    pub fn new(id: i32, collection_id: i32, class_id: i32, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            collection_id,
+            class_id,
+            name: name.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> i32 {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub const fn class_id(&self) -> i32 {
+        self.class_id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Debug for AuthorizationObjectResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationObjectResource")
+            .field("id", &"[redacted]")
+            .field("collection_id", &"[redacted]")
+            .field("class_id", &"[redacted]")
+            .field("name", &"[redacted]")
+            .finish()
+    }
+}
+
 /// Mandatory authorization-data contract for every selectable storage backend.
 ///
 /// Policy decisions remain the responsibility of the configured permission
@@ -790,9 +963,24 @@ pub trait AuthorizationStorage: Send + Sync {
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError>;
 
+    async fn load_authorization_classes(
+        &self,
+        query: AuthorizationResourceIds,
+    ) -> Result<Vec<AuthorizationClassResource>, StorageError>;
+
+    async fn load_authorization_objects(
+        &self,
+        query: AuthorizationResourceIds,
+    ) -> Result<Vec<AuthorizationObjectResource>, StorageError>;
+
     async fn authorize_local_collection(
         &self,
         query: AuthorizationCollectionAccessQuery,
+    ) -> Result<bool, StorageError>;
+
+    async fn authorize_local_collections(
+        &self,
+        query: AuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError>;
 
     async fn local_authorized_collections(
@@ -909,5 +1097,68 @@ mod tests {
                 AuthorizationPermission::UpdateCollection,
             ]
         );
+    }
+
+    #[test]
+    fn batch_access_query_normalizes_collection_and_permission_sets() {
+        let query = AuthorizationCollectionsAccessQuery::new(
+            1,
+            [9, 3, 9, 5],
+            [
+                AuthorizationPermission::UpdateCollection,
+                AuthorizationPermission::ReadCollection,
+                AuthorizationPermission::UpdateCollection,
+            ],
+        );
+
+        assert_eq!(query.collection_ids(), &[3, 5, 9]);
+        assert_eq!(
+            query.permissions(),
+            &[
+                AuthorizationPermission::ReadCollection,
+                AuthorizationPermission::UpdateCollection,
+            ]
+        );
+    }
+
+    #[test]
+    fn batch_access_query_debug_redacts_identity() {
+        let debug = format!(
+            "{:?}",
+            AuthorizationCollectionsAccessQuery::new(
+                987_654,
+                [876_543, 765_432],
+                [AuthorizationPermission::ReadCollection],
+            )
+        );
+
+        for sensitive in ["987654", "876543", "765432"] {
+            assert!(!debug.contains(sensitive));
+        }
+        assert!(debug.contains("collection_count"));
+        assert!(debug.contains("permission_count"));
+    }
+
+    #[test]
+    fn authorization_resource_debug_redacts_projected_values() {
+        let class = AuthorizationClassResource::new(987_654, 876_543);
+        let object =
+            AuthorizationObjectResource::new(765_432, 654_321, 543_210, "sensitive-object-name");
+        let ids = AuthorizationResourceIds::new([432_109, 321_098]);
+        let debug = format!("{class:?} {object:?} {ids:?}");
+
+        for sensitive in [
+            "987654",
+            "876543",
+            "765432",
+            "654321",
+            "543210",
+            "432109",
+            "321098",
+            "sensitive-object-name",
+        ] {
+            assert!(!debug.contains(sensitive));
+        }
+        assert!(debug.contains("resource_count"));
     }
 }

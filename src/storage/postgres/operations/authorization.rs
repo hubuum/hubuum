@@ -10,12 +10,14 @@ use crate::storage::postgres::operations::collection as collection_backend;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
 use crate::storage::{
-    AuthorizationCollection, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
-    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
-    AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
+    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationObjectResource,
+    AuthorizationPermission, AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
+    AuthorizationResourceIds,
 };
 use crate::traits::PermissionController;
 
@@ -53,6 +55,59 @@ pub(crate) const fn permission_from_storage(permission: AuthorizationPermission)
         AuthorizationPermission::ReadAudit => Permissions::ReadAudit,
         AuthorizationPermission::ManageEventSubscription => Permissions::ManageEventSubscription,
     }
+}
+
+pub(crate) async fn load_authorization_classes(
+    pool: &PostgresPool,
+    query: AuthorizationResourceIds,
+) -> Result<Vec<AuthorizationClassResource>, ApiError> {
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id};
+
+    with_connection(pool, async |conn| {
+        hubuumclass
+            .filter(id.eq_any(query.ids()))
+            .select((id, collection_id))
+            .load::<(i32, i32)>(conn)
+            .await
+    })
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|(class_id, class_collection_id)| {
+                AuthorizationClassResource::new(class_id, class_collection_id)
+            })
+            .collect()
+    })
+}
+
+pub(crate) async fn load_authorization_objects(
+    pool: &PostgresPool,
+    query: AuthorizationResourceIds,
+) -> Result<Vec<AuthorizationObjectResource>, ApiError> {
+    use crate::schema::hubuumobject::dsl::{
+        collection_id, hubuum_class_id, hubuumobject, id, name,
+    };
+
+    with_connection(pool, async |conn| {
+        hubuumobject
+            .filter(id.eq_any(query.ids()))
+            .select((id, collection_id, hubuum_class_id, name))
+            .load::<(i32, i32, i32, String)>(conn)
+            .await
+    })
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|(object_id, object_collection_id, class_id, object_name)| {
+                AuthorizationObjectResource::new(
+                    object_id,
+                    object_collection_id,
+                    class_id,
+                    object_name,
+                )
+            })
+            .collect()
+    })
 }
 
 fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
@@ -207,6 +262,49 @@ pub(crate) async fn authorize_local_collection(
         select(exists(permission_query)).get_result(conn).await
     })
     .await
+}
+
+pub(crate) async fn authorize_local_collections(
+    pool: &PostgresPool,
+    query: AuthorizationCollectionsAccessQuery,
+) -> Result<bool, ApiError> {
+    use diesel::{AggregateExpressionMethods, dsl::count};
+
+    use crate::schema::{collection_closure, group_memberships, permissions};
+
+    if query.collection_ids().is_empty() {
+        return Ok(true);
+    }
+
+    let group_ids = group_memberships::table
+        .filter(group_memberships::principal_id.eq(query.principal_id()))
+        .select(group_memberships::group_id);
+    let mut permission_query = permissions::table
+        .inner_join(
+            collection_closure::table
+                .on(permissions::collection_id.eq(collection_closure::ancestor_collection_id)),
+        )
+        .select(permissions::all_columns)
+        .filter(collection_closure::descendant_collection_id.eq_any(query.collection_ids()))
+        .filter(permissions::group_id.eq_any(group_ids))
+        .into_boxed();
+    for permission in query.permissions().iter().copied() {
+        crate::apply_permission_filter!(
+            permission_query,
+            permission_from_storage(permission),
+            true
+        );
+    }
+
+    let matching_collections = with_connection(pool, async |conn| {
+        permission_query
+            .select(count(collection_closure::descendant_collection_id).aggregate_distinct())
+            .first::<i64>(conn)
+            .await
+    })
+    .await?;
+
+    Ok(matching_collections as usize == query.collection_ids().len())
 }
 
 pub(crate) async fn local_authorized_collections(

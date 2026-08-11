@@ -14,12 +14,12 @@ use crate::models::{
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
-use crate::services::relation_queries;
-use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::relations::{
+use crate::services::authorization_resources::{
     class_relation_authorization_resources, object_relation_authorization_resources,
 };
+use crate::services::relation_queries;
 use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::traits::scope_allows;
 use actix_web::delete;
 use tracing::debug;
 

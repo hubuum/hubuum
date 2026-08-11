@@ -15,6 +15,8 @@ mod task_queue;
 pub use runtime::*;
 
 use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
 use crate::models::search::QueryOptions;
@@ -49,29 +51,30 @@ use crate::storage::postgres::operations::relations::{
 
 use super::{
     AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthenticationTokenScopeQuery, AuthorizationClassResource, AuthorizationCollection,
+    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
+    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
-    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogPage, CatalogStorage, ClassRelationStore, ClassStore, CollectionStore,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
-    ComputedObjectStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
-    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
-    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalStateStorage, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
-    StorageComputedObject, StorageError, StorageIdentity, StorageObject,
+    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
+    AuthorizationStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage,
+    CatalogStorage, ClassRelationStore, ClassStore, CollectionStore, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, EventArchive,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
+    EventRetentionSummary, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
+    OperationalStateStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
+    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetHistoryRecord, StorageClass, StorageClassGraphRow, StorageClassRelation,
+    StorageCollection, StorageComputedObject, StorageError, StorageIdentity, StorageObject,
     StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, TaskGaugeSnapshot,
-    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -95,6 +98,20 @@ impl PostgresStorage {
 impl StorageIdentity for PostgresStorage {
     fn storage_name(&self) -> &'static str {
         "postgresql"
+    }
+}
+
+impl ExportQueryStorage for PostgresStorage {
+    fn run_export_queries<'a, F, R>(
+        &'a self,
+        budget: Option<StorageQueryBudget>,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        Box::pin(runtime::with_export_query_budget_scope(budget, future))
     }
 }
 
@@ -139,11 +156,38 @@ impl AuthorizationStorage for PostgresStorage {
             .map_err(map_postgres_error)
     }
 
+    async fn load_authorization_classes(
+        &self,
+        query: AuthorizationResourceIds,
+    ) -> Result<Vec<AuthorizationClassResource>, StorageError> {
+        operations::authorization::load_authorization_classes(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_authorization_objects(
+        &self,
+        query: AuthorizationResourceIds,
+    ) -> Result<Vec<AuthorizationObjectResource>, StorageError> {
+        operations::authorization::load_authorization_objects(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
     async fn authorize_local_collection(
         &self,
         query: AuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError> {
         operations::authorization::authorize_local_collection(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn authorize_local_collections(
+        &self,
+        query: AuthorizationCollectionsAccessQuery,
+    ) -> Result<bool, StorageError> {
+        operations::authorization::authorize_local_collections(&self.pool, query)
             .await
             .map_err(map_postgres_error)
     }

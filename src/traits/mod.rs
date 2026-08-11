@@ -7,7 +7,8 @@ pub mod permissions;
 
 pub use accessors::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 pub use authz::{
-    AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resource, scope_allows_resources,
+    AuthzSubject, PrincipalIdAccessor, UserPermissions, scope_allows, scope_allows_resource,
+    scope_allows_resources,
 };
 pub use crud::{CanDelete, CanSave, CanUpdate, Validate, ValidateAgainstSchema};
 pub use pagination::*;

@@ -22,7 +22,7 @@ use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::{remote_call_results, remote_targets};
-use crate::storage::postgres::operations::UserPermissions;
+use crate::traits::UserPermissions;
 use crate::traits::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 
 crate::int_id_newtype! {

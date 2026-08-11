@@ -7,15 +7,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::config::{
-    DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER,
-    DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS,
-    DEFAULT_EXPORT_STAGE_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
+    DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_EXPORT_MAX_OUTPUT_BYTES,
+    DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS, DEFAULT_EXPORT_STAGE_TIMEOUT_MS,
+    DEFAULT_EXPORT_STORAGE_QUERY_BUDGET_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
-    StatementTimeoutMs, parse_query_parameter,
+    parse_query_parameter,
 };
 use crate::models::{
     ClassIdSet, Collection, CollectionExportTemplates, CollectionID, ExportContentType,
@@ -35,25 +35,24 @@ use crate::permissions::{
     AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceRef,
 };
+use crate::services::authorization_resources::{
+    class_relation_authorization_resources, object_authorization_resources,
+    object_relation_authorization_resources,
+};
 use crate::services::catalog as catalog_service;
 use crate::services::relation_queries;
 use crate::services::tasks::{
     ClaimedTask, TaskStateChange, TaskSubmission, append_task_event, complete_task, submit_task,
     task_scope_snapshot, update_task_state,
 };
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::authz::{scope_allows, scope_allows_resource};
-use crate::storage::capabilities::relations::{
-    class_relation_authorization_resources, object_authorization_resources,
-    object_relation_authorization_resources,
-};
-use crate::storage::capabilities::with_statement_timeout_scope;
 use crate::storage::{
-    StorageContext, StorageExportTaskArtifact, StorageTaskCompletionArtifact, StorageTaskDurations,
-    StorageTaskScopeSnapshot,
+    ExportQueryStorage, StorageContext, StorageExportTaskArtifact, StorageQueryBudget,
+    StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
-use crate::traits::{AuthzSubject, SelfAccessors};
+use crate::traits::{
+    AuthzSubject, SelfAccessors, UserPermissions, scope_allows, scope_allows_resource,
+};
 use crate::utilities::exporting::render_template;
 
 use crate::models::traits::check_if_object_in_class;
@@ -1188,26 +1187,28 @@ where
     )
     .await?;
 
-    // Export-scoped, in-flight query budget. While these query stages run, every
-    // DB query they issue is bounded by this `statement_timeout` (applied as a
-    // transaction-local `SET LOCAL`), independently of the pool-global timeout
-    // and without affecting bookkeeping writes outside these scopes.
-    let statement_timeout = export_statement_timeout();
+    // Export-scoped, in-flight storage query budget. The selected adapter owns
+    // how it enforces the limit without affecting bookkeeping writes outside
+    // these scopes.
+    let query_budget = export_query_budget();
+    let export_storage = storage_handle(pool);
     let mut query_options = prepare_query_options(&runtime.export)?;
     let relation_hydration = resolve_relation_hydration_plan(&runtime, &mut query_options)?;
     let query_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
-    let (items, mut warnings, truncated) = with_statement_timeout_scope(
-        statement_timeout,
-        execute_scope(&exporter, runtime.scope, query_options),
-    )
-    .await?;
+    let (items, mut warnings, truncated) = export_storage
+        .run_export_queries(
+            query_budget,
+            execute_scope(&exporter, runtime.scope, query_options),
+        )
+        .await?;
     let mut items = items;
-    with_statement_timeout_scope(
-        statement_timeout,
-        apply_export_includes(&exporter, &runtime.export, &mut items),
-    )
-    .await?;
+    export_storage
+        .run_export_queries(
+            query_budget,
+            apply_export_includes(&exporter, &runtime.export, &mut items),
+        )
+        .await?;
     if let Err(error) = enforce_export_stage_timeout(query_metric.elapsed(), "query execution") {
         query_metric.finish(metrics::ExportMetricOutcome::Timeout);
         total_metric.finish(metrics::ExportMetricOutcome::Timeout);
@@ -1240,11 +1241,12 @@ where
     add_truncation_warning(&mut warnings, truncated);
     let hydration_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Hydration, metric_template_id);
-    let (template_items, source) = with_statement_timeout_scope(
-        statement_timeout,
-        build_template_items(&exporter, &runtime, &items, relation_hydration),
-    )
-    .await?;
+    let (template_items, source) = export_storage
+        .run_export_queries(
+            query_budget,
+            build_template_items(&exporter, &runtime, &items, relation_hydration),
+        )
+        .await?;
     if let Err(error) =
         enforce_export_stage_timeout(hydration_metric.elapsed(), "relation hydration")
     {
@@ -1523,16 +1525,16 @@ fn duration_to_millis_i32(duration: Duration) -> i32 {
     i32::try_from(duration.as_millis()).unwrap_or(i32::MAX)
 }
 
-/// The export-scoped Postgres `statement_timeout` to apply to export queries,
-/// or `None` when disabled (`export_db_statement_timeout_ms == 0`).
+/// The export-scoped backend read budget to apply to export queries,
+/// or `None` when disabled (`export_storage_query_budget_ms() == 0`).
 ///
-/// This is the in-flight, server-side query cancel that complements the
+/// This is the in-flight backend query limit that complements the
 /// post-completion wall-clock budget enforced by [`enforce_export_stage_timeout`].
-fn export_statement_timeout() -> Option<StatementTimeoutMs> {
+fn export_query_budget() -> Option<StorageQueryBudget> {
     let milliseconds = get_config()
-        .map(|config| config.export_db_statement_timeout_ms)
-        .unwrap_or(DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS);
-    StatementTimeoutMs::new(milliseconds)
+        .map(|config| config.export_storage_query_budget_ms())
+        .unwrap_or(DEFAULT_EXPORT_STORAGE_QUERY_BUDGET_MS);
+    StorageQueryBudget::from_millis(milliseconds)
 }
 
 /// Post-completion rejection guard for a export stage.
@@ -1541,9 +1543,8 @@ fn export_statement_timeout() -> Option<StatementTimeoutMs> {
 /// finished and rejects the export if the stage took longer than the configured
 /// budget. It bounds how long a stage is *accepted* to have taken, not how long
 /// it is *allowed to run*. In-flight protection comes from the MiniJinja fuel
-/// budget, `export_template_max_objects`, the output byte caps, the pool-global
-/// `db_statement_timeout_ms`, and the export-scoped `export_db_statement_timeout_ms`
-/// (both of which cancel slow queries server-side).
+/// budget, `export_template_max_objects`, output byte caps, and the configured
+/// storage query budgets.
 fn enforce_export_stage_timeout(elapsed: Duration, stage_name: &str) -> Result<(), ApiError> {
     let stage_timeout_ms = get_config()
         .map(|config| config.export_stage_timeout_ms)

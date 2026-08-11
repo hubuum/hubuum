@@ -10,6 +10,7 @@ mod catalog;
 mod computed_field_lifecycle;
 mod computed_objects;
 mod events;
+mod export_query;
 mod history;
 mod identity;
 mod object_aggregate;
@@ -22,12 +23,14 @@ mod task_queue;
 mod unified_search;
 
 pub use authorization::{
-    AuthorizationCollection, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
-    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
-    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage,
+    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationObjectResource,
+    AuthorizationPermission, AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
+    AuthorizationResourceIds, AuthorizationStorage,
 };
 pub use backup_snapshot::{BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot};
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
@@ -52,6 +55,7 @@ pub use events::{
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
     EventRetentionSummary, RetainedEvent,
 };
+pub use export_query::{ExportQueryStorage, StorageQueryBudget};
 pub use history::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
@@ -137,7 +141,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 14;
+pub const STORAGE_CONTRACT_VERSION: u16 = 15;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,7 +179,7 @@ pub enum StorageCapability {
     BackupSnapshots,
     Restores,
     Imports,
-    Workflows,
+    ExportQueries,
     Operations,
 }
 
@@ -196,7 +200,7 @@ impl StorageCapability {
         Self::BackupSnapshots,
         Self::Restores,
         Self::Imports,
-        Self::Workflows,
+        Self::ExportQueries,
         Self::Operations,
     ];
 
@@ -218,7 +222,7 @@ impl StorageCapability {
             Self::BackupSnapshots => "backup_snapshots",
             Self::Restores => "restores",
             Self::Imports => "imports",
-            Self::Workflows => "workflows",
+            Self::ExportQueries => "export_queries",
             Self::Operations => "operations",
         }
     }
@@ -393,7 +397,7 @@ mod tests {
                 "backup_snapshots",
                 "restores",
                 "imports",
-                "workflows",
+                "export_queries",
                 "operations",
             ]
         );

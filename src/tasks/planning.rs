@@ -28,8 +28,8 @@ use crate::models::{
     ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
     Permissions, RestoreTimestamps,
 };
-use crate::storage::capabilities::UserPermissions;
 use crate::storage::{ImportStorage, StorageImportPlanItem, storage_handle};
+use crate::traits::UserPermissions;
 
 fn import_item_allows_overwrite(
     condition: Option<ImportWriteCondition>,

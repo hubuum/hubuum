@@ -21,9 +21,9 @@ use crate::services::computed_fields::{
     list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
     request_class_rebuild, update_personal_definition, update_shared_definition,
 };
-use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::traits::SelfAccessors;
+use crate::traits::UserPermissions;
 
 fn require_human(requestor: &Authenticated) -> Result<i32, ApiError> {
     if requestor.principal.is_human() {

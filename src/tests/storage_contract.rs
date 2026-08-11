@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use actix_web::web::Data;
@@ -27,14 +28,15 @@ use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
     AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrantKey, AuthorizationGrantMutation,
+    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationResourceIds,
     AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
     CatalogListQuery, CatalogStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
     ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
     ComputedObjectVisibility, EventArchive, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, ImportStorage, MetricsStorage,
+    EventHealthStorage, EventRetentionStorage, ExportQueryStorage, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryStorage, ImportStorage, MetricsStorage,
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
@@ -48,8 +50,8 @@ use crate::storage::{
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
     StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StoragePersonalComputedFieldUpdate, StorageQueryBudget, StorageRelatedDirection,
+    StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
     StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
@@ -165,6 +167,30 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("authentication compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_the_export_query_scope() {
+    let pool = pool();
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let evaluations = Arc::new(AtomicUsize::new(0));
+                let evaluated = Arc::clone(&evaluations);
+                let output = backend
+                    .run_export_queries(StorageQueryBudget::from_millis(250), async move {
+                        evaluated.fetch_add(1, Ordering::SeqCst);
+                        "complete"
+                    })
+                    .await;
+
+                assert_eq!(output, "complete");
+                assert_eq!(AtomicUsize::load(evaluations.as_ref(), Ordering::SeqCst), 1);
+            }
+        }
+    }
 }
 
 #[actix_web::test]
@@ -1134,11 +1160,33 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         .add_member_without_events(pool.get_ref(), &user)
         .await
         .expect("authorization compatibility membership should be created");
-    let fixture = crate::tests::create_collection_fixture(
+    let collection = crate::tests::create_collection_fixture(
         pool.get_ref(),
         &prefix("authorization_collection"),
     )
     .await;
+    let needle = prefix("authorization_resource");
+    let fixture = crate::tests::create_object_fixture(
+        pool.get_ref(),
+        collection,
+        NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "authorization compatibility class".to_string(),
+        },
+        vec![NewHubuumObject {
+            name: format!("{needle}_object"),
+            collection_id: 0,
+            hubuum_class_id: 0,
+            data: serde_json::json!({}),
+            description: "authorization compatibility object".to_string(),
+        }],
+    )
+    .await
+    .expect("authorization compatibility resource fixture should be created");
+    let collection_id = fixture.collection_id();
 
     for kind in StorageBackendKind::ALL {
         match kind {
@@ -1162,10 +1210,41 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                         .expect("certified backend should query group membership")
                 );
 
+                let classes = backend
+                    .load_authorization_classes(AuthorizationResourceIds::new([
+                        fixture.class.id,
+                        fixture.class.id,
+                    ]))
+                    .await
+                    .expect("certified backend should project authorization class facts");
+                assert_eq!(classes.len(), 1);
+                assert_eq!(classes[0].id(), fixture.class.id);
+                assert_eq!(classes[0].collection_id(), collection_id);
+
+                let objects = backend
+                    .load_authorization_objects(AuthorizationResourceIds::new([
+                        fixture.objects[0].id,
+                        fixture.objects[0].id,
+                    ]))
+                    .await
+                    .expect("certified backend should project authorization object facts");
+                assert_eq!(objects.len(), 1);
+                assert_eq!(objects[0].id(), fixture.objects[0].id);
+                assert_eq!(objects[0].collection_id(), collection_id);
+                assert_eq!(objects[0].class_id(), fixture.class.id);
+                assert_eq!(objects[0].name(), fixture.objects[0].name);
+
                 let access_query = || {
                     AuthorizationCollectionAccessQuery::new(
                         user.id,
-                        fixture.collection.id,
+                        collection_id,
+                        [AuthorizationPermission::ReadCollection],
+                    )
+                };
+                let batch_access_query = || {
+                    AuthorizationCollectionsAccessQuery::new(
+                        user.id,
+                        [collection_id, collection_id],
                         [AuthorizationPermission::ReadCollection],
                     )
                 };
@@ -1175,8 +1254,14 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                         .await
                         .expect("missing local grant should deny")
                 );
+                assert!(
+                    !backend
+                        .authorize_local_collections(batch_access_query())
+                        .await
+                        .expect("missing local batch grant should deny")
+                );
 
-                let key = AuthorizationGrantKey::new(fixture.collection.id, group.id);
+                let key = AuthorizationGrantKey::new(collection_id, group.id);
                 backend
                     .apply_local_collection_grant(AuthorizationGrantMutation::new(
                         key,
@@ -1201,6 +1286,12 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                         .await
                         .expect("applied local grant should authorize")
                 );
+                assert!(
+                    backend
+                        .authorize_local_collections(batch_access_query())
+                        .await
+                        .expect("applied local grant should authorize the batch")
+                );
 
                 let collections = backend
                     .local_authorized_collections(AuthorizationCollectionsQuery::new(
@@ -1212,12 +1303,12 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 assert!(
                     collections
                         .iter()
-                        .any(|collection| collection.id() == fixture.collection.id)
+                        .any(|collection| collection.id() == collection_id)
                 );
 
                 let page = backend
                     .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
-                        fixture.collection.id,
+                        collection_id,
                         [AuthorizationPermission::ReadCollection],
                         QueryOptions {
                             filters: Vec::new(),
@@ -1240,7 +1331,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 assert!(
                     collection_candidates
                         .iter()
-                        .any(|collection| collection.id() == fixture.collection.id)
+                        .any(|collection| collection.id() == collection_id)
                 );
 
                 let group_candidates = backend
@@ -1267,7 +1358,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                     let (grant, snapshot_group, collection) = row.into_parts();
                     grant.group_id() == group.id
                         && snapshot_group.id() == group.id
-                        && collection.id() == fixture.collection.id
+                        && collection.id() == collection_id
                 }));
 
                 backend

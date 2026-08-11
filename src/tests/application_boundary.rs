@@ -251,7 +251,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "BackupSnapshotStorage",
         "RestoreStorage",
         "ImportStorage",
-        "WorkflowStorage",
+        "ExportQueryStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
     ] {
@@ -403,6 +403,28 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     for operation in [
+        "load_principal",
+        "principal_is_group_member",
+        "load_classes",
+        "load_objects",
+        "authorize_local_collection",
+        "authorize_local_collections",
+        "local_authorized_collections",
+        "list_collection_candidates",
+        "list_group_candidates",
+        "policy_snapshot",
+        "list_local_collection_grants",
+        "get_local_collection_grant",
+        "apply_local_collection_grant",
+        "revoke_local_collection_grant",
+        "revoke_all_local_collection_grants",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"authorization\",\"{operation}\"")),
+            "authorization operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
         "list_classes",
         "list_objects",
         "classes_touching",
@@ -451,6 +473,33 @@ fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
             assert!(
                 !source.contains(forbidden),
                 "{} still imports PostgreSQL task state helper {forbidden}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn export_consumers_use_only_backend_neutral_query_and_authorization_contracts() {
+    let root = repository_root();
+    for file in [
+        "src/exports/mod.rs",
+        "src/services/authorization_resources.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "storage::capabilities",
+            "storage::postgres",
+            "diesel::",
+            "diesel_async",
+            "statement_timeout",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "{} still selects backend implementation detail {forbidden}",
                 path.display()
             );
         }

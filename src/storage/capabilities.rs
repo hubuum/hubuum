@@ -9,14 +9,10 @@
 ///
 /// Keep this list explicit: adding a database module wholesale would make the
 /// boundary cosmetic and allow consumers to select arbitrary SQL adapters.
-pub(crate) use crate::storage::postgres::operations::{Status, UserPermissions};
+pub(crate) use crate::storage::postgres::operations::Status;
 
 pub(crate) mod active_tokens {
     pub(crate) use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-}
-
-pub(crate) mod authz {
-    pub use crate::traits::{scope_allows, scope_allows_resource, scope_allows_resources};
 }
 
 pub(crate) mod collection {
@@ -75,13 +71,6 @@ pub(crate) mod permissions {
     pub(crate) use crate::storage::postgres::operations::permissions::PermissionControllerBackend;
 }
 
-pub(crate) mod relations {
-    pub(crate) use crate::storage::postgres::operations::relations::{
-        class_relation_authorization_resources, object_authorization_resources,
-        object_relation_authorization_resources,
-    };
-}
-
 pub(crate) mod service_account {
     pub(crate) use crate::storage::postgres::operations::service_account::{
         DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
@@ -92,5 +81,5 @@ pub(crate) mod service_account {
 
 pub(crate) use crate::storage::postgres::{
     StorageCallSite, with_mutation_provenance_scope, with_revision_precondition_scope,
-    with_statement_timeout_scope, with_storage_call_site,
+    with_storage_call_site,
 };

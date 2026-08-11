@@ -1,5 +1,7 @@
 use actix_web::web::Data;
 use chrono::NaiveDateTime;
+use std::future::Future;
+use std::pin::Pin;
 use uuid::Uuid;
 
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
@@ -13,17 +15,19 @@ use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
     AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthenticationTokenScopeQuery, AuthorizationClassResource, AuthorizationCollection,
+    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
+    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
-    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationStorage, BackupSnapshotStorage,
-    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
-    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
-    ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage, EventArchive,
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
+    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
+    AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
+    CatalogListQuery, CatalogPage, CatalogStorage, ComputedFieldLifecycleStorage,
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
+    ComputedObjectStorage, DynLifecycleStorage, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
     HistoryPage, HistoryPrincipalName, HistoryStorage, ImportStorage, InventoryGaugeSnapshot,
     MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
@@ -39,13 +43,13 @@ use crate::storage::{
     StorageImportResult, StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage,
     StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePoolState, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPage, StorageRemoteTargetUpdate, StorageRestoreApply,
-    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
-    StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StoragePersonalComputedFieldUpdate, StoragePoolState, StorageQueryBudget,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
+    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
     StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskClaim,
     StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage,
     StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
@@ -109,6 +113,24 @@ impl StorageHandle {
     fn postgres_pool(&self) -> &PostgresPool {
         match &self.implementation {
             BackendImplementation::Postgresql(backend) => backend.pool(),
+        }
+    }
+}
+
+impl ExportQueryStorage for StorageHandle {
+    fn run_export_queries<'a, F, R>(
+        &'a self,
+        budget: Option<StorageQueryBudget>,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => {
+                backend.run_export_queries(budget, future)
+            }
         }
     }
 }
@@ -194,6 +216,44 @@ impl AuthorizationStorage for StorageHandle {
         .await
     }
 
+    async fn load_authorization_classes(
+        &self,
+        query: AuthorizationResourceIds,
+    ) -> Result<Vec<AuthorizationClassResource>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "load_classes",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_authorization_classes(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_authorization_objects(
+        &self,
+        query: AuthorizationResourceIds,
+    ) -> Result<Vec<AuthorizationObjectResource>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "load_objects",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_authorization_objects(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
     async fn authorize_local_collection(
         &self,
         query: AuthorizationCollectionAccessQuery,
@@ -206,6 +266,25 @@ impl AuthorizationStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.authorize_local_collection(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn authorize_local_collections(
+        &self,
+        query: AuthorizationCollectionsAccessQuery,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "authorize_local_collections",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.authorize_local_collections(query).await
                     }
                 }
             },

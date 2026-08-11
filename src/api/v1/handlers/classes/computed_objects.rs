@@ -21,8 +21,8 @@ use crate::services::computed_objects::{
 };
 use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
 use crate::storage::ComputedObjectProjection;
-use crate::storage::capabilities::authz::scope_allows;
 use crate::traits::AuthzSubject;
+use crate::traits::scope_allows;
 
 enum ComputedListVisibility {
     SqlPushdown,

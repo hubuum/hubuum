@@ -26,11 +26,10 @@ use crate::services::history::{
     HistoryCollectionFilter, export_template_as_of,
     export_template_history_paginated_with_total_count,
 };
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
+use crate::traits::{UserPermissions, scope_allows};
 
 #[utoipa::path(
     post,

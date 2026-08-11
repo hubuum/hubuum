@@ -27,12 +27,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking (administrator API):** the storage contract version is now `14`,
+- **Breaking (administrator API):** the storage contract version is now `15`,
   and the redacted administrator configuration reports independently enforced
   `catalog_queries`, `computed_object_queries`, `computed_field_lifecycle`,
   `object_aggregates`, `relation_queries`, `temporal_history`, and
   `unified_search`, `remote_targets`, `task_queue`, `task_execution`,
-  `backup_snapshots`, `restores`, and `imports`
+  `backup_snapshots`, `restores`, `imports`, and `export_queries`
   capabilities instead of
   the broader provisional `queries_and_history` label. Monitoring or
   administration clients matching the version or capability list must accept
@@ -48,12 +48,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   destructive apply, recovery, and provenance now form another mandatory
   compatibility-tested backend contract; restore application code no longer
   imports PostgreSQL/Diesel records or operations. Administration and monitoring
-  clients matching contract version `13` must upgrade to version `14` and
-  accept the required `imports` capability. Import planning lookups,
+  clients matching earlier contract versions must upgrade to version `15` and
+  accept the required `imports` and `export_queries` capabilities. Import planning lookups,
   rollback-only preflight, strict atomic apply, best-effort per-item apply, and
   result persistence now form one mandatory backend trait; application import
   code no longer imports PostgreSQL connections, transactions, or query
-  operations.
+  operations. Export selection, related-object includes, and template hydration
+  now run inside a mandatory backend-owned query-budget scope rather than
+  selecting PostgreSQL `statement_timeout` machinery from application code.
+  Authorization resource hydration and all-permissions-on-all-collections
+  decisions now use mandatory backend-neutral DTOs and operations; application
+  traits, export code, and handlers no longer import PostgreSQL authorization
+  query helpers.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

@@ -141,7 +141,8 @@ pub struct ExportConfig {
     pub template_max_objects: usize,
     pub max_output_bytes: usize,
     pub stage_timeout_ms: u64,
-    pub database_statement_timeout_ms: u64,
+    /// Backend-neutral budget applied to each export storage read stage.
+    pub storage_query_budget_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -337,7 +338,7 @@ impl RunningConfig {
                 template_max_objects: config.export_template_max_objects,
                 max_output_bytes: config.export_max_output_bytes,
                 stage_timeout_ms: config.export_stage_timeout_ms,
-                database_statement_timeout_ms: config.export_db_statement_timeout_ms,
+                storage_query_budget_ms: config.export_storage_query_budget_ms(),
             },
             backups: BackupConfig {
                 output_retention_hours: config.backup_output_retention_hours,
@@ -453,7 +454,7 @@ mod tests {
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
-        assert!(json.contains("\"contract_version\":14"));
+        assert!(json.contains("\"contract_version\":15"));
         assert!(json.contains("\"catalog_queries\""));
         assert!(json.contains("\"computed_object_queries\""));
         assert!(json.contains("\"computed_field_lifecycle\""));
@@ -467,6 +468,7 @@ mod tests {
         assert!(json.contains("\"backup_snapshots\""));
         assert!(json.contains("\"restores\""));
         assert!(json.contains("\"imports\""));
+        assert!(json.contains("\"export_queries\""));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
     }

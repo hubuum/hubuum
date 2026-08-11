@@ -9,8 +9,8 @@ pub use hubuum_query::{
     ComputedFieldScope, ComputedQueryValueType, DEFAULT_RELATED_FILTER_DEPTH, DataType,
     FilterField, JsonFieldPathRef, MAX_RELATED_FILTER_DEPTH, MAX_RELATED_FILTER_GROUPS, Operator,
     ParsedQueryParam, QueryOptions, RelatedClassField, RelatedFilterTarget, RelatedObjectField,
-    RelatedQueryField, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
-    decode_query_parameter_pairs, get_jsonb_field_type_from_value_and_operator,
+    RelatedQueryField, SQLMappedType, SearchOperator, SortParam, decode_query_parameter_pairs,
+    get_jsonb_field_type_from_value_and_operator,
 };
 #[cfg(test)]
 use hubuum_query::{get_jsonb_field_type_from_json_schema, get_sql_mapped_type_from_value};

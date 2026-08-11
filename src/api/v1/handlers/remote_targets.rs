@@ -27,13 +27,12 @@ use crate::services::history::{
 use crate::services::remote_targets as remote_target_service;
 use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
 use crate::storage::StorageTaskScopeSnapshot;
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
 use crate::traits::ClassAccessors;
+use crate::traits::{UserPermissions, scope_allows};
 
 #[utoipa::path(
     post,

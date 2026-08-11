@@ -67,7 +67,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Computed-field lifecycle | Shared and personal definition CRUD, class computation state, rebuild scheduling and claimed execution, and atomic audit behavior |
 | Object aggregates | Permission-scoped grouping, numeric measures, stable aggregate cursors, and bounded delegated-policy batching |
 | Relation queries | Relation filtering and paging, endpoint-set queries, graph traversal, and export-oriented multi-root expansion |
-| Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
+| Identity and authorization data | Principals, credentials, memberships, single- and multi-collection grant decisions, and class/object projections needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
 | Remote targets | Point and list reads, atomic audited lifecycle mutations, redacted transport policy, and invocation provenance |
@@ -76,17 +76,17 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Backup snapshots | Canonical state and optional history sections read from one consistent backend snapshot |
 | Restores | Durable artifact staging, lifecycle transitions, global drain coordination, rollback-safe snapshot replacement, provenance, and recovery |
 | Imports | Planning lookups, rollback-only preflight, strict and best-effort application, and durable item results |
-| Workflows | Remaining export-hydration operations with backend-owned atomic reads |
+| Export queries | Backend-enforced per-read budgets around export selection, includes, and relation hydration |
 | Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
 
 The families are not feature flags and the admin configuration does not report
 optional support. Every selectable backend implements the entire list. The
 sealed composition in `src/storage/contract.rs` makes adding a backend an
 explicit architecture change rather than an incidental trait implementation.
-During extraction, the workflow and remaining operational
-families retain temporary central migration gates. Those gates prevent another
-backend from becoming selectable, but they are not behavioral proof and must
-be replaced by mandatory operation-shaped traits and shared tests. The former
+During extraction, the remaining operational family retains a temporary central
+migration gate. That gate prevents another backend from becoming selectable,
+but it is not behavioral proof and must be replaced by mandatory operation-shaped
+traits and shared tests. The former
 identity, catalog-query, relation-query, history, and unified-search gates have
 now been replaced by the real `AuthenticationStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
@@ -98,10 +98,9 @@ contracts. `TaskQueueStorage` replaces task submission and reads, while
 execution is part of `ComputedFieldLifecycleStorage`. `RemoteTargetStorage`
 owns target reads, lifecycle mutations, and invocation provenance.
 `RestoreStorage` owns the complete staged-restore lifecycle and coordinator.
-`ImportStorage` owns the complete import workflow. Remaining export-hydration
-operations stay behind the workflow gate until their complete contract and
-compatibility tests land. No
-family is considered complete merely because a marker exists.
+`ImportStorage` owns the complete import workflow. `ExportQueryStorage` owns the
+backend read-budget scope used by selection, includes, and hydration. No family
+is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -115,6 +114,43 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
+
+## Export Query Semantics
+
+Every selectable backend implements `ExportQueryStorage`. The application
+supplies an optional non-zero `StorageQueryBudget` around each export read stage:
+scope selection, related-object includes, and template hydration. It does not
+select a database timeout primitive. The adapter evaluates the stage exactly
+once and enforces the budget using its native cancellation mechanism; `None`
+explicitly disables the export-specific limit.
+
+PostgreSQL implements this contract with a task-local adapter scope that applies
+transaction-local `statement_timeout` to every connection or transaction opened
+by the stage. That detail is private to the adapter and cannot leak back through
+the pool. The shared backend suite verifies the mandatory scope behavior, while
+PostgreSQL unit tests verify cancellation and timeout reset on connection reuse.
+
+## Authorization Data Semantics
+
+Every selectable backend implements the complete `AuthorizationStorage` trait.
+The application owns token-scope checks, administrator policy, authorization
+logging, resource construction, and conversion to `ApiError`. The storage
+backend supplies identity facts, local grant mutations and decisions, and the
+minimal class/object projections required to construct policy resources.
+
+Multi-collection decisions are one mandatory operation: the backend returns
+`true` only when every normalized permission is available on every normalized
+collection, including inherited collection grants. This preserves the
+all-permissions-on-all-collections rule without exposing joins, closure tables,
+or query-builder types to application traits. Resource identifiers and
+permission sets are deduplicated at the contract boundary, and DTO debug output
+reports bounded counts while redacting identifiers and object names.
+
+`StorageHandle` observes every authorization entry point under bounded
+`authorization/*` labels. The shared available-backend suite exercises identity,
+membership, resource projections, single and batch decisions, grant lifecycle,
+candidate listing, and policy snapshots. Adapter tests remain responsible for
+native query and inheritance mechanics.
 
 ## Import Semantics
 

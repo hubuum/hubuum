@@ -468,19 +468,6 @@ fn is_computed_field_name(key: &str) -> bool {
     .any(|prefix| key.starts_with(prefix))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StatementTimeoutMs(u64);
-
-impl StatementTimeoutMs {
-    pub fn new(milliseconds: u64) -> Option<Self> {
-        (milliseconds > 0).then_some(Self(milliseconds))
-    }
-
-    pub fn as_millis(self) -> u64 {
-        self.0
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryOptions {
     pub filters: Vec<ParsedQueryParam>,
