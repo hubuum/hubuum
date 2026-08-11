@@ -53,6 +53,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `21`
+  and the required capability list includes `export_template_lifecycle`.
+  Export-template point and visibility-scoped list reads, collection source
+  discovery, class binding lookup, and audited create, replacement, and delete
+  operations are now mandatory for every selectable backend. The application
+  model consumes private-field backend-neutral DTOs; PostgreSQL owns the Diesel
+  rows and maps adapter failures into `StorageError`. Every lifecycle entry
+  point uses the common bounded storage tracing and metrics wrapper, and the
+  shared available-backend suite exercises the entire capability. Public HTTP
+  request and response shapes are unchanged. Administration and monitoring
+  clients matching contract version `20` must accept version `21` and the new
+  capability label.
 - **Breaking (administrator API):** the storage contract version is now `20`.
   Initial local-administrator bootstrap, atomic local-password replacement with
   token revocation, the complete export-template audit set, and

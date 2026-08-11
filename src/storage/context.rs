@@ -31,26 +31,28 @@ use crate::storage::{
     EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
     EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
     EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
-    ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage, ImportStorage,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalExportTemplateAuditEntry,
-    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
-    OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
-    StorageAuditEvent, StorageAuditEventListQuery, StorageBackend, StorageBackendDescriptor,
-    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite,
-    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRelation,
-    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
-    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
-    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    ExportQueryStorage, ExportTemplateHistoryRecord, ExportTemplateStorage, HistoryAsOfQuery,
+    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
+    ImportStorage, InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery,
+    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
+    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
+    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
     StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExportOutput, StorageExportOutputSummary, StorageExternalPrincipalState,
+    StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
+    StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplatePage, StorageExportTemplateReplace, StorageExternalPrincipalState,
     StorageExternalUserSync, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageImportApply, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
     StorageImportTaskResultPage, StorageLocalPasswordReset, StorageObject,
@@ -1984,6 +1986,120 @@ impl UnifiedSearchStorage for StorageHandle {
             match &self.implementation {
                 BackendImplementation::Postgresql(backend) => {
                     backend.search_unified_objects(query).await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl ExportTemplateStorage for StorageHandle {
+    async fn get_export_template(
+        &self,
+        template_id: i32,
+    ) -> Result<StorageExportTemplate, StorageError> {
+        observe_storage_call(self.backend_name(), "export_templates", "get", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_export_template(template_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_export_templates(
+        &self,
+        query: StorageExportTemplateListQuery,
+    ) -> Result<StorageExportTemplatePage, StorageError> {
+        observe_storage_call(self.backend_name(), "export_templates", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_export_templates(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_export_templates_in_collection(
+        &self,
+        collection_id: i32,
+        exclude_template_id: Option<i32>,
+    ) -> Result<Vec<StorageExportTemplate>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "export_templates",
+            "list_in_collection",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .list_export_templates_in_collection(collection_id, exclude_template_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn export_template_class_collection_id(
+        &self,
+        class_id: i32,
+    ) -> Result<Option<i32>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "export_templates",
+            "class_collection",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.export_template_class_collection_id(class_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn create_export_template(
+        &self,
+        request: StorageExportTemplateCreate,
+    ) -> Result<StorageExportTemplate, StorageError> {
+        observe_storage_call(self.backend_name(), "export_templates", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.create_export_template(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn replace_export_template(
+        &self,
+        request: StorageExportTemplateReplace,
+    ) -> Result<StorageExportTemplate, StorageError> {
+        observe_storage_call(self.backend_name(), "export_templates", "replace", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.replace_export_template(request).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_export_template(
+        &self,
+        request: StorageExportTemplateDelete,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "export_templates", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.delete_export_template(request).await
                 }
             }
         })

@@ -12,14 +12,255 @@ use crate::storage::postgres::prelude::*;
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::collection::CollectionID;
-use crate::models::export_template::{
-    ExportTemplate, ExportTemplateID, ExportTemplateRow, NewExportTemplateRow,
-    UpdateExportTemplateRow,
-};
+use crate::models::ResourceRevision;
+use crate::models::export_template::ExportTemplateID;
 use crate::models::search::{FilterField, QueryOptions};
+use crate::pagination::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::{date_search, numeric_search, revision_search, string_search};
+
+#[derive(Debug, Clone, Queryable, Selectable)]
+#[diesel(table_name = crate::schema::export_templates)]
+pub(crate) struct ExportTemplateRow {
+    pub(crate) id: i32,
+    pub(crate) collection_id: i32,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) content_type: String,
+    pub(crate) template: String,
+    pub(crate) kind: String,
+    pub(crate) scope_kind: Option<String>,
+    pub(crate) class_id: Option<i32>,
+    pub(crate) default_query: Option<String>,
+    pub(crate) include: Option<serde_json::Value>,
+    pub(crate) relation_context: Option<serde_json::Value>,
+    pub(crate) default_missing_data_policy: Option<String>,
+    pub(crate) default_limits: Option<serde_json::Value>,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) revision: ResourceRevision,
+}
+
+impl ExportTemplateRow {
+    pub(crate) fn id(&self) -> i32 {
+        self.id
+    }
+
+    pub(crate) fn collection_id(&self) -> i32 {
+        self.collection_id
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn revision(&self) -> ResourceRevision {
+        self.revision
+    }
+
+    pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "collection_id": self.collection_id,
+            "name": self.name,
+            "description": self.description,
+            "content_type": self.content_type,
+            "template": self.template,
+            "kind": self.kind,
+            "scope_kind": self.scope_kind,
+            "class_id": self.class_id,
+            "default_query": self.default_query,
+            "include": self.include,
+            "relation_context": self.relation_context,
+            "default_missing_data_policy": self.default_missing_data_policy,
+            "default_limits": self.default_limits,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "revision": self.revision,
+        })
+    }
+}
+
+impl CursorPaginated for ExportTemplateRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Description
+                | FilterField::Collections
+                | FilterField::CollectionId
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::Revision
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id.into()),
+            FilterField::Name => CursorValue::String(self.name.clone()),
+            FilterField::Description => CursorValue::String(self.description.clone()),
+            FilterField::Collections | FilterField::CollectionId => {
+                CursorValue::Integer(self.collection_id.into())
+            }
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{field}' is not orderable for export templates"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        vec![crate::models::search::SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for ExportTemplateRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "export_templates.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "export_templates.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "export_templates.description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                column: "export_templates.collection_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "export_templates.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "export_templates.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "export_templates.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{field}' is not orderable for export templates"
+                )));
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::schema::export_templates)]
+pub(crate) struct NewExportTemplateRow {
+    pub(crate) collection_id: i32,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) content_type: String,
+    pub(crate) template: String,
+    pub(crate) kind: String,
+    pub(crate) scope_kind: Option<String>,
+    pub(crate) class_id: Option<i32>,
+    pub(crate) default_query: Option<String>,
+    pub(crate) include: Option<serde_json::Value>,
+    pub(crate) relation_context: Option<serde_json::Value>,
+    pub(crate) default_missing_data_policy: Option<String>,
+    pub(crate) default_limits: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = crate::schema::export_templates)]
+pub(crate) struct UpdateExportTemplateRow {
+    pub(crate) collection_id: Option<i32>,
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) template: Option<String>,
+    pub(crate) kind: Option<String>,
+    pub(crate) scope_kind: Option<Option<String>>,
+    pub(crate) class_id: Option<Option<i32>>,
+    pub(crate) default_query: Option<Option<String>>,
+    pub(crate) include: Option<Option<serde_json::Value>>,
+    pub(crate) relation_context: Option<Option<serde_json::Value>>,
+    pub(crate) default_missing_data_policy: Option<Option<String>>,
+    pub(crate) default_limits: Option<Option<serde_json::Value>>,
+}
+
+impl UpdateExportTemplateRow {
+    pub(crate) fn has_changes(&self, current: &ExportTemplateRow) -> bool {
+        self.collection_id
+            .is_some_and(|value| value != current.collection_id)
+            || self
+                .name
+                .as_ref()
+                .is_some_and(|value| value != &current.name)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+            || self
+                .template
+                .as_ref()
+                .is_some_and(|value| value != &current.template)
+            || self
+                .kind
+                .as_ref()
+                .is_some_and(|value| value != &current.kind)
+            || self
+                .scope_kind
+                .as_ref()
+                .is_some_and(|value| value != &current.scope_kind)
+            || self
+                .class_id
+                .as_ref()
+                .is_some_and(|value| value != &current.class_id)
+            || self
+                .default_query
+                .as_ref()
+                .is_some_and(|value| value != &current.default_query)
+            || self
+                .include
+                .as_ref()
+                .is_some_and(|value| value != &current.include)
+            || self
+                .relation_context
+                .as_ref()
+                .is_some_and(|value| value != &current.relation_context)
+            || self
+                .default_missing_data_policy
+                .as_ref()
+                .is_some_and(|value| value != &current.default_missing_data_policy)
+            || self
+                .default_limits
+                .as_ref()
+                .is_some_and(|value| value != &current.default_limits)
+    }
+}
 
 fn export_template_event(
     row: &ExportTemplateRow,
@@ -293,33 +534,6 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
     }
 }
 
-/// Look up the collection id of the export template identified by this id.
-pub(crate) trait ExportTemplateCollectionLookup {
-    async fn lookup_export_template_collection_id(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<CollectionID, ApiError>;
-}
-
-impl ExportTemplateCollectionLookup for ExportTemplateID {
-    async fn lookup_export_template_collection_id(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<CollectionID, ApiError> {
-        use crate::schema::export_templates::dsl::{collection_id, export_templates, id};
-
-        let raw = with_connection(pool, async |conn| {
-            export_templates
-                .filter(id.eq(self.id()))
-                .select(collection_id)
-                .first::<i32>(conn)
-                .await
-        })
-        .await?;
-        CollectionID::new(raw)
-    }
-}
-
 /// Load all export-template rows in a collection, optionally excluding one template id.
 pub(crate) async fn load_rows_in_collection(
     pool: &impl crate::storage::StorageContext,
@@ -338,43 +552,6 @@ pub(crate) async fn load_rows_in_collection(
         query.load::<ExportTemplateRow>(conn).await
     })
     .await
-}
-
-/// Load every export-template row.
-pub(crate) async fn load_all_rows(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<Vec<ExportTemplateRow>, ApiError> {
-    use crate::schema::export_templates::dsl::export_templates;
-
-    with_connection(pool, async |conn| {
-        export_templates.load::<ExportTemplateRow>(conn).await
-    })
-    .await
-}
-
-/// Whether a template with `target_name` already exists in the collection, optionally ignoring one
-/// template id (used so an update does not conflict with itself).
-pub(crate) async fn name_conflict_exists(
-    pool: &impl crate::storage::StorageContext,
-    target_collection_id: i32,
-    target_name: &str,
-    exclude_template_id: Option<i32>,
-) -> Result<bool, ApiError> {
-    use crate::schema::export_templates::dsl::{collection_id, export_templates, id, name};
-
-    let existing = with_connection(pool, async |conn| {
-        let mut query = export_templates
-            .into_boxed()
-            .filter(collection_id.eq(target_collection_id))
-            .filter(name.eq(target_name));
-        if let Some(exclude_template_id) = exclude_template_id {
-            query = query.filter(id.ne(exclude_template_id));
-        }
-        query.first::<ExportTemplateRow>(conn).await.optional()
-    })
-    .await?;
-
-    Ok(existing.is_some())
 }
 
 /// The collection a class belongs to, or `None` if the class does not exist.
@@ -470,7 +647,7 @@ async fn list_rows_with_optional_collection_scope(
     .await?;
 
     let mut query = build_list_query(allowed_collection_ids, query_options)?;
-    crate::apply_query_options!(query, query_options, ExportTemplate);
+    crate::apply_query_options!(query, query_options, ExportTemplateRow);
     let rows = with_connection(pool, async |conn| {
         query.load::<ExportTemplateRow>(conn).await
     })

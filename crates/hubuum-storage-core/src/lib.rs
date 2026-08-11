@@ -13,6 +13,7 @@ mod event_administration;
 mod events;
 mod execution;
 mod export_query;
+mod export_template_lifecycle;
 mod history;
 mod identity;
 mod identity_operations;
@@ -74,6 +75,12 @@ pub use execution::{
     StorageRevisionPreconditionError,
 };
 pub use export_query::{ExportQueryStorage, StorageQueryBudget};
+pub use export_template_lifecycle::{
+    ExportTemplateStorage, StorageExportTemplate, StorageExportTemplateCreate,
+    StorageExportTemplateDefinition, StorageExportTemplateDefinitionParts,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplatePage,
+    StorageExportTemplateReplace,
+};
 pub use history::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
@@ -173,7 +180,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 20;
+pub const STORAGE_CONTRACT_VERSION: u16 = 21;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,12 +219,13 @@ pub enum StorageCapability {
     Restores,
     Imports,
     ExportQueries,
+    ExportTemplateLifecycle,
     EventAdministration,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -234,6 +242,7 @@ impl StorageCapability {
         Self::Restores,
         Self::Imports,
         Self::ExportQueries,
+        Self::ExportTemplateLifecycle,
         Self::EventAdministration,
         Self::Operations,
     ];
@@ -257,6 +266,7 @@ impl StorageCapability {
             Self::Restores => "restores",
             Self::Imports => "imports",
             Self::ExportQueries => "export_queries",
+            Self::ExportTemplateLifecycle => "export_template_lifecycle",
             Self::EventAdministration => "event_administration",
             Self::Operations => "operations",
         }
@@ -433,6 +443,7 @@ mod tests {
                 "restores",
                 "imports",
                 "export_queries",
+                "export_template_lifecycle",
                 "event_administration",
                 "operations",
             ]

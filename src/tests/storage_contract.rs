@@ -41,13 +41,14 @@ use crate::storage::{
     ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
-    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage, IdentityStorage,
-    ImportStorage, MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
-    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
+    ExportTemplateStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
+    HistoryStorage, IdentityStorage, ImportStorage, MetricsStorage,
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetStorage, RestoreStorage, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageAuditEventFilters, StorageAuditEventListQuery,
     StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
@@ -55,8 +56,10 @@ use crate::storage::{
     StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
     StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExportTaskArtifact, StorageImportOperation, StorageImportPlanItem, StorageImportResult,
-    StorageLocalPasswordReset, StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    StorageImportOperation, StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset,
+    StorageObject, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
     StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
@@ -1176,6 +1179,135 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
             }
         }
     }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_export_template_lifecycle() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let owner = crate::tests::create_test_user(pool.get_ref()).await;
+    let fixture = crate::tests::create_collection_fixture(
+        pool.get_ref(),
+        &prefix("export_template_collection"),
+    )
+    .await;
+    let collection_id = fixture.collection.id;
+    let class = NewHubuumClass {
+        name: prefix("export_template_class"),
+        collection_id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "export-template compatibility class".to_string(),
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("export-template compatibility class should be created");
+    let event_context = EventContext::user(owner.id, None, None);
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let name = prefix("export_template");
+                let definition = StorageExportTemplateDefinition::new(
+                    "compatibility fragment",
+                    "text/plain",
+                    "Hello {{ object.name }}",
+                    "fragment",
+                );
+                let created = backend
+                    .create_export_template(StorageExportTemplateCreate::new(
+                        collection_id,
+                        name.clone(),
+                        definition,
+                        Some(event_context.clone()),
+                    ))
+                    .await
+                    .expect("certified backend should create an export template");
+                let (metadata, created_collection_id, created_name, _) = created.into_parts();
+                let template_id = metadata.id();
+                assert_eq!(created_collection_id, collection_id);
+                assert_eq!(created_name, name);
+
+                let loaded = backend
+                    .get_export_template(template_id)
+                    .await
+                    .expect("certified backend should load an export template");
+                assert_eq!(loaded.into_parts().0.id(), template_id);
+
+                let (templates, total) = backend
+                    .list_export_templates(StorageExportTemplateListQuery::within_collections(
+                        vec![collection_id],
+                        QueryOptions {
+                            filters: Vec::new(),
+                            sort: Vec::new(),
+                            limit: Some(10),
+                            cursor: None,
+                            include_total: true,
+                        },
+                    ))
+                    .await
+                    .expect("certified backend should list export templates")
+                    .into_parts();
+                assert_eq!(total, Some(1));
+                assert_eq!(templates.len(), 1);
+
+                let siblings = backend
+                    .list_export_templates_in_collection(collection_id, Some(template_id))
+                    .await
+                    .expect("certified backend should list collection template siblings");
+                assert!(siblings.is_empty());
+
+                assert_eq!(
+                    backend
+                        .export_template_class_collection_id(class.id)
+                        .await
+                        .expect("certified backend should resolve template class ownership"),
+                    Some(collection_id)
+                );
+
+                let replacement_name = format!("{name}_updated");
+                let replaced = backend
+                    .replace_export_template(StorageExportTemplateReplace::new(
+                        template_id,
+                        collection_id,
+                        replacement_name.clone(),
+                        StorageExportTemplateDefinition::new(
+                            "updated compatibility fragment",
+                            "text/plain",
+                            "Updated {{ object.name }}",
+                            "fragment",
+                        ),
+                        Some(event_context.clone()),
+                    ))
+                    .await
+                    .expect("certified backend should replace an export template");
+                assert_eq!(replaced.into_parts().2, replacement_name);
+
+                backend
+                    .delete_export_template(StorageExportTemplateDelete::new(
+                        template_id,
+                        Some(event_context.clone()),
+                    ))
+                    .await
+                    .expect("certified backend should delete an export template");
+                assert!(backend.get_export_template(template_id).await.is_err());
+            }
+        }
+    }
+
+    class
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("export-template compatibility class should be removed");
+    fixture
+        .cleanup()
+        .await
+        .expect("export-template compatibility collection should be removed");
+    owner
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("export-template compatibility owner should be removed");
 }
 
 #[actix_web::test]

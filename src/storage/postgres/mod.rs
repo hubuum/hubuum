@@ -1,6 +1,7 @@
 mod backup_snapshot;
 mod computed_fields;
 mod error;
+mod export_templates;
 mod imports;
 #[cfg(feature = "embedded-migrations")]
 mod migrations;
