@@ -8,11 +8,14 @@ use crate::events::{
     EventContext, EventDeliverySettings, EventFanoutSettings, EventRetentionSettings,
     MutationProvenance,
 };
+use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::{
     ClassIdSet, Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
-    NewHubuumClass, NewHubuumObject, TokenRetentionSettings, UpdateHubuumClass, UpdateHubuumObject,
+    NewCollectionWithAssignee, NewHubuumClass, NewHubuumObject, TokenRetentionSettings,
+    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
 };
+use crate::models::{Group, Permission};
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
@@ -27,7 +30,10 @@ use crate::storage::{
     AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
-    ClassRecordStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
+    ClassRecordStorage, CollectionGrantListQuery, CollectionGroupPermissionQuery,
+    CollectionGroupsPageQuery, CollectionGroupsQuery, CollectionPermissionStorage,
+    CollectionPrincipalPageQuery, CollectionPrincipalQuery, CollectionRecordStorage,
+    CollectionVisibilityQuery, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
     ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage,
     EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
     EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
@@ -2688,6 +2694,318 @@ impl InventoryStorage for StorageHandle {
                 BackendImplementation::Postgresql(backend) => backend.inventory_counts().await,
             }
         })
+        .await
+    }
+}
+
+#[async_trait]
+impl CollectionRecordStorage for StorageHandle {
+    async fn create_collection_record(
+        &self,
+        command: &NewCollectionWithAssignee,
+        context: Option<&EventContext>,
+    ) -> Result<Collection, StorageError> {
+        observe_storage_call(self.backend_name(), "collection_records", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.create_collection_record(command, context).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn update_collection_record(
+        &self,
+        update: &UpdateCollection,
+        collection_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Collection, StorageError> {
+        observe_storage_call(self.backend_name(), "collection_records", "update", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .update_collection_record(update, collection_id, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn delete_collection_record(
+        &self,
+        collection_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(self.backend_name(), "collection_records", "delete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .delete_collection_record(collection_id, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn move_collection_record(
+        &self,
+        collection_id: i32,
+        new_parent_collection_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Collection, StorageError> {
+        observe_storage_call(self.backend_name(), "collection_records", "move", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend
+                        .move_collection_record(collection_id, new_parent_collection_id, context)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl CollectionPermissionStorage for StorageHandle {
+    async fn principal_collection_permissions(
+        &self,
+        query: CollectionPrincipalQuery,
+    ) -> Result<Vec<GroupPermission>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "principal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.principal_collection_permissions(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn principal_all_collection_permissions(
+        &self,
+        principal_id: i32,
+    ) -> Result<Vec<(Collection, Group, Permission)>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "principal_all",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .principal_all_collection_permissions(principal_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn principal_collection_permissions_page(
+        &self,
+        query: CollectionPrincipalPageQuery,
+    ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "principal_page",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.principal_collection_permissions_page(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn effective_principal_collection_permissions(
+        &self,
+        query: CollectionPrincipalQuery,
+    ) -> Result<Vec<EffectiveGroupPermission>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "effective_principal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .effective_principal_collection_permissions(query)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn visible_collections(
+        &self,
+        query: CollectionVisibilityQuery,
+    ) -> Result<Vec<Collection>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "visible",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.visible_collections(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn group_has_collection_permission(
+        &self,
+        query: CollectionGroupPermissionQuery,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "group_has",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.group_has_collection_permission(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn effective_group_collection_permissions(
+        &self,
+        collection_id: i32,
+        group_id: i32,
+    ) -> Result<Vec<EffectiveGroupPermission>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "effective_group",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .effective_group_collection_permissions(collection_id, group_id)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn groups_with_collection_permission(
+        &self,
+        query: CollectionGroupsQuery,
+    ) -> Result<Vec<Group>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "groups",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.groups_with_collection_permission(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn groups_with_collection_permission_page(
+        &self,
+        query: CollectionGroupsPageQuery,
+    ) -> Result<(Vec<Group>, i64), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "groups_page",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.groups_with_collection_permission_page(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_collection_group_permissions(
+        &self,
+        query: CollectionGrantListQuery,
+    ) -> Result<Vec<GroupPermission>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "grants",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_collection_group_permissions(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_collection_group_permissions_page(
+        &self,
+        query: CollectionGrantListQuery,
+    ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "grants_page",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_collection_group_permissions_page(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn collection_group_permission(
+        &self,
+        collection_id: i32,
+        group_id: i32,
+    ) -> Result<Permission, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "collection_permissions",
+            "group_grant",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .collection_group_permission(collection_id, group_id)
+                            .await
+                    }
+                }
+            },
+        )
         .await
     }
 }

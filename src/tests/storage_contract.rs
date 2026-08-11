@@ -20,10 +20,11 @@ use crate::models::search::{
     parse_query_parameter_with_computed_filters_and_passthrough,
 };
 use crate::models::{
-    CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, HubuumClassHistory,
-    HubuumObjectHistory, ImportAtomicity, ImportClassInput, ImportCollectionInput, ImportMode,
-    NewComputedFieldDefinition, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, RemoteTargetHistory,
+    CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, GroupID,
+    HubuumClassHistory, HubuumObjectHistory, ImportAtomicity, ImportClassInput,
+    ImportCollectionInput, ImportMode, NewCollectionWithAssignee, NewComputedFieldDefinition,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
+    RemoteTargetHistory, UpdateCollection,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -37,6 +38,9 @@ use crate::storage::{
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
     AuthorizationPermissionSetQuery, AuthorizationResourceIds, AuthorizationStorage,
     BackupSnapshotStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
+    CollectionGrantListQuery, CollectionGroupPermissionQuery, CollectionGroupsPageQuery,
+    CollectionGroupsQuery, CollectionPermissionStorage, CollectionPrincipalPageQuery,
+    CollectionPrincipalQuery, CollectionRecordStorage, CollectionVisibilityQuery,
     ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
     ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
@@ -1609,6 +1613,62 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_supplies_collection_record_compatibility() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let group = crate::tests::create_test_group(pool.get_ref()).await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let command = NewCollectionWithAssignee {
+                    name: prefix("collection_record_compatibility"),
+                    description: "collection record compatibility".to_string(),
+                    group_id: GroupID::new(group.id).expect("valid compatibility group id"),
+                    parent_collection_id: None,
+                };
+                let created = backend
+                    .create_collection_record(&command, None)
+                    .await
+                    .expect("certified backend should create collection records");
+                let updated = backend
+                    .update_collection_record(
+                        &UpdateCollection {
+                            name: None,
+                            description: Some(
+                                "updated collection record compatibility".to_string(),
+                            ),
+                        },
+                        created.id,
+                        Some(&EventContext::system()),
+                    )
+                    .await
+                    .expect("certified backend should update collection records");
+                assert_eq!(
+                    updated.description,
+                    "updated collection record compatibility"
+                );
+                let moved = backend
+                    .move_collection_record(created.id, 1, None)
+                    .await
+                    .expect("certified backend should move collection records");
+                assert_eq!(moved.parent_collection_id, Some(1));
+                backend
+                    .delete_collection_record(created.id, Some(&EventContext::system()))
+                    .await
+                    .expect("certified backend should delete collection records");
+            }
+        }
+    }
+
+    group
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("collection record compatibility group should be removed");
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_local_authorization_data() {
     let _permit = postgres_permit().await;
     let pool = pool();
@@ -1770,6 +1830,130 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                         .await
                         .expect("applied local grant should authorize the batch")
                 );
+
+                let page_options = || QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: None,
+                    cursor: None,
+                    include_total: true,
+                };
+                let principal_query = || CollectionPrincipalQuery::new(user.id, collection_id);
+
+                let principal_permissions = backend
+                    .principal_collection_permissions(principal_query())
+                    .await
+                    .expect("certified backend should project principal collection grants");
+                assert!(
+                    principal_permissions
+                        .iter()
+                        .any(|row| row.group.id == group.id)
+                );
+
+                let all_permissions = backend
+                    .principal_all_collection_permissions(user.id)
+                    .await
+                    .expect("certified backend should project all principal collection grants");
+                assert!(all_permissions.iter().any(|(collection, row_group, _)| {
+                    collection.id == collection_id && row_group.id == group.id
+                }));
+
+                let (principal_page, principal_total) = backend
+                    .principal_collection_permissions_page(CollectionPrincipalPageQuery::new(
+                        principal_query(),
+                        page_options(),
+                    ))
+                    .await
+                    .expect("certified backend should page principal collection grants");
+                assert!(principal_total >= 1);
+                assert!(!principal_page.is_empty());
+
+                let effective_principal = backend
+                    .effective_principal_collection_permissions(principal_query())
+                    .await
+                    .expect("certified backend should project effective principal grants");
+                assert!(
+                    effective_principal
+                        .iter()
+                        .any(|row| row.group.id == group.id)
+                );
+
+                let visible = backend
+                    .visible_collections(CollectionVisibilityQuery::new(
+                        user.id,
+                        Permissions::ReadCollection,
+                        None,
+                    ))
+                    .await
+                    .expect("certified backend should project visible collections");
+                assert!(
+                    visible
+                        .iter()
+                        .any(|collection| collection.id == collection_id)
+                );
+
+                let group_query = CollectionGroupPermissionQuery::new(
+                    collection_id,
+                    group.id,
+                    Permissions::ReadCollection,
+                );
+                assert!(
+                    backend
+                        .group_has_collection_permission(group_query)
+                        .await
+                        .expect("certified backend should test group collection grants")
+                );
+
+                let effective_group = backend
+                    .effective_group_collection_permissions(collection_id, group.id)
+                    .await
+                    .expect("certified backend should project effective group grants");
+                assert!(!effective_group.is_empty());
+
+                let groups_query =
+                    || CollectionGroupsQuery::new(collection_id, Permissions::ReadCollection);
+                let groups = backend
+                    .groups_with_collection_permission(groups_query())
+                    .await
+                    .expect("certified backend should list groups with collection grants");
+                assert!(groups.iter().any(|candidate| candidate.id == group.id));
+
+                let (groups_page, groups_total) = backend
+                    .groups_with_collection_permission_page(CollectionGroupsPageQuery::new(
+                        groups_query(),
+                        page_options(),
+                    ))
+                    .await
+                    .expect("certified backend should page groups with collection grants");
+                assert!(groups_total >= 1);
+                assert!(!groups_page.is_empty());
+
+                let grant_query = || {
+                    CollectionGrantListQuery::new(
+                        collection_id,
+                        vec![Permissions::ReadCollection],
+                        page_options(),
+                    )
+                };
+                let grants = backend
+                    .list_collection_group_permissions(grant_query())
+                    .await
+                    .expect("certified backend should list collection grants");
+                assert!(grants.iter().any(|row| row.group.id == group.id));
+
+                let (grant_page, grant_total) = backend
+                    .list_collection_group_permissions_page(grant_query())
+                    .await
+                    .expect("certified backend should page collection grants");
+                assert!(grant_total >= 1);
+                assert!(!grant_page.is_empty());
+
+                let grant = backend
+                    .collection_group_permission(collection_id, group.id)
+                    .await
+                    .expect("certified backend should load a collection grant");
+                assert_eq!(grant.collection_id, collection_id);
+                assert_eq!(grant.group_id, group.id);
 
                 let collections = backend
                     .local_authorized_collections(AuthorizationCollectionsQuery::new(

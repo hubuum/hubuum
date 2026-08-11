@@ -12,6 +12,7 @@ use crate::models::{
 };
 use crate::storage::postgres::operations::authz::scope_allows;
 use crate::storage::postgres::operations::class::HubuumClassRow;
+use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::with_connection_async;
 
@@ -216,10 +217,11 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Text, _>(cursor_binds.name)
                 .bind::<Integer, _>(cursor_binds.id)
                 .bind::<BigInt, _>(limit)
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
         .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 
     async fn search_unified_classes_from_backend(
@@ -288,10 +290,13 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             use crate::schema::collections::dsl::{collections, id};
             collections
                 .filter(id.eq_any(collection_ids))
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await?;
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<Collection>>();
         let collection_map = collections
             .into_iter()
             .map(|collection| (collection.id, collection))

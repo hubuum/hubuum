@@ -15,10 +15,11 @@ async fn build_effective_group_permissions(
         return Ok(Vec::new());
     }
 
-    let target_collection = collections
+    let target_collection: Collection = collections
         .filter(id.eq(target_collection_id))
-        .first::<Collection>(conn)
-        .await?;
+        .first::<CollectionRow>(conn)
+        .await?
+        .into();
     let mut source_ids: Vec<i32> = rows
         .iter()
         .map(|(source_collection_id, _, _, _)| *source_collection_id)
@@ -27,10 +28,13 @@ async fn build_effective_group_permissions(
     source_ids.dedup();
     let source_collections = collections
         .filter(id.eq_any(source_ids))
-        .load::<Collection>(conn)
+        .load::<CollectionRow>(conn)
         .await?
         .into_iter()
-        .map(|collection| (collection.id, collection))
+        .map(|row| {
+            let collection: Collection = row.into();
+            (collection.id, collection)
+        })
         .collect::<HashMap<_, _>>();
 
     rows.into_iter()
@@ -101,14 +105,19 @@ pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
             .inner_join(crate::schema::collections::table)
             .filter(group_id.eq_any(group_ids_subquery))
             .select((
-                Collection::as_select(),
+                CollectionRow::as_select(),
                 Group::as_select(),
                 Permission::as_select(),
             ))
-            .load::<(Collection, Group, Permission)>(conn)
+            .load::<(CollectionRow, Group, Permission)>(conn)
             .await
     })
     .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|(collection, group, permission)| (collection.into(), group, permission))
+            .collect()
+    })
 }
 
 pub async fn principal_on_paginated_with_total_count_from_backend<
@@ -261,7 +270,9 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
         if let Some(scope) = resource_scope_ids(scopes) {
             query = query.filter(collection_scope_predicate(scope));
         }
-        return with_connection(pool, async |conn| query.load::<Collection>(conn).await).await;
+        return with_connection(pool, async |conn| query.load::<CollectionRow>(conn).await)
+            .await
+            .map(|rows| rows.into_iter().map(Into::into).collect());
     }
 
     let base_query = {
@@ -283,10 +294,11 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
                 .filter(collection_scope_predicate(scope))
                 .select(collections::all_columns())
                 .distinct()
-                .load::<Collection>(conn)
+                .load::<CollectionRow>(conn)
                 .await
         })
-        .await;
+        .await
+        .map(|rows| rows.into_iter().map(Into::into).collect());
     }
     with_connection(pool, async |conn| {
         filtered_query
@@ -294,10 +306,11 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
             .inner_join(collections.on(collection_table_id.eq(descendant_collection_id)))
             .select(collections::all_columns())
             .distinct()
-            .load::<Collection>(conn)
+            .load::<CollectionRow>(conn)
             .await
     })
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn group_can_on_from_backend<T: CollectionAccessors>(

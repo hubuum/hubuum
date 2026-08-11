@@ -5,17 +5,10 @@ use crate::models::collection::{
 };
 use crate::models::group::GroupID;
 use crate::models::search::{FilterField, SortParam};
-use crate::storage::StorageContext;
-use crate::storage::postgres::operations::collection::{
-    DeleteCollectionRecord, SaveCollectionForGroupRecord, SaveCollectionWithAssigneeRecord,
-    UpdateCollectionRecord,
-};
+use crate::storage::{CollectionRecordStorage, StorageContext, storage_handle};
 use crate::traits::accessors::{CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
-use crate::traits::{
-    CanUpdate, CollectionAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, PermissionController,
-};
+use crate::traits::{CollectionAccessors, CursorPaginated, PermissionController};
 
 impl SaveAdapter for Collection {
     type Output = Collection;
@@ -28,9 +21,10 @@ impl SaveAdapter for Collection {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
         };
-        updated_collection
-            .update_without_events(pool, CollectionID::new(self.id)?)
+        storage_handle(pool)
+            .update_collection_record(&updated_collection, self.id, None)
             .await
+            .map_err(ApiError::from)
     }
 
     async fn save_adapter(
@@ -42,9 +36,10 @@ impl SaveAdapter for Collection {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
         };
-        updated_collection
-            .update_collection_record(pool, self.id, Some(context))
+        storage_handle(pool)
+            .update_collection_record(&updated_collection, self.id, Some(context))
             .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -53,7 +48,10 @@ impl DeleteAdapter for Collection {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        self.delete_collection_record_without_events(pool).await
+        storage_handle(pool)
+            .delete_collection_record(self.id, None)
+            .await
+            .map_err(ApiError::from)
     }
 
     async fn delete_adapter(
@@ -61,7 +59,10 @@ impl DeleteAdapter for Collection {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        self.delete_collection_record(pool, Some(context)).await
+        storage_handle(pool)
+            .delete_collection_record(self.id, Some(context))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -70,7 +71,10 @@ impl DeleteAdapter for CollectionID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        self.delete_collection_record_without_events(pool).await
+        storage_handle(pool)
+            .delete_collection_record(self.id(), None)
+            .await
+            .map_err(ApiError::from)
     }
 
     async fn delete_adapter(
@@ -78,7 +82,10 @@ impl DeleteAdapter for CollectionID {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        self.delete_collection_record(pool, Some(context)).await
+        storage_handle(pool)
+            .delete_collection_record(self.id(), Some(context))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -91,8 +98,10 @@ impl UpdateAdapter for UpdateCollection {
         pool: &impl crate::storage::StorageContext,
         target_collection_id: CollectionID,
     ) -> Result<Self::Output, ApiError> {
-        self.update_collection_record_without_events(pool, target_collection_id.id())
+        storage_handle(pool)
+            .update_collection_record(self, target_collection_id.id(), None)
             .await
+            .map_err(ApiError::from)
     }
 
     async fn update_adapter(
@@ -101,8 +110,10 @@ impl UpdateAdapter for UpdateCollection {
         target_collection_id: CollectionID,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_collection_record(pool, target_collection_id.id(), Some(context))
+        storage_handle(pool)
+            .update_collection_record(self, target_collection_id.id(), Some(context))
             .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -113,8 +124,10 @@ impl SaveAdapter for NewCollectionWithAssignee {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Collection, ApiError> {
-        self.save_collection_with_assignee_record_without_events(pool)
+        storage_handle(pool)
+            .create_collection_record(self, None)
             .await
+            .map_err(ApiError::from)
     }
 
     async fn save_adapter(
@@ -122,8 +135,10 @@ impl SaveAdapter for NewCollectionWithAssignee {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
-        self.save_collection_with_assignee_record(pool, Some(context))
+        storage_handle(pool)
+            .create_collection_record(self, Some(context))
             .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -188,8 +203,12 @@ impl CollectionAdapter for CollectionID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Collection, ApiError> {
-        use crate::storage::postgres::operations::GetCollection;
-        self.collection_from_backend(pool).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .get_collection(*self)
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -206,8 +225,19 @@ impl NewCollection {
     where
         C: StorageContext,
     {
-        self.save_collection_for_group_record_without_events(backend, assignee.id())
+        let command = NewCollectionWithAssignee {
+            name: self.name,
+            description: self.description,
+            group_id: assignee,
+            parent_collection_id: self
+                .parent_collection_id
+                .map(CollectionID::new)
+                .transpose()?,
+        };
+        storage_handle(backend)
+            .create_collection_record(&command, None)
             .await
+            .map_err(ApiError::from)
     }
 
     /// Persist the collection and apply permissions using the assignee embedded in the supplied
@@ -223,11 +253,19 @@ impl NewCollection {
     where
         C: StorageContext,
     {
-        self.save_collection_for_group_record_without_events(
-            backend,
-            collection_with_assignee.group_id.id(),
-        )
-        .await
+        let command = NewCollectionWithAssignee {
+            name: self.name,
+            description: self.description,
+            group_id: collection_with_assignee.group_id,
+            parent_collection_id: self
+                .parent_collection_id
+                .map(CollectionID::new)
+                .transpose()?,
+        };
+        storage_handle(backend)
+            .create_collection_record(&command, None)
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -275,48 +313,5 @@ impl CursorPaginated for Collection {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for Collection {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "collections.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "collections.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "collections.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "collections.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "collections.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "collections.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for collections",
-                    field
-                )));
-            }
-        })
     }
 }

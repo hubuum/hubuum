@@ -24,16 +24,17 @@ use std::pin::Pin;
 use crate::events::{
     EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
 };
+use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ClassIdSet, ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassID,
+    ClassIdSet, ClassSelector, Collection, CollectionID, Group, HubuumClass, HubuumClassID,
     HubuumClassRelation, HubuumClassRelationID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectRelationID, MaintenanceState, NewCollectionWithAssignee, NewHubuumClass,
     NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, ObjectDataPatchDocument,
-    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, PreparedClassRelation,
-    PreparedObjectRelation, ResolvedClassRelationTarget, ResolvedClassTarget,
-    ResolvedObjectRelationTarget, ResolvedObjectTarget, TokenRetentionSettings, UpdateCollection,
-    UpdateHubuumClass, UpdateHubuumObject,
+    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, Permission,
+    PreparedClassRelation, PreparedObjectRelation, PrincipalID, ResolvedClassRelationTarget,
+    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget,
+    TokenRetentionSettings, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::class::{
@@ -44,7 +45,12 @@ use crate::storage::postgres::operations::class::{
 use crate::storage::postgres::operations::collection::{
     DeleteCollectionRecord, SaveCollectionWithAssigneeRecord, UpdateCollectionRecord,
     collection_ancestors_from_backend, collection_children_from_backend,
-    move_collection_record_from_backend,
+    effective_group_on_from_backend, effective_principal_on_from_backend,
+    group_can_on_from_backend, group_on_from_backend, groups_can_on_from_backend,
+    groups_can_on_paginated_with_total_count_from_backend, groups_on_from_backend,
+    groups_on_paginated_with_total_count_from_backend, move_collection_record_from_backend,
+    principal_all_permissions_from_backend, principal_on_from_backend,
+    principal_on_paginated_with_total_count_from_backend, user_can_on_any_from_backend,
 };
 use crate::storage::postgres::operations::object::{
     CreateObjectInResolvedClassRecord, DeleteObjectRecord, DeleteResolvedObjectRecord,
@@ -71,7 +77,10 @@ use super::{
     AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage,
     BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
-    ClassRecordStorage, ClassRelationStore, ClassStore, CollectionStore,
+    ClassRecordStorage, ClassRelationStore, ClassStore, CollectionGrantListQuery,
+    CollectionGroupPermissionQuery, CollectionGroupsPageQuery, CollectionGroupsQuery,
+    CollectionPermissionStorage, CollectionPrincipalPageQuery, CollectionPrincipalQuery,
+    CollectionRecordStorage, CollectionStore, CollectionVisibilityQuery,
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
     ComputedObjectStorage, EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch,
     EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
@@ -1277,6 +1286,214 @@ impl TokenRetentionStorage for PostgresStorage {
         settings: TokenRetentionSettings,
     ) -> Result<usize, StorageError> {
         operations::token_retention::purge_expired_token_batch(&self.pool, settings)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl CollectionRecordStorage for PostgresStorage {
+    async fn create_collection_record(
+        &self,
+        command: &NewCollectionWithAssignee,
+        context: Option<&EventContext>,
+    ) -> Result<Collection, StorageError> {
+        command
+            .save_collection_with_assignee_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_collection_record(
+        &self,
+        update: &UpdateCollection,
+        collection_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Collection, StorageError> {
+        update
+            .update_collection_record(&self.pool, collection_id, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_collection_record(
+        &self,
+        collection_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        CollectionID::new(collection_id)
+            .map_err(map_postgres_error)?
+            .delete_collection_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn move_collection_record(
+        &self,
+        collection_id: i32,
+        new_parent_collection_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Collection, StorageError> {
+        move_collection_record_from_backend(
+            &self.pool,
+            collection_id,
+            new_parent_collection_id,
+            context,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl CollectionPermissionStorage for PostgresStorage {
+    async fn principal_collection_permissions(
+        &self,
+        query: CollectionPrincipalQuery,
+    ) -> Result<Vec<GroupPermission>, StorageError> {
+        principal_on_from_backend(
+            &self.pool,
+            PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn principal_all_collection_permissions(
+        &self,
+        principal_id: i32,
+    ) -> Result<Vec<(Collection, Group, Permission)>, StorageError> {
+        principal_all_permissions_from_backend(
+            &self.pool,
+            PrincipalID::new(principal_id).map_err(map_postgres_error)?,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn principal_collection_permissions_page(
+        &self,
+        query: CollectionPrincipalPageQuery,
+    ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
+        principal_on_paginated_with_total_count_from_backend(
+            &self.pool,
+            PrincipalID::new(query.principal().principal_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.principal().collection_id()).map_err(map_postgres_error)?,
+            query.query_options(),
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn effective_principal_collection_permissions(
+        &self,
+        query: CollectionPrincipalQuery,
+    ) -> Result<Vec<EffectiveGroupPermission>, StorageError> {
+        effective_principal_on_from_backend(
+            &self.pool,
+            PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn visible_collections(
+        &self,
+        query: CollectionVisibilityQuery,
+    ) -> Result<Vec<Collection>, StorageError> {
+        user_can_on_any_from_backend(
+            &self.pool,
+            PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
+            query.permission(),
+            query.scopes(),
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn group_has_collection_permission(
+        &self,
+        query: CollectionGroupPermissionQuery,
+    ) -> Result<bool, StorageError> {
+        group_can_on_from_backend(
+            &self.pool,
+            query.group_id(),
+            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            query.permission(),
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn effective_group_collection_permissions(
+        &self,
+        collection_id: i32,
+        group_id: i32,
+    ) -> Result<Vec<EffectiveGroupPermission>, StorageError> {
+        effective_group_on_from_backend(&self.pool, collection_id, group_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn groups_with_collection_permission(
+        &self,
+        query: CollectionGroupsQuery,
+    ) -> Result<Vec<Group>, StorageError> {
+        groups_can_on_from_backend(&self.pool, query.collection_id(), query.permission())
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn groups_with_collection_permission_page(
+        &self,
+        query: CollectionGroupsPageQuery,
+    ) -> Result<(Vec<Group>, i64), StorageError> {
+        groups_can_on_paginated_with_total_count_from_backend(
+            &self.pool,
+            query.groups().collection_id(),
+            query.groups().permission(),
+            query.query_options(),
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn list_collection_group_permissions(
+        &self,
+        query: CollectionGrantListQuery,
+    ) -> Result<Vec<GroupPermission>, StorageError> {
+        groups_on_from_backend(
+            &self.pool,
+            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            query.permissions().to_vec(),
+            query.query_options().clone(),
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn list_collection_group_permissions_page(
+        &self,
+        query: CollectionGrantListQuery,
+    ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
+        groups_on_paginated_with_total_count_from_backend(
+            &self.pool,
+            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            query.permissions().to_vec(),
+            query.query_options(),
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn collection_group_permission(
+        &self,
+        collection_id: i32,
+        group_id: i32,
+    ) -> Result<Permission, StorageError> {
+        group_on_from_backend(&self.pool, collection_id, group_id)
             .await
             .map_err(map_postgres_error)
     }

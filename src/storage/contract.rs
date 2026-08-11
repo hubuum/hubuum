@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use super::{
     AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRecordStorage, ClassRelationStore, ClassStore, CollectionStore,
+    CatalogStorage, ClassRecordStorage, ClassRelationStore, ClassStore,
+    CollectionPermissionStorage, CollectionRecordStorage, CollectionStore,
     ComputedFieldLifecycleStorage, ComputedObjectStorage, EventDeliveryAdministrationStorage,
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
     EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, HistoryStorage,
@@ -77,6 +78,8 @@ pub(crate) trait StorageBackend:
     + OperationalStateStorage
     + TokenRetentionStorage
     + UnifiedSearchStorage
+    + CollectionPermissionStorage
+    + CollectionRecordStorage
     + ClassRecordStorage
     + ObjectRecordStorage
     + RemoteTargetStorage

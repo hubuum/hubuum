@@ -93,9 +93,13 @@ complete contract includes `AuthenticationStorage`, `IdentityStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
 `ObjectAggregateStorage`, `RelationQueryStorage`, `InventoryStorage`, and
-`UnifiedSearchStorage` contracts. `ObjectRecordStorage` keeps transitional
-point-load, validation, and event-suppressed fixture operations behind the same
-mandatory backend boundary; it does not expose rows or connections.
+`UnifiedSearchStorage` contracts. `CollectionRecordStorage` keeps deliberately
+event-suppressed collection writes behind the mandatory lifecycle boundary,
+while `CollectionPermissionStorage` exposes operation-shaped grant projections
+without leaking a query builder. `ClassRecordStorage` and `ObjectRecordStorage`
+keep transitional point-load, validation, bulk lookup, and event-suppressed
+fixture operations behind the same mandatory backend boundary. None of these
+contracts exposes rows or connections.
 `TaskQueueStorage` replaces task submission and reads, while
 `TaskExecutionStorage` owns the complete worker claim and state machine.
 `BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
@@ -119,13 +123,14 @@ considered complete merely because a marker exists.
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Export-template, remote-target, event,
 event-sink, event-subscription, and event-delivery lifecycle rows are
-adapter-owned, as are class and object lifecycle and history rows, class- and
-object-relation rows, relation graph query rows, remote-target history, and
-remote-call result persistence rows. Domain class, object, and relation values
-contain no Diesel derives, schema bindings, or SQL cursor mappings. Those
-mappings and explicit conversions live in the PostgreSQL adapter. Remaining mixed
-persistence rows move there as their backend-neutral DTOs are extracted. Their
-current locations are implementation details, not partial backend support.
+adapter-owned, as are collection, class, and object lifecycle and history rows,
+class- and object-relation rows, relation graph query rows, remote-target
+history, and remote-call result persistence rows. Domain collection, class,
+object, and relation values contain no Diesel derives, schema bindings, or SQL
+cursor mappings. Those mappings and explicit conversions live in the PostgreSQL
+adapter. Remaining mixed persistence rows move there as their backend-neutral
+DTOs are extracted. Their current locations are implementation details, not
+partial backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
@@ -135,14 +140,17 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 24 additionally requires class point persistence, bulk name resolution,
-and event-suppressed compatibility writes to cross one mandatory, observed
-storage contract. Class lifecycle and history rows, Diesel mappings, and SQL
-cursor mappings are adapter-owned. Version 23 required class- and object-relation
-point operations, lifecycle writes, and event-suppressed compatibility writes
-to cross the same mandatory, observed storage contract. Relation persistence
-and graph query rows, Diesel mappings, and SQL cursor mappings are adapter-owned.
-Version 22 required
+Version 25 additionally requires collection point and compatibility writes,
+hierarchy operations, and collection-permission projections to cross mandatory,
+observed storage contracts. Collection lifecycle and history rows, Diesel
+mappings, and SQL cursor mappings are adapter-owned. Version 24 required class
+point persistence, bulk name resolution, and event-suppressed compatibility
+writes to cross one mandatory, observed storage contract. Class lifecycle and
+history rows, Diesel mappings, and SQL cursor mappings are adapter-owned. Version
+23 required class- and object-relation point operations, lifecycle writes, and
+event-suppressed compatibility writes to cross the same mandatory, observed
+storage contract. Relation persistence and graph query rows, Diesel mappings,
+and SQL cursor mappings are adapter-owned. Version 22 required
 consistent administrative inventory queries, the `inventory_queries`
 capability label, and mandatory object point-operation abstraction. Version 21
 required the complete export-template lifecycle and a new

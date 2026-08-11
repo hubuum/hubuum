@@ -53,6 +53,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (administrator API):** the storage contract version is now `13`,
 - **Breaking (administrator API):** the storage contract version is now `14`,
 - **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `25`.
+  Collection point and compatibility writes, hierarchy operations, and
+  collection-permission projections now cross mandatory, uniformly observed
+  backend contracts. Collection, collection-history, insert, and update
+  persistence rows and SQL cursor mappings are owned by the PostgreSQL adapter;
+  collection domain models contain no Diesel or PostgreSQL implementation
+  details. Required capability labels and public HTTP request and response
+  shapes are unchanged. Administration and monitoring clients matching
+  contract version `24` must accept version `25`.
 - **Breaking (administrator API):** the storage contract version is now `24`.
   Class point persistence, bulk name resolution, and event-suppressed
   compatibility writes now cross a mandatory, uniformly observed backend

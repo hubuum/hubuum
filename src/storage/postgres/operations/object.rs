@@ -12,6 +12,7 @@ use crate::models::{
 };
 use crate::storage::postgres::operations::GetObject;
 use crate::storage::postgres::operations::class::{HubuumClassRow, lock_resolved_class_target};
+use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::computed_field::{
     acquire_computed_class_shared_lock, materialize_object_in_transaction,
 };
@@ -1080,10 +1081,11 @@ impl ObjectCollectionLookup for HubuumObject {
         with_connection(pool, async |conn| {
             collections
                 .filter(id.eq(self.collection_id))
-                .first::<Collection>(conn)
+                .first::<CollectionRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
     }
 }
 

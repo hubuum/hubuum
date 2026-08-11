@@ -9,6 +9,7 @@ use crate::models::{
     NewHubuumClassRelation, ResolvedClassTarget, UpdateHubuumClass,
 };
 use crate::storage::postgres::operations::GetClass;
+use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::relation_rows::HubuumClassRelationRow;
 use crate::storage::postgres::{with_connection, with_transaction};
@@ -754,10 +755,11 @@ impl ClassCollectionLookup for HubuumClass {
         with_connection(pool, async |conn| {
             collections
                 .filter(id.eq(self.collection_id))
-                .first::<Collection>(conn)
+                .first::<CollectionRow>(conn)
                 .await
         })
         .await
+        .map(Into::into)
     }
 }
 

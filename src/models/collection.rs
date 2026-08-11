@@ -1,5 +1,4 @@
 use crate::models::token_scope::TokenScope;
-use crate::storage::postgres::prelude::*;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -12,24 +11,16 @@ use crate::models::search::QueryOptions;
 use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, ResourceRevision};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::collections;
-use crate::storage::StorageContext;
-use crate::storage::postgres::operations::collection as collection_backend;
+use crate::storage::{
+    CollectionGrantListQuery, CollectionGroupPermissionQuery, CollectionGroupsPageQuery,
+    CollectionGroupsQuery, CollectionPermissionStorage, CollectionPrincipalPageQuery,
+    CollectionPrincipalQuery, CollectionRecordStorage, CollectionVisibilityQuery, StorageContext,
+    storage_handle,
+};
 use crate::traits::AuthzSubject;
 use crate::traits::{CollectionAccessors, SelfAccessors};
 
-#[derive(
-    Serialize,
-    Deserialize,
-    Queryable,
-    QueryableByName,
-    PartialEq,
-    Debug,
-    Clone,
-    Selectable,
-    ToSchema,
-)]
-#[diesel(table_name = collections)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Collection {
     pub id: i32,
     pub name: String,
@@ -46,9 +37,8 @@ crate::int_id_newtype! {
     noun = "collection id";
 }
 
-#[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
 #[schema(example = update_collection_example)]
-#[diesel(table_name = collections)]
 pub struct UpdateCollection {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -85,8 +75,7 @@ pub struct NewCollectionWithAssignee {
 /// into the database.
 ///
 /// Odds are pretty good that you want to use NewCollectionWithAssignee instead.
-#[derive(Serialize, Deserialize, Insertable, ToSchema)]
-#[diesel(table_name = collections)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct NewCollection {
     pub name: String,
     pub description: String,
@@ -134,7 +123,14 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::principal_on_from_backend(backend, principal, collection_ref).await
+    let query = CollectionPrincipalQuery::new(
+        principal.principal_id(),
+        collection_ref.collection_id(backend).await?.id(),
+    );
+    storage_handle(backend)
+        .principal_collection_permissions(query)
+        .await
+        .map_err(ApiError::from)
 }
 
 /// All of a principal's direct permission rows across every collection, as
@@ -147,7 +143,10 @@ where
     C: StorageContext,
     S: AuthzSubject,
 {
-    collection_backend::principal_all_permissions_from_backend(backend, principal).await
+    storage_handle(backend)
+        .principal_all_collection_permissions(principal.principal_id())
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn principal_on_paginated_with_total_count<C, S, T>(
@@ -161,13 +160,17 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::principal_on_paginated_with_total_count_from_backend(
-        backend,
-        principal,
-        collection_ref,
-        query_options,
-    )
-    .await
+    let principal = CollectionPrincipalQuery::new(
+        principal.principal_id(),
+        collection_ref.collection_id(backend).await?.id(),
+    );
+    storage_handle(backend)
+        .principal_collection_permissions_page(CollectionPrincipalPageQuery::new(
+            principal,
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn effective_principal_on<C, S, T>(
@@ -180,8 +183,14 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::effective_principal_on_from_backend(backend, principal, collection_ref)
+    let query = CollectionPrincipalQuery::new(
+        principal.principal_id(),
+        collection_ref.collection_id(backend).await?.id(),
+    );
+    storage_handle(backend)
+        .effective_principal_collection_permissions(query)
         .await
+        .map_err(ApiError::from)
 }
 
 /// Check if a user has a specific permission to any collection
@@ -205,8 +214,14 @@ where
     C: StorageContext,
     U: GroupAccessors + AuthzSubject,
 {
-    collection_backend::user_can_on_any_from_backend(backend, user_id, permission_type, scopes)
+    storage_handle(backend)
+        .visible_collections(CollectionVisibilityQuery::new(
+            user_id.principal_id(),
+            permission_type,
+            scopes,
+        ))
         .await
+        .map_err(ApiError::from)
 }
 
 /// Check if a group has a specific permission to a given collection ID
@@ -230,8 +245,14 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::group_can_on_from_backend(backend, gid, collection_ref, permission_type)
+    storage_handle(backend)
+        .group_has_collection_permission(CollectionGroupPermissionQuery::new(
+            collection_ref.collection_id(backend).await?.id(),
+            gid,
+            permission_type,
+        ))
         .await
+        .map_err(ApiError::from)
 }
 
 pub async fn effective_group_on<C>(
@@ -242,7 +263,10 @@ pub async fn effective_group_on<C>(
 where
     C: StorageContext,
 {
-    collection_backend::effective_group_on_from_backend(backend, target_collection_id, gid).await
+    storage_handle(backend)
+        .effective_group_collection_permissions(target_collection_id, gid)
+        .await
+        .map_err(ApiError::from)
 }
 
 /// Check what groups have a specific permission to a given collection ID
@@ -263,8 +287,13 @@ pub async fn groups_can_on<C>(
 where
     C: StorageContext,
 {
-    collection_backend::groups_can_on_from_backend(backend, target_collection_id, permission_type)
+    storage_handle(backend)
+        .groups_with_collection_permission(CollectionGroupsQuery::new(
+            target_collection_id,
+            permission_type,
+        ))
         .await
+        .map_err(ApiError::from)
 }
 
 pub async fn groups_can_on_paginated_with_total_count<C>(
@@ -276,13 +305,13 @@ pub async fn groups_can_on_paginated_with_total_count<C>(
 where
     C: StorageContext,
 {
-    collection_backend::groups_can_on_paginated_with_total_count_from_backend(
-        backend,
-        target_collection_id,
-        permission_type,
-        query_options,
-    )
-    .await
+    storage_handle(backend)
+        .groups_with_collection_permission_page(CollectionGroupsPageQuery::new(
+            CollectionGroupsQuery::new(target_collection_id, permission_type),
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)
 }
 
 /// List all groups and their permissions for a collection
@@ -304,13 +333,14 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::groups_on_from_backend(
-        backend,
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    storage_handle(backend)
+        .list_collection_group_permissions(CollectionGrantListQuery::new(
+            collection_ref.collection_id(backend).await?.id(),
+            permissions_filter,
+            query_options,
+        ))
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn groups_on_paginated<C, T>(
@@ -323,13 +353,15 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::groups_on_paginated_from_backend(
-        backend,
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    let (items, _) = storage_handle(backend)
+        .list_collection_group_permissions_page(CollectionGrantListQuery::new(
+            collection_ref.collection_id(backend).await?.id(),
+            permissions_filter,
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)?;
+    Ok(items)
 }
 
 pub async fn groups_on_paginated_with_total_count<C, T>(
@@ -342,13 +374,14 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::groups_on_paginated_with_total_count_from_backend(
-        backend,
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    storage_handle(backend)
+        .list_collection_group_permissions_page(CollectionGrantListQuery::new(
+            collection_ref.collection_id(backend).await?.id(),
+            permissions_filter,
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn count_groups_on_paginated<C, T>(
@@ -361,13 +394,15 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::count_groups_on_paginated_from_backend(
-        backend,
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    let (_, total) = storage_handle(backend)
+        .list_collection_group_permissions_page(CollectionGrantListQuery::new(
+            collection_ref.collection_id(backend).await?.id(),
+            permissions_filter,
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)?;
+    Ok(total)
 }
 
 /// List all permissions for a given group on a collection
@@ -379,7 +414,10 @@ pub async fn group_on<C>(
 where
     C: StorageContext,
 {
-    collection_backend::group_on_from_backend(backend, target_collection_id, gid).await
+    storage_handle(backend)
+        .collection_group_permission(target_collection_id, gid)
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn collection_children<C, T>(
@@ -390,7 +428,13 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::collection_children_from_backend(backend, collection_ref).await
+    let collection_id = collection_ref.collection_id(backend).await?;
+    storage_handle(backend)
+        .lifecycle_storage()
+        .inner()
+        .collection_children(collection_id)
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn collection_ancestors<C, T>(
@@ -401,7 +445,13 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::collection_ancestors_from_backend(backend, collection_ref).await
+    let collection_id = collection_ref.collection_id(backend).await?;
+    storage_handle(backend)
+        .lifecycle_storage()
+        .inner()
+        .collection_ancestors(collection_id)
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn move_collection<C>(
@@ -413,17 +463,13 @@ pub async fn move_collection<C>(
 where
     C: StorageContext,
 {
-    collection_backend::move_collection_record_from_backend(
-        backend,
-        collection_id,
-        new_parent_collection_id,
-        context,
-    )
-    .await
+    storage_handle(backend)
+        .move_collection_record(collection_id, new_parent_collection_id, context)
+        .await
+        .map_err(ApiError::from)
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::collections_history)]
+#[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct CollectionHistory {
     pub id: i32,
     pub name: String,
@@ -442,7 +488,45 @@ pub struct CollectionHistory {
     pub revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(CollectionHistory, "collections_history");
+impl crate::traits::CursorPaginated for CollectionHistory {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        matches!(
+            field,
+            crate::models::search::FilterField::HistoryId
+                | crate::models::search::FilterField::Revision
+        )
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorValue, ApiError> {
+        Ok(match field {
+            crate::models::search::FilterField::HistoryId => {
+                crate::traits::CursorValue::Integer(self.history_id)
+            }
+            crate::models::search::FilterField::Revision => {
+                crate::traits::CursorValue::Integer(self.revision.get())
+            }
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        vec![crate::models::search::SortParam {
+            field: crate::models::search::FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Self::default_sort()
+    }
+}
 
 #[async_trait]
 impl AuthzTarget for Collection {
@@ -476,6 +560,7 @@ impl AuthzTarget for CollectionID {
 mod tests {
     use std::vec;
 
+    use crate::storage::postgres::prelude::*;
     use diesel::sql_query;
 
     use super::*;
