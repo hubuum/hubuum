@@ -25,11 +25,11 @@ use crate::observability::metrics;
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
+use crate::services::identity::principal_is_disabled;
 use crate::services::tasks::{
     ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
-use crate::storage::postgres::operations::service_account::principal_is_disabled;
 use crate::storage::{
     StorageCallSite, with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
 };
@@ -700,7 +700,7 @@ async fn process_claimed_task(
 
     // Disabled-SA gate: queued service-account tasks must not run once the SA is
     // disabled (mirrors the immediate token-validation rejection).
-    if principal_is_disabled(context, &principal).await? {
+    if principal_is_disabled(context, principal.id).await? {
         return Err(ApiError::BadRequest(
             "Submitting service account is disabled; task will not run".to_string(),
         ));

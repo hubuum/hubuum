@@ -39,34 +39,37 @@ use crate::storage::{
     ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
     ExportQueryStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage,
-    ImportStorage, MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
-    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageBackupTaskArtifact,
-    StorageCallSite, StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
-    StorageExecution, StorageExportTaskArtifact, StorageImportOperation, StorageImportPlanItem,
-    StorageImportResult, StorageObject, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageQueryBudget, StorageRelatedDirection,
-    StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageSharedComputedFieldCreate,
+    IdentityStorage, ImportStorage, MetricsStorage, ObjectAggregateAuthorizationMode,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
+    OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
+    RestoreStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
+    StorageBackupTaskArtifact, StorageCallSite, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageError, StorageExecution, StorageExportTaskArtifact,
+    StorageImportOperation, StorageImportPlanItem, StorageImportResult, StorageObject,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StorageQueryBudget,
+    StorageRelatedDirection, StorageRelatedSort, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
+    StorageRevisionPrecondition, StorageServiceAccountCreate, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
     StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
     StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
     StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
-    StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageTokenListQuery, StorageTokenListState,
+    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -180,6 +183,209 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("authentication compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_complete_identity_operations() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("identity_contract_user"),
+        "testpassword",
+    )
+    .await;
+    let _token = user
+        .create_token(pool.get_ref())
+        .await
+        .expect("identity compatibility token should be created");
+    let owner_group = crate::tests::create_test_group(pool.get_ref()).await;
+    owner_group
+        .add_member_without_events(pool.get_ref(), &user)
+        .await
+        .expect("identity compatibility membership should be created");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let local_scope = backend
+                    .ensure_identity_scope(crate::storage::StorageIdentityScopeEnsure::new(
+                        LOCAL_IDENTITY_SCOPE,
+                        crate::models::LOCAL_PROVIDER_KIND,
+                    ))
+                    .await
+                    .expect("certified backend should reconcile identity scopes");
+                assert_eq!(
+                    backend
+                        .identity_scope_name(local_scope.id())
+                        .await
+                        .expect("certified backend should resolve one identity scope"),
+                    LOCAL_IDENTITY_SCOPE
+                );
+                assert_eq!(
+                    backend
+                        .identity_scope_names(vec![local_scope.id()])
+                        .await
+                        .expect("certified backend should resolve identity scopes"),
+                    vec![(local_scope.id(), LOCAL_IDENTITY_SCOPE.to_string())]
+                );
+
+                let membership = backend
+                    .load_principal_group(user.id, owner_group.id)
+                    .await
+                    .expect("certified backend should load effective memberships");
+                assert_eq!(membership.principal_id(), user.id);
+                assert!(
+                    backend
+                        .is_human_owner_group_member(user.id, owner_group.id)
+                        .await
+                        .expect("certified backend should evaluate human ownership")
+                );
+
+                let token_options =
+                    prepare_db_pagination::<crate::models::PrincipalToken>(&QueryOptions {
+                        filters: Vec::new(),
+                        sort: Vec::new(),
+                        limit: Some(20),
+                        cursor: None,
+                        include_total: true,
+                    })
+                    .expect("identity compatibility token query should be valid");
+                let (tokens, token_total) = backend
+                    .list_retained_tokens(StorageTokenListQuery::new(
+                        user.id,
+                        token_options,
+                        StorageTokenListState::Active,
+                    ))
+                    .await
+                    .expect("certified backend should list retained tokens")
+                    .into_parts();
+                assert_eq!(token_total, Some(1));
+                assert_eq!(tokens[0].principal_id(), user.id);
+
+                let event_context = EventContext::user(user.id, None, None);
+                let service_account_name = prefix("identity_contract_sa");
+                let created = backend
+                    .create_service_account(StorageServiceAccountCreate::new(
+                        &service_account_name,
+                        "identity contract",
+                        owner_group.id,
+                        Some(user.id),
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should create service accounts");
+                let loaded = backend
+                    .load_service_account(created.id())
+                    .await
+                    .expect("certified backend should load service accounts");
+                assert_eq!(loaded.owner_group_id(), owner_group.id);
+                let point = backend
+                    .load_service_account_point(created.id())
+                    .await
+                    .expect("certified backend should load service-account points");
+                assert_eq!(point.into_parts().2, service_account_name);
+
+                let service_account_options =
+                    prepare_db_pagination::<crate::models::ServiceAccountWithName>(&QueryOptions {
+                        filters: Vec::new(),
+                        sort: Vec::new(),
+                        limit: Some(100),
+                        cursor: None,
+                        include_total: true,
+                    })
+                    .expect("identity compatibility service-account query should be valid");
+                let (accounts, account_total) = backend
+                    .list_manageable_service_accounts(StorageServiceAccountListQuery::new(
+                        user.id,
+                        true,
+                        service_account_options,
+                    ))
+                    .await
+                    .expect("certified backend should list manageable service accounts")
+                    .into_parts();
+                assert!(account_total.is_some_and(|total| total >= 1));
+                assert!(accounts.into_iter().any(|account| {
+                    let (account, _, _, _) = account.into_parts();
+                    account.id() == created.id()
+                }));
+
+                let updated = backend
+                    .update_service_account(StorageServiceAccountUpdate::new(
+                        created.id(),
+                        Some("updated identity contract".to_string()),
+                        None,
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should update service accounts");
+                assert_eq!(updated.description(), "updated identity contract");
+                assert!(
+                    !backend
+                        .principal_is_disabled(created.id())
+                        .await
+                        .expect("certified backend should read principal lifecycle")
+                );
+                backend
+                    .disable_service_account(StorageServiceAccountMutation::new(
+                        created.id(),
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should disable service accounts");
+                assert!(
+                    backend
+                        .principal_is_disabled(created.id())
+                        .await
+                        .expect("certified backend should observe disabled principals")
+                );
+
+                let external_scope = prefix("identity_contract_scope");
+                let external_name = prefix("identity_contract_external");
+                let external = backend
+                    .sync_external_user(
+                        crate::storage::StorageExternalUserSync::builder(
+                            &external_scope,
+                            "compatibility_provider",
+                            prefix("identity_contract_subject"),
+                            &external_name,
+                        )
+                        .groups(vec![crate::storage::StorageExternalGroup::new(
+                            prefix("identity_contract_group_key"),
+                            prefix("identity_contract_group"),
+                            None,
+                        )])
+                        .build(),
+                    )
+                    .await
+                    .expect("certified backend should synchronize external identities");
+                let external_id = external.into_parts().0;
+                let external_state = backend
+                    .external_principal_state(external_id)
+                    .await
+                    .expect("certified backend should load external identity state")
+                    .expect("synchronized external identity should have refresh state");
+                assert_eq!(external_state.identity_scope(), external_scope);
+                backend
+                    .mark_external_sync_attempted(external_id)
+                    .await
+                    .expect("certified backend should record external sync attempts");
+
+                backend
+                    .delete_service_account(StorageServiceAccountMutation::new(
+                        created.id(),
+                        event_context,
+                    ))
+                    .await
+                    .expect("certified backend should delete service accounts");
+            }
+        }
+    }
+
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("identity compatibility user should be removed");
 }
 
 #[actix_web::test]

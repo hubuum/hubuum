@@ -230,6 +230,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     for required in [
         "LifecycleStorage",
         "AuthenticationStorage",
+        "IdentityStorage",
         "AuthorizationStorage",
         "CatalogStorage",
         "ComputedFieldLifecycleStorage",
@@ -406,6 +407,40 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         assert!(
             compact_context.contains(&format!("\"tasks\",\"{operation}\"")),
             "task queue operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "authenticate_bearer_token",
+        "load_identity",
+        "load_token_scope",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"authentication\",\"{operation}\"")),
+            "authentication operation {operation} must use the common storage observer"
+        );
+    }
+    for operation in [
+        "ensure_scope",
+        "load_scope_name",
+        "load_scope_names",
+        "load_membership",
+        "list_tokens",
+        "human_owner_group_member",
+        "principal_is_disabled",
+        "load_service_account",
+        "load_service_account_point",
+        "list_service_accounts",
+        "create_service_account",
+        "update_service_account",
+        "disable_service_account",
+        "delete_service_account",
+        "load_external_state",
+        "mark_external_sync_attempted",
+        "sync_external_user",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"identity\",\"{operation}\"")),
+            "identity operation {operation} must use the common storage observer"
         );
     }
     for operation in [
@@ -623,6 +658,10 @@ fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
     );
     for forbidden in [
         "operations::Status",
+        "mod active_tokens",
+        "mod external_identity",
+        "mod identity",
+        "mod service_account",
         "with_storage_call_site",
         "with_mutation_provenance_scope",
         "with_revision_precondition_scope",

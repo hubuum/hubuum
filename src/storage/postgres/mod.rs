@@ -67,18 +67,23 @@ use super::{
     EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
     EventRetentionSummary, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
-    OperationalStateStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, StorageCallSite, StorageClass, StorageClassGraphRow,
-    StorageClassRelation, StorageCollection, StorageComputedObject, StorageError, StorageExecution,
-    StorageIdentity, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePoolState, StorageQueryBudget, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRevisionPrecondition, TaskGaugeSnapshot,
-    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    IdentityStorage, InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
+    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalStateStorage, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    StorageCallSite, StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
+    StorageComputedObject, StorageError, StorageExecution, StorageExternalPrincipalState,
+    StorageExternalUserSync, StorageIdentity, StorageIdentityPage, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
+    StorageObjectRelation, StoragePoolState, StoragePrincipalGroup, StorageQueryBudget,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRevisionPrecondition,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenMetadata,
+    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -197,6 +202,159 @@ impl AuthenticationStorage for PostgresStorage {
         query: AuthenticationTokenScopeQuery,
     ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
         operations::authentication::load_authentication_token_scope(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl IdentityStorage for PostgresStorage {
+    async fn ensure_identity_scope(
+        &self,
+        request: StorageIdentityScopeEnsure,
+    ) -> Result<StorageIdentityScope, StorageError> {
+        operations::identity_operations::ensure_identity_scope(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
+        operations::identity_operations::identity_scope_name(&self.pool, scope_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn identity_scope_names(
+        &self,
+        scope_ids: Vec<i32>,
+    ) -> Result<Vec<(i32, String)>, StorageError> {
+        operations::identity_operations::identity_scope_names(&self.pool, scope_ids)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_principal_group(
+        &self,
+        principal_id: i32,
+        group_id: i32,
+    ) -> Result<StoragePrincipalGroup, StorageError> {
+        operations::identity_operations::load_principal_group(&self.pool, principal_id, group_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_retained_tokens(
+        &self,
+        query: StorageTokenListQuery,
+    ) -> Result<StorageIdentityPage<StorageTokenMetadata>, StorageError> {
+        operations::identity_operations::list_retained_tokens(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn is_human_owner_group_member(
+        &self,
+        principal_id: i32,
+        owner_group_id: i32,
+    ) -> Result<bool, StorageError> {
+        operations::identity_operations::is_human_owner_group_member(
+            &self.pool,
+            principal_id,
+            owner_group_id,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+
+    async fn principal_is_disabled(&self, principal_id: i32) -> Result<bool, StorageError> {
+        operations::identity_operations::principal_is_disabled(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_service_account(
+        &self,
+        service_account_id: i32,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        operations::identity_operations::load_service_account(&self.pool, service_account_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_service_account_point(
+        &self,
+        service_account_id: i32,
+    ) -> Result<StorageServiceAccountPoint, StorageError> {
+        operations::identity_operations::load_service_account_point(&self.pool, service_account_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_manageable_service_accounts(
+        &self,
+        query: StorageServiceAccountListQuery,
+    ) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, StorageError> {
+        operations::identity_operations::list_manageable_service_accounts(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_service_account(
+        &self,
+        request: StorageServiceAccountCreate,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        operations::identity_operations::create_service_account(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn update_service_account(
+        &self,
+        request: StorageServiceAccountUpdate,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        operations::identity_operations::update_service_account(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn disable_service_account(
+        &self,
+        request: StorageServiceAccountMutation,
+    ) -> Result<StorageServiceAccount, StorageError> {
+        operations::identity_operations::disable_service_account(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_service_account(
+        &self,
+        request: StorageServiceAccountMutation,
+    ) -> Result<(), StorageError> {
+        operations::identity_operations::delete_service_account(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn external_principal_state(
+        &self,
+        principal_id: i32,
+    ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
+        operations::identity_operations::external_principal_state(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn mark_external_sync_attempted(&self, principal_id: i32) -> Result<(), StorageError> {
+        operations::identity_operations::mark_external_sync_attempted(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn sync_external_user(
+        &self,
+        request: StorageExternalUserSync,
+    ) -> Result<StorageSyncedHuman, StorageError> {
+        operations::identity_operations::sync_external_user(&self.pool, request)
             .await
             .map_err(map_postgres_error)
     }

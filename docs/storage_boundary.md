@@ -86,7 +86,7 @@ explicit architecture change rather than an incidental trait implementation.
 Backend certification contains no empty capability markers. Identity,
 catalog-query, relation-query, history, unified-search, workflow, and operational
 responsibilities are enforced by operation-shaped traits and shared tests. The
-complete contract includes `AuthenticationStorage`,
+complete contract includes `AuthenticationStorage`, `IdentityStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
 `ObjectAggregateStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
@@ -110,13 +110,16 @@ PostgreSQL query implementations live in
 root domain models is the next extraction layer; the current location is an
 implementation detail, not partial backend support. `StorageHandle` selects
 one certified PostgreSQL adapter, and only the storage implementation can
-recover its pool. Application consumers use `StorageContext`, lifecycle
-traits, mandatory capability traits, or application services. No second backend can be added to
-composition without implementing every operation behind those contracts.
+recover its pool. Application consumers use `StorageContext`, lifecycle traits,
+mandatory capability traits, or application services. No second backend can be
+added to composition without implementing every operation behind those
+contracts.
 
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
+Version 17 requires the complete `IdentityStorage` operation set described
+below; the required capability labels are unchanged.
 
 ## Export Query Semantics
 
@@ -312,6 +315,26 @@ PostgreSQL kind strings, credential hashes, Diesel rows, and scope-table layouts
 never cross into request handling. The opaque `StorageHandle` applies the
 common `authentication` tracing and metric labels before dispatching to the
 selected adapter.
+
+`IdentityStorage` owns identity-scope reconciliation and lookup, effective
+principal-group membership reads, retained-token metadata pages, principal
+disablement facts, complete service-account point/list/lifecycle behavior, and
+external-directory synchronization. These operations are mandatory as one
+indivisible contract: a backend that can authenticate principals but cannot
+manage their scopes, memberships, service accounts, tokens, and external
+identity state is not selectable. Lifecycle requests carry the required event
+context so the adapter can keep identity mutations and audit events atomic.
+The application service converts the private-field storage DTOs into public
+domain and API models and maps `StorageError` into `ApiError`.
+
+The opaque handle observes every identity operation using bounded
+`identity/*` labels. Sensitive request DTOs and the few response DTOs that need
+`Debug` expose only redacted implementations; the remaining response DTOs omit
+`Debug`. Neither credential material nor names, descriptions, IDs, group
+membership, or synchronized-user PII can be printed accidentally at this
+boundary. The shared available-backend suite exercises every identity
+operation, and PostgreSQL tests retain responsibility for native transaction
+and query mechanics.
 
 `AuthorizationStorage` supplies neutral principal membership facts and the
 complete local-policy-store surface: collection decisions, reverse collection

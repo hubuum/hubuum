@@ -22,7 +22,7 @@ use crate::models::{
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobStatus,
     RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
-use crate::storage::capabilities::identity::identity_scope_name_by_id;
+use crate::services::identity::identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
 use crate::storage::{
     OperationalStateStorage, RestoreStorage, StorageBackupSnapshot, StorageContext,
@@ -1203,7 +1203,7 @@ pub async fn identity_scope_name(
     pool: &impl crate::storage::StorageContext,
     identity_scope_id: i32,
 ) -> Result<String, ApiError> {
-    identity_scope_name_by_id(pool, identity_scope_id).await
+    load_identity_scope_name(pool, identity_scope_id).await
 }
 
 #[cfg(test)]
