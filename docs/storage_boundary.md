@@ -113,11 +113,12 @@ and revision-precondition scopes used across requests and workers.
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
-`src/storage/postgres/operations/*`. Export-template, remote-target, event-sink,
-event-subscription, and event-delivery lifecycle rows are adapter-owned, as are
-remote-target history and remote-call result persistence rows. Remaining mixed
-persistence rows move there as their backend-neutral DTOs are extracted. Their
-current locations are implementation details, not partial backend support.
+`src/storage/postgres/operations/*`. Export-template, remote-target, event,
+event-sink, event-subscription, and event-delivery lifecycle rows are
+adapter-owned, as are remote-target history and remote-call result persistence
+rows. Remaining mixed persistence rows move there as their backend-neutral DTOs
+are extracted. Their current locations are implementation details, not partial
+backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
@@ -558,12 +559,17 @@ through related collections. Sink and subscription writes are atomic with
 their lifecycle events, and subscription point and mutation operations are
 collection-scoped at the contract boundary.
 
-Event-sink, event-subscription, and event-delivery API models contain no Diesel
-derives, schema bindings, persistence changesets, claim tokens, or SQL cursor
-mappings. Those rows and mappings stay in the PostgreSQL adapter, which converts
-them to backend-neutral storage DTOs. Handlers and request-level tests use
-application or test-support entry points rather than importing adapter rows,
-opening SQL connections, or mutating delivery tables directly.
+Event, event-sink, event-subscription, and event-delivery API/domain models
+contain no Diesel derives, schema bindings, persistence changesets, claim
+tokens, or SQL cursor mappings. `NewEvent` is a validated, private-field append
+DTO rather than an insertable PostgreSQL record. Each backend owns the row and
+append representation used inside its lifecycle transactions, preserving the
+mandatory atomic event semantics without exposing a connection-bound writer.
+The PostgreSQL adapter also owns audit SQL cursor mapping and fan-out dispatch
+state. It converts rows to backend-neutral DTOs before returning. Handlers and
+request-level tests use application or test-support entry points rather than
+importing adapter rows, opening event-table SQL connections, or mutating
+delivery tables directly.
 
 Delivery administration returns claim-free projections. Opaque worker claim
 tokens never cross into handlers, logs, or administrator responses. Listing

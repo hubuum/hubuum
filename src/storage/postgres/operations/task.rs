@@ -13,9 +13,7 @@ use uuid::Uuid;
 use crate::apply_query_options;
 use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::events::{
-    Action, EntityType, Event, MutationProvenance, NewEvent, emit_event, notify_task_queue,
-};
+use crate::events::{Action, EntityType, Event, MutationProvenance, NewEvent, notify_task_queue};
 use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
@@ -26,6 +24,8 @@ use crate::models::{
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
+use crate::storage::postgres::operations::event_record::EventRow;
+use crate::storage::postgres::operations::event_record::emit_event;
 #[cfg(test)]
 use crate::storage::postgres::operations::history::resolve_principal_names;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
@@ -437,18 +437,19 @@ pub trait TaskBackend: TaskIdentifier {
                 query
                     .order(id.desc())
                     .limit(limit as i64)
-                    .load::<Event>(conn)
+                    .load::<EventRow>(conn)
                     .await
             } else {
                 query
                     .order(id.asc())
                     .limit(limit as i64)
-                    .load::<Event>(conn)
+                    .load::<EventRow>(conn)
                     .await
             }
         })
         .await?
         .into_iter()
+        .map(Event::from)
         .map(TaskEventRecord::try_from)
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -1952,7 +1953,7 @@ mod tests {
         renew_task_lease, task_capacity_lock_key, task_event_responses, task_kind_claim_order,
     };
     use crate::errors::ApiError;
-    use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+    use crate::events::{Action, ActorKind, EntityType, NewEvent};
     use crate::models::search::QueryOptions;
     use crate::models::{
         CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
@@ -1961,6 +1962,7 @@ mod tests {
         StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
         TokenScope,
     };
+    use crate::storage::postgres::operations::event_record::emit_event;
     use crate::storage::postgres::operations::remote_target::NewRemoteCallResultRow;
     use crate::storage::postgres::operations::user::DeleteUserRecord;
     use crate::storage::postgres::{capture_queries, with_connection, with_transaction};

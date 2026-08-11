@@ -3,12 +3,13 @@ use serde_json::{Value, json};
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, NewEvent, emit_event};
+use crate::events::{Action, EntityType, NewEvent};
 use crate::models::{
     NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsPatch,
     PrincipalSettingsResponse, ResourceRevision, ServiceAccount, ServiceAccountPointResponse, User,
     UserPointResponse, UserResponse, UserWithName,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{
     PostgresConnection, assert_locked_revision_precondition, with_connection, with_transaction,

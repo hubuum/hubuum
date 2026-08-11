@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::search::{
     ComputedFieldScope, ComputedQueryValueType, FilterField, Operator, ParsedQueryParam,
     ParsedQueryParamExt, QueryOptions, SQLComponent, SQLValue, SortParam,
@@ -26,6 +26,7 @@ use crate::models::{
     ValidatedComputedFieldPatch,
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::search::{JsonSqlPredicate, dynamic_sql_predicate};
 use crate::storage::postgres::operations::task::{
     QueuedTaskCancellation, TaskBackend, TaskStateUpdate, cancel_queued_tasks_conn,

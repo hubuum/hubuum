@@ -628,8 +628,10 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
     }
 
     for file in [
+        "src/events/model.rs",
         "src/models/event_delivery.rs",
         "src/models/event_subscription.rs",
+        "tests/api_platform_suite/events.rs",
         "tests/api_platform_suite/event_deliveries.rs",
         "tests/api_platform_suite/event_subscriptions.rs",
     ] {
@@ -649,6 +651,37 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
             "NewEventSubscriptionRow",
             "UpdateEventSubscriptionRow",
             "EventDeliveryRow",
+            "EventRow",
+            "NewEventRow",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} still uses event persistence detail {forbidden}",
+                path.display()
+            );
+        }
+    }
+
+    for file in [
+        "tests/api_core_data_suite/object_data_patch/mod.rs",
+        "tests/api_core_data_suite/object_data_patch/atomicity.rs",
+        "tests/api_identity_suite/principal_settings.rs",
+        "tests/api_identity_suite/principal_settings_json_patch.rs",
+        "tests/api_identity_suite/service_accounts.rs",
+        "tests/api_platform_suite/events.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "schema::events",
+            "events::table",
+            "events::dsl",
+            "emit_event(",
+            "operations::event_record",
+            "Event::as_select",
+            "EventRow",
+            "NewEventRow",
         ] {
             assert!(
                 !source.contains(forbidden),

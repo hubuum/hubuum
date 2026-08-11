@@ -2,9 +2,8 @@
 //!
 //! The canonical `events` table is the single source of truth for both the
 //! internal audit log and external event delivery. A change is recorded iff
-//! its database transaction commits: [`emit_event`] appends exactly one row
-//! inside the caller's `with_transaction` block, so the event rolls back
-//! together with the domain mutation on failure.
+//! its storage transaction commits, so the event rolls back together with the
+//! domain mutation on failure.
 //!
 //! Backend-agnostic catalog types (`EntityType` / `Action` / `ActorKind` and
 //! the validity catalog) live in the [`hubuum_events_core`] crate, which is
@@ -12,7 +11,6 @@
 //! the fan-out worker share one authoritative definition.
 
 mod context;
-mod db;
 mod delivery;
 mod fanout;
 mod model;
@@ -22,8 +20,6 @@ mod settings;
 mod sink;
 
 pub use context::RequestProvenance;
-pub use db::emit_event;
-pub(crate) use db::emit_events;
 pub(crate) use delivery::event_delivery_worker_health;
 pub use delivery::{
     ensure_event_delivery_worker_running, event_delivery_wakeup_stats, kick_event_delivery_worker,

@@ -11,7 +11,7 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use crate::auth::ConfiguredLdapScope;
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent};
 use crate::models::user::User;
 use crate::models::{
     CollectionID, EventDeliveryResponse, EventDeliveryStatus, NewEventSink, NewEventSubscription,
@@ -24,6 +24,9 @@ use crate::storage::postgres::operations::event_delivery::{
     set_event_delivery_status_for_test,
 };
 use crate::storage::postgres::operations::event_fanout::fanout_event;
+use crate::storage::postgres::operations::event_record::{
+    count_events_for_test, emit_event, list_events_for_test,
+};
 use crate::storage::postgres::operations::event_subscription::{
     NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
 };
@@ -126,25 +129,45 @@ pub async fn remote_call_result(
 
 /// Count audit events through the PostgreSQL test adapter boundary.
 pub async fn audit_event_count(
-    pool: &PostgresPool,
+    pool: &impl crate::storage::StorageContext,
     entity_type_value: crate::events::EntityType,
     action_value: crate::events::Action,
     entity_id_value: i32,
 ) -> Result<i64, ApiError> {
-    use crate::schema::events::dsl::{action, entity_id, entity_type, events};
-    use crate::storage::postgres::prelude::*;
+    count_events_for_test(pool, entity_type_value, entity_id_value, Some(action_value)).await
+}
+
+/// Count all audit events for one typed entity through test support.
+pub async fn audit_event_total(
+    pool: &impl crate::storage::StorageContext,
+    entity_type: EntityType,
+    entity_id: i32,
+) -> Result<i64, ApiError> {
+    count_events_for_test(pool, entity_type, entity_id, None).await
+}
+
+/// Load typed audit responses for one entity through test support.
+pub async fn audit_events(
+    pool: &impl crate::storage::StorageContext,
+    entity_type: EntityType,
+    entity_id: i32,
+    action: Option<Action>,
+) -> Result<Vec<EventResponse>, ApiError> {
+    list_events_for_test(pool, entity_type, entity_id, action)
+        .await
+        .map(|events| events.into_iter().map(EventResponse::from).collect())
+}
+
+/// Append one validated audit event through PostgreSQL test support.
+pub async fn create_audit_event(
+    pool: &impl crate::storage::StorageContext,
+    event: &NewEvent,
+) -> Result<EventResponse, ApiError> {
     use crate::storage::postgres::with_connection;
 
-    with_connection(pool, async |conn| {
-        events
-            .filter(entity_type.eq(entity_type_value.as_str()))
-            .filter(action.eq(action_value.as_str()))
-            .filter(entity_id.eq(entity_id_value))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
-    .await
+    with_connection(pool, async |conn| emit_event(conn, event).await)
+        .await
+        .map(EventResponse::from)
 }
 
 /// Emit, fan out, and load one collection event delivery for request tests.

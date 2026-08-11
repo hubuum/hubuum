@@ -4,7 +4,7 @@ use serde_json;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::{
     Collection, HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectRelationID, NewHubuumObject, NewHubuumObjectRelation, ObjectDataPatchDocument,
@@ -16,6 +16,7 @@ use crate::storage::postgres::operations::class::lock_resolved_class_target;
 use crate::storage::postgres::operations::computed_field::{
     acquire_computed_class_shared_lock, materialize_object_in_transaction,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 use crate::traits::{ClassAccessors, SelfAccessors};
 

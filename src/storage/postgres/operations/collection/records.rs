@@ -1,6 +1,7 @@
 use super::*;
 use crate::api::etag::RevisionOwner;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
+use crate::storage::postgres::operations::event_record::emit_event;
 use chrono::NaiveDateTime;
 use diesel_async::RunQueryDsl;
 

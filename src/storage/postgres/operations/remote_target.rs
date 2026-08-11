@@ -5,7 +5,7 @@ use crate::storage::postgres::prelude::*;
 use crate::api::etag::RevisionOwner;
 use crate::apply_query_options;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 #[cfg(feature = "integration-test-support")]
 use crate::models::remote_target::RemoteCallResult;
 use crate::models::remote_target::RemoteTargetID;
@@ -14,6 +14,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_optio
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::{date_search, numeric_search, revision_search, string_search};
 

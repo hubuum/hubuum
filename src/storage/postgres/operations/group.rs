@@ -2,7 +2,7 @@ use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE,
 };
@@ -10,6 +10,7 @@ use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
     Group, GroupID, NewGroup, NewPrincipalGroup, Principal, PrincipalGroup, UpdateGroup,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::identity::{
     identity_scope_by_name, identity_scope_id_by_name_conn,
 };

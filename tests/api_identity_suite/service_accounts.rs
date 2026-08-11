@@ -2945,17 +2945,12 @@ mod tests {
         action_value: Action,
         service_account_id: i32,
     ) -> i64 {
-        with_connection(&context.pool, async |conn| {
-            use crate::schema::events::dsl::{action, entity_id, entity_type, events};
-
-            events
-                .filter(entity_type.eq(EntityType::ServiceAccount.as_str()))
-                .filter(action.eq(action_value.as_str()))
-                .filter(entity_id.eq(service_account_id))
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
+        crate::test_support::audit_event_count(
+            &context.pool,
+            EntityType::ServiceAccount,
+            action_value,
+            service_account_id,
+        )
         .await
         .unwrap()
     }

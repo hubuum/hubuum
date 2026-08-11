@@ -13,6 +13,7 @@ pub(crate) mod event_administration;
 pub mod event_delivery;
 pub mod event_fanout;
 pub mod event_observability;
+pub(crate) mod event_record;
 pub mod event_retention;
 pub mod event_subscription;
 pub mod events;

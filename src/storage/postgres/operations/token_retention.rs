@@ -3,10 +3,11 @@ use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{BigInt, Bool, Integer, Timestamp};
 
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_events};
+use crate::events::{Action, ActorKind, EntityType, NewEvent};
 use crate::models::{PrincipalToken, TokenRetentionSettings, TokenScope};
 use crate::schema::tokens;
 use crate::storage::postgres::operations::authz::load_token_scopes_for_tokens_conn;
+use crate::storage::postgres::operations::event_record::emit_events;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::operations::token::token_snapshot;
 use crate::storage::postgres::{PostgresConnection, with_transaction};
@@ -271,7 +272,7 @@ mod tests {
     use diesel::sql_types::{Bool, Text};
     use rstest::rstest;
 
-    use crate::events::{Action, ActorKind, EntityType, Event};
+    use crate::events::{Action, ActorKind, EntityType};
     use crate::models::search::QueryOptions;
     use crate::models::{
         MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, Permissions, PrincipalID,
@@ -280,6 +281,7 @@ mod tests {
     };
     use crate::schema::{events, token_scopes, tokens};
     use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
+    use crate::storage::postgres::operations::event_record::EventRow;
     use crate::storage::postgres::operations::user::DeleteUserRecord;
     use crate::storage::postgres::with_connection;
     use crate::tests::{TestMutex, create_test_user, lock_test_mutex, test_mutex};
@@ -626,7 +628,7 @@ mod tests {
                 .filter(events::entity_type.eq(EntityType::Token.as_str()))
                 .filter(events::entity_id.eq(Some(token_id)))
                 .filter(events::action.eq(Action::Purged.as_str()))
-                .first::<Event>(conn)
+                .first::<EventRow>(conn)
                 .await
         })
         .await

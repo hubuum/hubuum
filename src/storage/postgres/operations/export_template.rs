@@ -11,13 +11,14 @@ use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::ResourceRevision;
 use crate::models::export_template::ExportTemplateID;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::{date_search, numeric_search, revision_search, string_search};
 

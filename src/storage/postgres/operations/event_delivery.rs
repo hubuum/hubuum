@@ -25,6 +25,7 @@ use crate::storage::{
     EventDeliveryWorkItem,
 };
 
+use super::event_record::EventRow;
 use super::event_subscription::{EventSinkRow, EventSubscriptionRow};
 
 #[derive(Clone, Queryable, Selectable, PartialEq, Eq)]
@@ -466,9 +467,10 @@ async fn load_claimed_delivery_contexts(
 
     let loaded_events = events::table
         .filter(events::id.eq_any(&event_ids))
-        .load::<Event>(conn)
+        .load::<EventRow>(conn)
         .await?
         .into_iter()
+        .map(Event::from)
         .map(|event| (event.id, event))
         .collect::<HashMap<_, _>>();
     let loaded_subscriptions = event_subscriptions::table

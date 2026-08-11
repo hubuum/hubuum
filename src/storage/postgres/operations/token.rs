@@ -2,7 +2,7 @@ use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
     PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest,
@@ -15,6 +15,7 @@ use crate::schema::{
 use crate::storage::postgres::operations::authz::{
     load_token_scope_conn, load_token_scopes_for_tokens_conn,
 };
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 
 #[derive(Insertable)]

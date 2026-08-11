@@ -2,13 +2,14 @@ use crate::storage::postgres::prelude::*;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::{
     ClassIdSet, ClassSelector, ClassSelectorKind, Collection, HubuumClass, HubuumClassID,
     HubuumClassRelation, HubuumClassRelationID, NewHubuumClass, NewHubuumClassRelation,
     ResolvedClassTarget, UpdateHubuumClass,
 };
 use crate::storage::postgres::operations::GetClass;
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{with_connection, with_transaction};
 
 fn class_snapshot(class: &HubuumClass) -> serde_json::Value {

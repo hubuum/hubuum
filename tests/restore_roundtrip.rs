@@ -2,7 +2,7 @@ use diesel::ExpressionMethods;
 use diesel_async::RunQueryDsl;
 use hubuum::backups::create_backup_document;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
-use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent, emit_event};
+use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent};
 use hubuum::models::{
     BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord, ObjectRelationLimit,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobID,
@@ -21,6 +21,7 @@ use hubuum::storage::postgres::{
     init_postgres_pool_with_statement_timeout, with_connection, with_transaction,
 };
 use hubuum::storage::with_mutation_provenance;
+use hubuum::test_support::create_audit_event;
 use hubuum::traits::CanSave;
 
 fn database_url() -> String {
@@ -127,11 +128,9 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         historical_task_id,
     ));
     let historical_task_event_id = historical_task_event.event_id();
-    with_connection(&pool, async |conn| {
-        emit_event(conn, &historical_task_event).await
-    })
-    .await
-    .expect("historical task event");
+    create_audit_event(&pool, &historical_task_event)
+        .await
+        .expect("historical task event");
     let document = create_backup_document(
         &pool,
         &BackupRequest {

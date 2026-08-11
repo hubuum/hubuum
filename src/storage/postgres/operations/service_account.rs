@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, Principal, PrincipalID, PrincipalKind};
 use crate::models::search::{FilterField, QueryOptions};
@@ -12,6 +12,7 @@ use crate::models::{
 use crate::schema::service_accounts;
 use crate::storage::StorageContext;
 use crate::storage::postgres::operations::authz::AuthzSubject as PostgresAuthzSubject;
+use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::identity::identity_scope_by_name;
 use crate::storage::postgres::operations::principal::{
     InsertPrincipalRecord, lock_principal_revision_conn, principal_revision_conn,
