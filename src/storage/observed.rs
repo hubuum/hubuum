@@ -7,12 +7,13 @@ use tracing::{Instrument, debug, debug_span, warn};
 
 use crate::events::EventContext;
 use crate::models::{
-    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
+    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelation,
+    HubuumClassRelationID, HubuumObject, HubuumObjectRelation, HubuumObjectRelationID,
     NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
-    PreparedClassRelation, PreparedObjectRelation, ResolvedClassRelationTarget,
-    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, UpdateCollection,
-    UpdateHubuumClass, UpdateHubuumObject,
+    NewHubuumObjectRelation, ObjectDataPatchDocument, ObjectRelationCreateSelector,
+    ObjectRelationSelector, ObjectSelector, PreparedClassRelation, PreparedObjectRelation,
+    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
+    ResolvedObjectTarget, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
 };
 
 use super::{
@@ -327,7 +328,7 @@ impl ClassRelationStore for ObservedLifecycleStorage {
     async fn create_class_relation(
         &self,
         prepared: &PreparedClassRelation,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<ResolvedClassRelationTarget, StorageError> {
         self.call(
             "class_relations",
@@ -340,12 +341,39 @@ impl ClassRelationStore for ObservedLifecycleStorage {
     async fn delete_class_relation(
         &self,
         target: &ResolvedClassRelationTarget,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
             "class_relations",
             "delete",
             self.inner.delete_class_relation(target, context),
+        )
+        .await
+    }
+
+    async fn create_class_relation_from_command(
+        &self,
+        command: NewHubuumClassRelation,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClassRelation, StorageError> {
+        self.call(
+            "class_relations",
+            "create_from_command",
+            self.inner
+                .create_class_relation_from_command(command, context),
+        )
+        .await
+    }
+
+    async fn delete_class_relation_by_id(
+        &self,
+        id: HubuumClassRelationID,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        self.call(
+            "class_relations",
+            "delete_by_id",
+            self.inner.delete_class_relation_by_id(id, context),
         )
         .await
     }
@@ -380,7 +408,7 @@ impl ObjectRelationStore for ObservedLifecycleStorage {
     async fn create_object_relation(
         &self,
         prepared: &PreparedObjectRelation,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<ResolvedObjectRelationTarget, StorageError> {
         self.call(
             "object_relations",
@@ -393,12 +421,39 @@ impl ObjectRelationStore for ObservedLifecycleStorage {
     async fn delete_object_relation(
         &self,
         target: &ResolvedObjectRelationTarget,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
             "object_relations",
             "delete",
             self.inner.delete_object_relation(target, context),
+        )
+        .await
+    }
+
+    async fn create_object_relation_from_command(
+        &self,
+        command: NewHubuumObjectRelation,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObjectRelation, StorageError> {
+        self.call(
+            "object_relations",
+            "create_from_command",
+            self.inner
+                .create_object_relation_from_command(command, context),
+        )
+        .await
+    }
+
+    async fn delete_object_relation_by_id(
+        &self,
+        id: HubuumObjectRelationID,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        self.call(
+            "object_relations",
+            "delete_by_id",
+            self.inner.delete_object_relation_by_id(id, context),
         )
         .await
     }

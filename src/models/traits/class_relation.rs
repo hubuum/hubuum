@@ -1,24 +1,91 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::storage::postgres::operations::relations::{
-    DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
-};
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     ClassGraphRow, Collection, CollectionID, HubuumClass, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject,
     HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID, NewHubuumClassRelation,
-    NewHubuumObjectRelation, ObjectGraphRow, RelatedObjectGraphRow,
+    NewHubuumObjectRelation, ObjectGraphRow, ObjectRelationCreateSelector, ObjectRelationSelector,
+    PreparedClassRelation, PreparedObjectRelation, RelatedObjectGraphRow,
+    ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
+use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{
     ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter, ObjectAdapter,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 use crate::traits::{
-    ClassAccessors, CollectionAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, ObjectAccessors, SelfAccessors,
+    ClassAccessors, CollectionAccessors, CursorPaginated, CursorValue, ObjectAccessors,
+    SelfAccessors,
 };
+
+async fn prepare_class_relation(
+    backend: &impl StorageContext,
+    command: &NewHubuumClassRelation,
+) -> Result<PreparedClassRelation, ApiError> {
+    storage_handle(backend)
+        .lifecycle_storage()
+        .inner()
+        .prepare_class_relation(command.clone())
+        .await
+        .map_err(ApiError::from)
+}
+
+async fn resolve_class_relation(
+    backend: &impl StorageContext,
+    id: HubuumClassRelationID,
+) -> Result<ResolvedClassRelationTarget, ApiError> {
+    storage_handle(backend)
+        .lifecycle_storage()
+        .inner()
+        .resolve_class_relation(id)
+        .await
+        .map_err(ApiError::from)
+}
+
+async fn prepare_object_relation(
+    backend: &impl StorageContext,
+    command: &NewHubuumObjectRelation,
+) -> Result<PreparedObjectRelation, ApiError> {
+    storage_handle(backend)
+        .lifecycle_storage()
+        .inner()
+        .prepare_object_relation(ObjectRelationCreateSelector::explicit(command.clone()))
+        .await
+        .map_err(ApiError::from)
+}
+
+async fn resolve_object_relation(
+    backend: &impl StorageContext,
+    id: HubuumObjectRelationID,
+) -> Result<ResolvedObjectRelationTarget, ApiError> {
+    storage_handle(backend)
+        .lifecycle_storage()
+        .inner()
+        .resolve_object_relation(ObjectRelationSelector::by_id(id))
+        .await
+        .map_err(ApiError::from)
+}
+
+async fn relation_collections(
+    backend: &impl StorageContext,
+    from_collection_id: i32,
+    to_collection_id: i32,
+) -> Result<(Collection, Collection), ApiError> {
+    let storage = storage_handle(backend).lifecycle_storage();
+    let from_collection = storage
+        .inner()
+        .get_collection(CollectionID::new(from_collection_id)?)
+        .await
+        .map_err(ApiError::from)?;
+    let to_collection = storage
+        .inner()
+        .get_collection(CollectionID::new(to_collection_id)?)
+        .await
+        .map_err(ApiError::from)?;
+    Ok((from_collection, to_collection))
+}
 
 impl IdAccessor for HubuumClassRelationID {
     fn accessor_id(&self) -> i32 {
@@ -34,7 +101,10 @@ impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelationID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClassRelation, ApiError> {
-        self.load_class_relation_record(pool).await
+        Ok(resolve_class_relation(pool, *self)
+            .await?
+            .relation()
+            .clone())
     }
 }
 impl IdAccessor for HubuumClassRelation {
@@ -57,7 +127,12 @@ impl DeleteAdapter for HubuumClassRelation {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        self.delete_class_relation_record_without_events(pool).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?, None)
+            .await
+            .map_err(ApiError::from)
     }
 
     async fn delete_adapter(
@@ -65,7 +140,12 @@ impl DeleteAdapter for HubuumClassRelation {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        self.delete_class_relation_record(pool, Some(context)).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?, Some(context))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -76,7 +156,12 @@ impl SaveAdapter for NewHubuumClassRelation {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClassRelation, ApiError> {
-        self.save_class_relation_record_without_events(pool).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .create_class_relation_from_command(self.clone(), None)
+            .await
+            .map_err(ApiError::from)
     }
 
     async fn save_adapter(
@@ -84,7 +169,12 @@ impl SaveAdapter for NewHubuumClassRelation {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<HubuumClassRelation, ApiError> {
-        self.save_class_relation_record(pool, Some(context)).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .create_class_relation_from_command(self.clone(), Some(context))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -93,7 +183,12 @@ impl DeleteAdapter for HubuumClassRelationID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        self.delete_class_relation_record_without_events(pool).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .delete_class_relation_by_id(*self, None)
+            .await
+            .map_err(ApiError::from)
     }
 
     async fn delete_adapter(
@@ -101,7 +196,12 @@ impl DeleteAdapter for HubuumClassRelationID {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        self.delete_class_relation_record(pool, Some(context)).await
+        storage_handle(pool)
+            .lifecycle_storage()
+            .inner()
+            .delete_class_relation_by_id(*self, Some(context))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -112,8 +212,13 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::storage::postgres::operations::GetCollection;
-        self.collection_from_backend(pool).await
+        let prepared = prepare_class_relation(pool, self).await?;
+        relation_collections(
+            pool,
+            prepared.from_class().collection_id,
+            prepared.to_class().collection_id,
+        )
+        .await
     }
 
     async fn collection_id_adapter(
@@ -135,8 +240,13 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::storage::postgres::operations::GetCollection;
-        self.collection_from_backend(pool).await
+        let prepared = prepare_object_relation(pool, self).await?;
+        relation_collections(
+            pool,
+            prepared.from_object().collection_id,
+            prepared.to_object().collection_id,
+        )
+        .await
     }
 
     async fn collection_id_adapter(
@@ -176,8 +286,13 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::storage::postgres::operations::GetCollection;
-        self.collection_from_backend(pool).await
+        let target = resolve_object_relation(pool, HubuumObjectRelationID::new(self.id)?).await?;
+        relation_collections(
+            pool,
+            target.from_object().collection_id,
+            target.to_object().collection_id,
+        )
+        .await
     }
 
     async fn collection_id_adapter(
@@ -199,8 +314,13 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::storage::postgres::operations::GetCollection;
-        self.collection_from_backend(pool).await
+        let target = resolve_class_relation(pool, HubuumClassRelationID::new(self.id)?).await?;
+        relation_collections(
+            pool,
+            target.from_class().collection_id,
+            target.to_class().collection_id,
+        )
+        .await
     }
 
     async fn collection_id_adapter(
@@ -222,8 +342,8 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        use crate::storage::postgres::operations::GetClass;
-        self.class_from_backend(pool).await
+        let target = resolve_class_relation(pool, HubuumClassRelationID::new(self.id)?).await?;
+        Ok((target.from_class().clone(), target.to_class().clone()))
     }
 
     async fn class_id_adapter(
@@ -262,8 +382,8 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        use crate::storage::postgres::operations::GetClass;
-        self.class_from_backend(pool).await
+        let target = resolve_class_relation(pool, *self).await?;
+        Ok((target.from_class().clone(), target.to_class().clone()))
     }
 
     async fn class_id_adapter(
@@ -281,8 +401,8 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        use crate::storage::postgres::operations::GetClass;
-        self.class_from_backend(pool).await
+        let prepared = prepare_class_relation(pool, self).await?;
+        Ok((prepared.from_class().clone(), prepared.to_class().clone()))
     }
 
     async fn class_id_adapter(
@@ -303,8 +423,8 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
-        use crate::storage::postgres::operations::GetObject;
-        self.object_from_backend(pool).await
+        let prepared = prepare_object_relation(pool, self).await?;
+        Ok((prepared.from_object().clone(), prepared.to_object().clone()))
     }
 
     async fn object_id_adapter(
@@ -325,8 +445,8 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
-        use crate::storage::postgres::operations::GetObject;
-        self.object_from_backend(pool).await
+        let target = resolve_object_relation(pool, *self).await?;
+        Ok((target.from_object().clone(), target.to_object().clone()))
     }
 
     async fn object_id_adapter(
@@ -344,8 +464,8 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
-        use crate::storage::postgres::operations::GetObject;
-        self.object_from_backend(pool).await
+        let target = resolve_object_relation(pool, HubuumObjectRelationID::new(self.id)?).await?;
+        Ok((target.from_object().clone(), target.to_object().clone()))
     }
 
     async fn object_id_adapter(
@@ -472,49 +592,6 @@ impl CursorPaginated for HubuumClassRelation {
     }
 }
 
-impl CursorSqlMapping for HubuumClassRelation {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "hubuumclass_relation.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassFrom => CursorSqlField {
-                column: "hubuumclass_relation.from_hubuum_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassTo => CursorSqlField {
-                column: "hubuumclass_relation.to_hubuum_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "hubuumclass_relation.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "hubuumclass_relation.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "hubuumclass_relation.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for class relations",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl CursorPaginated for HubuumObjectRelation {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
@@ -556,54 +633,6 @@ impl CursorPaginated for HubuumObjectRelation {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for HubuumObjectRelation {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "hubuumobject_relation.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassRelation => CursorSqlField {
-                column: "hubuumobject_relation.class_relation_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ObjectFrom => CursorSqlField {
-                column: "hubuumobject_relation.from_hubuum_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ObjectTo => CursorSqlField {
-                column: "hubuumobject_relation.to_hubuum_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "hubuumobject_relation.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "hubuumobject_relation.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "hubuumobject_relation.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for object relations",
-                    field
-                )));
-            }
-        })
     }
 }
 
@@ -664,39 +693,6 @@ impl CursorPaginated for HubuumClassRelationTransitive {
                 descending: false,
             },
         ]
-    }
-}
-
-impl CursorSqlMapping for HubuumClassRelationTransitive {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::ClassFrom => CursorSqlField {
-                column: "ancestor_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassTo => CursorSqlField {
-                column: "descendant_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Depth => CursorSqlField {
-                column: "depth",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Path => CursorSqlField {
-                column: "path",
-                sql_type: CursorSqlType::IntegerArray,
-                nullable: true,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for transitive class relations",
-                    field
-                )));
-            }
-        })
     }
 }
 
@@ -785,94 +781,6 @@ impl CursorPaginated for ClassGraphRow {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for ClassGraphRow {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id
-            | FilterField::ClassTo
-            | FilterField::ClassId
-            | FilterField::Classes => CursorSqlField {
-                column: "related_classes.descendant_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassFrom => CursorSqlField {
-                column: "related_classes.ancestor_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::NameTo => CursorSqlField {
-                column: "related_classes.descendant_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::NameFrom => CursorSqlField {
-                column: "related_classes.ancestor_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description | FilterField::DescriptionTo => CursorSqlField {
-                column: "related_classes.descendant_description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::DescriptionFrom => CursorSqlField {
-                column: "related_classes.ancestor_description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
-                CursorSqlField {
-                    column: "related_classes.descendant_collection_id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                }
-            }
-            FilterField::CollectionsFrom => CursorSqlField {
-                column: "related_classes.ancestor_collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt | FilterField::CreatedAtTo => CursorSqlField {
-                column: "related_classes.descendant_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::CreatedAtFrom => CursorSqlField {
-                column: "related_classes.ancestor_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt | FilterField::UpdatedAtTo => CursorSqlField {
-                column: "related_classes.descendant_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAtFrom => CursorSqlField {
-                column: "related_classes.ancestor_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Depth => CursorSqlField {
-                column: "related_classes.depth",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Path => CursorSqlField {
-                column: "related_classes.path",
-                sql_type: CursorSqlType::IntegerArray,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for related classes",
-                    field
-                )));
-            }
-        })
     }
 }
 
@@ -969,101 +877,6 @@ impl CursorPaginated for ObjectGraphRow {
     }
 }
 
-impl CursorSqlMapping for ObjectGraphRow {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id | FilterField::ObjectTo => CursorSqlField {
-                column: "descendant_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ObjectFrom => CursorSqlField {
-                column: "ancestor_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::NameTo => CursorSqlField {
-                column: "descendant_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::NameFrom => CursorSqlField {
-                column: "ancestor_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description | FilterField::DescriptionTo => CursorSqlField {
-                column: "descendant_description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::DescriptionFrom => CursorSqlField {
-                column: "ancestor_description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
-                CursorSqlField {
-                    column: "descendant_collection_id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                }
-            }
-            FilterField::CollectionsFrom => CursorSqlField {
-                column: "ancestor_collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => CursorSqlField {
-                column: "descendant_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassFrom => CursorSqlField {
-                column: "ancestor_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt | FilterField::CreatedAtTo => CursorSqlField {
-                column: "descendant_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::CreatedAtFrom => CursorSqlField {
-                column: "ancestor_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt | FilterField::UpdatedAtTo => CursorSqlField {
-                column: "descendant_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAtFrom => CursorSqlField {
-                column: "ancestor_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Depth => CursorSqlField {
-                column: "depth",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Path => CursorSqlField {
-                column: "path",
-                sql_type: CursorSqlType::IntegerArray,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for related objects",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl CursorPaginated for RelatedObjectGraphRow {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
@@ -1154,100 +967,5 @@ impl CursorPaginated for RelatedObjectGraphRow {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for RelatedObjectGraphRow {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id | FilterField::ObjectTo => CursorSqlField {
-                column: "related_objects.descendant_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ObjectFrom => CursorSqlField {
-                column: "related_objects.ancestor_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::NameTo => CursorSqlField {
-                column: "related_objects.descendant_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::NameFrom => CursorSqlField {
-                column: "related_objects.ancestor_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description | FilterField::DescriptionTo => CursorSqlField {
-                column: "related_objects.descendant_description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::DescriptionFrom => CursorSqlField {
-                column: "related_objects.ancestor_description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
-                CursorSqlField {
-                    column: "related_objects.descendant_collection_id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                }
-            }
-            FilterField::CollectionsFrom => CursorSqlField {
-                column: "related_objects.ancestor_collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => CursorSqlField {
-                column: "related_objects.descendant_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassFrom => CursorSqlField {
-                column: "related_objects.ancestor_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt | FilterField::CreatedAtTo => CursorSqlField {
-                column: "related_objects.descendant_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::CreatedAtFrom => CursorSqlField {
-                column: "related_objects.ancestor_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt | FilterField::UpdatedAtTo => CursorSqlField {
-                column: "related_objects.descendant_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAtFrom => CursorSqlField {
-                column: "related_objects.ancestor_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Depth => CursorSqlField {
-                column: "related_objects.depth",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Path => CursorSqlField {
-                column: "related_objects.path",
-                sql_type: CursorSqlType::IntegerArray,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for related objects",
-                    field
-                )));
-            }
-        })
     }
 }

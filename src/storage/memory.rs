@@ -927,7 +927,7 @@ impl ClassRelationStore for MemoryStorageModel {
     async fn create_class_relation(
         &self,
         prepared: &PreparedClassRelation,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<ResolvedClassRelationTarget, StorageError> {
         let mut state = self.state.write().await;
         state.prepared_class_relation_endpoints(prepared)?;
@@ -957,7 +957,9 @@ impl ClassRelationStore for MemoryStorageModel {
             revision: ResourceRevision::INITIAL,
         };
         state.class_relations.insert(id, relation.clone());
-        state.record_class_relation_event(id, Action::Created, context);
+        if let Some(context) = context {
+            state.record_class_relation_event(id, Action::Created, context);
+        }
         ResolvedClassRelationTarget::new(
             relation,
             prepared.from_class().clone(),
@@ -969,7 +971,7 @@ impl ClassRelationStore for MemoryStorageModel {
     async fn delete_class_relation(
         &self,
         target: &ResolvedClassRelationTarget,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
         let relation_id = state.class_relation_target(target)?.id;
@@ -977,8 +979,32 @@ impl ClassRelationStore for MemoryStorageModel {
         state
             .object_relations
             .retain(|_, relation| relation.class_relation_id != relation_id);
-        state.record_class_relation_event(relation_id, Action::Deleted, context);
+        if let Some(context) = context {
+            state.record_class_relation_event(relation_id, Action::Deleted, context);
+        }
         Ok(())
+    }
+
+    async fn create_class_relation_from_command(
+        &self,
+        command: NewHubuumClassRelation,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClassRelation, StorageError> {
+        let prepared = self.prepare_class_relation(command).await?;
+        Ok(self
+            .create_class_relation(&prepared, context)
+            .await?
+            .relation()
+            .clone())
+    }
+
+    async fn delete_class_relation_by_id(
+        &self,
+        id: HubuumClassRelationID,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        let target = self.resolve_class_relation(id).await?;
+        self.delete_class_relation(&target, context).await
     }
 }
 
@@ -1095,7 +1121,7 @@ impl ObjectRelationStore for MemoryStorageModel {
     async fn create_object_relation(
         &self,
         prepared: &PreparedObjectRelation,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<ResolvedObjectRelationTarget, StorageError> {
         let mut state = self.state.write().await;
         state.validate_prepared_object_relation(prepared)?;
@@ -1143,7 +1169,9 @@ impl ObjectRelationStore for MemoryStorageModel {
             revision: ResourceRevision::INITIAL,
         };
         state.object_relations.insert(id, relation);
-        state.record_object_relation_event(id, Action::Created, context);
+        if let Some(context) = context {
+            state.record_object_relation_event(id, Action::Created, context);
+        }
         ResolvedObjectRelationTarget::new(
             relation,
             prepared.from_object().clone(),
@@ -1156,14 +1184,41 @@ impl ObjectRelationStore for MemoryStorageModel {
     async fn delete_object_relation(
         &self,
         target: &ResolvedObjectRelationTarget,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
         state.validate_resolved_object_relation(target)?;
         let relation_id = target.relation().id;
         state.object_relations.remove(&relation_id);
-        state.record_object_relation_event(relation_id, Action::Deleted, context);
+        if let Some(context) = context {
+            state.record_object_relation_event(relation_id, Action::Deleted, context);
+        }
         Ok(())
+    }
+
+    async fn create_object_relation_from_command(
+        &self,
+        command: NewHubuumObjectRelation,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObjectRelation, StorageError> {
+        let prepared = self
+            .prepare_object_relation(ObjectRelationCreateSelector::explicit(command))
+            .await?;
+        Ok(*self
+            .create_object_relation(&prepared, context)
+            .await?
+            .relation())
+    }
+
+    async fn delete_object_relation_by_id(
+        &self,
+        id: HubuumObjectRelationID,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        let target = self
+            .resolve_object_relation(ObjectRelationSelector::by_id(id))
+            .await?;
+        self.delete_object_relation(&target, context).await
     }
 }
 

@@ -119,13 +119,13 @@ considered complete merely because a marker exists.
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Export-template, remote-target, event,
 event-sink, event-subscription, and event-delivery lifecycle rows are
-adapter-owned, as are object lifecycle and object-history rows, remote-target
-history, and remote-call result persistence rows. Domain object, create, update,
-history, and per-class count values contain no Diesel derives, schema bindings,
-or SQL cursor mappings. Those mappings and explicit conversions live in the
-PostgreSQL adapter. Remaining mixed persistence rows move there as their
-backend-neutral DTOs are extracted. Their current locations are implementation
-details, not partial backend support.
+adapter-owned, as are object lifecycle and object-history rows, class- and
+object-relation rows, relation graph query rows, remote-target history, and
+remote-call result persistence rows. Domain object and relation values contain
+no Diesel derives, schema bindings, or SQL cursor mappings. Those mappings and
+explicit conversions live in the PostgreSQL adapter. Remaining mixed
+persistence rows move there as their backend-neutral DTOs are extracted. Their
+current locations are implementation details, not partial backend support.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
 implementation can recover its pool.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
@@ -135,10 +135,14 @@ composition without implementing every operation behind those contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 22 additionally requires consistent administrative inventory queries,
-the `inventory_queries` capability label, and mandatory object point-operation
-abstraction. Version 21 required the complete export-template lifecycle and a
-new `export_template_lifecycle` capability label. Version 20 required
+Version 23 additionally requires class- and object-relation point operations,
+lifecycle writes, and event-suppressed compatibility writes to cross the same
+mandatory, observed storage contract. Relation persistence and graph query rows,
+Diesel mappings, and SQL cursor mappings are adapter-owned. Version 22 required
+consistent administrative inventory queries, the `inventory_queries`
+capability label, and mandatory object point-operation abstraction. Version 21
+required the complete export-template lifecycle and a new
+`export_template_lifecycle` capability label. Version 20 required
 coordinated initial-administrator bootstrap,
 atomic local-password replacement with token revocation, the complete stored
 template set for administrator audits, and backend-aggregated export-template

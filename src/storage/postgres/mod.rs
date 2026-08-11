@@ -26,13 +26,14 @@ use crate::events::{
 };
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
-    HubuumObjectID, MaintenanceState, NewCollectionWithAssignee, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, ObjectDataPatchDocument, ObjectRelationCreateSelector,
-    ObjectRelationSelector, ObjectSelector, PreparedClassRelation, PreparedObjectRelation,
-    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
-    ResolvedObjectTarget, TokenRetentionSettings, UpdateCollection, UpdateHubuumClass,
-    UpdateHubuumObject,
+    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelation,
+    HubuumClassRelationID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectRelationID, MaintenanceState, NewCollectionWithAssignee, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, ObjectDataPatchDocument,
+    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, PreparedClassRelation,
+    PreparedObjectRelation, ResolvedClassRelationTarget, ResolvedClassTarget,
+    ResolvedObjectRelationTarget, ResolvedObjectTarget, TokenRetentionSettings, UpdateCollection,
+    UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::class::{
@@ -52,9 +53,10 @@ use crate::storage::postgres::operations::object::{
 };
 use crate::storage::postgres::operations::relations::{
     CreatePreparedClassRelationRecord, CreatePreparedObjectRelationRecord,
-    DeleteResolvedClassRelationRecord, DeleteResolvedObjectRelationRecord,
-    PrepareClassRelationRecord, PrepareObjectRelationRecord, ResolveClassRelationTargetRecord,
-    ResolveObjectRelationTargetRecord,
+    DeleteClassRelationRecord, DeleteObjectRelationRecord, DeleteResolvedClassRelationRecord,
+    DeleteResolvedObjectRelationRecord, PrepareClassRelationRecord, PrepareObjectRelationRecord,
+    ResolveClassRelationTargetRecord, ResolveObjectRelationTargetRecord, SaveClassRelationRecord,
+    SaveObjectRelationRecord,
 };
 
 use super::{
@@ -1420,7 +1422,7 @@ impl ClassRelationStore for PostgresStorage {
     async fn create_class_relation(
         &self,
         prepared: &PreparedClassRelation,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<ResolvedClassRelationTarget, StorageError> {
         let relation = prepared
             .create_prepared_class_relation_record(&self.pool, context)
@@ -1437,10 +1439,31 @@ impl ClassRelationStore for PostgresStorage {
     async fn delete_class_relation(
         &self,
         target: &ResolvedClassRelationTarget,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         target
             .delete_resolved_class_relation_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_class_relation_from_command(
+        &self,
+        command: NewHubuumClassRelation,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClassRelation, StorageError> {
+        command
+            .save_class_relation_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_class_relation_by_id(
+        &self,
+        id: HubuumClassRelationID,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        id.delete_class_relation_record(&self.pool, context)
             .await
             .map_err(map_postgres_error)
     }
@@ -1471,7 +1494,7 @@ impl ObjectRelationStore for PostgresStorage {
     async fn create_object_relation(
         &self,
         prepared: &PreparedObjectRelation,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<ResolvedObjectRelationTarget, StorageError> {
         let relation = prepared
             .create_prepared_object_relation_record(&self.pool, context)
@@ -1489,10 +1512,31 @@ impl ObjectRelationStore for PostgresStorage {
     async fn delete_object_relation(
         &self,
         target: &ResolvedObjectRelationTarget,
-        context: &EventContext,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         target
             .delete_resolved_object_relation_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn create_object_relation_from_command(
+        &self,
+        command: NewHubuumObjectRelation,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObjectRelation, StorageError> {
+        command
+            .save_object_relation_record(&self.pool, context)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn delete_object_relation_by_id(
+        &self,
+        id: HubuumObjectRelationID,
+        context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        id.delete_object_relation_record(&self.pool, context)
             .await
             .map_err(map_postgres_error)
     }
