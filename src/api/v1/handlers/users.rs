@@ -10,7 +10,7 @@ use crate::models::user::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 
@@ -168,7 +168,8 @@ pub async fn update_user(
         .await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let user = with_revision_precondition_scope(
+    let user = with_revision_precondition(
+        &context,
         precondition,
         updated_user
             .into_inner()
@@ -216,7 +217,8 @@ pub async fn delete_user(
     let precondition = revision_precondition_for_tag(&req, &etag)?;
 
     let event_context = requestor.event_context(&req);
-    let delete_result = with_revision_precondition_scope(
+    let delete_result = with_revision_precondition(
+        &context,
         precondition,
         user_id.delete(&context, Some(&event_context)),
     )
@@ -261,7 +263,7 @@ pub async fn anonymize_user(
         .to_point_response(&context)
         .await?;
     let precondition = revision_precondition(&req, &current)?;
-    with_revision_precondition_scope(precondition, user_id.anonymize(&context)).await?;
+    with_revision_precondition(&context, precondition, user_id.anonymize(&context)).await?;
     let updated = user_id
         .user(&context)
         .await?

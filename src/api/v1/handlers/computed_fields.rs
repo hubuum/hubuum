@@ -21,7 +21,7 @@ use crate::services::computed_fields::{
     list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
     request_class_rebuild, update_personal_definition, update_shared_definition,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::SelfAccessors;
 use crate::traits::UserPermissions;
 
@@ -212,7 +212,8 @@ pub async fn patch_shared_computed_field(
     }
     let precondition = computed_field_precondition(&http_request, &definition)?;
     let event_context = requestor.event_context(&http_request);
-    let response = with_revision_precondition_scope(
+    let response = with_revision_precondition(
+        &context,
         precondition,
         update_shared_definition(
             &context,
@@ -271,7 +272,8 @@ pub async fn delete_shared_computed_field(
     }
     let precondition = computed_field_precondition(&http_request, &definition)?;
     let event_context = requestor.event_context(&http_request);
-    let state = with_revision_precondition_scope(
+    let state = with_revision_precondition(
+        &context,
         precondition,
         delete_shared_definition(
             &context,
@@ -557,7 +559,8 @@ pub async fn patch_personal_computed_field(
         class
     );
     let precondition = computed_field_precondition(&http_request, &definition)?;
-    let updated = with_revision_precondition_scope(
+    let updated = with_revision_precondition(
+        &context,
         precondition,
         update_personal_definition(&context, owner_id, field_id.id(), request.into_inner()),
     )
@@ -605,7 +608,8 @@ pub async fn delete_personal_computed_field(
         class
     );
     let precondition = computed_field_precondition(&http_request, &definition)?;
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         delete_personal_definition(&context, owner_id, field_id.id()),
     )

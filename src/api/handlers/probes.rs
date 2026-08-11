@@ -7,7 +7,7 @@ use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
 use crate::storage::OperationalStateStorage;
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 #[derive(Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -47,6 +47,7 @@ pub async fn healthz() -> impl Responder {
 #[get("/readyz")]
 pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
     let snapshot = with_storage_call_site(
+        &context,
         StorageCallSite::Readiness,
         context.backend().readiness_snapshot(),
     )

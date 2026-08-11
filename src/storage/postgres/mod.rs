@@ -18,7 +18,9 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
+use crate::events::{
+    EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
+};
 use crate::models::search::QueryOptions;
 use crate::models::{
     ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
@@ -50,15 +52,16 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, AuthorizationClassResource, AuthorizationCollection,
-    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
-    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
-    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
-    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
-    AuthorizationStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage,
-    CatalogStorage, ClassRelationStore, ClassStore, CollectionStore, ComputedObjectEnrichmentQuery,
+    AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity, AuthenticationStorage,
+    AuthenticationTokenScope, AuthenticationTokenScopeQuery, AuthorizationClassResource,
+    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrantPage,
+    AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage,
+    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
+    ClassRelationStore, ClassStore, CollectionStore, ComputedObjectEnrichmentQuery,
     ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, EventArchive,
     EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
@@ -69,12 +72,13 @@ use super::{
     ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
     OperationalStateStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
     RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, StorageClass, StorageClassGraphRow, StorageClassRelation,
-    StorageCollection, StorageComputedObject, StorageError, StorageIdentity, StorageObject,
-    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
-    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
-    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    RemoteTargetHistoryRecord, StorageCallSite, StorageClass, StorageClassGraphRow,
+    StorageClassRelation, StorageCollection, StorageComputedObject, StorageError, StorageExecution,
+    StorageIdentity, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
+    StorageObjectRelation, StoragePoolState, StorageQueryBudget, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRevisionPrecondition, TaskGaugeSnapshot,
+    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -115,8 +119,70 @@ impl ExportQueryStorage for PostgresStorage {
     }
 }
 
+impl StorageExecution for PostgresStorage {
+    fn run_with_call_site<'a, F, R>(
+        &'a self,
+        call_site: StorageCallSite,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        Box::pin(runtime::with_storage_call_site_scope(call_site, future))
+    }
+
+    fn run_with_call_site_send<'a, F, R>(
+        &'a self,
+        call_site: StorageCallSite,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>
+    where
+        F: Future<Output = R> + Send + 'a,
+        R: Send + 'a,
+    {
+        Box::pin(runtime::with_storage_call_site_scope(call_site, future))
+    }
+
+    fn run_with_mutation_provenance<'a, F, R>(
+        &'a self,
+        provenance: Option<MutationProvenance>,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        Box::pin(runtime::with_mutation_provenance_scope(provenance, future))
+    }
+
+    fn run_with_revision_precondition<'a, F, R>(
+        &'a self,
+        precondition: Option<StorageRevisionPrecondition>,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        Box::pin(runtime::with_revision_precondition_scope(
+            precondition,
+            future,
+        ))
+    }
+}
+
 #[async_trait]
 impl AuthenticationStorage for PostgresStorage {
+    async fn authenticate_bearer_token(
+        &self,
+        credential: AuthenticationCredential,
+    ) -> Result<AuthenticatedToken, StorageError> {
+        operations::authentication::authenticate_bearer_token(&self.pool, credential)
+            .await
+            .map_err(map_postgres_error)
+    }
+
     async fn load_authentication_identity(
         &self,
         principal_id: i32,

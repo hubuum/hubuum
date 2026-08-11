@@ -19,7 +19,7 @@ use crate::storage::capabilities::service_account::{
     DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
     is_human_owner_group_member, search_manageable_service_accounts,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::{AuthzSubject, CanDelete, CanUpdate, SelfAccessors};
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -217,9 +217,12 @@ pub async fn update_service_account(
     let current = sa.to_point_response(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let updated =
-        with_revision_precondition_scope(precondition, update.update(&context, id, &event_context))
-            .await?;
+    let updated = with_revision_precondition(
+        &context,
+        precondition,
+        update.update(&context, id, &event_context),
+    )
+    .await?;
     ApiResponse::ok_revisioned(updated.to_point_response(&context).await?)
 }
 
@@ -251,7 +254,7 @@ pub async fn disable_service_account(
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let disabled =
-        with_revision_precondition_scope(precondition, id.disable(&context, &event_context))
+        with_revision_precondition(&context, precondition, id.disable(&context, &event_context))
             .await?;
 
     debug!(
@@ -290,6 +293,6 @@ pub async fn delete_service_account(
     let etag = current.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, id.delete(&context, &event_context)).await?;
+    with_revision_precondition(&context, precondition, id.delete(&context, &event_context)).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }

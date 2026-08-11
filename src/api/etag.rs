@@ -7,6 +7,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
+use crate::storage::StorageRevisionPrecondition;
 
 const ETAG_PREFIX: &str = "hubuum-v1";
 const MAX_IF_MATCH_BYTES: usize = 2 * 1024;
@@ -287,25 +288,7 @@ pub enum IfMatchCondition {
     Tags(Vec<EntityTag>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RevisionPrecondition {
-    owner_key: String,
-    revisions: Vec<ResourceRevision>,
-}
-
-impl RevisionPrecondition {
-    pub(crate) fn owner_key(&self) -> &str {
-        &self.owner_key
-    }
-
-    pub(crate) fn revisions_csv(&self) -> String {
-        self.revisions
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
+pub type RevisionPrecondition = StorageRevisionPrecondition;
 
 impl IfMatchCondition {
     pub fn from_request(request: &HttpRequest) -> Result<Self, ApiError> {
@@ -386,10 +369,17 @@ impl IfMatchCondition {
                 tags.iter().map(EntityTag::revision).collect()
             }
         };
-        Ok(Some(RevisionPrecondition {
-            owner_key: current.revision_owner_key(),
-            revisions,
-        }))
+        let revisions = revisions
+            .into_iter()
+            .map(ResourceRevision::get)
+            .collect::<Vec<_>>();
+        StorageRevisionPrecondition::new(current.revision_owner_key(), revisions)
+            .map(Some)
+            .map_err(|error| {
+                ApiError::InternalServerError(format!(
+                    "Could not build validated revision precondition: {error}"
+                ))
+            })
     }
 }
 
@@ -568,13 +558,7 @@ mod tests {
             .to_http_request();
         let parsed = IfMatchCondition::from_request(&request).unwrap();
         let precondition = parsed.database_precondition(&tag(17)).unwrap().unwrap();
-        assert_eq!(
-            precondition.revisions,
-            vec![
-                ResourceRevision::new(16).unwrap(),
-                ResourceRevision::new(17).unwrap()
-            ]
-        );
+        assert_eq!(precondition.revisions(), [16, 17]);
 
         let request = TestRequest::default()
             .insert_header((header::IF_MATCH, "*"))

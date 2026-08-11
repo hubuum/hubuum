@@ -10,6 +10,7 @@ use crate::storage::{
     StorageRestoreStatus, StorageRestoreTimestamps,
 };
 
+use super::PostgresStorage;
 use super::error::map_postgres_error;
 use super::operations::restore::{
     NewRestoreJobRow, RestoreJobRow, RestoreJobStatusRecord, ServerInstanceRow, apply_restore_db,
@@ -19,7 +20,8 @@ use super::operations::restore::{
     restore_coordinator_tick_db, resume_maintenance_without_job_db, resume_terminal_restore_db,
     start_restore_draining_db,
 };
-use super::{PostgresStorage, StorageCallSite, with_storage_call_site};
+use super::runtime::with_storage_call_site_scope;
+use crate::storage::StorageCallSite;
 
 struct RestoreSummaryParts {
     id: i64,
@@ -258,7 +260,7 @@ impl RestoreStorage for PostgresStorage {
         local_work_is_idle: &(dyn Fn() -> bool + Send + Sync),
         expire_validated_jobs: bool,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        with_storage_call_site(
+        with_storage_call_site_scope(
             StorageCallSite::RestoreCoordinator,
             restore_coordinator_tick_db(
                 self.pool(),

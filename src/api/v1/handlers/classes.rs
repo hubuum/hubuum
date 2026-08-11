@@ -35,7 +35,7 @@ use crate::services::history::{
     object_history_paginated_with_total_count,
 };
 use crate::services::relation_queries;
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::{UserPermissions, scope_allows};
 
 use crate::models::{
@@ -542,7 +542,8 @@ async fn apply_resolved_class_update(
 
     let precondition = revision_precondition(req, target.class())?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .class_service()
@@ -647,7 +648,8 @@ async fn delete_resolved_class(
     let etag = target.class().entity_tag()?;
     let precondition = revision_precondition_for_tag(req, &etag)?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context.class_service().delete(&target, &event_context),
     )

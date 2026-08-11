@@ -21,7 +21,7 @@ use crate::models::{
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
 use crate::storage::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::GroupAccessors;
 
 pub use crate::models::CurrentTokenMetadata;
@@ -67,7 +67,8 @@ pub async fn get_me(
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let principal = load_principal_by_id(&context, requestor.principal.id()).await?;
-    let token = CurrentTokenMetadata::from_token_and_scope(&requestor.token_meta, requestor.scope)?;
+    let token =
+        CurrentTokenMetadata::from_authenticated_token(&requestor.token_meta, requestor.scope)?;
 
     Ok(ApiResponse::new(
         MeResponse {
@@ -209,7 +210,8 @@ pub async fn put_my_settings(
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let settings = with_revision_precondition_scope(
+    let settings = with_revision_precondition(
+        &context,
         precondition,
         principal_id.replace_settings(&context, settings.into_inner(), &event_context),
     )
@@ -262,7 +264,8 @@ pub async fn patch_my_settings(
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let settings = with_revision_precondition_scope(
+    let settings = with_revision_precondition(
+        &context,
         precondition,
         principal_id.apply_settings_patch(&context, patch.into_inner(), &event_context),
     )
@@ -290,7 +293,8 @@ pub async fn delete_my_settings(
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let reset = with_revision_precondition_scope(
+    let reset = with_revision_precondition(
+        &context,
         precondition,
         principal_id.reset_settings(&context, &event_context),
     )

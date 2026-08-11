@@ -17,8 +17,8 @@ use crate::models::{
     TokenScope, TokenScopeDetails,
 };
 use crate::schema::tokens;
-use crate::storage::StorageContext;
 use crate::storage::postgres::operations::user::DeleteTokenRecord;
+use crate::storage::{AuthenticatedToken, StorageContext};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -312,19 +312,29 @@ impl PrincipalTokenMetadata {
 
 impl CurrentTokenMetadata {
     /// Project a validated persisted token and its loaded scope for `/iam/me`.
-    pub fn from_token_and_scope(
-        value: &PrincipalToken,
+    pub fn from_authenticated_token(
+        value: &AuthenticatedToken,
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         Ok(Self {
-            id: value.metadata_id()?,
-            name: value.name.clone(),
-            description: value.description.clone(),
-            issued: value.issued,
-            expires_at: value.expires_at,
-            last_used_at: value.last_used_at,
-            scope: value.scope_details(scope)?,
-            revision: value.revision,
+            id: TokenID::new(value.id()).map_err(|_| {
+                ApiError::InternalServerError(format!(
+                    "Authenticated token has invalid identifier {}",
+                    value.id()
+                ))
+            })?,
+            name: value.name().map(str::to_string),
+            description: value.description().map(str::to_string),
+            issued: value.issued(),
+            expires_at: value.expires_at(),
+            last_used_at: value.last_used_at(),
+            scope: token_scope_details(value.id(), value.is_scoped(), scope)?,
+            revision: ResourceRevision::new(value.revision()).map_err(|_| {
+                ApiError::InternalServerError(format!(
+                    "Authenticated token {} has invalid revision",
+                    value.id()
+                ))
+            })?,
         })
     }
 }
@@ -361,18 +371,26 @@ impl PrincipalToken {
         &self,
         scope: Option<TokenScope>,
     ) -> Result<Option<TokenScopeDetails>, ApiError> {
-        match (self.is_scoped(), scope) {
-            (false, None) => Ok(None),
-            (true, Some(scope)) => TokenScopeDetails::from_scope(scope).map(Some),
-            (false, Some(_)) => Err(ApiError::InternalServerError(format!(
-                "Unscoped token {} has stored scope rows",
-                self.id
-            ))),
-            (true, None) => Err(ApiError::InternalServerError(format!(
-                "Scoped token {} has no stored scope",
-                self.id
-            ))),
-        }
+        token_scope_details(self.id, self.is_scoped(), scope)
+    }
+}
+
+fn token_scope_details(
+    token_id: i32,
+    is_scoped: bool,
+    scope: Option<TokenScope>,
+) -> Result<Option<TokenScopeDetails>, ApiError> {
+    match (is_scoped, scope) {
+        (false, None) => Ok(None),
+        (true, Some(scope)) => TokenScopeDetails::from_scope(scope).map(Some),
+        (false, Some(_)) => Err(ApiError::InternalServerError(format!(
+            "Unscoped token {} has stored scope rows",
+            token_id
+        ))),
+        (true, None) => Err(ApiError::InternalServerError(format!(
+            "Scoped token {} has no stored scope",
+            token_id
+        ))),
     }
 }
 
@@ -450,6 +468,15 @@ pub(crate) fn configured_token_lifetime() -> Result<TokenLifetime, ApiError> {
 impl Token {
     pub fn get_token(&self) -> String {
         self.0.clone()
+    }
+
+    /// Validate this bearer token through the selected complete storage
+    /// backend and return its hash-free authentication projection.
+    pub async fn authenticate<C>(&self, backend: &C) -> Result<AuthenticatedToken, ApiError>
+    where
+        C: StorageContext,
+    {
+        crate::services::authentication::authenticate_bearer_token(backend, self).await
     }
 
     /// Return a string where we only expose the first three and last three characters.

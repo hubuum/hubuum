@@ -9,9 +9,8 @@ use crate::models::backup::{
 };
 use crate::models::{BackupHistory, BackupState};
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{
-    PostgresConnection, with_mutation_provenance_scope, with_transaction,
-};
+use crate::storage::postgres::runtime::with_mutation_provenance_scope;
+use crate::storage::postgres::{PostgresConnection, with_transaction};
 
 #[derive(QueryableByName)]
 struct JsonRows {

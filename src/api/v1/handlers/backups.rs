@@ -76,7 +76,7 @@ pub async fn create_backup(
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
     let scope_snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id)?),
+        Some(TokenID::new(requestor.token_meta.id())?),
         requestor.scopes(),
     );
     let task = submit_task(

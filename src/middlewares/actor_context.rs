@@ -5,10 +5,9 @@ use actix_web::{Error, HttpMessage};
 
 use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
-use crate::models::token::{PrincipalToken, Token};
+use crate::models::token::Token;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::Status;
-use crate::storage::capabilities::with_mutation_provenance_scope;
+use crate::storage::{AuthenticatedToken, with_mutation_provenance};
 
 /// Outcome of resolving the bearer token once per request. Stored in request
 /// extensions and consumed by the auth extractors so they never re-query.
@@ -16,7 +15,7 @@ use crate::storage::capabilities::with_mutation_provenance_scope;
 pub(crate) enum ResolvedAuth {
     Authenticated {
         token: Token,
-        token_meta: PrincipalToken,
+        token_meta: AuthenticatedToken,
     },
     Missing,
     Invalid,
@@ -35,16 +34,12 @@ fn is_public_path(path: &str) -> bool {
         || path.starts_with("/swagger-ui/")
 }
 
-async fn resolve_auth(req: &ServiceRequest) -> ResolvedAuth {
+async fn resolve_auth(req: &ServiceRequest, backend: &AppContext) -> ResolvedAuth {
     let token = match bearer_token(req) {
         Some(token) => token,
         None => return ResolvedAuth::Missing,
     };
-    let backend = match AppContext::from_http_request(req.request()) {
-        Ok(backend) => backend,
-        Err(_) => return ResolvedAuth::Invalid,
-    };
-    match token.is_valid(&backend).await {
+    match crate::services::authentication::authenticate_bearer_token(backend, &token).await {
         Ok(token_meta) => ResolvedAuth::Authenticated { token, token_meta },
         Err(_) => ResolvedAuth::Invalid,
     }
@@ -57,13 +52,14 @@ pub async fn actor_context(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
+    let backend = AppContext::from_http_request(req.request())?;
     let resolved = if is_public_path(req.path()) {
         ResolvedAuth::Missing
     } else {
-        resolve_auth(&req).await
+        resolve_auth(&req, &backend).await
     };
     let actor = match &resolved {
-        ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id),
+        ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id()),
         _ => None,
     };
     if let Some(principal_id) = actor {
@@ -71,7 +67,7 @@ pub async fn actor_context(
     }
     req.extensions_mut().insert(resolved);
     let provenance = actor.map(MutationProvenance::user);
-    let res = with_mutation_provenance_scope(provenance, next.call(req)).await?;
+    let res = with_mutation_provenance(&backend, provenance, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
 }
 

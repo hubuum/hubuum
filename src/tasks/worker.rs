@@ -30,8 +30,8 @@ use crate::services::tasks::{
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::storage::postgres::operations::service_account::principal_is_disabled;
-use crate::storage::postgres::{
-    StorageCallSite, with_mutation_provenance_scope, with_storage_call_site,
+use crate::storage::{
+    StorageCallSite, with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
 };
 
 use super::TaskWorkerSettings;
@@ -141,7 +141,7 @@ async fn task_worker_loop(
             Some(&shutdown),
             &backup_settings,
         ));
-        let result = with_storage_call_site(StorageCallSite::TaskWorker, iteration).await;
+        let result = with_storage_call_site(&context, StorageCallSite::TaskWorker, iteration).await;
         if shutdown.is_requested() {
             break;
         }
@@ -323,7 +323,7 @@ async fn process_one_task_with_settings(
     );
 
     let provenance = task.worker_provenance();
-    with_mutation_provenance_scope(Some(provenance), async {
+    with_mutation_provenance(context, Some(provenance), async {
         let mut heartbeat = start_task_lease_heartbeat(
             context.backend().clone(),
             &task,
@@ -462,7 +462,8 @@ fn start_task_lease_heartbeat(
             let storage = storage.clone();
             let lease = lease.clone();
             async move {
-                with_storage_call_site(
+                with_storage_call_site_send(
+                    &storage,
                     StorageCallSite::TaskLease,
                     renew_task_lease(&storage, lease, settings.lease_duration()),
                 )

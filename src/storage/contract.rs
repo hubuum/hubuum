@@ -6,7 +6,7 @@ use super::{
     ComputedObjectStorage, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
     EventRetentionStorage, ExportQueryStorage, HistoryStorage, ImportStorage, MetricsStorage,
     ObjectAggregateStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
+    PostgresStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage, StorageExecution,
     TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, UnifiedSearchStorage,
     observed::ObservedLifecycleStorage,
 };
@@ -77,6 +77,7 @@ pub(crate) trait StorageBackend:
     + RestoreStorage
     + ImportStorage
     + ExportQueryStorage
+    + StorageExecution
     + sealed::CertifiedStorageBackend
 {
     fn descriptor(&self) -> StorageBackendDescriptor;

@@ -1,13 +1,120 @@
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, SubsecRound};
 use hubuum_storage_core::{
-    AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
-    AuthenticationPrincipalKind, AuthenticationResourceScope, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery,
+    AuthenticatedToken, AuthenticationCredential, AuthenticationHuman, AuthenticationIdentity,
+    AuthenticationPrincipal, AuthenticationPrincipalKind, AuthenticationResourceScope,
+    AuthenticationTokenScope, AuthenticationTokenScopeQuery,
 };
 
 use crate::errors::ApiError;
+use crate::storage::postgres::operations::active_tokens::{
+    active_token_predicate, active_tokens_cutoff,
+};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
+
+/// Advance `last_used_at` at most this often. Routine authenticated requests
+/// stay read-only on the hot path, and a telemetry write failure never rejects
+/// an otherwise valid credential.
+const LAST_USED_AT_THROTTLE_SECS: i64 = 60;
+
+pub(crate) async fn authenticate_bearer_token(
+    pool: &PostgresPool,
+    credential: AuthenticationCredential,
+) -> Result<AuthenticatedToken, ApiError> {
+    use crate::schema::service_accounts;
+    use crate::schema::tokens::dsl::{
+        description, expires_at, id as token_id, issued, last_used_at, name, permission_scoped,
+        principal_id, resource_scoped, revision, token, tokens,
+    };
+
+    let lookup_value = credential.lookup_value().to_string();
+    // PostgreSQL timestamps have microsecond resolution. Use that same value
+    // for the active predicate and any best-effort telemetry update.
+    let now = chrono::Utc::now().naive_utc().trunc_subsecs(6);
+    let cutoff = active_tokens_cutoff()?;
+    let row = with_connection(pool, async move |conn| {
+        tokens
+            .filter(token.eq(lookup_value))
+            .filter(active_token_predicate(now, cutoff))
+            .filter(diesel::dsl::not(diesel::dsl::exists(
+                service_accounts::table
+                    .filter(service_accounts::id.eq(principal_id))
+                    .filter(service_accounts::disabled_at.is_not_null()),
+            )))
+            .select((
+                token_id,
+                principal_id,
+                name,
+                description,
+                issued,
+                expires_at,
+                permission_scoped,
+                resource_scoped,
+                last_used_at,
+                revision,
+            ))
+            .first::<(
+                i32,
+                i32,
+                Option<String>,
+                Option<String>,
+                NaiveDateTime,
+                Option<NaiveDateTime>,
+                bool,
+                bool,
+                Option<NaiveDateTime>,
+                crate::models::ResourceRevision,
+            )>(conn)
+            .await
+            .optional()
+    })
+    .await?;
+
+    let Some((
+        id,
+        principal_id_value,
+        token_name,
+        token_description,
+        token_issued,
+        token_expires_at,
+        is_permission_scoped,
+        is_resource_scoped,
+        last_used,
+        token_revision,
+    )) = row
+    else {
+        return Err(ApiError::Unauthorized("Invalid token".to_string()));
+    };
+
+    let throttle = chrono::Duration::seconds(LAST_USED_AT_THROTTLE_SECS);
+    let mut observed_last_used = last_used;
+    let last_used_is_stale = last_used
+        .map(|previous| now - previous >= throttle)
+        .unwrap_or(true);
+    if last_used_is_stale {
+        let updated = with_connection(pool, async move |conn| {
+            diesel::update(tokens.filter(token_id.eq(id)))
+                .set(last_used_at.eq(now))
+                .execute(conn)
+                .await
+        })
+        .await;
+        if updated.is_ok() {
+            observed_last_used = Some(now);
+        }
+    }
+
+    Ok(
+        AuthenticatedToken::builder(id, principal_id_value, token_issued, token_revision.get())
+            .name(token_name)
+            .description(token_description)
+            .expires_at(token_expires_at)
+            .last_used_at(observed_last_used)
+            .permission_scoped(is_permission_scoped)
+            .resource_scoped(is_resource_scoped)
+            .build(),
+    )
+}
 
 type AuthenticationIdentityRow = (
     i32,

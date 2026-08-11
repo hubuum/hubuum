@@ -49,7 +49,7 @@ pub async fn create_import(
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id)?),
+        Some(TokenID::new(requestor.token_meta.id())?),
         requestor.scopes(),
     );
 

@@ -12,7 +12,7 @@ use crate::permissions::AppContext;
 use crate::storage::capabilities::event_subscription::{
     DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 
 #[utoipa::path(
     post,
@@ -130,7 +130,8 @@ pub async fn patch_event_sink(
     let existing = sink_id.instance(&context).await?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = admin.event_context(&req);
-    let updated: EventSink = with_revision_precondition_scope(
+    let updated: EventSink = with_revision_precondition(
+        &context,
         precondition,
         update
             .into_row(&existing)?
@@ -166,7 +167,8 @@ pub async fn delete_event_sink(
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = admin.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         sink_id.delete_event_sink_record(&context, &event_context),
     )

@@ -65,9 +65,8 @@ pub(crate) fn active_tokens_cutoff() -> Result<chrono::NaiveDateTime, ApiError> 
 /// an explicit `expires_at` in the future, or, for a legacy null expiry, issued
 /// within the global lifetime window.
 ///
-/// Single source for the security-critical validity rule so token validation
-/// ([`crate::storage::postgres::operations::Status::is_valid`]) and active-token listing can never
-/// drift apart.
+/// Single source for the security-critical validity rule so bearer validation
+/// and active-token listing can never drift apart.
 ///
 /// Semantics note: an explicit `expires_at` is authoritative and overrides the
 /// global `token_lifetime_hours` window — a token with a non-null `expires_at`

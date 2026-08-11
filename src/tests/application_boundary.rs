@@ -252,6 +252,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "RestoreStorage",
         "ImportStorage",
         "ExportQueryStorage",
+        "StorageExecution",
         "sealed::CertifiedStorageBackend",
     ] {
         assert!(
@@ -620,6 +621,17 @@ fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
             .contains("pub(crate) use crate::storage::postgres::operations as capabilities"),
         "the application capability facade must explicitly whitelist operations"
     );
+    for forbidden in [
+        "operations::Status",
+        "with_storage_call_site",
+        "with_mutation_provenance_scope",
+        "with_revision_precondition_scope",
+    ] {
+        assert!(
+            !backend_source.contains(forbidden),
+            "authentication and execution context must not cross the PostgreSQL capability facade: {forbidden}"
+        );
+    }
     assert!(
         library_source.contains("#[doc(hidden)]\npub mod storage;"),
         "the internal root storage module must remain hidden from generated API documentation"

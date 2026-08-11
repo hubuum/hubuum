@@ -7,7 +7,7 @@
 use diesel::sql_types::{Integer, Json, Text};
 use serde_json::Value;
 
-use crate::events::EventContext;
+use crate::events::{EventContext, MutationProvenance};
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
@@ -21,8 +21,8 @@ use crate::storage::postgres::operations::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
 use crate::storage::postgres::prelude::{QueryableByName, RunQueryDsl};
-use crate::storage::postgres::with_actor_scope;
 use crate::storage::postgres::{PostgresPool, capture_queries, with_connection};
+use crate::storage::with_mutation_provenance;
 use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
 
@@ -1294,8 +1294,9 @@ async fn collection_history_query_count_is_constant_with_page_size() {
     let actor = ensure_admin_user(&scope.pool).await;
 
     for version in 0..12 {
-        with_actor_scope(
-            Some(actor.id),
+        with_mutation_provenance(
+            &scope.pool,
+            Some(MutationProvenance::user(actor.id)),
             UpdateCollection {
                 name: None,
                 description: Some(format!("query budget history version {version}")),

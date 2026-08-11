@@ -25,11 +25,11 @@ use crate::storage::StorageContext;
 use crate::storage::capabilities::event_delivery::{
     ClaimedEventDelivery, claimed_event_delivery_work_item,
 };
-use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{
     EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
     StorageHandle, storage_handle,
 };
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_LISTENER: Once = Once::new();
@@ -239,6 +239,7 @@ async fn event_delivery_worker_loop(
             biased;
             _ = shutdown.requested() => break,
             result = with_storage_call_site(
+                &pool,
                 StorageCallSite::EventDelivery,
                 process_event_delivery_batch_with_schedule(&pool, settings, resolver),
             ) => result,

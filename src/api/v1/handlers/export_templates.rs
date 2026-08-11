@@ -26,7 +26,7 @@ use crate::services::history::{
     HistoryCollectionFilter, export_template_as_of,
     export_template_history_paginated_with_total_count,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
 use crate::traits::{UserPermissions, scope_allows};
@@ -273,7 +273,7 @@ pub async fn run_template_export(
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let submission = ExportTaskSubmission::for_token(
         export,
-        TokenID::new(requestor.token_meta.id)?,
+        TokenID::new(requestor.token_meta.id())?,
         requestor.scopes(),
     )
     .template(template)
@@ -348,7 +348,8 @@ pub async fn patch_template(
 
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
-    let updated = with_revision_precondition_scope(
+    let updated = with_revision_precondition(
+        &context,
         precondition,
         update.update(&context, template_id, &event_context),
     )
@@ -401,8 +402,12 @@ pub async fn delete_template(
     let etag = template.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, template_id.delete(&context, &event_context))
-        .await?;
+    with_revision_precondition(
+        &context,
+        precondition,
+        template_id.delete(&context, &event_context),
+    )
+    .await?;
 
     Ok(ApiResponse::no_content_with_etag(etag))
 }

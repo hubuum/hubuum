@@ -27,7 +27,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking (administrator API):** the storage contract version is now `15`,
+- **Breaking (administrator API):** the storage contract version is now `16`,
   and the redacted administrator configuration reports independently enforced
   `catalog_queries`, `computed_object_queries`, `computed_field_lifecycle`,
   `object_aggregates`, `relation_queries`, `temporal_history`, and
@@ -48,7 +48,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   destructive apply, recovery, and provenance now form another mandatory
   compatibility-tested backend contract; restore application code no longer
   imports PostgreSQL/Diesel records or operations. Administration and monitoring
-  clients matching earlier contract versions must upgrade to version `15` and
+  clients matching earlier contract versions must upgrade to version `16` and
   accept the required `imports` and `export_queries` capabilities. Import planning lookups,
   rollback-only preflight, strict atomic apply, best-effort per-item apply, and
   result persistence now form one mandatory backend trait; application import
@@ -61,7 +61,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   traits, export code, and handlers no longer import PostgreSQL authorization
   query helpers. Backend certification no longer contains provisional workflow
   or operational markers: all advertised families are enforced through
-  operation-shaped traits and shared available-backend tests.
+  operation-shaped traits and shared available-backend tests. Bearer-token
+  validation now returns a hash-free storage DTO through the mandatory
+  authentication contract instead of a PostgreSQL query trait, and the
+  mandatory execution-context contract carries bounded diagnostic attribution,
+  mutation provenance, and revision preconditions without exposing PostgreSQL
+  task-local or transaction-setting helpers. Administration clients matching
+  contract version `15` must accept version `16`; the required capability label
+  set is unchanged.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

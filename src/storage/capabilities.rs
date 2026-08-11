@@ -9,8 +9,6 @@
 ///
 /// Keep this list explicit: adding a database module wholesale would make the
 /// boundary cosmetic and allow consumers to select arbitrary SQL adapters.
-pub(crate) use crate::storage::postgres::operations::Status;
-
 pub(crate) mod active_tokens {
     pub(crate) use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
 }
@@ -78,8 +76,3 @@ pub(crate) mod service_account {
         search_manageable_service_accounts,
     };
 }
-
-pub(crate) use crate::storage::postgres::{
-    StorageCallSite, with_mutation_provenance_scope, with_revision_precondition_scope,
-    with_storage_call_site,
-};

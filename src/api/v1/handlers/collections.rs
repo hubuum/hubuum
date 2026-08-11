@@ -21,7 +21,7 @@ use crate::services::catalog as catalog_service;
 use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
-use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::storage::with_revision_precondition;
 use crate::traits::{UserPermissions, scope_allows};
 use actix_web::{
     Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
@@ -244,7 +244,8 @@ pub async fn update_collection(
 
     let precondition = collection_precondition(&req, &collection)?;
     let event_context = requestor.event_context(&req);
-    let updated_collection = with_revision_precondition_scope(
+    let updated_collection = with_revision_precondition(
+        &context,
         precondition,
         context.collection_service().update(
             collection_id,
@@ -295,7 +296,8 @@ pub async fn delete_collection(
     let etag = collection.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .collection_service()
@@ -439,7 +441,8 @@ pub async fn move_collection_parent(
 
     let precondition = collection_precondition(&req, &collection)?;
     let event_context = requestor.event_context(&req);
-    let updated = with_revision_precondition_scope(
+    let updated = with_revision_precondition(
+        &context,
         precondition,
         context
             .collection_service()
@@ -676,7 +679,8 @@ pub async fn grant_collection_group_permissions(
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(
+        with_revision_precondition(
+            &context,
             precondition,
             collection.grant(&context, group_id, permissions, Some(&event_context)),
         )
@@ -753,7 +757,8 @@ pub async fn replace_collection_group_permissions(
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(
+        with_revision_precondition(
+            &context,
             precondition,
             collection.set_permissions(&context, group_id, permissions, Some(&event_context)),
         )
@@ -814,7 +819,8 @@ pub async fn revoke_collection_group_permissions(
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(
+        with_revision_precondition(
+            &context,
             precondition,
             collection.revoke_all(&context, group_id, Some(&event_context)),
         )
@@ -937,7 +943,8 @@ pub async fn grant_collection_group_permission(
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(
+        with_revision_precondition(
+            &context,
             precondition,
             collection.grant(&context, group_id, permissions, Some(&event_context)),
         )
@@ -1004,7 +1011,8 @@ pub async fn revoke_collection_group_permission(
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(
+        with_revision_precondition(
+            &context,
             precondition,
             collection.revoke(&context, group_id, permissions, Some(&event_context)),
         )

@@ -524,7 +524,8 @@ async fn delete_object_relation(
     let etag = relation.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .object_relation_service()

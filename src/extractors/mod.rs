@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
-use crate::models::token::{PrincipalToken, Token};
+use crate::models::token::Token;
 use crate::models::user::User;
 use crate::models::{
     CollectionID, HubuumClassID, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
@@ -8,9 +8,8 @@ use crate::models::{
     PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope, TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::storage::capabilities::Status;
 use crate::storage::{
-    AuthenticationHuman, AuthenticationPrincipal, AuthenticationResourceScope,
+    AuthenticatedToken, AuthenticationHuman, AuthenticationPrincipal, AuthenticationResourceScope,
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery, StorageContext,
     storage_handle,
 };
@@ -184,7 +183,7 @@ fn patch_payload_error(error: JsonPayloadError, context: PatchPayloadErrorContex
 pub struct Authenticated {
     /// The raw bearer token (e.g. for current-token logout).
     pub token: Token,
-    pub token_meta: PrincipalToken,
+    pub token_meta: AuthenticatedToken,
     pub principal: AuthenticationPrincipal,
     /// `None` = unscoped (full principal authority); `Some(..)` = the token's
     /// permission and/or resource narrowing boundary.
@@ -290,26 +289,27 @@ async fn build_authenticated(
     backend: &impl StorageContext,
     token: Token,
 ) -> Result<Authenticated, ApiError> {
-    let token_meta = token.is_valid(backend).await?;
+    let token_meta =
+        crate::services::authentication::authenticate_bearer_token(backend, &token).await?;
     build_authenticated_from_meta(backend, token, token_meta).await
 }
 
 async fn build_authenticated_from_meta(
     backend: &impl StorageContext,
     token: Token,
-    token_meta: PrincipalToken,
+    token_meta: AuthenticatedToken,
 ) -> Result<Authenticated, ApiError> {
-    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id).await?;
+    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id()).await?;
     let storage = storage_handle(backend);
     let identity = storage
-        .load_authentication_identity(token_meta.principal_id)
+        .load_authentication_identity(token_meta.principal_id())
         .await?;
     let (principal, _) = identity.into_parts();
     let scope = storage
         .load_authentication_token_scope(AuthenticationTokenScopeQuery::new(
-            token_meta.id,
-            token_meta.permission_scoped,
-            token_meta.resource_scoped,
+            token_meta.id(),
+            token_meta.is_permission_scoped(),
+            token_meta.is_resource_scoped(),
         ))
         .await?
         .map(token_scope_from_storage)
@@ -322,7 +322,7 @@ async fn build_authenticated_from_meta(
     })
 }
 
-fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<PrincipalToken> {
+fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<AuthenticatedToken> {
     match req.extensions().get::<ResolvedAuth>() {
         Some(ResolvedAuth::Authenticated {
             token: resolved_token,
@@ -340,7 +340,7 @@ fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<PrincipalToken> {
 /// unscoped token) can never act through a human/IAM extractor.
 async fn human_unscoped_user_from_meta(
     backend: &impl StorageContext,
-    token_meta: PrincipalToken,
+    token_meta: AuthenticatedToken,
 ) -> Result<User, ApiError> {
     if token_meta.is_scoped() {
         return Err(ApiError::Forbidden(
@@ -348,13 +348,13 @@ async fn human_unscoped_user_from_meta(
         ));
     }
 
-    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id).await?;
+    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id()).await?;
 
     // Single round trip: fetch the backend-neutral principal projection and,
     // when human, a password-free human projection from the same snapshot.
     let storage = storage_handle(backend);
     let identity = storage
-        .load_authentication_identity(token_meta.principal_id)
+        .load_authentication_identity(token_meta.principal_id())
         .await?;
     let (principal, human) = identity.into_parts();
     if !principal.is_human() {
@@ -423,7 +423,8 @@ async fn human_unscoped_user(
     backend: &impl StorageContext,
     token: &Token,
 ) -> Result<User, ApiError> {
-    let token_meta = token.is_valid(backend).await?;
+    let token_meta =
+        crate::services::authentication::authenticate_bearer_token(backend, token).await?;
     human_unscoped_user_from_meta(backend, token_meta).await
 }
 

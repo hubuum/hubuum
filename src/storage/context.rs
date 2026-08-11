@@ -4,7 +4,9 @@ use std::future::Future;
 use std::pin::Pin;
 use uuid::Uuid;
 
-use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
+use crate::events::{
+    EventDeliverySettings, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
+};
 use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionKey, HubuumClass, HubuumObject, ImportMode, MaintenanceState,
@@ -14,31 +16,32 @@ use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, AuthorizationClassResource, AuthorizationCollection,
-    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
-    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
-    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
-    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
-    AuthorizationStorage, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogPage, CatalogStorage, ComputedFieldLifecycleStorage,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
-    ComputedObjectStorage, DynLifecycleStorage, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, ImportStorage, InventoryGaugeSnapshot,
-    MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
-    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    RemoteTargetStorage, RestoreStorage, StorageBackend, StorageBackendDescriptor,
-    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageClass,
-    StorageClassComputationState, StorageClassGraphRow, StorageClassRelation, StorageCollection,
-    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
-    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageError, StorageExportOutput,
+    AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity, AuthenticationStorage,
+    AuthenticationTokenScope, AuthenticationTokenScopeQuery, AuthorizationClassResource,
+    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
+    AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrantPage,
+    AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
+    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
+    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
+    ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage, EventArchive,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
+    EventRetentionSummary, ExportQueryStorage, ExportTemplateHistoryRecord, HistoryAsOfQuery,
+    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, ImportStorage,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage,
+    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage, StorageBackend,
+    StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageError, StorageExecution, StorageExportOutput,
     StorageExportOutputSummary, StorageImportApply, StorageImportPlanItem, StorageImportPreflight,
     StorageImportResult, StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage,
     StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
@@ -49,14 +52,14 @@ use crate::storage::{
     StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
     StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
     StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskClaim,
-    StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage,
-    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
-    StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate,
-    TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
-    UnifiedSearchStorage,
+    StorageRestoreStatus, StorageRevisionPrecondition, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
+    StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
+    StorageTaskPageQuery, StorageTaskStateUpdate, TaskExecutionStorage, TaskGaugeSnapshot,
+    TaskQueueStorage, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -135,8 +138,93 @@ impl ExportQueryStorage for StorageHandle {
     }
 }
 
+impl StorageExecution for StorageHandle {
+    fn run_with_call_site<'a, F, R>(
+        &'a self,
+        call_site: StorageCallSite,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => {
+                backend.run_with_call_site(call_site, future)
+            }
+        }
+    }
+
+    fn run_with_call_site_send<'a, F, R>(
+        &'a self,
+        call_site: StorageCallSite,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>
+    where
+        F: Future<Output = R> + Send + 'a,
+        R: Send + 'a,
+    {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => {
+                backend.run_with_call_site_send(call_site, future)
+            }
+        }
+    }
+
+    fn run_with_mutation_provenance<'a, F, R>(
+        &'a self,
+        provenance: Option<MutationProvenance>,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => {
+                backend.run_with_mutation_provenance(provenance, future)
+            }
+        }
+    }
+
+    fn run_with_revision_precondition<'a, F, R>(
+        &'a self,
+        precondition: Option<StorageRevisionPrecondition>,
+        future: F,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
+    where
+        F: Future<Output = R> + 'a,
+        R: 'a,
+    {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => {
+                backend.run_with_revision_precondition(precondition, future)
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl AuthenticationStorage for StorageHandle {
+    async fn authenticate_bearer_token(
+        &self,
+        credential: AuthenticationCredential,
+    ) -> Result<AuthenticatedToken, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authentication",
+            "authenticate_bearer_token",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.authenticate_bearer_token(credential).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
     async fn load_authentication_identity(
         &self,
         principal_id: i32,

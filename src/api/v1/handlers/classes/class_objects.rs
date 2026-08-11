@@ -453,7 +453,8 @@ async fn apply_resolved_object_update(
 
     let precondition = revision_precondition(req, target.object())?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .object_service()
@@ -571,7 +572,8 @@ async fn apply_object_data_patch(
     // otherwise fail with 409.
     let precondition = revision_precondition(req, target.object())?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context
             .object_service()
@@ -709,7 +711,8 @@ async fn delete_resolved_object(
     let etag = target.object().entity_tag()?;
     let precondition = revision_precondition_for_tag(req, &etag)?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
         context.object_service().delete(&target, &event_context),
     )
