@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use hubuum_domain::{MaintenanceState, TokenRetentionSettings};
+use std::fmt;
 
 use crate::StorageError;
 
@@ -220,6 +221,135 @@ pub struct OperationalTaskQueueSnapshot {
     total_import_result_rows: i64,
     oldest_queued_at: Option<NaiveDateTime>,
     oldest_active_at: Option<NaiveDateTime>,
+}
+
+/// Aggregated execution health for one export-template identity.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperationalExportTemplateHealth {
+    template_name: Option<String>,
+    runs: i64,
+    warning_total: i64,
+    warning_max: i32,
+    total_duration_ms_total: i64,
+    total_duration_ms_max: i32,
+}
+
+/// Stored template material required by the explicit administrator audit.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OperationalExportTemplateAuditEntry {
+    id: i32,
+    collection_id: i32,
+    name: String,
+    template: String,
+    content_type: String,
+}
+
+impl OperationalExportTemplateAuditEntry {
+    #[must_use]
+    pub fn new(
+        id: i32,
+        collection_id: i32,
+        name: impl Into<String>,
+        template: impl Into<String>,
+        content_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            id,
+            collection_id,
+            name: name.into(),
+            template: template.into(),
+            content_type: content_type.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> i32 {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn template(&self) -> &str {
+        &self.template
+    }
+
+    #[must_use]
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+}
+
+impl fmt::Debug for OperationalExportTemplateAuditEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OperationalExportTemplateAuditEntry")
+            .field("id", &self.id)
+            .field("collection_id", &self.collection_id)
+            .field("name", &"<redacted>")
+            .field("template", &"<redacted>")
+            .field("content_type", &self.content_type)
+            .finish()
+    }
+}
+
+impl OperationalExportTemplateHealth {
+    #[must_use]
+    pub fn new(
+        template_name: Option<String>,
+        runs: i64,
+        warning_total: i64,
+        warning_max: i32,
+        total_duration_ms_total: i64,
+        total_duration_ms_max: i32,
+    ) -> Self {
+        Self {
+            template_name,
+            runs,
+            warning_total,
+            warning_max,
+            total_duration_ms_total,
+            total_duration_ms_max,
+        }
+    }
+
+    #[must_use]
+    pub fn template_name(&self) -> Option<&str> {
+        self.template_name.as_deref()
+    }
+
+    #[must_use]
+    pub const fn runs(&self) -> i64 {
+        self.runs
+    }
+
+    #[must_use]
+    pub const fn warning_total(&self) -> i64 {
+        self.warning_total
+    }
+
+    #[must_use]
+    pub const fn warning_max(&self) -> i32 {
+        self.warning_max
+    }
+
+    #[must_use]
+    pub const fn total_duration_ms_total(&self) -> i64 {
+        self.total_duration_ms_total
+    }
+
+    #[must_use]
+    pub const fn total_duration_ms_max(&self) -> i32 {
+        self.total_duration_ms_max
+    }
 }
 
 impl OperationalTaskQueueSnapshot {
@@ -624,6 +754,18 @@ pub trait OperationalStateStorage: Send + Sync {
     async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError>;
 
     async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError>;
+
+    /// Return one backend-aggregated row per stored export-template identity.
+    /// Implementations must not return individual export outputs.
+    async fn export_template_health(
+        &self,
+    ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError>;
+
+    /// Load the complete stored template set required for an explicit
+    /// administrator validation pass.
+    async fn export_templates_for_audit(
+        &self,
+    ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError>;
 }
 
 /// Token retention behavior required from every selectable storage backend.
@@ -633,6 +775,27 @@ pub trait TokenRetentionStorage: Send + Sync {
         &self,
         settings: TokenRetentionSettings,
     ) -> Result<usize, StorageError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OperationalExportTemplateAuditEntry;
+
+    #[test]
+    fn export_template_audit_debug_redacts_name_and_source() {
+        let entry = OperationalExportTemplateAuditEntry::new(
+            1,
+            2,
+            "sensitive-template-name",
+            "sensitive-template-source",
+            "text/plain",
+        );
+        let debug = format!("{entry:?}");
+
+        assert!(!debug.contains("sensitive-template-name"));
+        assert!(!debug.contains("sensitive-template-source"));
+        assert!(debug.contains("text/plain"));
+    }
 }
 
 /// Event-pipeline persistence health required from every selectable backend.

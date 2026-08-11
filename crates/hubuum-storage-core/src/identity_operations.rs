@@ -1040,6 +1040,87 @@ pub struct StorageSyncedHuman {
     anonymized_at: Option<NaiveDateTime>,
 }
 
+/// Initial local administrator bootstrap request.
+///
+/// The password value is already hashed by the application before it crosses
+/// the storage boundary. Debug output deliberately reveals neither the group
+/// name nor the credential hash.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageDefaultAdminBootstrap {
+    admin_group_name: String,
+    password_hash: String,
+}
+
+impl StorageDefaultAdminBootstrap {
+    #[must_use]
+    pub fn new(admin_group_name: impl Into<String>, password_hash: impl Into<String>) -> Self {
+        Self {
+            admin_group_name: admin_group_name.into(),
+            password_hash: password_hash.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn admin_group_name(&self) -> &str {
+        &self.admin_group_name
+    }
+
+    #[must_use]
+    pub fn password_hash(&self) -> &str {
+        &self.password_hash
+    }
+}
+
+impl fmt::Debug for StorageDefaultAdminBootstrap {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageDefaultAdminBootstrap")
+            .field("admin_group_name", &"<redacted>")
+            .field("has_password_hash", &!self.password_hash.is_empty())
+            .finish()
+    }
+}
+
+/// Administrator-requested local password replacement.
+///
+/// The application hashes the new credential before dispatch. Implementations
+/// atomically replace it and revoke active bearer tokens.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageLocalPasswordReset {
+    principal_name: String,
+    password_hash: String,
+}
+
+impl StorageLocalPasswordReset {
+    #[must_use]
+    pub fn new(principal_name: impl Into<String>, password_hash: impl Into<String>) -> Self {
+        Self {
+            principal_name: principal_name.into(),
+            password_hash: password_hash.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn principal_name(&self) -> &str {
+        &self.principal_name
+    }
+
+    #[must_use]
+    pub fn password_hash(&self) -> &str {
+        &self.password_hash
+    }
+}
+
+impl fmt::Debug for StorageLocalPasswordReset {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageLocalPasswordReset")
+            .field("principal_name", &"<redacted>")
+            .field("has_password_hash", &!self.password_hash.is_empty())
+            .finish()
+    }
+}
+
 impl StorageSyncedHuman {
     #[must_use]
     pub const fn new(
@@ -1085,6 +1166,26 @@ impl StorageSyncedHuman {
 /// Complete identity and IAM operations every selectable backend must provide.
 #[async_trait]
 pub trait IdentityStorage: Send + Sync {
+    /// Return whether the backend is empty enough to require its initial local
+    /// administrator. This is an optimization; the atomic bootstrap operation
+    /// must repeat the check under its backend-native coordination primitive.
+    async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError>;
+
+    /// Atomically create the initial local administrator when still required.
+    /// Concurrent callers must produce at most one administrator and all later
+    /// callers return `false`.
+    async fn bootstrap_default_admin(
+        &self,
+        request: StorageDefaultAdminBootstrap,
+    ) -> Result<bool, StorageError>;
+
+    /// Replace one local human credential and atomically revoke every active
+    /// bearer token owned by that principal. Returns the revoked token count.
+    async fn reset_local_password(
+        &self,
+        request: StorageLocalPasswordReset,
+    ) -> Result<usize, StorageError>;
+
     /// Create the named scope if absent, or reconcile its provider kind when it
     /// already exists, and return the authoritative stored row.
     async fn ensure_identity_scope(
@@ -1247,5 +1348,27 @@ mod tests {
         assert!(!debug.contains("secret-name"));
         assert!(!debug.contains("secret@example.com"));
         assert!(debug.contains("group_count: 1"));
+    }
+
+    #[test]
+    fn default_admin_bootstrap_debug_redacts_group_and_hash() {
+        let request =
+            StorageDefaultAdminBootstrap::new("sensitive-admin-group", "sensitive-password-hash");
+        let debug = format!("{request:?}");
+
+        assert!(!debug.contains("sensitive-admin-group"));
+        assert!(!debug.contains("sensitive-password-hash"));
+        assert!(debug.contains("has_password_hash: true"));
+    }
+
+    #[test]
+    fn local_password_reset_debug_redacts_name_and_hash() {
+        let request =
+            StorageLocalPasswordReset::new("sensitive-principal-name", "sensitive-password-hash");
+        let debug = format!("{request:?}");
+
+        assert!(!debug.contains("sensitive-principal-name"));
+        assert!(!debug.contains("sensitive-password-hash"));
+        assert!(debug.contains("has_password_hash: true"));
     }
 }

@@ -2,6 +2,8 @@ mod backup_snapshot;
 mod computed_fields;
 mod error;
 mod imports;
+#[cfg(feature = "embedded-migrations")]
+mod migrations;
 #[cfg(test)]
 pub(crate) use imports::{RuntimeState, execute_planned_item, resolve_object_runtime};
 #[doc(hidden)]
@@ -72,26 +74,27 @@ use super::{
     InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectHistoryRecord, ObjectRelationStore, ObjectRelationsTouchingIdsQuery, ObjectStore,
-    OperationalStateStorage, OperationalStorageSnapshot, OperationalTaskQueueSnapshot,
-    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, StorageAuditEvent, StorageAuditEventListQuery, StorageCallSite,
-    StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
-    StorageComputedObject, StorageError, StorageEventDelivery, StorageEventDeliveryListQuery,
-    StorageEventPage, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
-    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
+    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    StorageAuditEvent, StorageAuditEventListQuery, StorageCallSite, StorageClass,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedObject,
+    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentity, StorageIdentityPage,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StorageObject, StorageObjectAggregatePage,
-    StorageObjectGraphRow, StorageObjectRelation, StoragePoolState, StoragePrincipalGroup,
-    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
-    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenListQuery, StorageTokenMetadata, TaskGaugeSnapshot, TokenRetentionStorage,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
-    UnifiedSearchStorage,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset, StorageObject,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
+    StoragePrincipalGroup, StorageQueryBudget, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRevisionPrecondition, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenListQuery, StorageTokenMetadata, TaskGaugeSnapshot,
+    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -101,6 +104,9 @@ use error::map_postgres_error;
 pub(crate) struct PostgresStorage {
     pool: PostgresPool,
 }
+
+#[cfg(feature = "embedded-migrations")]
+pub(in crate::storage) use migrations::run_embedded_migrations;
 
 impl PostgresStorage {
     pub(crate) fn new(pool: PostgresPool) -> Self {
@@ -217,6 +223,30 @@ impl AuthenticationStorage for PostgresStorage {
 
 #[async_trait]
 impl IdentityStorage for PostgresStorage {
+    async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
+        operations::bootstrap::default_admin_bootstrap_required(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn bootstrap_default_admin(
+        &self,
+        request: StorageDefaultAdminBootstrap,
+    ) -> Result<bool, StorageError> {
+        operations::bootstrap::bootstrap_default_admin(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn reset_local_password(
+        &self,
+        request: StorageLocalPasswordReset,
+    ) -> Result<usize, StorageError> {
+        operations::identity_operations::reset_local_password(&self.pool, request)
+            .await
+            .map_err(map_postgres_error)
+    }
+
     async fn ensure_identity_scope(
         &self,
         request: StorageIdentityScopeEnsure,
@@ -985,6 +1015,22 @@ impl OperationalStateStorage for PostgresStorage {
 
     async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
         operations::meta::load_task_queue_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn export_template_health(
+        &self,
+    ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
+        operations::meta::load_export_template_health(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn export_templates_for_audit(
+        &self,
+    ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
+        operations::meta::load_export_templates_for_audit(&self.pool)
             .await
             .map_err(map_postgres_error)
     }

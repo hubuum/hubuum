@@ -16,12 +16,28 @@ use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
     AuthenticationTokenScope, IdentityStorage, StorageContext, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StoragePrincipalGroup, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    storage_handle,
+    StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, storage_handle,
 };
+
+pub(crate) async fn reset_local_password(
+    context: &impl StorageContext,
+    principal_name: &str,
+    new_password: String,
+) -> Result<usize, ApiError> {
+    let password_hash = crate::utilities::auth::hash_password_async(new_password)
+        .await
+        .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
+    Ok(storage_handle(context)
+        .reset_local_password(StorageLocalPasswordReset::new(
+            principal_name,
+            password_hash,
+        ))
+        .await?)
+}
 
 fn revision(value: i64, resource: &str) -> Result<ResourceRevision, ApiError> {
     ResourceRevision::new(value).map_err(|_| {

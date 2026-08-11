@@ -35,25 +35,27 @@ use crate::storage::{
     HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage, ImportStorage,
     InventoryGaugeSnapshot, MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
-    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StorageComputedObject, StorageError, StorageEventDelivery, StorageEventDeliveryListQuery,
-    StorageEventPage, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
-    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    ObjectHistoryRecord, ObjectRelationsTouchingIdsQuery, OperationalExportTemplateAuditEntry,
+    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
+    OperationalTaskQueueSnapshot, PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
+    StorageAuditEvent, StorageAuditEventListQuery, StorageBackend, StorageBackendDescriptor,
+    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite,
+    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRelation,
+    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
+    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
+    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
     StorageExportOutput, StorageExportOutputSummary, StorageExternalPrincipalState,
     StorageExternalUserSync, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageImportApply, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
-    StorageImportTaskResultPage, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StorageImportTaskResultPage, StorageLocalPasswordReset, StorageObject,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StoragePrincipalGroup, StorageQueryBudget, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
@@ -278,6 +280,60 @@ impl AuthenticationStorage for StorageHandle {
 
 #[async_trait]
 impl IdentityStorage for StorageHandle {
+    async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "default_admin_bootstrap_required",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.default_admin_bootstrap_required().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn bootstrap_default_admin(
+        &self,
+        request: StorageDefaultAdminBootstrap,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "bootstrap_default_admin",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.bootstrap_default_admin(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn reset_local_password(
+        &self,
+        request: StorageLocalPasswordReset,
+    ) -> Result<usize, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "reset_local_password",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.reset_local_password(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
     async fn ensure_identity_scope(
         &self,
         request: StorageIdentityScopeEnsure,
@@ -2561,6 +2617,42 @@ impl OperationalStateStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.task_queue_snapshot().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn export_template_health(
+        &self,
+    ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "operational_state",
+            "export_template_health",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.export_template_health().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn export_templates_for_audit(
+        &self,
+    ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "operational_state",
+            "export_templates_for_audit",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.export_templates_for_audit().await
                     }
                 }
             },

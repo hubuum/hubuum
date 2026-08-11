@@ -122,9 +122,12 @@ contracts.
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
 reported in startup logs, process metrics, and the redacted admin configuration.
-Version 19 additionally requires revisioned permission-set snapshots, atomic
-event-aware local grant mutations, persisted storage diagnostics, and task-queue
-diagnostics. The required capability labels are unchanged from version 18.
+Version 20 additionally requires coordinated initial-administrator bootstrap,
+atomic local-password replacement with token revocation, the complete stored
+template set for administrator audits, and backend-aggregated export-template
+health. Process entry points construct an opaque backend through validated
+storage settings and cannot import the selected adapter, its pool, Diesel, or
+schema. The required capability labels are unchanged from version 19.
 
 ## Export Query Semantics
 
@@ -300,8 +303,10 @@ the contract DTOs. Metrics use this pattern today: `MetricsStorage` returns
 neutral inventory, task, event, and pool snapshots while PostgreSQL keeps its
 queryable row structs inside the adapter. `OperationalStateStorage` does the
 same for readiness, maintenance, persisted storage diagnostics, and task-queue
-diagnostics; backend-specific activity and maintenance queries are mapped into
-neutral snapshots before dispatch returns. `TokenRetentionStorage` accepts
+diagnostics. It also returns export-template health already aggregated by the
+backend, so administration never receives an unbounded output-row collection.
+Backend-specific activity and maintenance queries are mapped into neutral
+snapshots before dispatch returns. `TokenRetentionStorage` accepts
 validated retention settings without exposing the transaction, advisory lock,
 or SQL cutoffs. `EventHealthStorage` returns only persisted queue and claim
 state. The application adds worker configuration and in-process wake-up
@@ -335,13 +340,21 @@ selected adapter.
 `IdentityStorage` owns identity-scope reconciliation and lookup, effective
 principal-group membership reads, retained-token metadata pages, principal
 disablement facts, complete service-account point/list/lifecycle behavior, and
-external-directory synchronization. These operations are mandatory as one
-indivisible contract: a backend that can authenticate principals but cannot
-manage their scopes, memberships, service accounts, tokens, and external
-identity state is not selectable. Lifecycle requests carry the required event
-context so the adapter can keep identity mutations and audit events atomic.
-The application service converts the private-field storage DTOs into public
-domain and API models and maps `StorageError` into `ApiError`.
+external-directory synchronization. It also owns initial local-administrator
+bootstrap: the application hashes the generated credential, while the backend
+rechecks empty-state eligibility under its native coordination primitive and
+creates at most one initial administrator atomically. Administrator-initiated
+local-password replacement follows the same boundary: the application hashes
+the generated credential, and the backend resolves the local principal, writes
+the replacement, and revokes every active bearer token in one transaction.
+These operations are mandatory as one indivisible contract: a backend that can
+authenticate principals but cannot manage their scopes, memberships, service
+accounts, tokens, bootstrap, credential reset, and external identity state is
+not selectable. Lifecycle
+requests carry the required event context so the adapter can keep identity
+mutations and audit events atomic. The application service converts the
+private-field storage DTOs into public domain and API models and maps
+`StorageError` into `ApiError`.
 
 The opaque handle observes every identity operation using bounded
 `identity/*` labels. Sensitive request DTOs and the few response DTOs that need
@@ -576,6 +589,21 @@ Logs and metric labels must never contain entity IDs, user-controlled names,
 queries, URLs, credentials, or payloads. Detailed mutation audit logs remain
 commit-aware and separate from diagnostic backend events.
 
+## Process Composition
+
+Server, administration, and bootstrap entry points construct validated
+`StorageSettings` and receive an opaque `StorageHandle`. Only the internal
+storage factory selects an adapter, maps its initialization error into
+`StorageError`, and logs its non-sensitive effective endpoint and pool settings.
+The embedded-migration command dispatches through the same factory boundary
+without exposing a connection, Diesel migration harness, or credential-bearing
+URL to the administration workflow.
+
+Readiness, initial-administrator coordination, credential reset,
+export-template audits, and export-template health enter the common observed
+contracts. Consequently process startup and CLI operations use the same bounded
+success, rejection, failure, and duration diagnostics as HTTP and worker calls.
+
 ## Administrator Configuration
 
 `GET /api/v1/admin/config` reports the effective non-secret storage selection:
@@ -687,8 +715,10 @@ The crates have deliberately different responsibilities:
   Behavioral traits that still name root domain types remain in `src/storage`
   until those types move to `hubuum-domain`; the root aggregate trait enforces
   completeness meanwhile.
-- `hubuum-storage-postgres` currently owns pool and TLS setup, JSONB helpers,
-  and query capture. It ultimately owns generated schema, migrations,
+- `hubuum-storage-postgres` currently owns private-field pool settings, pool and
+  TLS setup, endpoint parsing, JSONB helpers, and query capture. The root
+  storage factory is its only process-composition consumer. The crate
+  ultimately owns generated schema, migrations,
   transaction helpers, persistence rows, PostgreSQL queries, and
   `PostgresStorageError` as domain types are separated.
 - `hubuum-storage-contract-tests` supplies the reusable compatibility suite and
@@ -716,8 +746,8 @@ A safe continuation stack is:
 4. Move `src/schema.rs` and `migrations/` together so generated schema,
    embedded migrations, and production queries stay owned by one crate.
 5. Forward root package features such as embedded migrations and TLS to the
-   adapter crate, and update the CLI migration entrypoint to call its narrow
-   migration API.
+   adapter crate, and move the generic CLI migration dispatch implementation
+   behind its narrow workspace migration API.
 6. Update the Docker manifest-copy stage, CI change classifier, Rust API policy,
    and production container build in the same stack layers that add the crates.
 
@@ -734,6 +764,8 @@ Architecture tests enforce that:
 - handlers, services, extractors, middleware, and metrics scraping do not
   import Diesel, `PostgresPool`, transaction helpers, or database
   implementation modules;
+- server, administration, and bootstrap entry points construct storage only
+  through backend-neutral settings and an opaque handle;
 - backend-neutral services and storage contracts do not import PostgreSQL or
   application API errors;
 - storage contract DTOs do not derive Diesel traits or expose adapter types;
@@ -744,6 +776,6 @@ Architecture tests enforce that:
 - the complete backend trait contains every required capability family; and
 - the memory contract model cannot be certified or selected as a full backend.
 
-Direct persistence APIs remain internal implementation machinery for adapters,
-administrative workflows, and fixtures. They are not an application-facing
-escape hatch.
+Direct persistence APIs remain internal implementation machinery for adapters
+and fixtures. They are not an application-facing or administrative escape
+hatch.

@@ -2,10 +2,11 @@ use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserPro
 use hubuum_storage_core::{
     AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityPage,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StoragePrincipalGroup, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset,
+    StoragePrincipalGroup, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
 };
 
 use crate::errors::ApiError;
@@ -114,6 +115,18 @@ fn storage_token_metadata(metadata: PrincipalTokenMetadata) -> StorageTokenMetad
     .expired(metadata.expired)
     .scope(metadata.scope.map(storage_token_scope))
     .build()
+}
+
+pub(crate) async fn reset_local_password(
+    pool: &PostgresPool,
+    request: StorageLocalPasswordReset,
+) -> Result<usize, ApiError> {
+    super::user::reset_local_password_record(
+        pool,
+        request.principal_name(),
+        request.password_hash(),
+    )
+    .await
 }
 
 pub(crate) async fn ensure_identity_scope(

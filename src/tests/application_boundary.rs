@@ -173,6 +173,7 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
             if is_storage_adapter(&root, &path)
                 || path == root.join("src/storage/context.rs")
                 || path == root.join("src/storage/capabilities.rs")
+                || path == root.join("src/storage/factory.rs")
             {
                 continue;
             }
@@ -423,6 +424,9 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     for operation in [
+        "default_admin_bootstrap_required",
+        "bootstrap_default_admin",
+        "reset_local_password",
         "ensure_scope",
         "load_scope_name",
         "load_scope_names",
@@ -474,6 +478,8 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "maintenance_state",
         "storage_snapshot",
         "task_queue_snapshot",
+        "export_template_health",
+        "export_templates_for_audit",
     ] {
         assert!(
             compact_context.contains(&format!("\"operational_state\",\"{operation}\"")),
@@ -527,6 +533,46 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "event-delivery administration operation {operation} must use the common storage observer"
         );
     }
+}
+
+#[test]
+fn process_entry_points_compose_only_through_backend_neutral_storage() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for file in [
+        "src/application.rs",
+        "src/administration.rs",
+        "src/utilities/init.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production = source
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap_or(&source);
+        for forbidden in [
+            "crate::storage::postgres",
+            "hubuum_storage_postgres",
+            "PostgresPool",
+            "PgConnection",
+            "diesel::",
+            "diesel_async",
+            "crate::schema",
+            "StorageBackendKind::Postgresql",
+        ] {
+            if production.contains(forbidden) {
+                violations.push(format!("{} imports or uses {forbidden}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "process entry points selected a storage implementation directly:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]

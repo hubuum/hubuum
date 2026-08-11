@@ -77,6 +77,28 @@ impl PostgresPoolSettings {
     pub fn endpoint(&self) -> &PostgresEndpoint {
         &self.endpoint
     }
+
+    #[must_use]
+    pub const fn max_size(&self) -> u32 {
+        self.max_size
+    }
+
+    #[must_use]
+    pub const fn statement_timeout_ms(&self) -> u64 {
+        self.statement_timeout_ms
+    }
+
+    #[must_use]
+    pub const fn acquire_timeout_ms(&self) -> u64 {
+        self.acquire_timeout_ms
+    }
+
+    /// Credential-bearing connection URL for adapter-internal setup such as
+    /// embedded migrations. Do not include this value in diagnostics.
+    #[must_use]
+    pub fn connection_url(&self) -> &str {
+        &self.database_url
+    }
 }
 
 pub struct PostgresPoolSettingsBuilder {

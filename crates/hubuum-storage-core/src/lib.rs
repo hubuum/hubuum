@@ -87,9 +87,10 @@ pub use identity::{
     AuthenticationTokenScopeQuery,
 };
 pub use identity_operations::{
-    IdentityStorage, StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageExternalUserSyncBuilder, StorageIdentityPage, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StoragePrincipalGroup, StorageServiceAccount,
+    IdentityStorage, StorageDefaultAdminBootstrap, StorageExternalGroup,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageExternalUserSyncBuilder,
+    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageLocalPasswordReset, StoragePrincipalGroup, StorageServiceAccount,
     StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
     StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
     StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
@@ -106,7 +107,8 @@ pub use object_aggregate::{
 pub use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-    EventSubscriptionHealthSnapshot, OperationalStateStorage, OperationalStorageSnapshot,
+    EventSubscriptionHealthSnapshot, OperationalExportTemplateAuditEntry,
+    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
     OperationalTaskActiveCounts, OperationalTaskKindCounts, OperationalTaskQueueSnapshot,
     OperationalTaskStatusCounts, OperationalTaskTerminalCounts, ReadinessSnapshot,
     TokenRetentionStorage,
@@ -171,7 +173,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 19;
+pub const STORAGE_CONTRACT_VERSION: u16 = 20;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
