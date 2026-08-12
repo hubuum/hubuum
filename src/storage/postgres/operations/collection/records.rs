@@ -109,12 +109,10 @@ impl CursorSqlMapping for CollectionRow {
     }
 }
 
-#[derive(Insertable)]
-#[diesel(table_name = crate::schema::collections)]
 struct NewCollectionRow<'a> {
     name: &'a str,
     description: &'a str,
-    parent_collection_id: Option<i32>,
+    parent_collection_id: i32,
 }
 
 #[derive(AsChangeset)]
@@ -293,18 +291,23 @@ pub(crate) async fn insert_collection_row_with_closure(
     conn: &mut crate::storage::postgres::PostgresConnection,
     input: CollectionRowInsert<'_>,
 ) -> Result<Collection, ApiError> {
-    use crate::schema::collections::dsl::{collections, created_at, updated_at};
+    use crate::schema::collections::dsl::{
+        collections, created_at, description, name, parent_collection_id, updated_at,
+    };
 
     let resolved_parent_id = resolve_parent_collection_id(conn, input.parent_collection_id).await?;
+    let row = NewCollectionRow {
+        name: input.name,
+        description: input.description,
+        parent_collection_id: resolved_parent_id,
+    };
 
     let collection: Collection = match input.timestamps {
         Some((created, updated)) => diesel::insert_into(collections)
             .values((
-                NewCollectionRow {
-                    name: input.name,
-                    description: input.description,
-                    parent_collection_id: Some(resolved_parent_id),
-                },
+                name.eq(row.name),
+                description.eq(row.description),
+                parent_collection_id.eq(row.parent_collection_id),
                 created_at.eq(created),
                 updated_at.eq(updated),
             ))
@@ -312,11 +315,15 @@ pub(crate) async fn insert_collection_row_with_closure(
             .await?
             .into(),
         None => diesel::insert_into(collections)
-            .values(NewCollectionRow {
-                name: input.name,
-                description: input.description,
-                parent_collection_id: Some(resolved_parent_id),
-            })
+            // Keep the adapter DTO private, then express its resolved fields as
+            // fixed `Eq` values. Deriving `Insertable` for an optional parent
+            // produces a dynamic DEFAULT-capable statement and bypasses
+            // Diesel's prepared-statement cache.
+            .values((
+                name.eq(row.name),
+                description.eq(row.description),
+                parent_collection_id.eq(row.parent_collection_id),
+            ))
             .get_result::<CollectionRow>(conn)
             .await?
             .into(),
@@ -835,4 +842,33 @@ pub async fn move_collection_record_from_backend(
         Ok(updated)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use diesel::query_builder::QueryId;
+
+    use super::*;
+
+    fn assert_static_query_id<T: QueryId>(_: &T) {
+        assert!(
+            T::HAS_STATIC_QUERY_ID,
+            "collection inserts must remain eligible for prepared-statement caching"
+        );
+    }
+
+    #[test]
+    fn ordinary_collection_insert_has_a_static_query_shape() {
+        use crate::schema::collections::dsl::{
+            collections, description, name, parent_collection_id,
+        };
+
+        let query = diesel::insert_into(collections).values((
+            name.eq("cacheable-collection"),
+            description.eq("cacheable collection insert"),
+            parent_collection_id.eq(1),
+        ));
+
+        assert_static_query_id(&query);
+    }
 }

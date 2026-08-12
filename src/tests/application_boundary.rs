@@ -11,6 +11,11 @@ fn repository_root() -> PathBuf {
 }
 
 #[cfg(test)]
+fn read_source(path: &Path) -> std::io::Result<String> {
+    fs::read_to_string(path).map(|source| source.replace("\r\n", "\n"))
+}
+
+#[cfg(test)]
 fn rust_files(directory: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut pending = vec![directory.to_path_buf()];
@@ -44,13 +49,13 @@ fn is_storage_adapter(root: &Path, path: &Path) -> bool {
 fn app_context_exposes_only_an_opaque_backend_handle() {
     let root = repository_root();
     let context_path = root.join("src/permissions/context.rs");
-    let context_source = fs::read_to_string(&context_path)
+    let context_source = read_source(&context_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
     let trait_path = root.join("src/storage/context.rs");
-    let trait_source = fs::read_to_string(&trait_path)
+    let trait_source = read_source(&trait_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", trait_path.display()));
     let application_path = root.join("src/application.rs");
-    let application_source = fs::read_to_string(&application_path)
+    let application_source = read_source(&application_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", application_path.display()));
 
     assert!(
@@ -134,7 +139,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
 
     let mut violations = Vec::new();
     for path in paths {
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let source = if path.starts_with(root.join("src/services"))
             || path == root.join("src/exports/mod.rs")
@@ -181,7 +186,7 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
                 continue;
             }
 
-            let source = fs::read_to_string(&path)
+            let source = read_source(&path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
             let source = if path.starts_with(root.join("src/services")) {
                 source.split("#[cfg(test)]").next().unwrap_or(&source)
@@ -223,7 +228,7 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
 
     for relative_path in ["src/models/group.rs", "src/models/principal_group.rs"] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -242,7 +247,7 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let adapter_path = root.join("src/storage/postgres/operations/group.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct GroupRow",
@@ -268,7 +273,7 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
 fn principal_domain_types_are_free_of_persistence_implementation_details() {
     let root = repository_root();
     let path = root.join("src/models/principal.rs");
-    let source = fs::read_to_string(&path)
+    let source = read_source(&path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
     let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
     let violations = [
@@ -285,7 +290,7 @@ fn principal_domain_types_are_free_of_persistence_implementation_details() {
     .collect::<Vec<_>>();
 
     let adapter_path = root.join("src/storage/postgres/operations/principal.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct PrincipalRow",
@@ -320,7 +325,7 @@ fn identity_subtype_domain_types_are_free_of_persistence_implementation_details(
         "src/models/traits/user.rs",
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -371,7 +376,7 @@ fn identity_subtype_domain_types_are_free_of_persistence_implementation_details(
         ),
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for item in required {
             assert!(
@@ -399,7 +404,7 @@ fn permission_domain_types_are_free_of_persistence_implementation_details() {
         "src/models/traits/output.rs",
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -419,7 +424,7 @@ fn permission_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let adapter_path = root.join("src/storage/postgres/operations/permissions.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct PermissionRow",
@@ -435,7 +440,7 @@ fn permission_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let query_path = root.join("src/storage/postgres/operations/collection/permissions.rs");
-    let query_source = fs::read_to_string(&query_path)
+    let query_source = read_source(&query_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", query_path.display()));
     assert!(
         query_source.contains("impl CursorSqlMapping for GroupPermissionQueryRow"),
@@ -459,7 +464,7 @@ fn collection_domain_types_are_free_of_persistence_implementation_details() {
         "src/models/traits/collection.rs",
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -478,7 +483,7 @@ fn collection_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let adapter_path = root.join("src/storage/postgres/operations/collection/records.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct CollectionRow",
@@ -494,7 +499,7 @@ fn collection_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let history_path = root.join("src/storage/postgres/operations/history.rs");
-    let history_source = fs::read_to_string(&history_path)
+    let history_source = read_source(&history_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
     assert!(
         history_source.contains("struct CollectionHistoryRow"),
@@ -515,7 +520,7 @@ fn class_domain_types_are_free_of_persistence_implementation_details() {
 
     for relative_path in ["src/models/class.rs", "src/models/traits/class.rs"] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -534,7 +539,7 @@ fn class_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let adapter_path = root.join("src/storage/postgres/operations/class.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct HubuumClassRow",
@@ -550,7 +555,7 @@ fn class_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let history_path = root.join("src/storage/postgres/operations/history.rs");
-    let history_source = fs::read_to_string(&history_path)
+    let history_source = read_source(&history_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
     assert!(
         history_source.contains("struct HubuumClassHistoryRow"),
@@ -558,7 +563,7 @@ fn class_domain_types_are_free_of_persistence_implementation_details() {
     );
 
     let output_path = root.join("src/models/traits/output.rs");
-    let output_source = fs::read_to_string(&output_path)
+    let output_source = read_source(&output_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", output_path.display()));
     assert!(
         !output_source.contains("impl CursorSqlMapping for HubuumClassExpanded"),
@@ -579,7 +584,7 @@ fn object_domain_types_are_free_of_persistence_implementation_details() {
 
     for relative_path in ["src/models/object.rs", "src/models/traits/object.rs"] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "diesel::",
@@ -597,7 +602,7 @@ fn object_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let adapter_path = root.join("src/storage/postgres/operations/object.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct HubuumObjectRow",
@@ -630,7 +635,7 @@ fn relation_domain_types_are_free_of_persistence_implementation_details() {
         "src/models/traits/object_relation.rs",
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -649,7 +654,7 @@ fn relation_domain_types_are_free_of_persistence_implementation_details() {
     }
 
     let adapter_path = root.join("src/storage/postgres/operations/relation_rows.rs");
-    let adapter_source = fs::read_to_string(&adapter_path)
+    let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct HubuumClassRelationRow",
@@ -691,7 +696,7 @@ fn workflow_domain_types_are_free_of_persistence_implementation_details() {
         "src/models/search.rs",
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -755,7 +760,7 @@ fn workflow_domain_types_are_free_of_persistence_implementation_details() {
         ),
     ] {
         let path = root.join(relative_path);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for item in required {
             assert!(
@@ -776,14 +781,14 @@ fn workflow_domain_types_are_free_of_persistence_implementation_details() {
 fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable() {
     let root = repository_root();
     let contract_path = root.join("src/storage/contract.rs");
-    let contract_source = fs::read_to_string(&contract_path)
+    let contract_source = read_source(&contract_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
     let context_path = root.join("src/storage/context.rs");
-    let context_source = fs::read_to_string(&context_path)
+    let context_source = read_source(&context_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
     let notification_adapter_path = root.join("src/storage/postgres/notifications.rs");
-    let notification_adapter_source = fs::read_to_string(&notification_adapter_path)
-        .unwrap_or_else(|error| {
+    let notification_adapter_source =
+        read_source(&notification_adapter_path).unwrap_or_else(|error| {
             panic!(
                 "could not read {}: {error}",
                 notification_adapter_path.display()
@@ -1233,7 +1238,7 @@ fn process_entry_points_compose_only_through_backend_neutral_storage() {
         "src/utilities/init.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production = source
             .split("\n#[cfg(test)]\nmod tests")
@@ -1275,7 +1280,7 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
         "tests/api_platform_suite/event_subscriptions.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "storage::capabilities::events",
@@ -1308,7 +1313,7 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
         "tests/api_platform_suite/event_subscriptions.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "storage::postgres",
@@ -1343,7 +1348,7 @@ fn event_administration_consumers_use_the_backend_neutral_application_service() 
         "tests/api_platform_suite/events.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "schema::events",
@@ -1373,7 +1378,7 @@ fn remaining_administration_consumers_do_not_use_postgres_facades() {
         "src/traits/permissions.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "storage::capabilities",
@@ -1405,7 +1410,7 @@ fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
         "src/tasks/worker.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "TaskBackend",
@@ -1436,7 +1441,7 @@ fn export_consumers_use_only_backend_neutral_query_and_authorization_contracts()
         "src/services/authorization_resources.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -1464,7 +1469,7 @@ fn export_template_consumers_use_only_the_backend_neutral_lifecycle_contract() {
         "src/exports/mod.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
@@ -1501,7 +1506,7 @@ fn remote_target_consumers_use_the_backend_neutral_application_service() {
         "tests/api_jobs_suite/remote_targets.rs",
     ] {
         let path = root.join(file);
-        let source = fs::read_to_string(&path)
+        let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         for forbidden in [
             "storage::capabilities::remote_target",
@@ -1536,7 +1541,7 @@ fn remote_target_consumers_use_the_backend_neutral_application_service() {
 fn restore_consumers_use_only_the_mandatory_storage_contract() {
     let root = repository_root();
     let path = root.join("src/restores/mod.rs");
-    let source = fs::read_to_string(&path)
+    let source = read_source(&path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
 
     for forbidden in [
@@ -1572,10 +1577,10 @@ fn restore_consumers_use_only_the_mandatory_storage_contract() {
 fn storage_error_translation_has_one_way_dependency_direction() {
     let root = repository_root();
     let errors_path = root.join("src/errors.rs");
-    let errors_source = fs::read_to_string(&errors_path)
+    let errors_source = read_source(&errors_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", errors_path.display()));
     let postgres_error_path = root.join("src/storage/postgres/error.rs");
-    let postgres_error_source = fs::read_to_string(&postgres_error_path).unwrap_or_else(|error| {
+    let postgres_error_source = read_source(&postgres_error_path).unwrap_or_else(|error| {
         panic!("could not read {}: {error}", postgres_error_path.display())
     });
 
@@ -1615,10 +1620,10 @@ fn storage_error_translation_has_one_way_dependency_direction() {
 fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
     let root = repository_root();
     let backend_path = root.join("src/storage/capabilities.rs");
-    let backend_source = fs::read_to_string(&backend_path)
+    let backend_source = read_source(&backend_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", backend_path.display()));
     let library_path = root.join("src/lib.rs");
-    let library_source = fs::read_to_string(&library_path)
+    let library_source = read_source(&library_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", library_path.display()));
 
     assert!(

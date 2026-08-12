@@ -777,6 +777,12 @@ pub trait TokenRetentionStorage: Send + Sync {
     ) -> Result<usize, StorageError>;
 }
 
+/// Event-pipeline persistence health required from every selectable backend.
+#[async_trait]
+pub trait EventHealthStorage: Send + Sync {
+    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::OperationalExportTemplateAuditEntry;
@@ -796,10 +802,4 @@ mod tests {
         assert!(!debug.contains("sensitive-template-source"));
         assert!(debug.contains("text/plain"));
     }
-}
-
-/// Event-pipeline persistence health required from every selectable backend.
-#[async_trait]
-pub trait EventHealthStorage: Send + Sync {
-    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError>;
 }
