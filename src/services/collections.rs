@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
-use crate::storage::DynLifecycleStorage;
+use crate::storage::CollectionStore;
 
 /// Application-facing collection use cases.
 ///
@@ -10,17 +12,16 @@ use crate::storage::DynLifecycleStorage;
 /// while persistence invariants stay behind the storage capability.
 #[derive(Clone)]
 pub struct CollectionService {
-    storage: DynLifecycleStorage,
+    storage: Arc<dyn CollectionStore>,
 }
 
 impl CollectionService {
-    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
+    pub(crate) fn new(storage: Arc<dyn CollectionStore>) -> Self {
         Self { storage }
     }
 
     pub async fn get(&self, id: CollectionID) -> Result<Collection, ApiError> {
         self.storage
-            .inner()
             .get_collection(id)
             .await
             .map_err(ApiError::from)
@@ -32,7 +33,6 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .inner()
             .create_collection(command, context)
             .await
             .map_err(ApiError::from)
@@ -45,7 +45,6 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .inner()
             .update_collection(id, changes, context)
             .await
             .map_err(ApiError::from)
@@ -53,7 +52,6 @@ impl CollectionService {
 
     pub async fn delete(&self, id: CollectionID, context: &EventContext) -> Result<(), ApiError> {
         self.storage
-            .inner()
             .delete_collection(id, context)
             .await
             .map_err(ApiError::from)
@@ -61,7 +59,6 @@ impl CollectionService {
 
     pub async fn children(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .inner()
             .collection_children(id)
             .await
             .map_err(ApiError::from)
@@ -69,7 +66,6 @@ impl CollectionService {
 
     pub async fn ancestors(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .inner()
             .collection_ancestors(id)
             .await
             .map_err(ApiError::from)
@@ -82,7 +78,6 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .inner()
             .move_collection(id, new_parent_id, context)
             .await
             .map_err(ApiError::from)
@@ -102,7 +97,7 @@ mod tests {
     };
     use crate::services::Services;
     use crate::storage::postgres::PostgresPool;
-    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
+    use crate::storage::{MemoryStorageModel, PostgresStorage};
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
         postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
@@ -122,11 +117,9 @@ mod tests {
         async fn new(backend: ContractImplementation, label: &str) -> Self {
             match backend {
                 ContractImplementation::MemoryModel => Self {
-                    service: Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                        MemoryStorageModel::new(),
-                    ))
-                    .collections()
-                    .clone(),
+                    service: Services::from_resource_storage(MemoryStorageModel::new())
+                        .collections()
+                        .clone(),
                     group_id: GroupID::new(1).expect("valid memory group id"),
                     prefix: format!("memory_{label}"),
                     postgres_cleanup: None,
@@ -145,8 +138,8 @@ mod tests {
                     .await
                     .expect("contract owner group should save");
                     Self {
-                        service: Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                            PostgresStorage::new(pool.get_ref().clone()),
+                        service: Services::from_resource_storage(PostgresStorage::new(
+                            pool.get_ref().clone(),
                         ))
                         .collections()
                         .clone(),
@@ -522,7 +515,7 @@ mod tests {
     #[actix_web::test]
     async fn memory_collection_events_exclude_no_op_updates() {
         let storage = MemoryStorageModel::new();
-        let service = Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()))
+        let service = Services::from_resource_storage(storage.clone())
             .collections()
             .clone();
         let context = EventContext::system();

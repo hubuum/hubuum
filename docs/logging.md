@@ -20,7 +20,7 @@ Every log record includes:
 
 Request-scoped records also include `request_id` and, when accepted from the client, `correlation_id`. Authenticated requests record `principal_id` on the request span after bearer token resolution.
 
-The server emits one `server startup` record at `INFO` after binding succeeds. It includes the package version, build Git SHA, bind address, TLS state, worker counts, storage and authorization backends, storage contract version, log format and level, and the number of enabled event sinks. Release and container builds populate `git_sha`; local builds report `unknown` unless `HUBUUM_BUILD_GIT_SHA` is set while compiling.
+The server emits one `server startup` record at `INFO` after binding succeeds. It includes the package version, build Git SHA, bind address, TLS state, worker counts, storage and authorization backends, log format and level, and the number of enabled event sinks. Release and container builds populate `git_sha`; local builds report `unknown` unless `HUBUUM_BUILD_GIT_SHA` is set while compiling.
 
 `db_backend` remains as a compatibility alias for `storage_backend` while the
 only selectable implementation is PostgreSQL.

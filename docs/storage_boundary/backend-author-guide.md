@@ -11,8 +11,32 @@ not selectable when it supports only lifecycle operations, only HTTP-facing
 queries, or only the operations needed by one deployment.
 
 A partial implementation can be useful as a focused model or test double. Name
-and compose it as such. Do not add it to `StorageBackendKind::ALL`, advertise it
-to administrators, or certify it in `src/storage/contract.rs`.
+and compose it through only the narrow traits it implements. Do not provide
+dummy methods, silent no-ops, or generic "unsupported" defaults. Do not add it
+to `StorageBackendKind::ALL`, advertise it to administrators, or implement
+`StorageBackend` for it.
+
+### Why unsupported defaults are forbidden
+
+A mandatory write that logs and returns success can lose data or skip an
+invariant while its caller proceeds as though the operation committed. A
+mandatory read that returns an empty value can produce incorrect authorization,
+pagination, retention, or recovery decisions. Returning a generic unsupported
+error is safer than a no-op, but still defers a composition mistake from the
+compiler to a production request.
+
+Partiality is therefore structural:
+
+- a collection-only model implements `StorageIdentity` and `CollectionStore`;
+- a service accepts `Arc<dyn CollectionStore>`, not a complete backend; and
+- application composition accepts only `StorageBackend`, whose supertraits
+  require every family.
+
+An operation may have a real optional or best-effort semantic only when the
+contract explicitly defines it. For example, a wake-up hint may be optional if
+durable polling remains the correctness path. That semantic belongs on the
+narrow operation itself; it is not a blanket escape hatch for an incomplete
+backend.
 
 ## Implementation Order
 
@@ -26,7 +50,7 @@ The following order minimizes rework:
 5. Implement task execution and workflow families.
 6. Implement event and operational families.
 7. Add exhaustive dispatch, common observation, administrator projection, and
-   explicit certification.
+   the explicit `StorageBackend` implementation.
 8. Run shared compatibility and backend-native certification tests.
 
 Later families depend conceptually on the earlier facts, but this order does
@@ -155,13 +179,12 @@ rest of the application.
 The administrator projection must include:
 
 - stable backend name;
-- storage contract version;
-- the complete required capability list; and
 - effective non-sensitive settings useful for diagnosis.
 
 Report whether a sensitive setting is configured when useful, but never return
 its value. Startup logs, backend-info metrics, and administrator configuration
-must agree on backend identity and contract version.
+must agree on backend identity. Statically linked adapters use trait checking
+and crate versions; do not introduce duplicate runtime contract metadata.
 
 ## Registration
 
@@ -170,7 +193,7 @@ fallback:
 
 1. Add its stable variant to `StorageBackendKind` and `StorageBackendKind::ALL`.
 2. Implement every trait aggregated by `StorageBackend`.
-3. Add it to the private certification module in `src/storage/contract.rs`.
+3. Explicitly implement `StorageBackend` in `src/storage/contract.rs`.
 4. Add one exhaustive `StorageHandle` composition and dispatch variant.
 5. Add factory construction and redacted settings projection.
 6. Add it to the `available_backends()` test factory.
@@ -231,6 +254,6 @@ A backend is selectable only when all of the following are true:
 - [ ] Native failure, consistency, concurrency, and recovery tests pass.
 - [ ] Service, API, CLI, worker, feature, and packaging tests pass.
 - [ ] Representative database round trips show no unexplained regression.
-- [ ] The contract version and documentation are updated when semantics changed.
+- [ ] Trait, compatibility, and boundary documentation changes remain aligned.
 
 If any item is missing, keep the implementation internal and non-selectable.

@@ -86,10 +86,6 @@ pub struct TlsConfig {
 pub struct DatabaseConfig {
     /// Complete storage backend selected by the application composition root.
     pub backend: String,
-    /// Version of the all-or-nothing storage contract implemented by the backend.
-    pub contract_version: u16,
-    /// Required capability families. Selectable backends always report the complete set.
-    pub capabilities: Vec<String>,
     pub url: SecretStatus,
     pub pool_size: u32,
     pub pool_acquire_timeout_ms: u64,
@@ -291,11 +287,6 @@ impl RunningConfig {
             },
             database: DatabaseConfig {
                 backend: storage.kind().as_str().to_string(),
-                contract_version: storage.contract_version(),
-                capabilities: storage
-                    .capabilities()
-                    .map(|capability| capability.as_str().to_string())
-                    .collect(),
                 url: SecretStatus {
                     configured: !config.database_url.trim().is_empty(),
                 },
@@ -460,22 +451,8 @@ mod tests {
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
-        assert!(json.contains("\"contract_version\":1"));
-        assert!(json.contains("\"catalog_queries\""));
-        assert!(json.contains("\"computed_object_queries\""));
-        assert!(json.contains("\"computed_field_lifecycle\""));
-        assert!(json.contains("\"object_aggregates\""));
-        assert!(json.contains("\"relation_queries\""));
-        assert!(json.contains("\"temporal_history\""));
-        assert!(json.contains("\"unified_search\""));
-        assert!(json.contains("\"remote_targets\""));
-        assert!(json.contains("\"task_queue\""));
-        assert!(json.contains("\"task_execution\""));
-        assert!(json.contains("\"backup_snapshots\""));
-        assert!(json.contains("\"restores\""));
-        assert!(json.contains("\"imports\""));
-        assert!(json.contains("\"export_queries\""));
-        assert!(json.contains("\"export_template_lifecycle\""));
+        assert!(!json.contains("contract_version"));
+        assert!(!json.contains("capabilities"));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
     }

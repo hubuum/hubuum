@@ -42,7 +42,7 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | --- | --- |
 | Extracted traits, DTOs, errors, descriptors | `crates/hubuum-storage-core/src/*` |
 | Extracted PostgreSQL pool, TLS, JSONB, query capture | `crates/hubuum-storage-postgres/src/*` |
-| Aggregate and certification | `src/storage/contract.rs` |
+| Complete aggregate and backend opt-in | `src/storage/contract.rs` |
 | Opaque context, dispatch, common observation | `src/storage/context.rs` |
 | Lifecycle and root-domain contracts | `src/storage/*.rs` |
 | PostgreSQL adapter implementations | `src/storage/postgres/*.rs` |
@@ -100,17 +100,18 @@ changed.
 
 ### New capability family
 
-Adding a family is an architecture and contract-version change. Update:
+Adding a family changes the compile-time backend contract. Update:
 
-- `StorageCapability` and `STORAGE_CONTRACT_VERSION`;
 - the `StorageBackend` aggregate;
 - exhaustive dispatch and observation;
 - every selectable adapter;
-- administrator metadata;
+- sanitized administrator settings when applicable;
 - shared certification tests; and
 - the capability and backend-author documentation.
 
-Do not add an optional marker to make one backend compile.
+Do not add optional markers, no-op implementations, or generic unsupported
+defaults to make one backend compile. Focused adapters implement only the
+narrow traits they support.
 
 ## Contexts and Authorization
 
@@ -202,8 +203,8 @@ because native instrumentation exists.
 ## Administrator Configuration
 
 The administrator endpoint, startup logs, and backend-info metric must agree on
-backend name and contract version. Add diagnostic settings only when they are
-non-sensitive or can be represented as a safe boolean.
+backend identity. Add diagnostic settings only when they are non-sensitive or
+can be represented as a safe boolean.
 
 Never expose a connection URL, password, token, certificate contents, remote
 authentication configuration, or raw driver option string.
@@ -249,7 +250,7 @@ The current source guards verify that:
 - only adapters convert implementation errors into `StorageError`;
 - only the application converts `StorageError` into `ApiError`;
 - all required capability traits remain in the aggregate;
-- PostgreSQL is explicitly certified and the memory model is not;
+- PostgreSQL explicitly implements the aggregate and the memory model does not;
 - dispatch labels remain complete, bounded, and unique; and
 - workspace dependencies continue to point from adapters toward neutral
   crates, never toward the application.
@@ -271,6 +272,5 @@ Before considering a boundary change complete:
 - [ ] Labels and debug output are bounded and non-sensitive.
 - [ ] Shared and PostgreSQL-native tests cover the changed semantics.
 - [ ] API, worker, administration, and configuration callers remain neutral.
-- [ ] Contract version, capability docs, OpenAPI, and changelog are updated
-      where applicable.
+- [ ] Trait-family docs, OpenAPI, and changelog are updated where applicable.
 - [ ] All verification required by `AGENTS.md` passes.

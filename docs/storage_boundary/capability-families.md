@@ -13,13 +13,13 @@ For source locations, see the [maintainer guide](maintainer-guide.md).
 ## How Families and Traits Relate
 
 A **trait** is the Rust interface that makes an operation available. A
-**capability family** is stable metadata that groups related traits for
-contract versioning, administration, logs, metrics, and documentation.
+**capability family** is a documentation grouping for related traits and
+semantics. It is not a separately versioned or negotiable runtime feature.
 
-`StorageBackend` aggregates all required traits. `StorageCapability::ALL`
-contains all required families. Neither mechanism makes a family optional.
-The private `sealed::CertifiedStorageBackend` marker makes selection an explicit
-architecture decision after those traits are implemented and tested.
+`StorageBackend` aggregates every required trait. An adapter implements that
+aggregate explicitly when it is ready to be selectable. Rust checks all
+supertrait requirements at compile time, and the composition registry controls
+which complete implementations administrators can select.
 
 ```text
 StorageBackend
@@ -91,8 +91,9 @@ the atomic operations each use case requires.
 
 Required traits:
 
+- `StorageIdentity`;
 - `CollectionStore`, `ClassStore`, `ObjectStore`, `ClassRelationStore`, and
-  `ObjectRelationStore` through `LifecycleStorage`;
+  `ObjectRelationStore` directly;
 - `CollectionRecordStorage`, `ClassRecordStorage`, and `ObjectRecordStorage`.
 
 This family owns collection, class, object, and relation resolution and
@@ -312,23 +313,19 @@ mutation provenance, and revision preconditions. The adapter translates those
 values into its native mechanism; callers never select task locals, session
 variables, or transaction settings.
 
-## Family Changes and Contract Versioning
+## Changing a Family
 
-Increment `STORAGE_CONTRACT_VERSION` when:
-
-- a selectable backend must implement a new family or trait;
-- an existing operation gains a required observable semantic; or
-- a request or result changes in a way that alters backend obligations.
-
-Do not increment it for a private PostgreSQL query rewrite, a DTO implementation
-detail that preserves semantics, or an application-only API presentation
-change.
+Traits and crate versions are the compatibility mechanism for statically linked
+adapters. Do not add a parallel contract version or runtime capability
+negotiation. If Hubuum later supports dynamically loaded or remote adapters,
+version that concrete ABI or wire protocol instead.
 
 When a family changes, update all of the following together:
 
-1. `StorageBackend` and `StorageCapability::ALL` when the aggregate changes.
+1. The owning trait and `StorageBackend` when the aggregate changes.
 2. Common dispatch and observation in `StorageHandle`.
 3. Every selectable adapter.
 4. The shared compatibility behavior.
 5. Backend-native tests where consistency or failure mechanics change.
-6. Administrator capability projection and this document.
+6. This document and any sanitized administrator settings affected by the
+   change.

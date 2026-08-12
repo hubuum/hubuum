@@ -30,11 +30,8 @@ pub use context::StorageContext;
 #[doc(hidden)]
 pub use context::StorageHandle as BenchmarkStorageContext;
 pub(crate) use context::{StorageHandle, storage_handle};
-#[cfg(test)]
-pub(crate) use contract::STORAGE_CONTRACT_VERSION;
 pub(crate) use contract::{
-    DynLifecycleStorage, LifecycleStorage, StorageBackend, StorageBackendDescriptor,
-    StorageBackendKind, StorageIdentity,
+    StorageBackend, StorageBackendDescriptor, StorageBackendKind, StorageIdentity,
 };
 pub use execution::{
     with_mutation_provenance, with_revision_precondition, with_storage_call_site,
@@ -150,6 +147,8 @@ pub(crate) use metrics::{
 };
 pub(crate) use object_relations::ObjectRelationStore;
 pub(crate) use objects::{ObjectRecordStorage, ObjectStore};
+#[cfg(test)]
+pub(crate) use observed::ObservedStorage;
 pub(crate) use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,

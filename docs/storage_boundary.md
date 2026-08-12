@@ -35,7 +35,7 @@ HTTP handlers / workers / administration
         common dispatch + observation
                     |
                     v
-      complete, sealed StorageBackend
+          complete StorageBackend
                     |
                     v
            PostgreSQL adapter
@@ -54,8 +54,7 @@ The boundary has four responsibilities:
    selection, validation that is independent of persistence, and conversion
    from `StorageError` to `ApiError`.
 2. **The storage contract** owns operation-shaped traits, backend-neutral
-   requests and results, stable capability metadata, and the bounded storage
-   error taxonomy.
+   requests and results, and the bounded storage error taxonomy.
 3. **The opaque handle** owns exhaustive backend dispatch plus common tracing
    and metrics. Callers do not select an adapter for each operation.
 4. **Each adapter** owns persistence rows, queries, transactions, locking,
@@ -64,9 +63,10 @@ The boundary has four responsibilities:
 
 ## Complete Means Complete
 
-`StorageBackend` is a sealed aggregate trait in `src/storage/contract.rs`. A
-backend cannot be selected until it implements every required trait and is
-explicitly certified in that module.
+`StorageBackend` is an aggregate trait in `src/storage/contract.rs`. Its
+supertraits are the complete compile-time contract. An adapter opts in with an
+explicit implementation only after it implements every required family; Rust
+rejects that implementation if any requirement is missing.
 
 The contract groups those traits into 20 stable capability families:
 
@@ -77,38 +77,38 @@ The contract groups those traits into 20 stable capability families:
 - event administration and event workers; and
 - operational state, retention, notifications, and execution context.
 
-These families describe one indivisible contract. They are not feature flags.
+These families are a documentation map over one indivisible contract. They are
+not a second runtime contract and they are not feature flags.
 The [capability family map](storage_boundary/capability-families.md) names every
 family, maps it to its required traits, and explains its relationships.
 
-The storage contract version changes when a required family is added or when a
-family's observable semantics change. The selected backend, contract version,
-complete capability list, and non-sensitive settings are reported consistently
-through startup logs, metrics, and the administrator configuration endpoint.
+Because adapters are statically linked Rust crates, trait checking and crate
+versions are the compatibility mechanism. Hubuum does not maintain a duplicate
+runtime contract version or advertise a universal capability list. The
+selected backend and its non-sensitive settings are reported through startup
+logs, metrics, and the administrator configuration endpoint.
 
-## Focused Lifecycle Tests Are Different
+## Services Depend on Exact Operation Families
 
 Collection, class, object, class-relation, and object-relation services use the
-narrower `LifecycleStorage` contract:
+specific traits that own their operations:
 
 ```text
-              lifecycle services
-                      |
-                      v
-              LifecycleStorage
-                 /          \
-                v            v
-      PostgreSQL adapter   memory model
-         production        focused tests
+CollectionService -------> CollectionStore
+ClassService ------------> ClassStore
+ObjectService -----------> ObjectStore
+ClassRelationService ----> ClassRelationStore
+ObjectRelationService ---> ObjectRelationStore
+                                ^
+                                |
+                     PostgreSQL or focused model
 ```
 
-This lets the same domain behavior run against a deterministic model without
-claiming that the model can perform authentication, search, tasks, restores,
-event delivery, or operations.
-
-Production composition uses `DynLifecycleStorage::from_backend`, which requires
-a complete `StorageBackend`. `DynLifecycleStorage::new` is reserved for focused
-contract harnesses.
+There is no aggregate lifecycle trait and no default "unsupported" behavior.
+A focused model implements only the family traits it can perform. It can be
+injected into the matching tests, but it cannot satisfy `StorageBackend` and
+therefore cannot be selected for the application. Production composition
+projects exact observed trait objects from a complete `StorageHandle`.
 
 ## Boundary Rules
 
@@ -156,8 +156,8 @@ hubuum application
 
 - `hubuum-domain` owns backend-independent validated domain values that have
   been extracted from the root application.
-- `hubuum-storage-core` owns extracted storage traits, DTOs, errors,
-  descriptors, and capability metadata. It has no Actix, Diesel, global
+- `hubuum-storage-core` owns extracted storage traits, DTOs, errors, and
+  backend identity. It has no Actix, Diesel, global
   configuration, or `ApiError` dependency.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS setup,
   endpoint diagnostics, JSONB validation, and query instrumentation.

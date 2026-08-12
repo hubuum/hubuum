@@ -229,8 +229,7 @@ impl PatchObjectData for ObjectDataPatchDocument {
         C: StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .object_store()
             .patch_object_data(target, self.clone(), context)
             .await
             .map_err(ApiError::from)
@@ -265,8 +264,7 @@ impl CreateObjectInResolvedClass for NewHubuumObject {
         C: StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .object_store()
             .create_object(target, self.clone(), context)
             .await
             .map_err(ApiError::from)
@@ -279,8 +277,7 @@ impl ResolveObjectTarget for ObjectSelector {
         C: StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .object_store()
             .resolve_object(self.clone())
             .await
             .map_err(ApiError::from)
@@ -309,8 +306,7 @@ impl UpdateResolvedObject for UpdateHubuumObject {
         C: StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .object_store()
             .update_object(target, self.clone(), context)
             .await
             .map_err(ApiError::from)
@@ -337,8 +333,7 @@ impl DeleteResolvedObject for ResolvedObjectTarget {
         C: StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .object_store()
             .delete_object(self, context)
             .await
             .map_err(ApiError::from)

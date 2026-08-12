@@ -18,6 +18,7 @@ use crate::models::{
     RemoteCallResult, TaskKind, validate_sink_parts, validate_subscription_parts,
 };
 use crate::services::Services;
+use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::event_delivery::{
     load_event_delivery_for_event, set_event_delivery_claim_token_for_test,
@@ -31,7 +32,6 @@ use crate::storage::postgres::operations::event_subscription::{
     NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
 };
 use crate::storage::postgres::operations::remote_target::load_remote_call_result_for_task;
-use crate::storage::{DynLifecycleStorage, PostgresStorage};
 
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
@@ -114,9 +114,7 @@ pub fn executable_task_kind_values() -> [&'static str; 4] {
 
 /// Build lifecycle services around the PostgreSQL adapter for integration tests.
 pub fn services_for_postgres(pool: PostgresPool) -> Services {
-    Services::from_lifecycle_storage(DynLifecycleStorage::from_backend(PostgresStorage::new(
-        pool,
-    )))
+    Services::from_storage(StorageHandle::postgres(pool))
 }
 
 /// Load the adapter-owned remote-call result projection for request-level tests.

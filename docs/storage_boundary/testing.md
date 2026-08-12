@@ -15,7 +15,7 @@ This document separates what each test layer proves from what it does not.
 | PostgreSQL behavior on a real database | Strong | The full suite creates and migrates an isolated PostgreSQL database and exercises queries, transactions, triggers, workers, services, and APIs. |
 | Lifecycle semantics | Strong | Focused contracts run against PostgreSQL and a deterministic memory model, with extensive API coverage above them. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
-| Mandatory family availability | Strong | `StorageBackend` requires every trait, certification is sealed, dispatch is exhaustive, and the registry covers every selectable kind. |
+| Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and the registry covers every selectable kind. |
 | Every method's observable semantics | Good, not mechanical | Shared tests exercise all families and most operations, but method-level behavioral coverage is curated rather than generated from trait definitions. |
 | Application and HTTP behavior | Strong | Large identity, core-data, job, and platform integration suites exercise real storage through handlers and services. |
 | Concurrency and failure recovery | Good | Targeted lease, notification, transaction, restore, retention, and atomicity tests exist; systematic fault injection and schedule exploration do not. |
@@ -71,7 +71,7 @@ guard the dependency direction. Among other checks, they verify that:
 - neutral crates do not depend on Actix, Diesel, global application
   configuration, or `ApiError`;
 - the aggregate contains every required trait;
-- only explicitly certified backends are selectable;
+- only adapters that explicitly implement the complete aggregate are selectable;
 - the memory lifecycle model is not selectable; and
 - common observation labels cover the known dispatch surface.
 

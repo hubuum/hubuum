@@ -23,8 +23,7 @@ impl ResolveClassTarget for ClassSelector {
         C: crate::storage::StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .class_store()
             .resolve_class(self.clone())
             .await
             .map_err(ApiError::from)
@@ -53,8 +52,7 @@ impl UpdateResolvedClass for UpdateHubuumClass {
         C: crate::storage::StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .class_store()
             .update_class(target, self.clone(), context)
             .await
             .map_err(ApiError::from)
@@ -81,8 +79,7 @@ impl DeleteResolvedClass for ResolvedClassTarget {
         C: crate::storage::StorageContext,
     {
         storage_handle(backend)
-            .lifecycle_storage()
-            .inner()
+            .class_store()
             .delete_class(self, context)
             .await
             .map_err(ApiError::from)

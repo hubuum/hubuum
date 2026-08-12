@@ -20254,8 +20254,6 @@
         "type": "object",
         "required": [
           "backend",
-          "contract_version",
-          "capabilities",
           "url",
           "pool_size",
           "pool_acquire_timeout_ms",
@@ -20265,19 +20263,6 @@
           "backend": {
             "type": "string",
             "description": "Complete storage backend selected by the application composition root."
-          },
-          "capabilities": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Required capability families. Selectable backends always report the complete set."
-          },
-          "contract_version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Version of the all-or-nothing storage contract implemented by the backend.",
-            "minimum": 0
           },
           "pool_acquire_timeout_ms": {
             "type": "integer",

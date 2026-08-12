@@ -32,7 +32,7 @@ Use these metrics to identify a target:
 
 - `hubuum_build_info{version,git_sha}`
 - `hubuum_runtime_info{role}`
-- `hubuum_storage_backend_info{backend,contract_version}`
+- `hubuum_storage_backend_info{backend}`
 - `hubuum_process_start_time_seconds`
 
 Check the target mix before interpreting process-local worker metrics:
@@ -202,7 +202,7 @@ max by (template_id, template_name) (
 | `hubuum_db_connection_acquire_failures_total` | `caller` | Pool connection acquisition failures |
 | `hubuum_db_operation_duration_seconds` | `caller`, `operation`, `result` | `with_connection` and `with_transaction` helper duration |
 | `hubuum_db_operation_errors_total` | `caller`, `operation`, `result` | Database helper failures by broad public error class |
-| `hubuum_storage_backend_info` | `backend`, `contract_version` | Complete storage backend selected for the process |
+| `hubuum_storage_backend_info` | `backend` | Complete storage backend selected for the process |
 | `hubuum_storage_operation_duration_seconds` | `backend`, `capability`, `operation`, `result` | Backend-neutral lifecycle storage duration |
 | `hubuum_storage_operation_errors_total` | `backend`, `capability`, `operation`, `result` | Backend-neutral lifecycle storage failures |
 | `hubuum_metrics_refresh_duration_seconds` | `source` | Duration of the latest refresh attempt |

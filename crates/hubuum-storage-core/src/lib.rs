@@ -194,12 +194,6 @@ pub type StorageVisibility = UnifiedSearchVisibility;
 
 use std::fmt;
 
-/// Version of the complete application storage contract.
-///
-/// Increment this when a selectable backend must implement a new capability
-/// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 1;
-
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageBackendKind {
@@ -214,82 +208,6 @@ impl StorageBackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Postgresql => "postgresql",
-        }
-    }
-}
-
-/// Stable, bounded capability families required of every selectable backend.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StorageCapability {
-    DomainLifecycle,
-    CatalogQueries,
-    ComputedObjectQueries,
-    ComputedFieldLifecycle,
-    ObjectAggregates,
-    RelationQueries,
-    IdentityAndAuthorizationData,
-    TemporalHistory,
-    InventoryQueries,
-    UnifiedSearch,
-    RemoteTargets,
-    TaskQueue,
-    TaskExecution,
-    BackupSnapshots,
-    Restores,
-    Imports,
-    ExportQueries,
-    ExportTemplateLifecycle,
-    EventAdministration,
-    Operations,
-}
-
-impl StorageCapability {
-    pub const ALL: [Self; 20] = [
-        Self::DomainLifecycle,
-        Self::CatalogQueries,
-        Self::ComputedObjectQueries,
-        Self::ComputedFieldLifecycle,
-        Self::ObjectAggregates,
-        Self::RelationQueries,
-        Self::IdentityAndAuthorizationData,
-        Self::TemporalHistory,
-        Self::InventoryQueries,
-        Self::UnifiedSearch,
-        Self::RemoteTargets,
-        Self::TaskQueue,
-        Self::TaskExecution,
-        Self::BackupSnapshots,
-        Self::Restores,
-        Self::Imports,
-        Self::ExportQueries,
-        Self::ExportTemplateLifecycle,
-        Self::EventAdministration,
-        Self::Operations,
-    ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DomainLifecycle => "domain_lifecycle",
-            Self::CatalogQueries => "catalog_queries",
-            Self::ComputedObjectQueries => "computed_object_queries",
-            Self::ComputedFieldLifecycle => "computed_field_lifecycle",
-            Self::ObjectAggregates => "object_aggregates",
-            Self::RelationQueries => "relation_queries",
-            Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
-            Self::TemporalHistory => "temporal_history",
-            Self::InventoryQueries => "inventory_queries",
-            Self::UnifiedSearch => "unified_search",
-            Self::RemoteTargets => "remote_targets",
-            Self::TaskQueue => "task_queue",
-            Self::TaskExecution => "task_execution",
-            Self::BackupSnapshots => "backup_snapshots",
-            Self::Restores => "restores",
-            Self::Imports => "imports",
-            Self::ExportQueries => "export_queries",
-            Self::ExportTemplateLifecycle => "export_template_lifecycle",
-            Self::EventAdministration => "event_administration",
-            Self::Operations => "operations",
         }
     }
 }
@@ -309,15 +227,6 @@ impl StorageBackendDescriptor {
     #[must_use]
     pub const fn kind(self) -> StorageBackendKind {
         self.kind
-    }
-
-    #[must_use]
-    pub const fn contract_version(self) -> u16 {
-        STORAGE_CONTRACT_VERSION
-    }
-
-    pub fn capabilities(self) -> impl Iterator<Item = StorageCapability> {
-        StorageCapability::ALL.into_iter()
     }
 }
 
@@ -438,38 +347,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn descriptor_reports_the_complete_contract() {
+    fn descriptor_reports_the_selected_backend() {
         let descriptor = StorageBackendDescriptor::new(StorageBackendKind::Postgresql);
 
-        assert_eq!(descriptor.contract_version(), STORAGE_CONTRACT_VERSION);
-        assert_eq!(
-            descriptor
-                .capabilities()
-                .map(StorageCapability::as_str)
-                .collect::<Vec<_>>(),
-            [
-                "domain_lifecycle",
-                "catalog_queries",
-                "computed_object_queries",
-                "computed_field_lifecycle",
-                "object_aggregates",
-                "relation_queries",
-                "identity_and_authorization_data",
-                "temporal_history",
-                "inventory_queries",
-                "unified_search",
-                "remote_targets",
-                "task_queue",
-                "task_execution",
-                "backup_snapshots",
-                "restores",
-                "imports",
-                "export_queries",
-                "export_template_lifecycle",
-                "event_administration",
-                "operations",
-            ]
-        );
+        assert_eq!(descriptor.kind(), StorageBackendKind::Postgresql);
     }
 
     #[test]

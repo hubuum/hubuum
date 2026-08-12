@@ -161,10 +161,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     let app_context = AppContext::new(storage, permission_backend);
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {
-        observability::metrics::storage_backend_identity(
-            storage_backend.kind().as_str(),
-            storage_backend.contract_version(),
-        );
+        observability::metrics::storage_backend_identity(storage_backend.kind().as_str());
     }
     let authorization_backend = app_context.permission_backend().kind();
 
@@ -197,7 +194,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             event_delivery_workers = config.event_delivery_workers,
             db_backend = storage_backend.kind().as_str(),
             storage_backend = storage_backend.kind().as_str(),
-            storage_contract_version = storage_backend.contract_version(),
             authorization_backend,
             active_event_sinks,
             metrics_listener = metrics_server.is_some(),
@@ -326,7 +322,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         event_delivery_workers = config.event_delivery_workers,
         db_backend = storage_backend.kind().as_str(),
         storage_backend = storage_backend.kind().as_str(),
-        storage_contract_version = storage_backend.contract_version(),
         authorization_backend,
         login_rate_limit_backend = config.login_rate_limit_backend.as_str(),
         active_event_sinks,

@@ -22,7 +22,7 @@ pub struct AppContext {
 
 impl AppContext {
     pub(crate) fn new(backend: StorageHandle, permissions: Arc<dyn PermissionBackend>) -> Self {
-        let services = Services::from_lifecycle_storage(backend.lifecycle_storage());
+        let services = Services::from_storage(backend.clone());
         Self {
             backend,
             permissions,

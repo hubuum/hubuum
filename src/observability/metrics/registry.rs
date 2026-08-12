@@ -185,7 +185,7 @@ pub fn init() -> Result<(), ApiError> {
             .build(),
         storage_backend_info: meter
             .u64_gauge("hubuum_storage_backend_info")
-            .with_description("Selected complete storage backend and contract version")
+            .with_description("Selected complete storage backend")
             .build(),
         storage_operation_duration: duration_histogram(
             &meter,

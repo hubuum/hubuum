@@ -430,8 +430,7 @@ where
 {
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
-        .lifecycle_storage()
-        .inner()
+        .collection_store()
         .collection_children(collection_id)
         .await
         .map_err(ApiError::from)
@@ -447,8 +446,7 @@ where
 {
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
-        .lifecycle_storage()
-        .inner()
+        .collection_store()
         .collection_ancestors(collection_id)
         .await
         .map_err(ApiError::from)

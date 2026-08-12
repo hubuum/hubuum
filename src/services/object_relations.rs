@@ -1,19 +1,21 @@
+use std::sync::Arc;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{
     ObjectRelationCreateSelector, ObjectRelationSelector, PreparedObjectRelation,
     ResolvedObjectRelationTarget,
 };
-use crate::storage::DynLifecycleStorage;
+use crate::storage::ObjectRelationStore;
 
 /// Application-facing object-relation lifecycle use cases.
 #[derive(Clone)]
 pub struct ObjectRelationService {
-    storage: DynLifecycleStorage,
+    storage: Arc<dyn ObjectRelationStore>,
 }
 
 impl ObjectRelationService {
-    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ObjectRelationStore>) -> Self {
         Self { storage }
     }
 
@@ -22,7 +24,6 @@ impl ObjectRelationService {
         selector: ObjectRelationCreateSelector,
     ) -> Result<PreparedObjectRelation, ApiError> {
         self.storage
-            .inner()
             .prepare_object_relation(selector)
             .await
             .map_err(ApiError::from)
@@ -33,7 +34,6 @@ impl ObjectRelationService {
         selector: ObjectRelationSelector,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         self.storage
-            .inner()
             .resolve_object_relation(selector)
             .await
             .map_err(ApiError::from)
@@ -45,7 +45,6 @@ impl ObjectRelationService {
         context: &EventContext,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         self.storage
-            .inner()
             .create_object_relation(prepared, Some(context))
             .await
             .map_err(ApiError::from)
@@ -57,7 +56,6 @@ impl ObjectRelationService {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         self.storage
-            .inner()
             .delete_object_relation(target, Some(context))
             .await
             .map_err(ApiError::from)
@@ -79,7 +77,7 @@ mod tests {
         ObjectRelationSelector, ResolvedClassRelationTarget, ResourceRevision,
     };
     use crate::services::Services;
-    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
+    use crate::storage::{MemoryStorageModel, PostgresStorage};
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
@@ -115,8 +113,7 @@ mod tests {
             match backend {
                 ContractImplementation::MemoryModel => {
                     let storage = MemoryStorageModel::new();
-                    let services =
-                        Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()));
+                    let services = Services::from_resource_storage(storage.clone());
                     Self {
                         services,
                         storage: Some(storage),
@@ -155,8 +152,8 @@ mod tests {
                         prefix: prefix.clone(),
                     };
                     Self {
-                        services: Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                            PostgresStorage::new(pool.get_ref().clone()),
+                        services: Services::from_resource_storage(PostgresStorage::new(
+                            pool.get_ref().clone(),
                         )),
                         storage: None,
                         collection_id,
@@ -400,7 +397,6 @@ mod tests {
         let fixture = harness.fixture("event_suppressed").await;
         let lifecycle = &harness.services.object_relations().storage;
         let created = lifecycle
-            .inner()
             .create_object_relation_from_command(
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.from_object.id,
@@ -414,19 +410,16 @@ mod tests {
         let relation_id =
             HubuumObjectRelationID::new(created.id).expect("valid object relation id");
         lifecycle
-            .inner()
             .resolve_object_relation(ObjectRelationSelector::by_id(relation_id))
             .await
             .expect("event-suppressed relation should resolve");
         lifecycle
-            .inner()
             .delete_object_relation_by_id(relation_id, None)
             .await
             .expect("event-suppressed relation should delete");
 
         assert!(
             lifecycle
-                .inner()
                 .resolve_object_relation(ObjectRelationSelector::by_id(relation_id))
                 .await
                 .is_err()

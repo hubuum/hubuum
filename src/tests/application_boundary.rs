@@ -17,7 +17,12 @@ fn read_source(path: &Path) -> std::io::Result<String> {
 
 #[cfg(test)]
 const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
-    "LifecycleStorage",
+    "StorageIdentity",
+    "CollectionStore",
+    "ClassStore",
+    "ObjectStore",
+    "ClassRelationStore",
+    "ObjectRelationStore",
     "AuthenticationStorage",
     "IdentityStorage",
     "UserStorage",
@@ -57,13 +62,10 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "ExportTemplateStorage",
     "WorkerNotificationStorage",
     "StorageExecution",
-    "sealed::CertifiedStorageBackend",
 ];
 
 #[test]
 fn storage_boundary_documentation_covers_the_complete_contract() {
-    use hubuum_storage_core::StorageCapability;
-
     let root = repository_root();
     let overview_path = root.join("docs/storage_boundary.md");
     let overview = read_source(&overview_path)
@@ -92,13 +94,6 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
     let family_path = root.join("docs/storage_boundary/capability-families.md");
     let families = read_source(&family_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", family_path.display()));
-    for capability in StorageCapability::ALL {
-        let documented_name = format!("`{}`", capability.as_str());
-        assert!(
-            families.contains(&documented_name),
-            "storage capability family {documented_name} is not documented"
-        );
-    }
     for required_trait in REQUIRED_STORAGE_BACKEND_TRAITS {
         assert!(
             families.contains(required_trait),
@@ -1060,6 +1055,43 @@ fn workflow_domain_types_are_free_of_persistence_implementation_details() {
 }
 
 #[test]
+fn resource_services_depend_on_their_exact_storage_families() {
+    let root = repository_root();
+
+    for (file, service, storage_trait) in [
+        ("collections.rs", "CollectionService", "CollectionStore"),
+        ("classes.rs", "ClassService", "ClassStore"),
+        ("objects.rs", "ObjectService", "ObjectStore"),
+        (
+            "class_relations.rs",
+            "ClassRelationService",
+            "ClassRelationStore",
+        ),
+        (
+            "object_relations.rs",
+            "ObjectRelationService",
+            "ObjectRelationStore",
+        ),
+    ] {
+        let path = root.join("src/services").join(file);
+        let source = read_source(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+
+        assert!(
+            production.contains(&format!("storage: Arc<dyn {storage_trait}>")),
+            "{service} must depend directly on {storage_trait}"
+        );
+        for forbidden in ["LifecycleStorage", "StorageBackend", "StorageHandle"] {
+            assert!(
+                !production.contains(forbidden),
+                "{service} depends on overly broad storage type {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable() {
     let root = repository_root();
     let contract_path = root.join("src/storage/contract.rs");
@@ -1089,11 +1121,11 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     assert!(
-        contract_source.contains("impl sealed::CertifiedStorageBackend for PostgresStorage"),
-        "PostgreSQL must be explicitly certified in the central storage contract"
+        contract_source.contains("impl StorageBackend for PostgresStorage {}"),
+        "PostgreSQL must explicitly opt into the complete storage contract"
     );
     assert!(
-        !contract_source.contains("CertifiedStorageBackend for MemoryStorageModel"),
+        !contract_source.contains("StorageBackend for MemoryStorageModel"),
         "the focused memory contract model must not be selectable as a full backend"
     );
     for forbidden_marker in ["WorkflowStorage", "OperationalStorage"] {

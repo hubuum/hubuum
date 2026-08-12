@@ -79,10 +79,9 @@ examples.
 See [Database Pool Tuning and Load Testing](performance.md) for connection
 budgeting, pool observability, and a repeatable k6 scenario.
 
-Administrators can inspect the selected storage backend, storage contract
-version, complete capability-family list, and these effective pool settings at
-`GET /api/v1/admin/config`. The endpoint reports only whether the database URL
-is configured; it never returns the URL or credentials. See
+Administrators can inspect the selected storage backend and these effective
+pool settings at `GET /api/v1/admin/config`. The endpoint reports only whether
+the database URL is configured; it never returns the URL or credentials. See
 [Application and Storage Boundary](storage_boundary.md) for the all-or-nothing
 backend contract.
 

@@ -17,21 +17,29 @@ use crate::models::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, LifecycleStorage, ObjectRelationStore,
-    ObjectStore, StorageError, StorageIdentity,
+    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
+    StorageError, StorageIdentity,
 };
 
-/// Uniform diagnostics around every lifecycle storage entrypoint.
-pub(super) struct ObservedLifecycleStorage {
+/// Uniform diagnostics around whichever storage capabilities `S` implements.
+///
+/// The wrapper deliberately has no aggregate capability bound. A focused test
+/// adapter can implement one storage family and is observed only for that
+/// family; complete backend selection is enforced separately at composition.
+pub(crate) struct ObservedStorage<S> {
     backend: &'static str,
-    inner: Arc<dyn LifecycleStorage>,
+    inner: Arc<S>,
 }
 
-impl ObservedLifecycleStorage {
-    pub(super) fn new(inner: Arc<dyn LifecycleStorage>) -> Self {
+impl<S> ObservedStorage<S>
+where
+    S: StorageIdentity,
+{
+    pub(crate) fn new(storage: S) -> Self {
+        let backend = storage.storage_name();
         Self {
-            backend: inner.storage_name(),
-            inner,
+            backend,
+            inner: Arc::new(storage),
         }
     }
 
@@ -115,14 +123,20 @@ pub(super) fn observe_infallible_storage_call<T>(
     result
 }
 
-impl StorageIdentity for ObservedLifecycleStorage {
+impl<S> StorageIdentity for ObservedStorage<S>
+where
+    S: StorageIdentity,
+{
     fn storage_name(&self) -> &'static str {
         self.backend
     }
 }
 
 #[async_trait]
-impl CollectionStore for ObservedLifecycleStorage {
+impl<S> CollectionStore for ObservedStorage<S>
+where
+    S: CollectionStore + StorageIdentity,
+{
     async fn get_collection(&self, id: CollectionID) -> Result<Collection, StorageError> {
         self.call("collections", "get", self.inner.get_collection(id))
             .await
@@ -205,7 +219,10 @@ impl CollectionStore for ObservedLifecycleStorage {
 }
 
 #[async_trait]
-impl ClassStore for ObservedLifecycleStorage {
+impl<S> ClassStore for ObservedStorage<S>
+where
+    S: ClassStore + StorageIdentity,
+{
     async fn resolve_class(
         &self,
         selector: ClassSelector,
@@ -256,7 +273,10 @@ impl ClassStore for ObservedLifecycleStorage {
 }
 
 #[async_trait]
-impl ObjectStore for ObservedLifecycleStorage {
+impl<S> ObjectStore for ObservedStorage<S>
+where
+    S: ObjectStore + StorageIdentity,
+{
     async fn resolve_object(
         &self,
         selector: ObjectSelector,
@@ -322,7 +342,10 @@ impl ObjectStore for ObservedLifecycleStorage {
 }
 
 #[async_trait]
-impl ClassRelationStore for ObservedLifecycleStorage {
+impl<S> ClassRelationStore for ObservedStorage<S>
+where
+    S: ClassRelationStore + StorageIdentity,
+{
     async fn prepare_class_relation(
         &self,
         command: NewHubuumClassRelation,
@@ -402,7 +425,10 @@ impl ClassRelationStore for ObservedLifecycleStorage {
 }
 
 #[async_trait]
-impl ObjectRelationStore for ObservedLifecycleStorage {
+impl<S> ObjectRelationStore for ObservedStorage<S>
+where
+    S: ObjectRelationStore + StorageIdentity,
+{
     async fn prepare_object_relation(
         &self,
         selector: ObjectRelationCreateSelector,

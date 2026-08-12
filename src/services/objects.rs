@@ -1,19 +1,21 @@
+use std::sync::Arc;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{
     HubuumObject, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
     ResolvedObjectTarget, UpdateHubuumObject,
 };
-use crate::storage::DynLifecycleStorage;
+use crate::storage::ObjectStore;
 
 /// Application-facing object resolution and lifecycle use cases.
 #[derive(Clone)]
 pub struct ObjectService {
-    storage: DynLifecycleStorage,
+    storage: Arc<dyn ObjectStore>,
 }
 
 impl ObjectService {
-    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ObjectStore>) -> Self {
         Self { storage }
     }
 
@@ -22,7 +24,6 @@ impl ObjectService {
         selector: ObjectSelector,
     ) -> Result<ResolvedObjectTarget, ApiError> {
         self.storage
-            .inner()
             .resolve_object(selector)
             .await
             .map_err(ApiError::from)
@@ -35,7 +36,6 @@ impl ObjectService {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
         self.storage
-            .inner()
             .create_object(class, command, context)
             .await
             .map_err(ApiError::from)
@@ -48,7 +48,6 @@ impl ObjectService {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
         self.storage
-            .inner()
             .update_object(target, changes, context)
             .await
             .map_err(ApiError::from)
@@ -61,7 +60,6 @@ impl ObjectService {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
         self.storage
-            .inner()
             .patch_object_data(target, patch, context)
             .await
             .map_err(ApiError::from)
@@ -73,7 +71,6 @@ impl ObjectService {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         self.storage
-            .inner()
             .delete_object(target, context)
             .await
             .map_err(ApiError::from)
@@ -93,7 +90,7 @@ mod tests {
         ObjectDataPatchDocument, ObjectSelector, UpdateHubuumObject,
     };
     use crate::services::{ClassService, Services};
-    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
+    use crate::storage::{MemoryStorageModel, PostgresStorage};
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
@@ -122,9 +119,7 @@ mod tests {
         async fn new(backend: ContractImplementation, label: &str) -> Self {
             match backend {
                 ContractImplementation::MemoryModel => {
-                    let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                        MemoryStorageModel::new(),
-                    ));
+                    let services = Services::from_resource_storage(MemoryStorageModel::new());
                     let prefix = format!("memory_{label}");
                     let class = create_class(
                         services.classes(),
@@ -169,8 +164,8 @@ mod tests {
                         owner_group,
                         prefix: prefix.clone(),
                     };
-                    let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                        PostgresStorage::new(pool.get_ref().clone()),
+                    let services = Services::from_resource_storage(PostgresStorage::new(
+                        pool.get_ref().clone(),
                     ));
                     let class =
                         create_class(services.classes(), &prefix, fixture.collection.id, None)
@@ -577,7 +572,7 @@ mod tests {
     #[actix_web::test]
     async fn memory_object_events_exclude_no_op_mutations() {
         let storage = MemoryStorageModel::new();
-        let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()));
+        let services = Services::from_resource_storage(storage.clone());
         let class = create_class(services.classes(), "memory_object_events", 1, None).await;
         let class_target = services
             .classes()

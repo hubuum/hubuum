@@ -5,15 +5,11 @@ use opentelemetry::KeyValue;
 use super::current;
 
 /// Publish the one complete storage backend selected for this process.
-pub fn storage_backend_identity(backend: &'static str, contract_version: u16) {
+pub fn storage_backend_identity(backend: &'static str) {
     if let Some(metrics) = current() {
-        metrics.storage_backend_info.record(
-            1,
-            &[
-                KeyValue::new("backend", backend),
-                KeyValue::new("contract_version", i64::from(contract_version)),
-            ],
-        );
+        metrics
+            .storage_backend_info
+            .record(1, &[KeyValue::new("backend", backend)]);
     }
 }
 

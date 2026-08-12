@@ -1,24 +1,25 @@
+use std::sync::Arc;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{
     ClassSelector, HubuumClass, NewHubuumClass, ResolvedClassTarget, UpdateHubuumClass,
 };
-use crate::storage::DynLifecycleStorage;
+use crate::storage::ClassStore;
 
 /// Application-facing class resolution and lifecycle use cases.
 #[derive(Clone)]
 pub struct ClassService {
-    storage: DynLifecycleStorage,
+    storage: Arc<dyn ClassStore>,
 }
 
 impl ClassService {
-    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ClassStore>) -> Self {
         Self { storage }
     }
 
     pub async fn resolve(&self, selector: ClassSelector) -> Result<ResolvedClassTarget, ApiError> {
         self.storage
-            .inner()
             .resolve_class(selector)
             .await
             .map_err(ApiError::from)
@@ -30,7 +31,6 @@ impl ClassService {
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
         self.storage
-            .inner()
             .create_class(command, context)
             .await
             .map_err(ApiError::from)
@@ -43,7 +43,6 @@ impl ClassService {
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
         self.storage
-            .inner()
             .update_class(target, changes, context)
             .await
             .map_err(ApiError::from)
@@ -55,7 +54,6 @@ impl ClassService {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         self.storage
-            .inner()
             .delete_class(target, context)
             .await
             .map_err(ApiError::from)
@@ -74,7 +72,7 @@ mod tests {
         NewCollectionWithAssignee, NewGroup, NewHubuumClass, UpdateHubuumClass,
     };
     use crate::services::{CollectionService, Services};
-    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
+    use crate::storage::{MemoryStorageModel, PostgresStorage};
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
@@ -104,9 +102,7 @@ mod tests {
         async fn new(backend: ContractImplementation, label: &str) -> Self {
             match backend {
                 ContractImplementation::MemoryModel => {
-                    let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                        MemoryStorageModel::new(),
-                    ));
+                    let services = Services::from_resource_storage(MemoryStorageModel::new());
                     Self {
                         service: services.classes().clone(),
                         collections: services.collections().clone(),
@@ -144,8 +140,8 @@ mod tests {
                         owner_group,
                         prefix: prefix.clone(),
                     };
-                    let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                        PostgresStorage::new(pool.get_ref().clone()),
+                    let services = Services::from_resource_storage(PostgresStorage::new(
+                        pool.get_ref().clone(),
                     ));
                     Self {
                         service: services.classes().clone(),
@@ -522,7 +518,7 @@ mod tests {
     #[actix_web::test]
     async fn memory_class_events_exclude_no_op_updates() {
         let storage = MemoryStorageModel::new();
-        let service = Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()))
+        let service = Services::from_resource_storage(storage.clone())
             .classes()
             .clone();
         let context = EventContext::system();

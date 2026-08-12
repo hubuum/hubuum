@@ -204,8 +204,7 @@ impl CollectionAdapter for CollectionID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
-            .lifecycle_storage()
-            .inner()
+            .collection_store()
             .get_collection(*self)
             .await
             .map_err(ApiError::from)

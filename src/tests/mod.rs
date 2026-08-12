@@ -35,11 +35,7 @@ pub fn integration_test_config() -> Result<crate::config::AppConfig, crate::erro
 pub(crate) fn services_for_postgres(
     pool: crate::storage::postgres::PostgresPool,
 ) -> crate::services::Services {
-    crate::services::Services::from_lifecycle_storage(
-        crate::storage::DynLifecycleStorage::from_backend(crate::storage::PostgresStorage::new(
-            pool,
-        )),
-    )
+    crate::services::Services::from_storage(crate::storage::StorageHandle::postgres(pool))
 }
 
 #[cfg(test)]

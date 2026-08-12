@@ -1,19 +1,21 @@
+use std::sync::Arc;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{
     HubuumClassRelationID, NewHubuumClassRelation, PreparedClassRelation,
     ResolvedClassRelationTarget,
 };
-use crate::storage::DynLifecycleStorage;
+use crate::storage::ClassRelationStore;
 
 /// Application-facing class-relation lifecycle use cases.
 #[derive(Clone)]
 pub struct ClassRelationService {
-    storage: DynLifecycleStorage,
+    storage: Arc<dyn ClassRelationStore>,
 }
 
 impl ClassRelationService {
-    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ClassRelationStore>) -> Self {
         Self { storage }
     }
 
@@ -22,7 +24,6 @@ impl ClassRelationService {
         command: NewHubuumClassRelation,
     ) -> Result<PreparedClassRelation, ApiError> {
         self.storage
-            .inner()
             .prepare_class_relation(command)
             .await
             .map_err(ApiError::from)
@@ -33,7 +34,6 @@ impl ClassRelationService {
         id: HubuumClassRelationID,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
         self.storage
-            .inner()
             .resolve_class_relation(id)
             .await
             .map_err(ApiError::from)
@@ -45,7 +45,6 @@ impl ClassRelationService {
         context: &EventContext,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
         self.storage
-            .inner()
             .create_class_relation(prepared, Some(context))
             .await
             .map_err(ApiError::from)
@@ -57,7 +56,6 @@ impl ClassRelationService {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         self.storage
-            .inner()
             .delete_class_relation(target, Some(context))
             .await
             .map_err(ApiError::from)
@@ -76,7 +74,7 @@ mod tests {
         ObjectRelationLimit, ResourceRevision, UpdateHubuumClass,
     };
     use crate::services::Services;
-    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
+    use crate::storage::{MemoryStorageModel, PostgresStorage};
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
@@ -98,8 +96,7 @@ mod tests {
             match backend {
                 ContractImplementation::MemoryModel => {
                     let storage = MemoryStorageModel::new();
-                    let services =
-                        Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()));
+                    let services = Services::from_resource_storage(storage.clone());
                     Self {
                         services,
                         storage: Some(storage),
@@ -138,8 +135,8 @@ mod tests {
                         prefix: prefix.clone(),
                     };
                     Self {
-                        services: Services::from_lifecycle_storage(DynLifecycleStorage::new(
-                            PostgresStorage::new(pool.get_ref().clone()),
+                        services: Services::from_resource_storage(PostgresStorage::new(
+                            pool.get_ref().clone(),
                         )),
                         storage: None,
                         collection_id,
@@ -305,29 +302,20 @@ mod tests {
         let to_class = harness.create_class("to").await;
         let lifecycle = &harness.services.class_relations().storage;
         let created = lifecycle
-            .inner()
             .create_class_relation_from_command(harness.command(&from_class, &to_class), None)
             .await
             .expect("event-suppressed relation should create");
         let relation_id = HubuumClassRelationID::new(created.id).expect("valid class relation id");
         lifecycle
-            .inner()
             .resolve_class_relation(relation_id)
             .await
             .expect("event-suppressed relation should resolve");
         lifecycle
-            .inner()
             .delete_class_relation_by_id(relation_id, None)
             .await
             .expect("event-suppressed relation should delete");
 
-        assert!(
-            lifecycle
-                .inner()
-                .resolve_class_relation(relation_id)
-                .await
-                .is_err()
-        );
+        assert!(lifecycle.resolve_class_relation(relation_id).await.is_err());
         if let Some(storage) = harness.storage.as_ref() {
             assert!(storage.class_relation_events().await.is_empty());
         }

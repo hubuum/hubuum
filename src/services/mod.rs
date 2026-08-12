@@ -30,7 +30,15 @@ pub use collections::CollectionService;
 pub use object_relations::ObjectRelationService;
 pub use objects::ObjectService;
 
-use crate::storage::DynLifecycleStorage;
+#[cfg(test)]
+use std::sync::Arc;
+
+use crate::storage::StorageHandle;
+#[cfg(test)]
+use crate::storage::{
+    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
+    ObservedStorage, StorageIdentity,
+};
 
 /// Application use-case facade.
 #[derive(Clone)]
@@ -43,7 +51,28 @@ pub struct Services {
 }
 
 impl Services {
-    pub(crate) fn from_lifecycle_storage(storage: DynLifecycleStorage) -> Self {
+    pub(crate) fn from_storage(storage: StorageHandle) -> Self {
+        Self {
+            classes: ClassService::new(storage.class_store()),
+            class_relations: ClassRelationService::new(storage.class_relation_store()),
+            collections: CollectionService::new(storage.collection_store()),
+            objects: ObjectService::new(storage.object_store()),
+            object_relations: ObjectRelationService::new(storage.object_relation_store()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_resource_storage<S>(storage: S) -> Self
+    where
+        S: StorageIdentity
+            + CollectionStore
+            + ClassStore
+            + ObjectStore
+            + ClassRelationStore
+            + ObjectRelationStore
+            + 'static,
+    {
+        let storage = Arc::new(ObservedStorage::new(storage));
         Self {
             classes: ClassService::new(storage.clone()),
             class_relations: ClassRelationService::new(storage.clone()),

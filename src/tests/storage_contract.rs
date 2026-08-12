@@ -54,8 +54,8 @@ use crate::storage::{
     ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
     PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
     RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageAuditEventFilters,
-    StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
+    RestoreStorage, RetainedEvent, StorageAuditEventFilters, StorageAuditEventListQuery,
+    StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
     StorageDefaultAdminBootstrap, StorageError, StorageEventDeliveryListQuery,
@@ -3616,9 +3616,9 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
         accepts_worker_notification_contract(&backend);
         accepts_event_administration_contract(&backend);
         let descriptor = backend.descriptor();
-        assert_eq!(descriptor.contract_version(), STORAGE_CONTRACT_VERSION);
+        assert_eq!(descriptor.kind(), StorageBackendKind::Postgresql);
 
-        let services = Services::from_lifecycle_storage(backend.lifecycle_storage());
+        let services = Services::from_storage(backend.clone());
         let root = services
             .collections()
             .get(CollectionID::new(1).expect("valid root collection id"))

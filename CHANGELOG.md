@@ -10,10 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 
 - The redacted administrator configuration now reports the selected complete
-  storage backend, storage contract version, required capability families, and
-  effective non-secret pool settings. Startup logs and Prometheus metrics expose
-  the same backend identity, and lifecycle storage calls have uniform bounded
-  tracing plus duration and failure metrics.
+  storage backend and effective non-secret pool settings. Startup logs and
+  Prometheus metrics expose the same backend identity, and storage calls have
+  uniform bounded tracing plus duration and failure metrics.
 - Class object lists now accept up to four named `related.<alias>` filter
   groups. Each group selects one target class, normal target-object fields, and
   an optional bidirectional depth up to 10; groups are combined with `AND`, and
@@ -31,21 +30,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   remain available as per-run Actions artifacts, while multi-architecture GHCR
   images receive a commit-SHA tag before the movable `main` and `main-full`
   tags are advanced to the same manifest.
-- Storage backends now implement one complete, versioned contract (`1`) for
+- Storage backends now implement one complete compile-time contract for
   catalog and lifecycle operations, authorization and identity, queries and
   history, workflows, operational behavior, and durable-worker notifications.
   Application code exchanges backend-neutral DTOs and errors through uniformly
   observed traits; PostgreSQL owns Diesel rows, SQL construction, transactions,
   native notifications, migrations, and adapter-specific failures. Opaque
-  storage contexts preserve the configured backend instance, while PostgreSQL
-  helpers accept concrete pools only inside the adapter tree. Storage-only
-  contexts no longer carry authorization-provider selection; policy-aware
-  workflows explicitly require the stronger application context. PostgreSQL is
-  the only selectable production backend, and compatibility tests exercise
-  every required capability for every selectable backend. Public HTTP request
-  and response shapes are unchanged; the deprecated administrator configuration
-  field `exports.database_statement_timeout_ms` remains as an alias for
-  `exports.storage_query_budget_ms`.
+  storage contexts preserve the configured backend instance. Resource services
+  depend on their exact operation-family traits; focused adapters implement
+  only the families they support and cannot be selected as complete backends.
+  PostgreSQL helpers accept concrete pools only inside the adapter tree.
+  Storage-only contexts no longer carry authorization-provider selection;
+  policy-aware workflows explicitly require the stronger application context.
+  PostgreSQL is the only selectable production backend, and compatibility tests
+  exercise every required family for every selectable backend. Public HTTP
+  request and response shapes are unchanged; the deprecated administrator
+  configuration field `exports.database_statement_timeout_ms` remains as an
+  alias for `exports.storage_query_budget_ms`.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.
