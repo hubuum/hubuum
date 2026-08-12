@@ -16,6 +16,98 @@ fn read_source(path: &Path) -> std::io::Result<String> {
 }
 
 #[cfg(test)]
+const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
+    "LifecycleStorage",
+    "AuthenticationStorage",
+    "IdentityStorage",
+    "UserStorage",
+    "TokenStorage",
+    "AuthorizationStorage",
+    "CatalogStorage",
+    "ComputedFieldLifecycleStorage",
+    "ComputedObjectStorage",
+    "ObjectAggregateStorage",
+    "RelationQueryStorage",
+    "AuditEventStorage",
+    "EventSubscriptionStorage",
+    "EventDeliveryAdministrationStorage",
+    "EventDeliveryStorage",
+    "EventFanoutStorage",
+    "EventHealthStorage",
+    "EventRetentionStorage",
+    "HistoryStorage",
+    "InventoryStorage",
+    "MetricsStorage",
+    "OperationalStateStorage",
+    "TokenRetentionStorage",
+    "UnifiedSearchStorage",
+    "GroupStorage",
+    "PrincipalStorage",
+    "CollectionPermissionStorage",
+    "CollectionRecordStorage",
+    "ClassRecordStorage",
+    "ObjectRecordStorage",
+    "RemoteTargetStorage",
+    "TaskQueueStorage",
+    "TaskExecutionStorage",
+    "BackupSnapshotStorage",
+    "RestoreStorage",
+    "ImportStorage",
+    "ExportQueryStorage",
+    "ExportTemplateStorage",
+    "WorkerNotificationStorage",
+    "StorageExecution",
+    "sealed::CertifiedStorageBackend",
+];
+
+#[test]
+fn storage_boundary_documentation_covers_the_complete_contract() {
+    use hubuum_storage_core::StorageCapability;
+
+    let root = repository_root();
+    let overview_path = root.join("docs/storage_boundary.md");
+    let overview = read_source(&overview_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", overview_path.display()));
+
+    for document in [
+        "capability-families.md",
+        "backend-author-guide.md",
+        "maintainer-guide.md",
+        "testing.md",
+    ] {
+        let relative_link = format!("storage_boundary/{document}");
+        assert!(
+            overview.contains(&relative_link),
+            "storage boundary overview must link to {relative_link}"
+        );
+
+        let path = root.join("docs/storage_boundary").join(document);
+        assert!(
+            path.is_file(),
+            "storage boundary guide is missing {}",
+            path.display()
+        );
+    }
+
+    let family_path = root.join("docs/storage_boundary/capability-families.md");
+    let families = read_source(&family_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", family_path.display()));
+    for capability in StorageCapability::ALL {
+        let documented_name = format!("`{}`", capability.as_str());
+        assert!(
+            families.contains(&documented_name),
+            "storage capability family {documented_name} is not documented"
+        );
+    }
+    for required_trait in REQUIRED_STORAGE_BACKEND_TRAITS {
+        assert!(
+            families.contains(required_trait),
+            "required storage trait {required_trait} is not mapped to a capability family"
+        );
+    }
+}
+
+#[cfg(test)]
 fn rust_files(directory: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut pending = vec![directory.to_path_buf()];
@@ -990,47 +1082,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         .and_then(|(_, remainder)| remainder.split_once("\n{"))
         .map(|(body, _)| body)
         .expect("StorageBackend should have a readable aggregate trait declaration");
-    for required in [
-        "LifecycleStorage",
-        "AuthenticationStorage",
-        "IdentityStorage",
-        "AuthorizationStorage",
-        "CatalogStorage",
-        "ComputedFieldLifecycleStorage",
-        "ComputedObjectStorage",
-        "ObjectAggregateStorage",
-        "RelationQueryStorage",
-        "AuditEventStorage",
-        "EventSubscriptionStorage",
-        "EventDeliveryAdministrationStorage",
-        "EventDeliveryStorage",
-        "EventFanoutStorage",
-        "EventHealthStorage",
-        "EventRetentionStorage",
-        "MetricsStorage",
-        "OperationalStateStorage",
-        "TokenRetentionStorage",
-        "HistoryStorage",
-        "InventoryStorage",
-        "UnifiedSearchStorage",
-        "CollectionPermissionStorage",
-        "CollectionRecordStorage",
-        "ClassRecordStorage",
-        "GroupStorage",
-        "PrincipalStorage",
-        "ObjectRecordStorage",
-        "RemoteTargetStorage",
-        "TaskQueueStorage",
-        "TaskExecutionStorage",
-        "BackupSnapshotStorage",
-        "RestoreStorage",
-        "ImportStorage",
-        "ExportQueryStorage",
-        "ExportTemplateStorage",
-        "WorkerNotificationStorage",
-        "StorageExecution",
-        "sealed::CertifiedStorageBackend",
-    ] {
+    for required in REQUIRED_STORAGE_BACKEND_TRAITS {
         assert!(
             contract_body.contains(required),
             "complete storage contract is missing {required}"
