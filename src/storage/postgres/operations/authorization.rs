@@ -113,7 +113,7 @@ pub(crate) async fn load_authorization_objects(
     })
 }
 
-fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
+pub(crate) fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
     match permission {
         Permissions::ReadCollection => AuthorizationPermission::ReadCollection,
         Permissions::UpdateCollection => AuthorizationPermission::UpdateCollection,
@@ -480,7 +480,7 @@ pub(crate) async fn list_local_collection_grants(
     let (rows, total_count) =
         collection_backend::groups_on_paginated_with_total_count_from_backend(
             pool,
-            CollectionID::new(query.collection_id())?,
+            CollectionID::new(query.collection_id())?.id(),
             required_permissions,
             query.query_options(),
         )

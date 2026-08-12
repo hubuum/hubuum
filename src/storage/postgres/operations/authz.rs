@@ -47,11 +47,39 @@ pub trait AuthzSubject: crate::traits::AuthzSubject {
 
 impl<T: crate::traits::AuthzSubject + ?Sized> AuthzSubject for T {}
 
+/// Resolve Hubuum's configured administrator membership inside the adapter.
+///
+/// PostgreSQL queries use this helper instead of calling the application-facing
+/// `AuthzSubject::is_admin`, which would make a concrete pool masquerade as an
+/// application storage context.
+pub(crate) async fn principal_is_admin(
+    pool: &crate::storage::postgres::PostgresPool,
+    principal_id: i32,
+) -> Result<bool, ApiError> {
+    use crate::models::identity::LOCAL_IDENTITY_SCOPE;
+    use crate::storage::AuthorizationGroupMembershipQuery;
+
+    let config = crate::config::get_config()?;
+    let identity_scope = config
+        .admin_identity_scope
+        .clone()
+        .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
+    super::authorization::authorization_principal_is_group_member(
+        pool,
+        AuthorizationGroupMembershipQuery::new(
+            principal_id,
+            config.admin_groupname.clone(),
+            identity_scope,
+        ),
+    )
+    .await
+}
+
 /// Load a token's permission dimension from `token_scopes`, validating each
 /// stored string against the `Permissions` enum (fail-closed on an unknown
 /// value). A flagged dimension may contain zero rows, which means deny-all.
 pub async fn load_token_scopes(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     token_id: i32,
 ) -> Result<Vec<Permissions>, ApiError> {
     use crate::schema::token_scopes::dsl::{permission, token_id as ts_token_id, token_scopes};

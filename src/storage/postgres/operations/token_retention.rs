@@ -71,7 +71,7 @@ pub(crate) async fn purge_expired_token_batch(
 }
 
 async fn purge_expired_token_batch_at(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     settings: TokenRetentionSettings,
     now: NaiveDateTime,
 ) -> Result<usize, ApiError> {
@@ -310,7 +310,7 @@ mod tests {
     }
 
     async fn create_token(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         principal_id: i32,
         expires_at: Option<NaiveDateTime>,
     ) -> Token {
@@ -325,7 +325,7 @@ mod tests {
     }
 
     async fn set_persisted_expiry(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         token_value: &Token,
         expires_at: NaiveDateTime,
     ) {
@@ -341,7 +341,7 @@ mod tests {
     }
 
     async fn set_revoked_at(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         token_value: &Token,
         revoked_at: NaiveDateTime,
     ) {
@@ -356,7 +356,10 @@ mod tests {
         .unwrap();
     }
 
-    async fn token_exists(pool: &impl crate::storage::StorageContext, token_value: &Token) -> bool {
+    async fn token_exists(
+        pool: &crate::storage::postgres::PostgresPool,
+        token_value: &Token,
+    ) -> bool {
         let token_hash = token_value.storage_hash();
         with_connection(pool, async |conn| {
             tokens::table
@@ -371,7 +374,7 @@ mod tests {
     }
 
     async fn wait_until_token_row_is_locked(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         token_id: i32,
     ) {
         for _ in 0..100 {

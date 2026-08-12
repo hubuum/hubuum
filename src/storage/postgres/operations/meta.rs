@@ -84,7 +84,7 @@ struct ExportTemplateAuditRow {
 }
 
 pub(crate) async fn load_storage_snapshot(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<OperationalStorageSnapshot, ApiError> {
     const QUERY: &str = r#"
         SELECT
@@ -107,7 +107,7 @@ pub(crate) async fn load_storage_snapshot(
 }
 
 pub(crate) async fn load_task_queue_snapshot(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<OperationalTaskQueueSnapshot, ApiError> {
     const QUERY: &str = r#"
         SELECT
@@ -164,7 +164,7 @@ pub(crate) async fn load_task_queue_snapshot(
 }
 
 pub(crate) async fn load_export_template_health(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Vec<OperationalExportTemplateHealth>, ApiError> {
     const QUERY: &str = r#"
         SELECT
@@ -202,7 +202,7 @@ pub(crate) async fn load_export_template_health(
 }
 
 pub(crate) async fn load_export_templates_for_audit(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Vec<OperationalExportTemplateAuditEntry>, ApiError> {
     const QUERY: &str = r#"
         SELECT id, collection_id, name, template, content_type

@@ -28,6 +28,7 @@ use crate::models::{
     ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
     Permissions, RestoreTimestamps,
 };
+use crate::permissions::AuthorizationContext;
 use crate::storage::{ImportStorage, StorageImportPlanItem, storage_handle};
 use crate::traits::UserPermissions;
 
@@ -49,7 +50,6 @@ fn import_item_requires_existing(condition: Option<ImportWriteCondition>) -> boo
     condition.is_some_and(ImportWriteCondition::requires_existing)
 }
 use crate::permissions::PrincipalRef;
-use crate::storage::StorageContext;
 
 fn extended_graph_items(request: &ImportRequest) -> usize {
     request.graph.identity_scopes.len()
@@ -230,7 +230,7 @@ async fn is_import_admin<C>(
     state: &mut PlanningState,
 ) -> Result<bool, String>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     if let Some(is_admin) = state.admin_status.known() {
         return Ok(is_admin);
@@ -261,7 +261,7 @@ async fn ensure_collection_permission_cached<C>(
     permission: Permissions,
 ) -> Result<(), String>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
         return Ok(());
@@ -381,7 +381,7 @@ async fn ensure_relation_permissions<C>(
     failure_item: PlannedTaskResult,
 ) -> Result<(), PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     for collection in collections {
         ensure_collection_permission_cached(
@@ -409,7 +409,7 @@ pub(super) async fn plan_import<C>(
     request: &ImportRequest,
 ) -> PlanningOutcome
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     plan_import_with_admin_status(backend, user, scopes, request, ImportAdminStatus::Unknown).await
 }
@@ -421,7 +421,7 @@ pub(super) async fn plan_runtime_admin_import<C>(
     request: &ImportRequest,
 ) -> PlanningOutcome
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     plan_import_with_admin_status(backend, user, None, request, ImportAdminStatus::Known(true))
         .await
@@ -435,7 +435,7 @@ async fn plan_import_with_admin_status<C>(
     admin_status: ImportAdminStatus,
 ) -> PlanningOutcome
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     let mode = request.mode();
@@ -900,7 +900,7 @@ pub(super) async fn plan_collection<C>(
     input: &ImportCollectionInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     if let Some(reference) = &input.ref_
@@ -1116,7 +1116,7 @@ pub(super) async fn plan_class<C>(
     input: &ImportClassInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     if let Some(schema) = input.json_schema.as_ref() {
@@ -1341,7 +1341,7 @@ pub(super) async fn plan_object<C>(
     input: &ImportObjectInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     if let Some(reference) = &input.ref_
@@ -1556,7 +1556,7 @@ pub(super) async fn plan_class_relation<C>(
     input: &ImportClassRelationInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     let from_class = resolve_class_planning(
@@ -1702,7 +1702,7 @@ pub(super) async fn plan_object_relation<C>(
     input: &ImportObjectRelationInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     let from_object = resolve_object_planning(
@@ -1872,7 +1872,7 @@ pub(super) async fn plan_collection_permission<C>(
     input: &ImportCollectionPermissionInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     let collection = resolve_collection_planning(

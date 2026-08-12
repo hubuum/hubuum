@@ -7,8 +7,10 @@ use hubuum::events::EventContext;
 use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
 };
+use hubuum::services::Services;
+use hubuum::storage::BenchmarkStorageContext;
 use hubuum::storage::postgres::{
-    PostgresPool, ensure_postgres_schema_ready, init_postgres_pool_with_statement_timeout,
+    ensure_postgres_schema_ready, init_postgres_pool_with_statement_timeout,
 };
 use hubuum::traits::{CanDelete, CanSave};
 use tokio::runtime::{Builder, Runtime};
@@ -33,7 +35,8 @@ fn runtime() -> Runtime {
 }
 
 struct StorageFixture {
-    pool: PostgresPool,
+    storage: BenchmarkStorageContext,
+    services: Services,
     owner_group: Group,
     collections: Vec<Collection>,
 }
@@ -47,6 +50,8 @@ impl StorageFixture {
         runtime
             .block_on(ensure_postgres_schema_ready(&pool))
             .expect("benchmark database should be migrated");
+        let storage = hubuum::benchmark_support::storage_for_postgres(pool);
+        let services = hubuum::benchmark_support::services_for_storage(&storage);
 
         let owner_group = runtime
             .block_on(
@@ -55,7 +60,7 @@ impl StorageFixture {
                     groupname: unique_name("storage-bench-group"),
                     description: Some("PostgreSQL storage benchmark owner".to_string()),
                 }
-                .save_without_events(&pool),
+                .save_without_events(&storage),
             )
             .expect("benchmark owner group should save");
 
@@ -68,7 +73,7 @@ impl StorageFixture {
                         .expect("persisted owner group id should be positive"),
                     parent_collection_id: None,
                 }
-                .save_without_events(&pool),
+                .save_without_events(&storage),
             )
             .expect("benchmark collection should save");
         let mut collections = vec![first];
@@ -86,14 +91,15 @@ impl StorageFixture {
                             CollectionID::new(parent_id).expect("valid parent id"),
                         ),
                     }
-                    .save_without_events(&pool),
+                    .save_without_events(&storage),
                 )
                 .expect("nested benchmark collection should save");
             collections.push(collection);
         }
 
         Self {
-            pool,
+            storage,
+            services,
             owner_group,
             collections,
         }
@@ -110,18 +116,18 @@ impl StorageFixture {
 
     fn cleanup_created_collection(&self, runtime: &Runtime, collection: &Collection) {
         runtime
-            .block_on(collection.delete_without_events(&self.pool))
+            .block_on(collection.delete_without_events(&self.storage))
             .expect("created benchmark collection should delete");
     }
 
     fn cleanup(self, runtime: &Runtime) {
         for collection in self.collections.iter().rev() {
             runtime
-                .block_on(collection.delete_without_events(&self.pool))
+                .block_on(collection.delete_without_events(&self.storage))
                 .expect("benchmark collection should delete");
         }
         runtime
-            .block_on(self.owner_group.delete_without_events(&self.pool))
+            .block_on(self.owner_group.delete_without_events(&self.storage))
             .expect("benchmark owner group should delete");
     }
 }
@@ -137,8 +143,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
 
     let runtime = runtime();
     let fixture = StorageFixture::new(&runtime, &database_url);
-    let services = hubuum::benchmark_support::services_for_postgres(fixture.pool.clone());
-    let collections = services.collections();
+    let collections = fixture.services.collections();
     let point_read_id = fixture.point_read_id();
     let leaf_id = fixture.leaf_id();
 

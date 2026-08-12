@@ -436,7 +436,7 @@ async fn lock_group_for_delete(
 }
 
 async fn delete_group_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     group_id: i32,
     context: Option<&EventContext>,
 ) -> Result<usize, ApiError> {
@@ -467,12 +467,12 @@ async fn delete_group_by_id(
 pub trait LoadGroupRecord {
     async fn load_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Group, ApiError>;
 }
 
 pub async fn count_group_records(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<i64, ApiError> {
     use crate::schema::groups::dsl::groups;
     with_connection(pool, async |conn| {
@@ -482,7 +482,7 @@ pub async fn count_group_records(
 }
 
 pub async fn group_identity_scope_name(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     group_id_value: i32,
 ) -> Result<String, ApiError> {
     use crate::schema::{groups, identity_scopes};
@@ -500,7 +500,7 @@ pub async fn group_identity_scope_name(
 impl LoadGroupRecord for GroupID {
     async fn load_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
@@ -518,12 +518,12 @@ impl LoadGroupRecord for GroupID {
 pub trait DeleteGroupRecord {
     async fn delete_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<usize, ApiError>;
 
     async fn delete_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         let _ = context;
@@ -534,14 +534,14 @@ pub trait DeleteGroupRecord {
 impl DeleteGroupRecord for GroupID {
     async fn delete_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<usize, ApiError> {
         delete_group_by_id(pool, self.id(), None).await
     }
 
     async fn delete_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         delete_group_by_id(pool, self.id(), context).await
@@ -551,14 +551,14 @@ impl DeleteGroupRecord for GroupID {
 impl DeleteGroupRecord for Group {
     async fn delete_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<usize, ApiError> {
         delete_group_by_id(pool, self.id, None).await
     }
 
     async fn delete_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         delete_group_by_id(pool, self.id, context).await
@@ -568,12 +568,12 @@ impl DeleteGroupRecord for Group {
 pub trait SaveGroupRecord {
     async fn save_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Group, ApiError>;
 
     async fn save_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let _ = context;
@@ -584,7 +584,7 @@ pub trait SaveGroupRecord {
 impl SaveGroupRecord for NewGroup {
     async fn save_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Group, ApiError> {
         use crate::schema::groups;
 
@@ -618,7 +618,7 @@ impl SaveGroupRecord for NewGroup {
 
     async fn save_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let Some(context) = context else {
@@ -668,13 +668,13 @@ pub trait UpdateGroupRecord {
     async fn update_group_record_without_events(
         &self,
         group_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Group, ApiError>;
 
     async fn update_group_record(
         &self,
         group_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let _ = context;
@@ -687,7 +687,7 @@ impl UpdateGroupRecord for UpdateGroup {
     async fn update_group_record_without_events(
         &self,
         group_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
@@ -705,7 +705,7 @@ impl UpdateGroupRecord for UpdateGroup {
     async fn update_group_record(
         &self,
         group_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let Some(context) = context else {
@@ -759,31 +759,31 @@ impl UpdateGroupRecord for UpdateGroup {
 pub trait GroupMembersBackend {
     async fn load_group_members(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<Principal>, ApiError>;
 
     async fn load_group_members_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<(PrincipalGroup, Principal)>, ApiError>;
 
     async fn count_group_members_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError>;
 
     async fn remove_group_member_from_backend_without_events(
         &self,
         member_principal_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn remove_group_member_from_backend(
         &self,
         member_principal_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -795,7 +795,7 @@ pub trait GroupMembersBackend {
 impl GroupMembersBackend for Group {
     async fn load_group_members(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<Principal>, ApiError> {
         use crate::schema::group_memberships::dsl::{group_id, group_memberships};
         use crate::schema::principals::dsl::principals;
@@ -814,7 +814,7 @@ impl GroupMembersBackend for Group {
 
     async fn load_group_members_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<(PrincipalGroup, Principal)>, ApiError> {
         use crate::schema::group_memberships::dsl::{
@@ -874,7 +874,7 @@ impl GroupMembersBackend for Group {
 
     async fn count_group_members_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError> {
         use crate::schema::group_memberships::dsl::{
@@ -922,7 +922,7 @@ impl GroupMembersBackend for Group {
     async fn remove_group_member_from_backend_without_events(
         &self,
         member_principal_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             remove_manual_membership_source(conn, member_principal_id, self.id).await?;
@@ -935,7 +935,7 @@ impl GroupMembersBackend for Group {
     async fn remove_group_member_from_backend(
         &self,
         member_principal_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -974,7 +974,7 @@ impl GroupMembersBackend for Group {
 }
 
 pub(crate) async fn save_manual_membership(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id: i32,
     group_id: i32,
     context: Option<&EventContext>,
@@ -1026,7 +1026,7 @@ async fn load_principal_group(
 }
 
 pub async fn principal_group_by_ids(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal: i32,
     group: i32,
 ) -> Result<PrincipalGroup, ApiError> {
@@ -1037,7 +1037,7 @@ pub async fn principal_group_by_ids(
 }
 
 pub(crate) async fn group_member_principal(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id: i32,
 ) -> Result<Principal, ApiError> {
     use crate::schema::principals::dsl::{id, principals};

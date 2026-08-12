@@ -110,20 +110,20 @@ use super::{
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentity, StorageIdentityGroup,
-    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure, StorageInventoryCounts,
-    StorageLocalPasswordReset, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePoolState, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
-    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata,
-    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete,
-    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
-    StorageUserUpdate, TaskGaugeSnapshot, TokenRetentionStorage, TokenStorage, UnifiedSearchClass,
-    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
-    UserStorage,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupListQuery, StorageIdentity,
+    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageInventoryCounts, StorageLocalPasswordReset, StorageObject, StorageObjectAggregatePage,
+    StorageObjectGraphRow, StorageObjectRelation, StoragePoolState, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StorageQueryBudget, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRevisionPrecondition, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
+    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, TaskGaugeSnapshot, TokenRetentionStorage, TokenStorage,
+    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
+    UnifiedSearchStorage, UserStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -150,10 +150,9 @@ impl PostgresStorage {
         pool: PostgresPool,
         notification_pool_settings: PostgresPoolSettings,
     ) -> Self {
-        Self {
-            pool,
-            notification_pool_settings: Some(Arc::new(notification_pool_settings)),
-        }
+        let mut backend = Self::new(pool);
+        backend.notification_pool_settings = Some(Arc::new(notification_pool_settings));
+        backend
     }
 
     pub(crate) fn pool(&self) -> &PostgresPool {
@@ -336,6 +335,15 @@ impl IdentityStorage for PostgresStorage {
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
         operations::identity_operations::list_principal_groups(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_groups(
+        &self,
+        query: StorageGroupListQuery,
+    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
+        operations::identity_operations::list_groups(&self.pool, query)
             .await
             .map_err(map_postgres_error)
     }
@@ -1734,7 +1742,9 @@ impl CollectionPermissionStorage for PostgresStorage {
         principal_on_from_backend(
             &self.pool,
             PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
-            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id())
+                .map_err(map_postgres_error)?
+                .id(),
         )
         .await
         .map_err(map_postgres_error)
@@ -1759,7 +1769,9 @@ impl CollectionPermissionStorage for PostgresStorage {
         principal_on_paginated_with_total_count_from_backend(
             &self.pool,
             PrincipalID::new(query.principal().principal_id()).map_err(map_postgres_error)?,
-            CollectionID::new(query.principal().collection_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.principal().collection_id())
+                .map_err(map_postgres_error)?
+                .id(),
             query.query_options(),
         )
         .await
@@ -1773,7 +1785,9 @@ impl CollectionPermissionStorage for PostgresStorage {
         effective_principal_on_from_backend(
             &self.pool,
             PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
-            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id())
+                .map_err(map_postgres_error)?
+                .id(),
         )
         .await
         .map_err(map_postgres_error)
@@ -1800,7 +1814,9 @@ impl CollectionPermissionStorage for PostgresStorage {
         group_can_on_from_backend(
             &self.pool,
             query.group_id(),
-            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id())
+                .map_err(map_postgres_error)?
+                .id(),
             query.permission(),
         )
         .await
@@ -1846,7 +1862,9 @@ impl CollectionPermissionStorage for PostgresStorage {
     ) -> Result<Vec<GroupPermission>, StorageError> {
         groups_on_from_backend(
             &self.pool,
-            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id())
+                .map_err(map_postgres_error)?
+                .id(),
             query.permissions().to_vec(),
             query.query_options().clone(),
         )
@@ -1860,7 +1878,9 @@ impl CollectionPermissionStorage for PostgresStorage {
     ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
         groups_on_paginated_with_total_count_from_backend(
             &self.pool,
-            CollectionID::new(query.collection_id()).map_err(map_postgres_error)?,
+            CollectionID::new(query.collection_id())
+                .map_err(map_postgres_error)?
+                .id(),
             query.permissions().to_vec(),
             query.query_options(),
         )
@@ -1921,7 +1941,7 @@ impl CollectionStore for PostgresStorage {
     }
 
     async fn collection_children(&self, id: CollectionID) -> Result<Vec<Collection>, StorageError> {
-        collection_children_from_backend(&self.pool, id)
+        collection_children_from_backend(&self.pool, id.id())
             .await
             .map_err(map_postgres_error)
     }
@@ -1930,7 +1950,7 @@ impl CollectionStore for PostgresStorage {
         &self,
         id: CollectionID,
     ) -> Result<Vec<Collection>, StorageError> {
-        collection_ancestors_from_backend(&self.pool, id)
+        collection_ancestors_from_backend(&self.pool, id.id())
             .await
             .map_err(map_postgres_error)
     }

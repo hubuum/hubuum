@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde_json::Value;
 
-use crate::{AuthorizationPermission, StorageError};
+use crate::{AuthorizationPermission, StorageError, StorageRecordMetadata};
 
 /// Normalized collection, class, and object boundary for a scoped search.
 #[derive(Clone, PartialEq, Eq)]
@@ -276,22 +276,19 @@ pub struct UnifiedSearchCollection {
 impl UnifiedSearchCollection {
     #[must_use]
     pub fn new(
-        id: i32,
+        metadata: StorageRecordMetadata,
         name: impl Into<String>,
         description: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
         parent_collection_id: Option<i32>,
-        revision: i64,
     ) -> Self {
         Self {
-            id,
+            id: metadata.id(),
             name: name.into(),
             description: description.into(),
-            created_at,
-            updated_at,
+            created_at: metadata.created_at(),
+            updated_at: metadata.updated_at(),
             parent_collection_id,
-            revision,
+            revision: metadata.revision(),
         }
     }
 
@@ -335,28 +332,19 @@ pub struct UnifiedSearchClass {
 
 impl UnifiedSearchClass {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: i32,
+    pub fn builder(
+        metadata: StorageRecordMetadata,
         name: impl Into<String>,
         collection: UnifiedSearchCollection,
-        json_schema: Option<Value>,
-        validate_schema: bool,
         description: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        revision: i64,
-    ) -> Self {
-        Self {
-            id,
+    ) -> UnifiedSearchClassBuilder {
+        UnifiedSearchClassBuilder {
+            metadata,
             name: name.into(),
             collection,
-            json_schema,
-            validate_schema,
             description: description.into(),
-            created_at,
-            updated_at,
-            revision,
+            json_schema: None,
+            validate_schema: false,
         }
     }
 
@@ -389,6 +377,44 @@ impl UnifiedSearchClass {
     }
 }
 
+pub struct UnifiedSearchClassBuilder {
+    metadata: StorageRecordMetadata,
+    name: String,
+    collection: UnifiedSearchCollection,
+    description: String,
+    json_schema: Option<Value>,
+    validate_schema: bool,
+}
+
+impl UnifiedSearchClassBuilder {
+    #[must_use]
+    pub fn json_schema(mut self, value: Option<Value>) -> Self {
+        self.json_schema = value;
+        self
+    }
+
+    #[must_use]
+    pub const fn validate_schema(mut self, value: bool) -> Self {
+        self.validate_schema = value;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> UnifiedSearchClass {
+        UnifiedSearchClass {
+            id: self.metadata.id(),
+            name: self.name,
+            collection: self.collection,
+            json_schema: self.json_schema,
+            validate_schema: self.validate_schema,
+            description: self.description,
+            created_at: self.metadata.created_at(),
+            updated_at: self.metadata.updated_at(),
+            revision: self.metadata.revision(),
+        }
+    }
+}
+
 /// Object projection returned by unified search.
 #[derive(Clone, PartialEq)]
 pub struct UnifiedSearchObject {
@@ -405,28 +431,24 @@ pub struct UnifiedSearchObject {
 
 impl UnifiedSearchObject {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        id: i32,
+        metadata: StorageRecordMetadata,
         name: impl Into<String>,
         collection_id: i32,
         class_id: i32,
         data: Value,
         description: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        revision: i64,
     ) -> Self {
         Self {
-            id,
+            id: metadata.id(),
             name: name.into(),
             collection_id,
             class_id,
             data,
             description: description.into(),
-            created_at,
-            updated_at,
-            revision,
+            created_at: metadata.created_at(),
+            updated_at: metadata.updated_at(),
+            revision: metadata.revision(),
         }
     }
 

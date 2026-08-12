@@ -413,14 +413,14 @@ impl CursorSqlMapping for EventSubscriptionRow {
 pub(crate) trait LoadEventSinkRecord {
     async fn load_event_sink_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSinkRow, ApiError>;
 }
 
 impl LoadEventSinkRecord for EventSinkID {
     async fn load_event_sink_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSinkRow, ApiError> {
         use crate::schema::event_sinks::dsl::{event_sinks, id};
 
@@ -435,50 +435,40 @@ impl LoadEventSinkRecord for EventSinkID {
 }
 
 pub(crate) trait SaveEventSinkRecord {
-    async fn save_event_sink_record<C>(
+    async fn save_event_sink_record(
         &self,
-        pool: &C,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError>
-    where
-        C: crate::storage::StorageContext;
+    ) -> Result<EventSinkRow, ApiError>;
 
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn save_event_sink_record_without_events<C>(
+    async fn save_event_sink_record_without_events(
         &self,
-        pool: &C,
-    ) -> Result<EventSinkRow, ApiError>
-    where
-        C: crate::storage::StorageContext;
+        pool: &crate::storage::postgres::PostgresPool,
+    ) -> Result<EventSinkRow, ApiError>;
 }
 
 impl SaveEventSinkRecord for NewEventSinkRow {
-    async fn save_event_sink_record<C>(
+    async fn save_event_sink_record(
         &self,
-        pool: &C,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError>
-    where
-        C: crate::storage::StorageContext,
-    {
+    ) -> Result<EventSinkRow, ApiError> {
         insert_event_sink_record(self, pool, Some(event_context)).await
     }
 
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn save_event_sink_record_without_events<C>(
+    async fn save_event_sink_record_without_events(
         &self,
-        pool: &C,
-    ) -> Result<EventSinkRow, ApiError>
-    where
-        C: crate::storage::StorageContext,
-    {
+        pool: &crate::storage::postgres::PostgresPool,
+    ) -> Result<EventSinkRow, ApiError> {
         insert_event_sink_record(self, pool, None).await
     }
 }
 
 async fn insert_event_sink_record(
     row: &NewEventSinkRow,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_context: Option<&EventContext>,
 ) -> Result<EventSinkRow, ApiError> {
     use crate::schema::event_sinks::dsl::event_sinks;
@@ -495,33 +485,28 @@ async fn insert_event_sink_record(
 }
 
 pub(crate) trait UpdateEventSinkRecord {
-    async fn update_event_sink_record<C>(
+    async fn update_event_sink_record(
         &self,
-        pool: &C,
+        pool: &crate::storage::postgres::PostgresPool,
         sink_id: i32,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError>
-    where
-        C: crate::storage::StorageContext;
+    ) -> Result<EventSinkRow, ApiError>;
 }
 
 impl UpdateEventSinkRecord for UpdateEventSinkRow {
-    async fn update_event_sink_record<C>(
+    async fn update_event_sink_record(
         &self,
-        pool: &C,
+        pool: &crate::storage::postgres::PostgresPool,
         sink_id: i32,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError>
-    where
-        C: crate::storage::StorageContext,
-    {
+    ) -> Result<EventSinkRow, ApiError> {
         update_event_sink_record_impl(self, pool, sink_id, Some(event_context)).await
     }
 }
 
 async fn update_event_sink_record_impl(
     row: &UpdateEventSinkRow,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     sink_id: i32,
     event_context: Option<&EventContext>,
 ) -> Result<EventSinkRow, ApiError> {
@@ -560,31 +545,26 @@ async fn update_event_sink_record_impl(
 }
 
 pub(crate) trait DeleteEventSinkRecord {
-    async fn delete_event_sink_record<C>(
+    async fn delete_event_sink_record(
         &self,
-        pool: &C,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
-    ) -> Result<(), ApiError>
-    where
-        C: crate::storage::StorageContext;
+    ) -> Result<(), ApiError>;
 }
 
 impl DeleteEventSinkRecord for EventSinkID {
-    async fn delete_event_sink_record<C>(
+    async fn delete_event_sink_record(
         &self,
-        pool: &C,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
-    ) -> Result<(), ApiError>
-    where
-        C: crate::storage::StorageContext,
-    {
+    ) -> Result<(), ApiError> {
         delete_event_sink_record_impl(self, pool, Some(event_context)).await
     }
 }
 
 async fn delete_event_sink_record_impl(
     sink_id: &EventSinkID,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_context: Option<&EventContext>,
 ) -> Result<(), ApiError> {
     use crate::schema::event_sinks::dsl::{event_sinks, id};
@@ -609,14 +589,14 @@ async fn delete_event_sink_record_impl(
 pub(crate) trait LoadEventSubscriptionRecord {
     async fn load_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSubscriptionRow, ApiError>;
 }
 
 impl LoadEventSubscriptionRecord for EventSubscriptionID {
     async fn load_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSubscriptionRow, ApiError> {
         use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
 
@@ -633,21 +613,21 @@ impl LoadEventSubscriptionRecord for EventSubscriptionID {
 pub(crate) trait SaveEventSubscriptionRecord {
     async fn save_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError>;
 
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_event_subscription_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSubscriptionRow, ApiError>;
 }
 
 impl SaveEventSubscriptionRecord for NewEventSubscriptionRow {
     async fn save_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError> {
         insert_event_subscription_record(self, pool, Some(event_context)).await
@@ -656,7 +636,7 @@ impl SaveEventSubscriptionRecord for NewEventSubscriptionRow {
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_event_subscription_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSubscriptionRow, ApiError> {
         insert_event_subscription_record(self, pool, None).await
     }
@@ -664,7 +644,7 @@ impl SaveEventSubscriptionRecord for NewEventSubscriptionRow {
 
 async fn insert_event_subscription_record(
     row: &NewEventSubscriptionRow,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_context: Option<&EventContext>,
 ) -> Result<EventSubscriptionRow, ApiError> {
     use crate::schema::event_subscriptions::dsl::event_subscriptions;
@@ -687,7 +667,7 @@ async fn insert_event_subscription_record(
 pub(crate) trait UpdateEventSubscriptionRecord {
     async fn update_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         subscription_id: i32,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError>;
@@ -696,7 +676,7 @@ pub(crate) trait UpdateEventSubscriptionRecord {
 impl UpdateEventSubscriptionRecord for UpdateEventSubscriptionRow {
     async fn update_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         subscription_id: i32,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError> {
@@ -707,7 +687,7 @@ impl UpdateEventSubscriptionRecord for UpdateEventSubscriptionRow {
 
 async fn update_event_subscription_record_impl(
     row: &UpdateEventSubscriptionRow,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     subscription_id: i32,
     event_context: Option<&EventContext>,
 ) -> Result<EventSubscriptionRow, ApiError> {
@@ -751,7 +731,7 @@ async fn update_event_subscription_record_impl(
 pub(crate) trait DeleteEventSubscriptionRecord {
     async fn delete_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
     ) -> Result<(), ApiError>;
 }
@@ -759,7 +739,7 @@ pub(crate) trait DeleteEventSubscriptionRecord {
 impl DeleteEventSubscriptionRecord for EventSubscriptionID {
     async fn delete_event_subscription_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         event_context: &EventContext,
     ) -> Result<(), ApiError> {
         delete_event_subscription_record_impl(self, pool, Some(event_context)).await
@@ -768,7 +748,7 @@ impl DeleteEventSubscriptionRecord for EventSubscriptionID {
 
 async fn delete_event_subscription_record_impl(
     subscription_id: &EventSubscriptionID,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_context: Option<&EventContext>,
 ) -> Result<(), ApiError> {
     use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
@@ -884,7 +864,7 @@ fn event_subscription_snapshot(row: &EventSubscriptionRow) -> serde_json::Value 
 }
 
 pub(crate) async fn list_event_sink_rows_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSinkRow>, i64), ApiError> {
     let query = build_event_sink_query(query_options)?;
@@ -901,15 +881,13 @@ pub(crate) async fn list_event_sink_rows_with_total_count(
     Ok((rows, total_count))
 }
 
-pub async fn enabled_event_sink_count<C>(backend: &C) -> Result<i64, ApiError>
-where
-    C: crate::storage::StorageContext,
-{
+pub async fn enabled_event_sink_count(
+    pool: &crate::storage::postgres::PostgresPool,
+) -> Result<i64, ApiError> {
     use diesel::dsl::count_star;
 
     use crate::schema::event_sinks::dsl::{enabled, event_sinks};
 
-    let pool = backend;
     with_connection(pool, async |conn| {
         event_sinks
             .filter(enabled.eq(true))
@@ -946,7 +924,7 @@ fn build_event_sink_query(
 }
 
 pub(crate) async fn list_event_subscription_rows_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection: i32,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSubscriptionRow>, i64), ApiError> {
@@ -999,7 +977,7 @@ fn build_event_subscription_query(
 impl EventSinkID {
     pub async fn instance(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSink, ApiError> {
         self.load_event_sink_record(pool).await?.try_into()
     }
@@ -1008,7 +986,7 @@ impl EventSinkID {
 impl EventSubscriptionID {
     pub async fn instance(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<EventSubscription, ApiError> {
         self.load_event_subscription_record(pool).await?.try_into()
     }
@@ -1016,7 +994,7 @@ impl EventSubscriptionID {
 
 impl EventSink {
     pub async fn list_with_total_count(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<EventSink>, i64), ApiError> {
         let (rows, total) = list_event_sink_rows_with_total_count(pool, query_options).await?;
@@ -1030,7 +1008,7 @@ impl EventSink {
 
 impl EventSubscription {
     pub async fn list_with_total_count(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
         query_options: &QueryOptions,
     ) -> Result<(Vec<EventSubscription>, i64), ApiError> {

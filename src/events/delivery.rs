@@ -21,10 +21,6 @@ use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-#[cfg(test)]
-use crate::storage::capabilities::event_delivery::{
-    ClaimedEventDelivery, claimed_event_delivery_work_item,
-};
 use crate::storage::{
     EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
     StorageHandle, StorageNotification, WorkerNotificationStorage, storage_handle,
@@ -115,19 +111,7 @@ async fn process_event_delivery_batch_with_schedule(
     })
 }
 
-#[cfg(test)]
-pub(crate) async fn process_claimed_event_delivery(
-    pool: &impl crate::storage::StorageContext,
-    settings: EventDeliverySettings,
-    resolver: &dyn SinkResolver,
-    claimed: ClaimedEventDelivery,
-) -> Result<(), ApiError> {
-    let work_item = claimed_event_delivery_work_item(pool, claimed).await?;
-    let storage = storage_handle(pool);
-    process_event_delivery_work_item(&storage, settings, resolver, work_item).await
-}
-
-async fn process_event_delivery_work_item(
+pub(super) async fn process_event_delivery_work_item(
     storage: &StorageHandle,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,

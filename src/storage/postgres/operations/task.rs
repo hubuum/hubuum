@@ -369,7 +369,7 @@ impl<T: TaskIdentifier + ?Sized> TaskIdentifier for &T {
 pub trait TaskBackend: TaskIdentifier {
     async fn find_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<TaskRecord, ApiError> {
         use crate::schema::tasks::dsl::{id, tasks};
 
@@ -385,7 +385,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_claimed_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<TaskRecord, ApiError> {
         let claim_token = self.task_lease_token().ok_or_else(|| {
             ApiError::BadRequest("A live task claim is required for this operation".to_string())
@@ -399,7 +399,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn list_events_with_total_count(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<TaskEventRecord>, i64), ApiError> {
         use crate::schema::events::dsl::{entity_id, entity_type, events, id};
@@ -467,7 +467,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn list_import_results_with_total_count(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
         use crate::schema::import_task_results::dsl::{id, import_task_results, task_id};
@@ -529,7 +529,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_export_output(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ExportOutputLookup<ExportTaskOutputRecord>, ApiError> {
         use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
@@ -558,7 +558,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_export_output_summary(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ExportOutputLookup<ExportTaskOutputSummaryRecord>, ApiError> {
         use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
@@ -585,7 +585,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_backup_output(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<BackupOutputLookup<BackupTaskOutputRecord>, ApiError> {
         use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
 
@@ -612,7 +612,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_backup_output_summary(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<BackupOutputLookup<BackupTaskOutputSummaryRecord>, ApiError> {
         use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
 
@@ -639,7 +639,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn count_import_results(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<TaskResultCounts, ApiError> {
         use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
 
@@ -663,7 +663,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn update_state(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         update: TaskStateUpdate,
     ) -> Result<TaskRecord, ApiError> {
         use crate::schema::tasks::dsl::{
@@ -714,7 +714,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn finalize_terminal(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
     ) -> Result<TaskRecord, ApiError> {
@@ -732,7 +732,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn finalize_export_with_output(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
         output: NewExportTaskOutputRecord,
@@ -763,7 +763,7 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn finalize_backup_with_output(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
         output: NewBackupTaskOutputRecord,
@@ -794,7 +794,7 @@ impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
 pub(crate) trait RemoteCallTaskBackend: TaskIdentifier {
     async fn finalize_remote_call_with_result(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
         result: NewRemoteCallResultRow,
@@ -922,7 +922,7 @@ impl NewTaskRecord {
     /// Insert this new task row and return the persisted record.
     pub async fn create(
         self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<TaskRecord, ApiError> {
         use crate::schema::tasks::dsl::tasks;
 
@@ -939,7 +939,7 @@ impl NewTaskRecord {
 impl TaskRecord {
     /// Find the task submitted by `submitter_id` carrying the given idempotency key, if any.
     pub async fn find_by_idempotency(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         submitter_id: PrincipalID,
         key: &str,
     ) -> Result<Option<TaskRecord>, ApiError> {
@@ -982,7 +982,7 @@ fn build_task_query<'a>(
 }
 
 pub(crate) async fn list_tasks_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     submitted_by_filter: Option<i32>,
     kind_filter: Option<&str>,
     status_filter: Option<&str>,
@@ -1013,7 +1013,7 @@ pub(crate) async fn list_tasks_with_total_count(
 /// batched principal-name lookup.
 #[cfg(test)]
 pub(crate) async fn task_event_responses(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     records: Vec<TaskEventRecord>,
 ) -> Result<Vec<crate::models::TaskEventResponse>, ApiError> {
     let records = enrich_legacy_task_event_initiators(pool, records).await?;
@@ -1032,7 +1032,7 @@ pub(crate) async fn task_event_responses(
 }
 
 pub(crate) async fn enrich_legacy_task_event_initiators(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     mut records: Vec<TaskEventRecord>,
 ) -> Result<Vec<TaskEventRecord>, ApiError> {
     use crate::schema::events::dsl as stored;
@@ -1076,7 +1076,7 @@ pub(crate) async fn enrich_legacy_task_event_initiators(
 }
 
 pub(crate) async fn list_export_task_output_summaries(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_ids: &[i32],
 ) -> Result<Vec<ExportTaskOutputSummaryRecord>, ApiError> {
     use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
@@ -1099,7 +1099,7 @@ pub(crate) async fn list_export_task_output_summaries(
 }
 
 pub(crate) async fn list_backup_task_output_summaries(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_ids: &[i32],
 ) -> Result<Vec<BackupTaskOutputSummaryRecord>, ApiError> {
     use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
@@ -1119,7 +1119,7 @@ pub(crate) async fn list_backup_task_output_summaries(
 }
 
 pub async fn purge_expired_export_outputs(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Vec<i32>, ApiError> {
     use crate::schema::export_task_outputs::dsl::{
         export_task_outputs, output_expires_at, task_id,
@@ -1175,7 +1175,7 @@ pub async fn purge_expired_export_outputs(
 }
 
 pub(crate) async fn purge_expired_backup_outputs(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Vec<i32>, ApiError> {
     use crate::schema::backup_task_outputs::dsl::{
         backup_task_outputs, output_expires_at, task_id,
@@ -1294,7 +1294,7 @@ impl NewTaskEventRecord {
     /// Append this event to its task's history and return the persisted event.
     pub async fn append(
         self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<TaskEventRecord, ApiError> {
         with_connection(pool, async |conn| -> Result<TaskEventRecord, ApiError> {
             use crate::schema::tasks::dsl::{id, tasks};
@@ -1313,7 +1313,7 @@ impl NewTaskEventRecord {
 /// Append an in-flight lifecycle event only while the supplied worker still
 /// owns the task's live lease.
 pub(crate) async fn append_task_event_while_claimed(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_id_value: i32,
     claim_token: Uuid,
     event: NewTaskEventRecord,
@@ -1338,7 +1338,7 @@ pub(crate) async fn append_task_event_while_claimed(
 }
 
 pub(crate) async fn insert_import_results(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     entries: &[NewImportTaskResultRecord],
 ) -> Result<usize, ApiError> {
     use crate::schema::import_task_results::dsl::import_task_results;
@@ -1389,7 +1389,7 @@ fn task_kind_claim_order(start: usize) -> [&'static str; TaskKind::ALL.len()] {
 }
 
 pub(crate) async fn claim_next_queued_task(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     lease_duration: TaskLeaseDuration,
 ) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{
@@ -1470,7 +1470,7 @@ pub(crate) async fn claim_next_queued_task(
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]
 pub async fn claim_task_for_backend_test(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_id_value: i32,
 ) -> Result<TaskRecord, ApiError> {
     use crate::schema::tasks::dsl::{
@@ -1501,7 +1501,7 @@ pub async fn claim_task_for_backend_test(
 
 /// Extend an active task lease if this worker still owns it.
 pub(crate) async fn renew_task_lease(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_id_value: i32,
     claim_token: Uuid,
     lease_duration: TaskLeaseDuration,
@@ -1541,7 +1541,7 @@ pub(crate) async fn renew_task_lease(
 /// remote-call tasks can have external side effects, so replaying them without an
 /// operator first inspecting the task history could duplicate those effects.
 pub async fn recover_expired_task_leases(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     batch_size: i64,
 ) -> Result<Vec<TaskRecord>, ApiError> {
     recover_expired_task_leases_matching(pool, batch_size, None).await
@@ -1582,7 +1582,7 @@ async fn recovered_task_result_counts(
 }
 
 async fn recover_expired_task_leases_matching(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     batch_size: i64,
     task_id_filter: Option<i32>,
 ) -> Result<Vec<TaskRecord>, ApiError> {
@@ -1681,7 +1681,7 @@ async fn recover_expired_task_leases_matching(
 
 #[cfg(test)]
 async fn recover_expired_task_lease(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_id: i32,
 ) -> Result<Vec<TaskRecord>, ApiError> {
     recover_expired_task_leases_matching(pool, 1, Some(task_id)).await
@@ -1693,7 +1693,7 @@ impl TaskCreateRequest {
     /// closes the race between concurrent requests carrying the same key.
     pub async fn create_idempotently_with_active_limit(
         self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         max_active_tasks: usize,
     ) -> Result<TaskRecord, ApiError> {
         let kind = self.kind;
@@ -1738,7 +1738,7 @@ impl TaskCreateRequest {
 
     async fn create_with_active_kind_limit(
         self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         limited_kind: TaskKind,
         max_active_tasks: usize,
     ) -> Result<TaskRecord, ApiError> {

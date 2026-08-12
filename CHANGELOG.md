@@ -36,8 +36,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   history, workflows, operational behavior, and durable-worker notifications.
   Application code exchanges backend-neutral DTOs and errors through uniformly
   observed traits; PostgreSQL owns Diesel rows, SQL construction, transactions,
-  native notifications, migrations, and adapter-specific failures. PostgreSQL
-  is the only selectable production backend, and compatibility tests exercise
+  native notifications, migrations, and adapter-specific failures. Opaque
+  storage contexts preserve the configured backend instance, while PostgreSQL
+  helpers accept concrete pools only inside the adapter tree. Storage-only
+  contexts no longer carry authorization-provider selection; policy-aware
+  workflows explicitly require the stronger application context. PostgreSQL is
+  the only selectable production backend, and compatibility tests exercise
   every required capability for every selectable backend. Public HTTP request
   and response shapes are unchanged; the deprecated administrator configuration
   field `exports.database_statement_timeout_ms` remains as an alias for

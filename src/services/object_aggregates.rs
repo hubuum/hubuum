@@ -8,22 +8,21 @@ use crate::models::object_aggregate::{
 use crate::models::{ObjectAggregatePage, Permissions};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
-    PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
-    ResourceKind, ResourceRef, permission_from_storage, permission_to_storage,
+    AuthorizationContext, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
+    ResourceAttrs, ResourceKind, ResourceRef, permission_from_storage, permission_to_storage,
 };
 use crate::services::storage_boundary::visibility;
 use crate::storage::{
     AuthorizationPermission, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageContext, StorageError,
-    StorageErrorKind, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateMeasureState,
-    StorageObjectAggregateRow, StorageObjectAggregateSort, StorageObjectAggregateSpec,
-    StorageObjectAggregateTarget, storage_handle,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageError, StorageErrorKind,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateMeasureState, StorageObjectAggregateRow, StorageObjectAggregateSort,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget, storage_handle,
 };
 use crate::traits::{AuthzSubject, PrincipalIdAccessor};
 
 pub(crate) async fn aggregate_objects(
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
     principal: &(impl PrincipalIdAccessor + ?Sized),
     request: ObjectAggregateRequest,
 ) -> Result<ObjectAggregatePage, ApiError> {

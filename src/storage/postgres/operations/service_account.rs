@@ -11,7 +11,7 @@ use crate::models::{
     TaskStatus, UpdateServiceAccount,
 };
 use crate::schema::service_accounts;
-use crate::storage::StorageContext;
+use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::authz::AuthzSubject as PostgresAuthzSubject;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::identity::identity_scope_by_name;
@@ -25,8 +25,6 @@ use crate::storage::postgres::operations::task_rows::TaskRow as TaskRecord;
 use crate::storage::postgres::operations::token::revoke_all_tokens_for_principal_conn;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::accessors::InstanceAdapter;
-use crate::traits::crud::{DeleteAdapter, UpdateAdapter};
 use crate::traits::{AuthzSubject, CursorPaginated, CursorValue};
 
 #[derive(Debug, Queryable, Selectable, Clone)]
@@ -137,60 +135,47 @@ impl CursorSqlMapping for ServiceAccountWithNameQueryRow {
 }
 
 pub trait SaveServiceAccount {
-    async fn save<C>(
+    async fn save(
         &self,
-        backend: &C,
+        pool: &PostgresPool,
         created_by: Option<i32>,
         event_context: &EventContext,
-    ) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext;
+    ) -> Result<ServiceAccount, ApiError>;
 
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn save_without_events<C>(
+    async fn save_without_events(
         &self,
-        backend: &C,
+        pool: &PostgresPool,
         created_by: Option<i32>,
-    ) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext;
+    ) -> Result<ServiceAccount, ApiError>;
 }
 
 impl SaveServiceAccount for NewServiceAccount {
-    async fn save<C>(
+    async fn save(
         &self,
-        backend: &C,
+        pool: &PostgresPool,
         created_by: Option<i32>,
         event_context: &EventContext,
-    ) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext,
-    {
-        save_service_account(self, backend, created_by, Some(event_context)).await
+    ) -> Result<ServiceAccount, ApiError> {
+        save_service_account(self, pool, created_by, Some(event_context)).await
     }
 
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn save_without_events<C>(
+    async fn save_without_events(
         &self,
-        backend: &C,
+        pool: &PostgresPool,
         created_by: Option<i32>,
-    ) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext,
-    {
-        save_service_account(self, backend, created_by, None).await
+    ) -> Result<ServiceAccount, ApiError> {
+        save_service_account(self, pool, created_by, None).await
     }
 }
 
-async fn save_service_account<C>(
+async fn save_service_account(
     account: &NewServiceAccount,
-    backend: &C,
+    pool: &PostgresPool,
     created_by: Option<i32>,
     event_context: Option<&EventContext>,
-) -> Result<ServiceAccount, ApiError>
-where
-    C: StorageContext,
-{
+) -> Result<ServiceAccount, ApiError> {
     let name = account.name.clone();
     let description = account.description.clone().unwrap_or_default();
     let owner_group_id = account.owner_group_id.id();
@@ -204,9 +189,9 @@ where
                 .to_string(),
         ));
     }
-    let local_scope = identity_scope_by_name(backend, LOCAL_IDENTITY_SCOPE).await?;
+    let local_scope = identity_scope_by_name(pool, LOCAL_IDENTITY_SCOPE).await?;
 
-    with_transaction(backend, async |conn| -> Result<ServiceAccount, ApiError> {
+    with_transaction(pool, async |conn| -> Result<ServiceAccount, ApiError> {
         let principal = NewPrincipal {
             identity_scope_id: local_scope.id,
             kind: PrincipalKind::ServiceAccount.as_str(),
@@ -257,32 +242,9 @@ where
     .await
 }
 
-impl UpdateAdapter for UpdateServiceAccount {
-    type Output = ServiceAccount;
-    type Identifier = ServiceAccountID;
-
-    async fn update_adapter_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        service_account_id: ServiceAccountID,
-    ) -> Result<ServiceAccount, ApiError> {
-        update_service_account_record(self, pool, service_account_id.id(), None).await
-    }
-
-    async fn update_adapter(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        service_account_id: ServiceAccountID,
-        event_context: &EventContext,
-    ) -> Result<ServiceAccount, ApiError> {
-        update_service_account_record(self, pool, service_account_id.id(), Some(event_context))
-            .await
-    }
-}
-
-async fn update_service_account_record(
+pub(crate) async fn update_service_account_record(
     update: &UpdateServiceAccount,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     service_account_id: i32,
     event_context: Option<&EventContext>,
 ) -> Result<ServiceAccount, ApiError> {
@@ -327,78 +289,43 @@ async fn update_service_account_record(
     .await
 }
 
-impl InstanceAdapter<ServiceAccount> for ServiceAccountID {
-    async fn instance_adapter(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<ServiceAccount, ApiError> {
-        load_service_account_by_id(pool, self.id()).await
-    }
-}
-
 pub trait DisableServiceAccount {
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn disable_without_events<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext;
+    async fn disable_without_events(&self, pool: &PostgresPool)
+    -> Result<ServiceAccount, ApiError>;
 
-    async fn disable<C>(
+    async fn disable(
         &self,
-        backend: &C,
+        pool: &PostgresPool,
         event_context: &EventContext,
-    ) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext;
+    ) -> Result<ServiceAccount, ApiError>;
 }
 
 impl DisableServiceAccount for ServiceAccountID {
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn disable_without_events<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext,
-    {
-        disable_service_account(self, backend, None).await
+    async fn disable_without_events(
+        &self,
+        pool: &PostgresPool,
+    ) -> Result<ServiceAccount, ApiError> {
+        disable_service_account(self, pool, None).await
     }
 
-    async fn disable<C>(
+    async fn disable(
         &self,
-        backend: &C,
+        pool: &PostgresPool,
         event_context: &EventContext,
-    ) -> Result<ServiceAccount, ApiError>
-    where
-        C: StorageContext,
-    {
-        disable_service_account(self, backend, Some(event_context)).await
+    ) -> Result<ServiceAccount, ApiError> {
+        disable_service_account(self, pool, Some(event_context)).await
     }
 }
 
-impl DeleteAdapter for ServiceAccountID {
-    async fn delete_adapter_without_events(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<(), ApiError> {
-        delete_service_account(self, pool, None).await
-    }
-
-    async fn delete_adapter(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-        context: &EventContext,
-    ) -> Result<(), ApiError> {
-        delete_service_account(self, pool, Some(context)).await
-    }
-}
-
-async fn disable_service_account<C>(
+async fn disable_service_account(
     account_id: &ServiceAccountID,
-    backend: &C,
+    pool: &PostgresPool,
     event_context: Option<&EventContext>,
-) -> Result<ServiceAccount, ApiError>
-where
-    C: StorageContext,
-{
+) -> Result<ServiceAccount, ApiError> {
     let sa_id = account_id.id();
-    let (disabled, cancelled_tasks) = with_transaction(backend, async |conn| {
+    let (disabled, cancelled_tasks) = with_transaction(pool, async |conn| {
         disable_service_account_conn(conn, sa_id, event_context).await
     })
     .await?;
@@ -466,9 +393,9 @@ async fn disable_service_account_conn(
     Ok((disabled, cancelled_tasks))
 }
 
-async fn delete_service_account(
+pub(crate) async fn delete_service_account(
     account_id: &ServiceAccountID,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_context: Option<&EventContext>,
 ) -> Result<(), ApiError> {
     use crate::schema::principals::dsl::{id, principals as principals_table};
@@ -546,7 +473,7 @@ fn service_account_snapshot(
 
 /// Is `principal_id` a **human** member of `owner_group_id`?
 pub async fn is_human_owner_group_member(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id: i32,
     owner_group_id: i32,
 ) -> Result<bool, ApiError> {
@@ -571,7 +498,7 @@ pub async fn is_human_owner_group_member(
 }
 
 pub async fn principal_is_disabled(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal: &Principal,
 ) -> Result<bool, ApiError> {
     if !principal.is_service_account() {
@@ -583,7 +510,7 @@ pub async fn principal_is_disabled(
 
 /// Soft-revoke all tokens belonging to a principal (used when disabling an SA).
 pub async fn revoke_all_tokens_for_principal(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     let principal_id = PrincipalID::new(principal_id_value)?;
@@ -594,7 +521,7 @@ pub async fn revoke_all_tokens_for_principal(
 }
 
 pub async fn cancel_pending_tasks_for_principal(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     let cancelled_tasks = with_transaction(pool, async |conn| {
@@ -639,7 +566,7 @@ fn record_cancelled_task_metrics(cancelled_tasks: &[TaskRecord]) {
 }
 
 pub async fn service_accounts_owned_by_group(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     owner_group: i32,
 ) -> Result<Vec<(i32, String)>, ApiError> {
     use crate::schema::principals;
@@ -656,7 +583,7 @@ pub async fn service_accounts_owned_by_group(
 }
 
 pub async fn load_service_account_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
@@ -671,7 +598,7 @@ pub async fn load_service_account_by_id(
 }
 
 pub async fn search_manageable_service_accounts<S>(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     requestor: &S,
     is_admin: bool,
     query_options: QueryOptions,
@@ -749,7 +676,7 @@ where
 }
 
 pub async fn count_manageable_service_accounts<S>(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     requestor: &S,
     is_admin: bool,
     query_options: QueryOptions,

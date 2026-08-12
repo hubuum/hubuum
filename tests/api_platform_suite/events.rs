@@ -16,7 +16,7 @@ mod tests {
     const EVENTS_ENDPOINT: &str = "/api/v1/events";
 
     async fn emit_test_event(
-        pool: &impl crate::storage::StorageContext,
+        pool: &impl crate::test_support::AuditEventFixture,
         event: &NewEvent,
     ) -> EventResponse {
         create_audit_event(pool, event)
@@ -32,7 +32,7 @@ mod tests {
             .await;
 
         let event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
                 Action::Created,
@@ -109,7 +109,7 @@ mod tests {
             .unwrap();
 
         let collectiond_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
                 Action::Created,
@@ -123,7 +123,7 @@ mod tests {
         )
         .await;
         let collection_less_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Token,
                 Action::Created,
@@ -181,7 +181,7 @@ mod tests {
             .unwrap();
 
         let matching_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
                 Action::Created,
@@ -195,7 +195,7 @@ mod tests {
         )
         .await;
         let other_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Object,
                 Action::Created,
@@ -258,7 +258,7 @@ mod tests {
             json!(related_collection.id)
         };
         let event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::ClassRelation,
                 Action::Created,

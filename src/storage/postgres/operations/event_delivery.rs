@@ -201,7 +201,7 @@ async fn next_event_delivery_wakeup_in(
 
 #[cfg(test)]
 pub(crate) async fn next_event_delivery_wakeup_in_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Option<StdDuration>, ApiError> {
     let now = Utc::now().naive_utc();
     with_connection(pool, async |conn| {
@@ -211,7 +211,7 @@ pub(crate) async fn next_event_delivery_wakeup_in_db(
 }
 
 pub(crate) async fn claim_event_delivery_batch(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     settings: EventDeliverySettings,
 ) -> Result<EventDeliveryClaimBatch, ApiError> {
     use crate::schema::event_deliveries::dsl::{
@@ -367,10 +367,10 @@ async fn claimed_delivery_work_items(
 
 #[cfg(test)]
 pub(crate) async fn claimed_event_delivery_work_item(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     claimed: ClaimedEventDelivery,
 ) -> Result<EventDeliveryWorkItem, ApiError> {
-    claimed_delivery_work_items(crate::storage::context::postgres_pool(pool), vec![claimed])
+    claimed_delivery_work_items(pool, vec![claimed])
         .await?
         .into_iter()
         .next()
@@ -379,7 +379,7 @@ pub(crate) async fn claimed_event_delivery_work_item(
 
 #[cfg(test)]
 pub(crate) async fn claim_event_deliveries(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     settings: EventDeliverySettings,
 ) -> Result<Vec<ClaimedEventDelivery>, ApiError> {
     let (deliveries, _) = claim_event_delivery_batch(pool, settings)
@@ -390,7 +390,7 @@ pub(crate) async fn claim_event_deliveries(
 
 #[cfg(test)]
 pub(crate) async fn claim_event_delivery_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: i64,
     settings: EventDeliverySettings,
 ) -> Result<ClaimedEventDelivery, ApiError> {
@@ -522,7 +522,7 @@ async fn load_claimed_delivery_contexts(
 }
 
 pub(crate) async fn mark_event_delivery_succeeded(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id_value: i64,
     claim_token_value: Uuid,
 ) -> Result<EventDeliveryRow, ApiError> {
@@ -560,7 +560,7 @@ pub(crate) async fn mark_event_delivery_claim_succeeded(
 
 #[cfg(test)]
 pub(crate) async fn mark_event_delivery_failed(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery: &EventDeliveryRow,
     settings: EventDeliverySettings,
     error: &str,
@@ -595,7 +595,7 @@ pub(crate) async fn mark_event_delivery_claim_failed(
 }
 
 async fn mark_event_delivery_failed_values(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: i64,
     delivery_claim_token: Option<Uuid>,
     delivery_attempts: i32,
@@ -657,7 +657,7 @@ fn truncate_delivery_error(error: &str) -> String {
 }
 
 pub(crate) async fn load_event_delivery(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: EventDeliveryID,
 ) -> Result<EventDeliveryRow, ApiError> {
     use crate::schema::event_deliveries::dsl::{event_deliveries, id};
@@ -689,7 +689,7 @@ fn event_delivery_response(delivery: EventDeliveryRow) -> EventDeliveryResponse 
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn load_event_delivery_for_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_id_value: i64,
 ) -> Result<EventDeliveryResponse, ApiError> {
     use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
@@ -706,7 +706,7 @@ pub(crate) async fn load_event_delivery_for_event(
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn set_event_delivery_status_for_test(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: i64,
     delivery_status: EventDeliveryStatus,
 ) -> Result<(), ApiError> {
@@ -724,7 +724,7 @@ pub(crate) async fn set_event_delivery_status_for_test(
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn set_event_delivery_claim_token_for_test(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: i64,
     delivery_claim_token: Uuid,
 ) -> Result<(), ApiError> {
@@ -741,7 +741,7 @@ pub(crate) async fn set_event_delivery_claim_token_for_test(
 }
 
 pub(crate) async fn list_event_deliveries_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     subscription_id_filter: Option<i32>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventDeliveryRow>, i64), ApiError> {
@@ -817,7 +817,7 @@ fn build_event_delivery_query(
 }
 
 pub(crate) async fn release_event_delivery_for_retry(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: EventDeliveryID,
 ) -> Result<EventDeliveryRow, ApiError> {
     use crate::schema::event_deliveries::dsl::{
@@ -850,7 +850,7 @@ pub(crate) async fn release_event_delivery_for_retry(
 }
 
 pub(crate) async fn mark_event_delivery_dead(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     delivery_id: EventDeliveryID,
 ) -> Result<EventDeliveryRow, ApiError> {
     use crate::schema::event_deliveries::dsl::{

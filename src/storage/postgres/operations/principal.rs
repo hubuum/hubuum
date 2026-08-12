@@ -205,7 +205,7 @@ impl InsertPrincipalRecord for NewPrincipal<'_> {
 }
 
 pub async fn load_principal_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<Principal, ApiError> {
     use crate::schema::principals::dsl::{id, principals as principals_table};
@@ -254,7 +254,7 @@ pub(crate) async fn lock_principal_revision_conn(
 }
 
 pub async fn load_principal_settings(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<PrincipalSettingsResponse, ApiError> {
     use crate::schema::principals::dsl::{id, principals as principals_table, revision, settings};
@@ -282,7 +282,7 @@ pub enum PrincipalSettingsMutation {
 }
 
 pub async fn mutate_principal_settings(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
     mutation: PrincipalSettingsMutation,
     input: PrincipalSettings,
@@ -299,7 +299,7 @@ pub async fn mutate_principal_settings(
 }
 
 pub(crate) async fn apply_principal_settings_patch(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
     patch: PrincipalSettingsPatch,
     event_context: &EventContext,
@@ -330,7 +330,7 @@ impl PrincipalSettingsWrite {
 }
 
 async fn write_principal_settings(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
     mutation: PrincipalSettingsWrite,
     event_context: &EventContext,
@@ -415,7 +415,7 @@ fn stored_principal_settings(
 
 /// Load the user point body and its validator revision in one SQL statement.
 pub(crate) async fn load_user_point_response(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     user_id_value: i32,
 ) -> Result<UserPointResponse, ApiError> {
     use crate::schema::{principals, users};
@@ -448,7 +448,7 @@ pub(crate) async fn load_user_point_response(
 
 /// Load the service-account point body and revision in one SQL statement.
 pub(crate) async fn load_service_account_point_response(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     service_account_id_value: i32,
 ) -> Result<ServiceAccountPointResponse, ApiError> {
     use crate::schema::{principals, service_accounts};

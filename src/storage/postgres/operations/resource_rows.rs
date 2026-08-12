@@ -1,44 +1,51 @@
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject};
-use crate::storage::{StorageClass, StorageCollection, StorageObject};
+use crate::storage::{StorageClass, StorageCollection, StorageObject, StorageRecordMetadata};
 
 pub(super) fn collection_to_storage(collection: Collection) -> StorageCollection {
     StorageCollection::new(
-        collection.id,
+        StorageRecordMetadata::new(
+            collection.id,
+            collection.created_at,
+            collection.updated_at,
+            collection.revision.get(),
+        ),
         collection.name,
         collection.description,
-        collection.created_at,
-        collection.updated_at,
         collection.parent_collection_id,
-        collection.revision.get(),
     )
 }
 
 pub(super) fn class_to_storage(class: HubuumClassExpanded) -> StorageClass {
-    StorageClass::new(
-        class.id,
+    StorageClass::builder(
+        StorageRecordMetadata::new(
+            class.id,
+            class.created_at,
+            class.updated_at,
+            class.revision.get(),
+        ),
         class.name,
         collection_to_storage(class.collection),
-        class.json_schema,
-        class.validate_schema,
         class.description,
-        class.created_at,
-        class.updated_at,
-        class.revision.get(),
     )
+    .json_schema(class.json_schema)
+    .validate_schema(class.validate_schema)
+    .build()
 }
 
 pub(super) fn object_to_storage(object: HubuumObject) -> StorageObject {
     StorageObject::new(
-        object.id,
+        StorageRecordMetadata::new(
+            object.id,
+            object.created_at,
+            object.updated_at,
+            object.revision.get(),
+        ),
         object.name,
         object.collection_id,
         object.hubuum_class_id,
         object.data,
         object.description,
-        object.created_at,
-        object.updated_at,
-        object.revision.get(),
     )
 }
 

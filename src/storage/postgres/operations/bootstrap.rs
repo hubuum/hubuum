@@ -48,7 +48,7 @@ async fn default_admin_bootstrap_required_conn(
 /// while holding the bootstrap advisory lock so concurrent replicas remain
 /// correct.
 pub async fn default_admin_bootstrap_required(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<bool, ApiError> {
     with_connection(pool, async |conn| {
         default_admin_bootstrap_required_conn(conn).await
@@ -62,7 +62,7 @@ pub async fn default_admin_bootstrap_required(
 /// process that waits for another replica observes the completed transaction and
 /// returns `false` instead of racing the unique group or principal constraints.
 pub async fn bootstrap_default_admin(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     request: StorageDefaultAdminBootstrap,
 ) -> Result<bool, ApiError> {
     let admin_groupname = request.admin_group_name().to_string();

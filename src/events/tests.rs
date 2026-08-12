@@ -11,7 +11,7 @@ use crate::storage::postgres::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
 
-use super::delivery::process_claimed_event_delivery;
+use super::delivery::process_event_delivery_work_item;
 use crate::errors::ApiError;
 use crate::events::retention::process_event_retention_batch;
 use crate::events::{
@@ -34,8 +34,9 @@ use crate::models::{
 };
 use crate::schema::events::dsl::events;
 use crate::storage::postgres::operations::event_delivery::{
-    EventDeliveryRow, claim_event_deliveries, claim_event_delivery_by_id, mark_event_delivery_dead,
-    mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
+    ClaimedEventDelivery, EventDeliveryRow, claim_event_deliveries, claim_event_delivery_by_id,
+    claimed_event_delivery_work_item, mark_event_delivery_dead, mark_event_delivery_failed,
+    next_event_delivery_wakeup_in_db,
 };
 use crate::storage::postgres::operations::event_fanout::{
     claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
@@ -57,6 +58,7 @@ use crate::storage::postgres::operations::remote_target::{
 };
 use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
+use crate::storage::storage_handle;
 use crate::storage::{EventDeliverySink, EventDeliverySubscription};
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
@@ -65,6 +67,16 @@ use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
 
 static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
 static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
+
+async fn process_claimed_event_delivery(
+    pool: &crate::storage::postgres::PostgresPool,
+    settings: EventDeliverySettings,
+    resolver: &dyn crate::events::SinkResolver,
+    claimed: ClaimedEventDelivery,
+) -> Result<(), ApiError> {
+    let work_item = claimed_event_delivery_work_item(pool, claimed).await?;
+    process_event_delivery_work_item(&storage_handle(pool), settings, resolver, work_item).await
+}
 
 #[rstest]
 #[tokio::test]

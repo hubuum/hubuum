@@ -18,7 +18,7 @@ pub mod visibility;
 pub mod test_support;
 
 pub use backend::PermissionBackend;
-pub use context::AppContext;
+pub use context::{AppContext, AuthorizationContext};
 pub use local::LocalPermissionBackend;
 pub(crate) use storage::{grant_from_storage, permission_from_storage, permission_to_storage};
 pub use types::{
@@ -31,7 +31,7 @@ use std::sync::Arc;
 use crate::config::{AppConfig, PermissionBackendKind};
 use crate::errors::ApiError;
 use crate::models::{Permissions, TokenScope};
-use crate::storage::{StorageContext, StorageHandle};
+use crate::storage::StorageHandle;
 use crate::traits::{AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resources};
 
 pub async fn authorize_resources<S>(
@@ -83,7 +83,7 @@ pub async fn require_unscoped_runtime_admin<C, S>(
     token_scoped: bool,
 ) -> Result<(), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: AuthzSubject + ?Sized,
 {
     if token_scoped {

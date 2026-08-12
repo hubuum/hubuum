@@ -425,7 +425,7 @@ fn collection_event(
 }
 
 async fn delete_collection_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection_id: i32,
     context: Option<&EventContext>,
 ) -> Result<(), ApiError> {
@@ -456,12 +456,12 @@ async fn delete_collection_by_id(
 pub trait DeleteCollectionRecord {
     async fn delete_collection_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_collection_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -472,14 +472,14 @@ pub trait DeleteCollectionRecord {
 impl DeleteCollectionRecord for Collection {
     async fn delete_collection_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         delete_collection_by_id(pool, self.id, None).await
     }
 
     async fn delete_collection_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         delete_collection_by_id(pool, self.id, context).await
@@ -489,14 +489,14 @@ impl DeleteCollectionRecord for Collection {
 impl DeleteCollectionRecord for CollectionID {
     async fn delete_collection_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         delete_collection_by_id(pool, self.id(), None).await
     }
 
     async fn delete_collection_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         delete_collection_by_id(pool, self.id(), context).await
@@ -506,13 +506,13 @@ impl DeleteCollectionRecord for CollectionID {
 pub trait UpdateCollectionRecord {
     async fn update_collection_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
     ) -> Result<Collection, ApiError>;
 
     async fn update_collection_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Collection, ApiError> {
@@ -525,7 +525,7 @@ pub trait UpdateCollectionRecord {
 impl UpdateCollectionRecord for UpdateCollection {
     async fn update_collection_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
     ) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
@@ -553,7 +553,7 @@ impl UpdateCollectionRecord for UpdateCollection {
 
     async fn update_collection_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Collection, ApiError> {
@@ -608,12 +608,12 @@ impl UpdateCollectionRecord for UpdateCollection {
 pub trait SaveCollectionWithAssigneeRecord {
     async fn save_collection_with_assignee_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError>;
 
     async fn save_collection_with_assignee_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<Collection, ApiError> {
         let _ = context;
@@ -625,7 +625,7 @@ pub trait SaveCollectionWithAssigneeRecord {
 impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
     async fn save_collection_with_assignee_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError> {
         let new_collection = NewCollection {
             name: self.name.clone(),
@@ -640,7 +640,7 @@ impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
 
     async fn save_collection_with_assignee_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<Collection, ApiError> {
         let new_collection = NewCollection {
@@ -658,13 +658,13 @@ impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
 pub trait SaveCollectionForGroupRecord {
     async fn save_collection_for_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         group_id: i32,
     ) -> Result<Collection, ApiError>;
 
     async fn save_collection_for_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Collection, ApiError> {
@@ -677,7 +677,7 @@ pub trait SaveCollectionForGroupRecord {
 impl SaveCollectionForGroupRecord for NewCollection {
     async fn save_collection_for_group_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         group_id: i32,
     ) -> Result<Collection, ApiError> {
         with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
@@ -688,7 +688,7 @@ impl SaveCollectionForGroupRecord for NewCollection {
 
     async fn save_collection_for_group_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Collection, ApiError> {
@@ -717,13 +717,12 @@ impl SaveCollectionForGroupRecord for NewCollection {
     }
 }
 
-pub async fn collection_children_from_backend<T: CollectionAccessors>(
-    pool: &impl crate::storage::StorageContext,
-    collection_ref: T,
+pub async fn collection_children_from_backend(
+    pool: &crate::storage::postgres::PostgresPool,
+    target_collection_id: i32,
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, parent_collection_id};
 
-    let target_collection_id = collection_ref.collection_id(pool).await?.id();
     with_connection(pool, async |conn| {
         collections
             .filter(parent_collection_id.eq(target_collection_id))
@@ -735,16 +734,15 @@ pub async fn collection_children_from_backend<T: CollectionAccessors>(
     .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
-pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
-    pool: &impl crate::storage::StorageContext,
-    collection_ref: T,
+pub async fn collection_ancestors_from_backend(
+    pool: &crate::storage::postgres::PostgresPool,
+    target_collection_id: i32,
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collection_closure::dsl::{
         ancestor_collection_id, collection_closure, depth, descendant_collection_id,
     };
     use crate::schema::collections::dsl::{collections, id};
 
-    let target_collection_id = collection_ref.collection_id(pool).await?.id();
     with_connection(pool, async |conn| {
         collection_closure
             .inner_join(collections.on(id.eq(ancestor_collection_id)))
@@ -760,7 +758,7 @@ pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
 }
 
 pub async fn move_collection_record_from_backend(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_collection_id: i32,
     new_parent_collection_id: i32,
     context: Option<&EventContext>,

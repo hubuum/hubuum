@@ -97,7 +97,7 @@ pub(super) struct ExternalAggregateAccumulator {
 impl ExternalAggregateAccumulator {
     pub(super) async fn add_rows(
         &mut self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         rows: AggregateRows,
         spec: &ObjectAggregateSpec,
     ) -> Result<(), ApiError> {
@@ -131,7 +131,7 @@ impl ExternalAggregateAccumulator {
 
     pub(super) async fn finish(
         mut self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         spec: &ObjectAggregateSpec,
     ) -> Result<AggregateRows, ApiError> {
         self.compact_pending(pool, spec).await?;
@@ -146,7 +146,7 @@ impl ExternalAggregateAccumulator {
 
     async fn compact_pending(
         &mut self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         spec: &ObjectAggregateSpec,
     ) -> Result<(), ApiError> {
         if self.pending.is_empty() {
@@ -226,7 +226,7 @@ SET object_count = object_aggregate_accumulator.object_count + EXCLUDED.object_c
 }
 
 async fn compact_aggregate_rows(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     compacted: AggregateRows,
     pending: AggregateRows,
     spec: &ObjectAggregateSpec,
@@ -279,7 +279,7 @@ GROUP BY sort_key"
 }
 
 pub(super) async fn page_external_aggregates(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     groups: AggregateRows,
     paging: &ObjectAggregatePaging,
 ) -> Result<ObjectAggregatePage, ApiError> {

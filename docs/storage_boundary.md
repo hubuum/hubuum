@@ -100,11 +100,11 @@ without leaking a query builder. `ClassRecordStorage` and `ObjectRecordStorage`
 keep transitional point-load, validation, bulk lookup, and event-suppressed
 fixture operations behind the same mandatory backend boundary. None of these
 contracts exposes rows or connections. `GroupStorage` owns group point reads,
-identity-scope resolution, lifecycle writes, membership mutation, listing,
-paging, and counting through backend-neutral domain values. `PrincipalStorage`
-owns principal point reads and the complete settings lifecycle, including
-atomic concurrency and audit behavior, without exposing adapter rows or
-connections.
+identity-scope resolution, lifecycle writes, and membership mutation through
+backend-neutral domain values. Group listing and optional exact counts use the
+workspace-owned `IdentityStorage` request and page DTOs. `PrincipalStorage` owns
+principal point reads and the complete settings lifecycle, including atomic
+concurrency and audit behavior, without exposing adapter rows or connections.
 `TaskQueueStorage` replaces task submission and reads, while
 `TaskExecutionStorage` owns the complete worker claim and state machine.
 `BackupSnapshotStorage` owns consistent full-system reads, and computed rebuild
@@ -137,10 +137,28 @@ mappings, revision serialization, native notifications, and explicit
 conversions. Application domain values contain no Diesel derives, schema
 bindings, or SQL cursor mappings.
 `StorageHandle` selects one certified PostgreSQL adapter, and only the storage
-implementation can recover its pool.
+implementation owns its pool. `StorageContext` normalization clones the
+already configured opaque handle; it does not recover a pool and reconstruct a
+new backend, so adapter settings and backend identity survive every application
+call. The storage context carries no authorization-policy selection. Use cases
+that actually choose a permission backend accept the stronger
+`AuthorizationContext`, while storage-only code retains the narrower contract.
+PostgreSQL helpers accept the concrete pool only inside the adapter tree,
+making an application-to-adapter call a type error. Focused tests can opt into
+a sealed pool-shaped compatibility implementation; it is absent from
+production builds. Architecture checks forbid application consumers from
+relying on it, and production composition always uses the opaque handle.
+Production authorization-aware workflows require `AppContext`; a bare storage
+handle cannot silently select local policy in place of a configured external
+authorization backend.
 Application consumers use `StorageContext`, lifecycle traits, mandatory
 capability traits, or application services. No second backend can be added to
 composition without implementing every operation behind those contracts.
+
+All `StorageHandle` capability implementations dispatch through one exhaustive
+private selector. Adding a backend therefore changes the selector once; the
+aggregate `StorageBackend` trait still makes every missing operation a compile
+error, and each call retains its explicit bounded observability labels.
 
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are

@@ -18,7 +18,7 @@ use crate::models::{
     TokenRetentionSettings, UpdateCollection, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::models::{Group, Permission};
-use crate::permissions::{AppContext, PermissionBackend};
+use crate::permissions::AppContext;
 use crate::storage::observed::{observe_infallible_storage_call, observe_storage_call};
 use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use crate::storage::{
@@ -63,42 +63,43 @@ use crate::storage::{
     StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
     StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
     StorageExportTemplatePage, StorageExportTemplateReplace, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageImportApply, StorageImportPlanItem, StorageImportPreflight,
-    StorageImportResult, StorageImportTaskResultPage, StorageInventoryCounts,
-    StorageLocalPasswordReset, StorageNotification, StorageObject, StorageObjectAggregatePage,
-    StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePoolState, StoragePrincipalGroup,
-    StoragePrincipalGroupListQuery, StorageQueryBudget, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPage, StorageRemoteTargetUpdate, StorageRestoreApply,
-    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
-    StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
-    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
-    StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
-    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate,
-    StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata, StorageTokenRenew,
-    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
-    TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageExternalUserSync, StorageGroupListQuery, StorageIdentityGroup, StorageIdentityPage,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageImportApply, StorageImportPlanItem,
+    StorageImportPreflight, StorageImportResult, StorageImportTaskResultPage,
+    StorageInventoryCounts, StorageLocalPasswordReset, StorageNotification, StorageObject,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
+    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StorageQueryBudget,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
+    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageRevisionPrecondition, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageSyncedHuman, StorageTask, StorageTaskAccess,
+    StorageTaskClaim, StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventPage, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery,
+    StorageTaskStateUpdate, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
+    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
+    TokenRetentionStorage, TokenStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    WorkerNotificationStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
 
 mod private {
-    use crate::storage::postgres::PostgresPool;
+    use super::StorageHandle;
 
     pub trait BackendAccess {
-        fn db_pool(&self) -> &PostgresPool;
+        fn storage_handle(&self) -> StorageHandle;
     }
 }
 
@@ -107,7 +108,7 @@ mod private {
 /// Application code passes this handle to domain operations without selecting
 /// a database implementation or handling a connection pool directly.
 #[derive(Clone)]
-pub(crate) struct StorageHandle {
+pub struct StorageHandle {
     implementation: BackendImplementation,
 }
 
@@ -116,7 +117,22 @@ enum BackendImplementation {
     Postgresql(PostgresStorage),
 }
 
+/// Dispatch one capability call to the selected complete backend.
+///
+/// Keeping the exhaustive match here means adding a selectable backend has one
+/// dispatch change instead of one change per storage operation. The aggregate
+/// [`StorageBackend`] bound still makes missing capability implementations a
+/// compile error before a backend can be composed.
+macro_rules! dispatch_backend {
+    ($handle:expr, |$backend:ident| $call:expr) => {
+        match &$handle.implementation {
+            BackendImplementation::Postgresql($backend) => $call,
+        }
+    };
+}
+
 impl StorageHandle {
+    #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
     pub(crate) fn postgres(pool: PostgresPool) -> Self {
         Self::from_postgres_backend(PostgresStorage::new(pool))
     }
@@ -139,9 +155,7 @@ impl StorageHandle {
     }
 
     pub(crate) fn descriptor(&self) -> StorageBackendDescriptor {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => backend.descriptor(),
-        }
+        dispatch_backend!(self, |backend| backend.descriptor())
     }
 
     fn backend_name(&self) -> &'static str {
@@ -149,17 +163,9 @@ impl StorageHandle {
     }
 
     pub(crate) fn lifecycle_storage(&self) -> DynLifecycleStorage {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                DynLifecycleStorage::from_backend(backend.clone())
-            }
-        }
-    }
-
-    fn postgres_pool(&self) -> &PostgresPool {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => backend.pool(),
-        }
+        dispatch_backend!(self, |backend| {
+            DynLifecycleStorage::from_backend(backend.clone())
+        })
     }
 }
 
@@ -173,11 +179,9 @@ impl ExportQueryStorage for StorageHandle {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                backend.run_export_queries(budget, future)
-            }
-        }
+        dispatch_backend!(self, |backend| {
+            backend.run_export_queries(budget, future)
+        })
     }
 }
 
@@ -191,11 +195,9 @@ impl StorageExecution for StorageHandle {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                backend.run_with_call_site(call_site, future)
-            }
-        }
+        dispatch_backend!(self, |backend| {
+            backend.run_with_call_site(call_site, future)
+        })
     }
 
     fn run_with_call_site_send<'a, F, R>(
@@ -207,11 +209,9 @@ impl StorageExecution for StorageHandle {
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                backend.run_with_call_site_send(call_site, future)
-            }
-        }
+        dispatch_backend!(self, |backend| {
+            backend.run_with_call_site_send(call_site, future)
+        })
     }
 
     fn run_with_mutation_provenance<'a, F, R>(
@@ -223,11 +223,9 @@ impl StorageExecution for StorageHandle {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                backend.run_with_mutation_provenance(provenance, future)
-            }
-        }
+        dispatch_backend!(self, |backend| {
+            backend.run_with_mutation_provenance(provenance, future)
+        })
     }
 
     fn run_with_revision_precondition<'a, F, R>(
@@ -239,11 +237,9 @@ impl StorageExecution for StorageHandle {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                backend.run_with_revision_precondition(precondition, future)
-            }
-        }
+        dispatch_backend!(self, |backend| {
+            backend.run_with_revision_precondition(precondition, future)
+        })
     }
 }
 
@@ -265,10 +261,11 @@ impl WorkerNotificationStorage for StorageHandle {
                     topic = topic.as_str(),
                     worker_name,
                 );
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => backend
-                        .spawn_worker_notification_listener(topic, worker_name, on_notification),
-                }
+                dispatch_backend!(self, |backend| backend.spawn_worker_notification_listener(
+                    topic,
+                    worker_name,
+                    on_notification
+                ))
             },
         )
     }
@@ -285,11 +282,9 @@ impl AuthenticationStorage for StorageHandle {
             "authentication",
             "authenticate_bearer_token",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.authenticate_bearer_token(credential).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.authenticate_bearer_token(credential).await
+                })
             },
         )
         .await
@@ -304,11 +299,9 @@ impl AuthenticationStorage for StorageHandle {
             "authentication",
             "load_identity",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_authentication_identity(principal_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_authentication_identity(principal_id).await
+                })
             },
         )
         .await
@@ -323,11 +316,9 @@ impl AuthenticationStorage for StorageHandle {
             "authentication",
             "load_token_scope",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_authentication_token_scope(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_authentication_token_scope(query).await
+                })
             },
         )
         .await
@@ -342,11 +333,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "default_admin_bootstrap_required",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.default_admin_bootstrap_required().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.default_admin_bootstrap_required().await
+                })
             },
         )
         .await
@@ -361,11 +350,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "bootstrap_default_admin",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.bootstrap_default_admin(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.bootstrap_default_admin(request).await
+                })
             },
         )
         .await
@@ -380,11 +367,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "reset_local_password",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.reset_local_password(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.reset_local_password(request).await
+                })
             },
         )
         .await
@@ -395,22 +380,18 @@ impl IdentityStorage for StorageHandle {
         request: StorageIdentityScopeEnsure,
     ) -> Result<StorageIdentityScope, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "ensure_scope", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.ensure_identity_scope(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.ensure_identity_scope(request).await
+            })
         })
         .await
     }
 
     async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "load_scope_name", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.identity_scope_name(scope_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.identity_scope_name(scope_id).await
+            })
         })
         .await
     }
@@ -420,11 +401,9 @@ impl IdentityStorage for StorageHandle {
         scope_ids: Vec<i32>,
     ) -> Result<Vec<(i32, String)>, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "load_scope_names", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.identity_scope_names(scope_ids).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.identity_scope_names(scope_ids).await
+            })
         })
         .await
     }
@@ -435,11 +414,9 @@ impl IdentityStorage for StorageHandle {
         group_id: i32,
     ) -> Result<StoragePrincipalGroup, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "load_membership", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_principal_group(principal_id, group_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_principal_group(principal_id, group_id).await
+            })
         })
         .await
     }
@@ -448,12 +425,25 @@ impl IdentityStorage for StorageHandle {
         &self,
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
-        observe_storage_call(self.backend_name(), "identity", "list_groups", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
+        observe_storage_call(
+            self.backend_name(),
+            "identity",
+            "list_principal_groups",
+            async {
+                dispatch_backend!(self, |backend| {
                     backend.list_principal_groups(query).await
-                }
-            }
+                })
+            },
+        )
+        .await
+    }
+
+    async fn list_groups(
+        &self,
+        query: StorageGroupListQuery,
+    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
+        observe_storage_call(self.backend_name(), "identity", "list_groups", async {
+            dispatch_backend!(self, |backend| backend.list_groups(query).await)
         })
         .await
     }
@@ -463,11 +453,9 @@ impl IdentityStorage for StorageHandle {
         query: StorageTokenListQuery,
     ) -> Result<StorageIdentityPage<StorageTokenMetadata>, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "list_tokens", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_retained_tokens(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_retained_tokens(query).await
+            })
         })
         .await
     }
@@ -482,13 +470,11 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "human_owner_group_member",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .is_human_owner_group_member(principal_id, owner_group_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .is_human_owner_group_member(principal_id, owner_group_id)
+                        .await
+                })
             },
         )
         .await
@@ -500,11 +486,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "principal_is_disabled",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.principal_is_disabled(principal_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.principal_is_disabled(principal_id).await
+                })
             },
         )
         .await
@@ -519,11 +503,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "load_service_account",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_service_account(service_account_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_service_account(service_account_id).await
+                })
             },
         )
         .await
@@ -538,11 +520,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "load_service_account_point",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_service_account_point(service_account_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_service_account_point(service_account_id).await
+                })
             },
         )
         .await
@@ -557,11 +537,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "list_service_accounts",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_manageable_service_accounts(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_manageable_service_accounts(query).await
+                })
             },
         )
         .await
@@ -576,11 +554,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "create_service_account",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.create_service_account(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.create_service_account(request).await
+                })
             },
         )
         .await
@@ -595,11 +571,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "update_service_account",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.update_service_account(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.update_service_account(request).await
+                })
             },
         )
         .await
@@ -614,11 +588,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "disable_service_account",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.disable_service_account(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.disable_service_account(request).await
+                })
             },
         )
         .await
@@ -633,11 +605,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "delete_service_account",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.delete_service_account(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.delete_service_account(request).await
+                })
             },
         )
         .await
@@ -652,11 +622,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "load_external_state",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.external_principal_state(principal_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.external_principal_state(principal_id).await
+                })
             },
         )
         .await
@@ -668,11 +636,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "mark_external_sync_attempted",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.mark_external_sync_attempted(principal_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.mark_external_sync_attempted(principal_id).await
+                })
             },
         )
         .await
@@ -687,11 +653,9 @@ impl IdentityStorage for StorageHandle {
             "identity",
             "sync_external_user",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.sync_external_user(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.sync_external_user(request).await
+                })
             },
         )
         .await
@@ -702,9 +666,7 @@ impl IdentityStorage for StorageHandle {
 impl UserStorage for StorageHandle {
     async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError> {
         observe_storage_call(self.backend_name(), "user", "load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.load_user(id).await,
-            }
+            dispatch_backend!(self, |backend| backend.load_user(id).await)
         })
         .await
     }
@@ -715,20 +677,16 @@ impl UserStorage for StorageHandle {
         name: String,
     ) -> Result<StorageUser, StorageError> {
         observe_storage_call(self.backend_name(), "user", "load_by_name", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_user_by_name(identity_scope, name).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_user_by_name(identity_scope, name).await
+            })
         })
         .await
     }
 
     async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError> {
         observe_storage_call(self.backend_name(), "user", "load_point", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.load_user_point(id).await,
-            }
+            dispatch_backend!(self, |backend| backend.load_user_point(id).await)
         })
         .await
     }
@@ -738,27 +696,21 @@ impl UserStorage for StorageHandle {
         query: StorageUserListQuery,
     ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError> {
         observe_storage_call(self.backend_name(), "user", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.list_users(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.list_users(query).await)
         })
         .await
     }
 
     async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError> {
         observe_storage_call(self.backend_name(), "user", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.create_user(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.create_user(request).await)
         })
         .await
     }
 
     async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError> {
         observe_storage_call(self.backend_name(), "user", "update", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.update_user(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.update_user(request).await)
         })
         .await
     }
@@ -768,29 +720,21 @@ impl UserStorage for StorageHandle {
         request: StorageUserPasswordUpdate,
     ) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "user", "set_password", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.set_user_password(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.set_user_password(request).await })
         })
         .await
     }
 
     async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "user", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.delete_user(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.delete_user(request).await)
         })
         .await
     }
 
     async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "user", "anonymize", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.anonymize_user(id).await,
-            }
+            dispatch_backend!(self, |backend| backend.anonymize_user(id).await)
         })
         .await
     }
@@ -803,9 +747,7 @@ impl TokenStorage for StorageHandle {
         request: StorageTokenCreate,
     ) -> Result<StorageTokenMetadata, StorageError> {
         observe_storage_call(self.backend_name(), "token", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.create_token(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.create_token(request).await)
         })
         .await
     }
@@ -815,9 +757,7 @@ impl TokenStorage for StorageHandle {
         request: StorageTokenRenew,
     ) -> Result<StorageTokenMetadata, StorageError> {
         observe_storage_call(self.backend_name(), "token", "renew", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.renew_token(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.renew_token(request).await)
         })
         .await
     }
@@ -828,11 +768,9 @@ impl TokenStorage for StorageHandle {
         token_id: i32,
     ) -> Result<StorageTokenMetadata, StorageError> {
         observe_storage_call(self.backend_name(), "token", "load_metadata", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_token_metadata(principal_id, token_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_token_metadata(principal_id, token_id).await
+            })
         })
         .await
     }
@@ -842,20 +780,16 @@ impl TokenStorage for StorageHandle {
         token_ids: Vec<i32>,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "load_metadata_batch", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_token_metadata_batch(token_ids).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_token_metadata_batch(token_ids).await
+            })
         })
         .await
     }
 
     async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.revoke_token(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.revoke_token(request).await)
         })
         .await
     }
@@ -865,22 +799,18 @@ impl TokenStorage for StorageHandle {
         request: StorageTokenHashRevoke,
     ) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke_by_hash", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.revoke_token_by_hash(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.revoke_token_by_hash(request).await
+            })
         })
         .await
     }
 
     async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke_all", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.revoke_all_principal_tokens(principal_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.revoke_all_principal_tokens(principal_id).await
+            })
         })
         .await
     }
@@ -897,11 +827,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "load_principal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_authorization_principal(principal_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_authorization_principal(principal_id).await
+                })
             },
         )
         .await
@@ -916,11 +844,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "principal_is_group_member",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.authorization_principal_is_group_member(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.authorization_principal_is_group_member(query).await
+                })
             },
         )
         .await
@@ -935,11 +861,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "load_classes",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_authorization_classes(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_authorization_classes(query).await
+                })
             },
         )
         .await
@@ -954,11 +878,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "load_objects",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_authorization_objects(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_authorization_objects(query).await
+                })
             },
         )
         .await
@@ -973,11 +895,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "authorize_local_collection",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.authorize_local_collection(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.authorize_local_collection(query).await
+                })
             },
         )
         .await
@@ -992,11 +912,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "authorize_local_collections",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.authorize_local_collections(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.authorize_local_collections(query).await
+                })
             },
         )
         .await
@@ -1011,11 +929,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "local_authorized_collections",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.local_authorized_collections(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.local_authorized_collections(query).await
+                })
             },
         )
         .await
@@ -1029,11 +945,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "list_collection_candidates",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_authorization_collection_candidates().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_authorization_collection_candidates().await
+                })
             },
         )
         .await
@@ -1048,13 +962,11 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "list_group_candidates",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .list_authorization_group_candidates(query_options)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .list_authorization_group_candidates(query_options)
+                        .await
+                })
             },
         )
         .await
@@ -1068,11 +980,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "policy_snapshot",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.authorization_policy_snapshot().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.authorization_policy_snapshot().await
+                })
             },
         )
         .await
@@ -1087,11 +997,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "list_local_collection_grants",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_local_collection_grants(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_local_collection_grants(query).await
+                })
             },
         )
         .await
@@ -1106,11 +1014,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "get_local_collection_grant",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.get_local_collection_grant(key).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.get_local_collection_grant(key).await
+                })
             },
         )
         .await
@@ -1125,11 +1031,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "load_local_collection_permission_set",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_local_collection_permission_set(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.load_local_collection_permission_set(query).await
+                })
             },
         )
         .await
@@ -1144,11 +1048,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "apply_local_collection_grant",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.apply_local_collection_grant(mutation).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.apply_local_collection_grant(mutation).await
+                })
             },
         )
         .await
@@ -1163,11 +1065,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "revoke_local_collection_grant",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.revoke_local_collection_grant(mutation).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.revoke_local_collection_grant(mutation).await
+                })
             },
         )
         .await
@@ -1182,11 +1082,9 @@ impl AuthorizationStorage for StorageHandle {
             "authorization",
             "revoke_all_local_collection_grants",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.revoke_all_local_collection_grants(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.revoke_all_local_collection_grants(request).await
+                })
             },
         )
         .await
@@ -1204,11 +1102,9 @@ impl HistoryStorage for StorageHandle {
             "history",
             "resolve_principal_names",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.resolve_history_principal_names(principal_ids).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.resolve_history_principal_names(principal_ids).await
+                })
             },
         )
         .await
@@ -1219,11 +1115,9 @@ impl HistoryStorage for StorageHandle {
         query: HistoryListQuery,
     ) -> Result<HistoryPage<CollectionHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "list_collections", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_collection_history(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_collection_history(query).await
+            })
         })
         .await
     }
@@ -1233,11 +1127,9 @@ impl HistoryStorage for StorageHandle {
         query: HistoryAsOfQuery,
     ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "collection_as_of", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.collection_history_as_of(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.collection_history_as_of(query).await
+            })
         })
         .await
     }
@@ -1247,11 +1139,7 @@ impl HistoryStorage for StorageHandle {
         query: HistoryListQuery,
     ) -> Result<HistoryPage<ClassHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "list_classes", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_class_history(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.list_class_history(query).await })
         })
         .await
     }
@@ -1261,11 +1149,7 @@ impl HistoryStorage for StorageHandle {
         query: HistoryAsOfQuery,
     ) -> Result<Option<ClassHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "class_as_of", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.class_history_as_of(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.class_history_as_of(query).await })
         })
         .await
     }
@@ -1275,11 +1159,7 @@ impl HistoryStorage for StorageHandle {
         query: ObjectHistoryListQuery,
     ) -> Result<HistoryPage<ObjectHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "list_objects", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_object_history(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.list_object_history(query).await })
         })
         .await
     }
@@ -1289,11 +1169,9 @@ impl HistoryStorage for StorageHandle {
         query: ObjectHistoryAsOfQuery,
     ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "object_as_of", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.object_history_as_of(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.object_history_as_of(query).await
+            })
         })
         .await
     }
@@ -1303,11 +1181,9 @@ impl HistoryStorage for StorageHandle {
         query: HistoryListQuery,
     ) -> Result<HistoryPage<ExportTemplateHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "list_templates", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_export_template_history(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_export_template_history(query).await
+            })
         })
         .await
     }
@@ -1317,11 +1193,9 @@ impl HistoryStorage for StorageHandle {
         query: HistoryAsOfQuery,
     ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "history", "template_as_of", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.export_template_history_as_of(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.export_template_history_as_of(query).await
+            })
         })
         .await
     }
@@ -1335,11 +1209,9 @@ impl HistoryStorage for StorageHandle {
             "history",
             "list_remote_targets",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_remote_target_history(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_remote_target_history(query).await
+                })
             },
         )
         .await
@@ -1354,11 +1226,9 @@ impl HistoryStorage for StorageHandle {
             "history",
             "remote_target_as_of",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.remote_target_history_as_of(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.remote_target_history_as_of(query).await
+                })
             },
         )
         .await
@@ -1372,9 +1242,7 @@ impl CatalogStorage for StorageHandle {
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageCollection>, StorageError> {
         observe_storage_call(self.backend_name(), "catalog", "collections", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.list_collections(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.list_collections(query).await)
         })
         .await
     }
@@ -1384,9 +1252,7 @@ impl CatalogStorage for StorageHandle {
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageClass>, StorageError> {
         observe_storage_call(self.backend_name(), "catalog", "classes", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.list_classes(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.list_classes(query).await)
         })
         .await
     }
@@ -1396,9 +1262,7 @@ impl CatalogStorage for StorageHandle {
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageObject>, StorageError> {
         observe_storage_call(self.backend_name(), "catalog", "objects", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.list_objects(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.list_objects(query).await)
         })
         .await
     }
@@ -1411,11 +1275,9 @@ impl ComputedObjectStorage for StorageHandle {
         query: ComputedObjectListQuery,
     ) -> Result<ComputedObjectPage, StorageError> {
         observe_storage_call(self.backend_name(), "computed_objects", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_computed_objects(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_computed_objects(query).await
+            })
         })
         .await
     }
@@ -1425,11 +1287,9 @@ impl ComputedObjectStorage for StorageHandle {
         query: ComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
         observe_storage_call(self.backend_name(), "computed_objects", "enrich", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.enrich_objects_with_computed(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.enrich_objects_with_computed(query).await
+            })
         })
         .await
     }
@@ -1442,20 +1302,14 @@ impl TaskQueueStorage for StorageHandle {
         request: StorageTaskCreateRequest,
     ) -> Result<StorageTask, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.create_task(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.create_task(request).await)
         })
         .await
     }
 
     async fn get_task_access(&self, task_id: i32) -> Result<StorageTaskAccess, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "get_access", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_task_access(task_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.get_task_access(task_id).await })
         })
         .await
     }
@@ -1465,9 +1319,7 @@ impl TaskQueueStorage for StorageHandle {
         query: StorageTaskListQuery,
     ) -> Result<StorageTaskPage, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.list_tasks(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.list_tasks(query).await)
         })
         .await
     }
@@ -1477,9 +1329,7 @@ impl TaskQueueStorage for StorageHandle {
         query: StorageTaskPageQuery,
     ) -> Result<StorageTaskEventPage, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "list_events", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.list_task_events(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.list_task_events(query).await)
         })
         .await
     }
@@ -1489,11 +1339,9 @@ impl TaskQueueStorage for StorageHandle {
         query: StorageTaskPageQuery,
     ) -> Result<StorageImportTaskResultPage, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "list_import_results", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_import_task_results(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_import_task_results(query).await
+            })
         })
         .await
     }
@@ -1503,11 +1351,9 @@ impl TaskQueueStorage for StorageHandle {
         task_ids: Vec<i32>,
     ) -> Result<Vec<StorageExportOutputSummary>, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "list_export_outputs", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_export_output_summaries(task_ids).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_export_output_summaries(task_ids).await
+            })
         })
         .await
     }
@@ -1517,11 +1363,9 @@ impl TaskQueueStorage for StorageHandle {
         task_ids: Vec<i32>,
     ) -> Result<Vec<StorageBackupOutputSummary>, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "list_backup_outputs", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_backup_output_summaries(task_ids).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_backup_output_summaries(task_ids).await
+            })
         })
         .await
     }
@@ -1531,11 +1375,9 @@ impl TaskQueueStorage for StorageHandle {
         task_id: i32,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "get_export_summary", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_export_output_summary(task_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.get_export_output_summary(task_id).await
+            })
         })
         .await
     }
@@ -1545,11 +1387,9 @@ impl TaskQueueStorage for StorageHandle {
         task_id: i32,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "get_backup_summary", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_backup_output_summary(task_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.get_backup_output_summary(task_id).await
+            })
         })
         .await
     }
@@ -1559,11 +1399,7 @@ impl TaskQueueStorage for StorageHandle {
         task_id: i32,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "get_export_output", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_export_output(task_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.get_export_output(task_id).await })
         })
         .await
     }
@@ -1573,11 +1409,7 @@ impl TaskQueueStorage for StorageHandle {
         task_id: i32,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
         observe_storage_call(self.backend_name(), "tasks", "get_backup_output", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_backup_output(task_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.get_backup_output(task_id).await })
         })
         .await
     }
@@ -1590,11 +1422,9 @@ impl TaskExecutionStorage for StorageHandle {
         lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         observe_storage_call(self.backend_name(), "task_execution", "claim", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.claim_next_task(lease_duration).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.claim_next_task(lease_duration).await
+            })
         })
         .await
     }
@@ -1609,11 +1439,9 @@ impl TaskExecutionStorage for StorageHandle {
             "task_execution",
             "renew_lease",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.renew_task_lease(lease, lease_duration).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.renew_task_lease(lease, lease_duration).await
+                })
             },
         )
         .await
@@ -1628,11 +1456,9 @@ impl TaskExecutionStorage for StorageHandle {
             "task_execution",
             "recover_leases",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.recover_expired_task_leases(batch_size).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.recover_expired_task_leases(batch_size).await
+                })
             },
         )
         .await
@@ -1643,13 +1469,7 @@ impl TaskExecutionStorage for StorageHandle {
             self.backend_name(),
             "task_execution",
             "append_event",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.append_task_event(event).await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.append_task_event(event).await }) },
         )
         .await
     }
@@ -1663,11 +1483,7 @@ impl TaskExecutionStorage for StorageHandle {
             "task_execution",
             "update_state",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.update_task_state(update).await
-                    }
-                }
+                dispatch_backend!(self, |backend| { backend.update_task_state(update).await })
             },
         )
         .await
@@ -1678,20 +1494,14 @@ impl TaskExecutionStorage for StorageHandle {
         completion: StorageTaskCompletion,
     ) -> Result<StorageTask, StorageError> {
         observe_storage_call(self.backend_name(), "task_execution", "complete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.complete_task(completion).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.complete_task(completion).await })
         })
         .await
     }
 
     async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError> {
         observe_storage_call(self.backend_name(), "task_execution", "fail", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.fail_task(failure).await,
-            }
+            dispatch_backend!(self, |backend| backend.fail_task(failure).await)
         })
         .await
     }
@@ -1702,11 +1512,9 @@ impl TaskExecutionStorage for StorageHandle {
             "task_execution",
             "purge_export_outputs",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.purge_expired_export_outputs().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.purge_expired_export_outputs().await
+                })
             },
         )
         .await
@@ -1718,11 +1526,9 @@ impl TaskExecutionStorage for StorageHandle {
             "task_execution",
             "purge_backup_outputs",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.purge_expired_backup_outputs().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.purge_expired_backup_outputs().await
+                })
             },
         )
         .await
@@ -1736,11 +1542,9 @@ impl BackupSnapshotStorage for StorageHandle {
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         observe_storage_call(self.backend_name(), "backup_snapshots", "snapshot", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.snapshot_backup(include_history).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.snapshot_backup(include_history).await
+            })
         })
         .await
     }
@@ -1753,11 +1557,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
         class_id: i32,
     ) -> Result<StorageClassComputationState, StorageError> {
         observe_storage_call(self.backend_name(), "computed_fields", "state", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.computed_field_state(class_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.computed_field_state(class_id).await
+            })
         })
         .await
     }
@@ -1771,11 +1573,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "list_shared",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_shared_computed_fields(class_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_shared_computed_fields(class_id).await
+                })
             },
         )
         .await
@@ -1790,11 +1590,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "list_personal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_personal_computed_fields(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_personal_computed_fields(query).await
+                })
             },
         )
         .await
@@ -1805,11 +1603,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
         definition_id: i32,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
         observe_storage_call(self.backend_name(), "computed_fields", "get", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_computed_field(definition_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.get_computed_field(definition_id).await
+            })
         })
         .await
     }
@@ -1823,11 +1619,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "create_shared",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.create_shared_computed_field(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.create_shared_computed_field(request).await
+                })
             },
         )
         .await
@@ -1842,11 +1636,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "update_shared",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.update_shared_computed_field(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.update_shared_computed_field(request).await
+                })
             },
         )
         .await
@@ -1861,11 +1653,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "delete_shared",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.delete_shared_computed_field(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.delete_shared_computed_field(request).await
+                })
             },
         )
         .await
@@ -1880,11 +1670,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "create_personal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.create_personal_computed_field(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.create_personal_computed_field(request).await
+                })
             },
         )
         .await
@@ -1899,11 +1687,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "update_personal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.update_personal_computed_field(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.update_personal_computed_field(request).await
+                })
             },
         )
         .await
@@ -1918,11 +1704,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "delete_personal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.delete_personal_computed_field(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.delete_personal_computed_field(request).await
+                })
             },
         )
         .await
@@ -1937,11 +1721,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "request_rebuild",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.request_computed_field_rebuild(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.request_computed_field_rebuild(request).await
+                })
             },
         )
         .await
@@ -1956,11 +1738,9 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
             "computed_fields",
             "execute_rebuild",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.execute_computed_field_rebuild(lease).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.execute_computed_field_rebuild(lease).await
+                })
             },
         )
         .await
@@ -1979,11 +1759,9 @@ impl ObjectAggregateStorage for StorageHandle {
             "object_aggregates",
             "aggregate",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.aggregate_objects(query, authorizer).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.aggregate_objects(query, authorizer).await
+                })
             },
         )
         .await
@@ -1997,11 +1775,9 @@ impl RelationQueryStorage for StorageHandle {
         query: RelationListQuery,
     ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
         observe_storage_call(self.backend_name(), "relations", "list_classes", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_class_relations(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_class_relations(query).await
+            })
         })
         .await
     }
@@ -2011,11 +1787,9 @@ impl RelationQueryStorage for StorageHandle {
         query: RelationListQuery,
     ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
         observe_storage_call(self.backend_name(), "relations", "list_objects", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_object_relations(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_object_relations(query).await
+            })
         })
         .await
     }
@@ -2029,11 +1803,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "classes_touching",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_class_relations_touching(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_class_relations_touching(query).await
+                })
             },
         )
         .await
@@ -2048,11 +1820,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "objects_touching",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_object_relations_touching(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_object_relations_touching(query).await
+                })
             },
         )
         .await
@@ -2067,11 +1837,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "classes_touching_ids",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.class_relations_touching_ids(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.class_relations_touching_ids(query).await
+                })
             },
         )
         .await
@@ -2086,11 +1854,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "classes_between_ids",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.class_relations_between_ids(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.class_relations_between_ids(query).await
+                })
             },
         )
         .await
@@ -2105,11 +1871,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "objects_between_ids",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.object_relations_between_ids(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.object_relations_between_ids(query).await
+                })
             },
         )
         .await
@@ -2124,11 +1888,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "objects_touching_ids",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.object_relations_touching_ids(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.object_relations_touching_ids(query).await
+                })
             },
         )
         .await
@@ -2139,9 +1901,7 @@ impl RelationQueryStorage for StorageHandle {
         query: RelationGraphQuery,
     ) -> Result<RelationPage<StorageClassGraphRow>, StorageError> {
         observe_storage_call(self.backend_name(), "relations", "related_classes", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.related_classes(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.related_classes(query).await)
         })
         .await
     }
@@ -2151,9 +1911,7 @@ impl RelationQueryStorage for StorageHandle {
         query: RelationGraphQuery,
     ) -> Result<RelationPage<StorageObjectGraphRow>, StorageError> {
         observe_storage_call(self.backend_name(), "relations", "related_objects", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.related_objects(query).await,
-            }
+            dispatch_backend!(self, |backend| backend.related_objects(query).await)
         })
         .await
     }
@@ -2167,11 +1925,9 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "related_objects_for_roots",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.related_objects_for_roots(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.related_objects_for_roots(query).await
+                })
             },
         )
         .await
@@ -2186,13 +1942,11 @@ impl RelationQueryStorage for StorageHandle {
             "relations",
             "bidirectional_objects_for_roots",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .bidirectionally_related_objects_for_roots(query)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .bidirectionally_related_objects_for_roots(query)
+                        .await
+                })
             },
         )
         .await
@@ -2210,11 +1964,9 @@ impl UnifiedSearchStorage for StorageHandle {
             "unified_search",
             "collections",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.search_unified_collections(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.search_unified_collections(query).await
+                })
             },
         )
         .await
@@ -2225,11 +1977,9 @@ impl UnifiedSearchStorage for StorageHandle {
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchClass>, StorageError> {
         observe_storage_call(self.backend_name(), "unified_search", "classes", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.search_unified_classes(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.search_unified_classes(query).await
+            })
         })
         .await
     }
@@ -2239,11 +1989,9 @@ impl UnifiedSearchStorage for StorageHandle {
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchObject>, StorageError> {
         observe_storage_call(self.backend_name(), "unified_search", "objects", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.search_unified_objects(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.search_unified_objects(query).await
+            })
         })
         .await
     }
@@ -2256,11 +2004,9 @@ impl ExportTemplateStorage for StorageHandle {
         template_id: i32,
     ) -> Result<StorageExportTemplate, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "get", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_export_template(template_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.get_export_template(template_id).await
+            })
         })
         .await
     }
@@ -2270,11 +2016,9 @@ impl ExportTemplateStorage for StorageHandle {
         query: StorageExportTemplateListQuery,
     ) -> Result<StorageExportTemplatePage, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_export_templates(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_export_templates(query).await
+            })
         })
         .await
     }
@@ -2289,13 +2033,11 @@ impl ExportTemplateStorage for StorageHandle {
             "export_templates",
             "list_in_collection",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .list_export_templates_in_collection(collection_id, exclude_template_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .list_export_templates_in_collection(collection_id, exclude_template_id)
+                        .await
+                })
             },
         )
         .await
@@ -2310,11 +2052,9 @@ impl ExportTemplateStorage for StorageHandle {
             "export_templates",
             "class_collection",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.export_template_class_collection_id(class_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.export_template_class_collection_id(class_id).await
+                })
             },
         )
         .await
@@ -2325,11 +2065,9 @@ impl ExportTemplateStorage for StorageHandle {
         request: StorageExportTemplateCreate,
     ) -> Result<StorageExportTemplate, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.create_export_template(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.create_export_template(request).await
+            })
         })
         .await
     }
@@ -2339,11 +2077,9 @@ impl ExportTemplateStorage for StorageHandle {
         request: StorageExportTemplateReplace,
     ) -> Result<StorageExportTemplate, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "replace", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.replace_export_template(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.replace_export_template(request).await
+            })
         })
         .await
     }
@@ -2353,11 +2089,9 @@ impl ExportTemplateStorage for StorageHandle {
         request: StorageExportTemplateDelete,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.delete_export_template(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.delete_export_template(request).await
+            })
         })
         .await
     }
@@ -2367,11 +2101,9 @@ impl ExportTemplateStorage for StorageHandle {
 impl RemoteTargetStorage for StorageHandle {
     async fn get_remote_target(&self, target_id: i32) -> Result<StorageRemoteTarget, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "get", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_remote_target(target_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.get_remote_target(target_id).await
+            })
         })
         .await
     }
@@ -2381,11 +2113,7 @@ impl RemoteTargetStorage for StorageHandle {
         query: StorageRemoteTargetListQuery,
     ) -> Result<StorageRemoteTargetPage, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_remote_targets(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.list_remote_targets(query).await })
         })
         .await
     }
@@ -2395,11 +2123,9 @@ impl RemoteTargetStorage for StorageHandle {
         request: StorageRemoteTargetCreate,
     ) -> Result<StorageRemoteTarget, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.create_remote_target(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.create_remote_target(request).await
+            })
         })
         .await
     }
@@ -2409,11 +2135,9 @@ impl RemoteTargetStorage for StorageHandle {
         request: StorageRemoteTargetUpdate,
     ) -> Result<StorageRemoteTarget, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "update", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.update_remote_target(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.update_remote_target(request).await
+            })
         })
         .await
     }
@@ -2423,11 +2147,9 @@ impl RemoteTargetStorage for StorageHandle {
         request: StorageRemoteTargetDelete,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.delete_remote_target(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.delete_remote_target(request).await
+            })
         })
         .await
     }
@@ -2441,11 +2163,9 @@ impl RemoteTargetStorage for StorageHandle {
             "remote_targets",
             "record_invocation",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.record_remote_target_invocation(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.record_remote_target_invocation(request).await
+                })
             },
         )
         .await
@@ -2456,11 +2176,7 @@ impl RemoteTargetStorage for StorageHandle {
 impl ImportStorage for StorageHandle {
     async fn import_root_collection(&self) -> Result<Collection, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "root_collection", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_root_collection().await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.import_root_collection().await })
         })
         .await
     }
@@ -2470,11 +2186,9 @@ impl ImportStorage for StorageHandle {
         collection_id: i32,
     ) -> Result<Option<Collection>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "collection_by_id", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_collection_by_id(collection_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.import_collection_by_id(collection_id).await
+            })
         })
         .await
     }
@@ -2484,11 +2198,9 @@ impl ImportStorage for StorageHandle {
         key: &CollectionKey,
     ) -> Result<Option<Collection>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "collection_by_key", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_collection_by_key(key).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.import_collection_by_key(key).await
+            })
         })
         .await
     }
@@ -2502,11 +2214,9 @@ impl ImportStorage for StorageHandle {
             "imports",
             "collections_by_name",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.import_collections_by_name(name).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.import_collections_by_name(name).await
+                })
             },
         )
         .await
@@ -2522,13 +2232,11 @@ impl ImportStorage for StorageHandle {
             "imports",
             "collection_child_by_name",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .import_collection_child_by_name(parent_collection_id, name)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .import_collection_child_by_name(parent_collection_id, name)
+                        .await
+                })
             },
         )
         .await
@@ -2540,11 +2248,9 @@ impl ImportStorage for StorageHandle {
         name: &str,
     ) -> Result<Option<HubuumClass>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "class_by_name", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_class_by_name(collection_id, name).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.import_class_by_name(collection_id, name).await
+            })
         })
         .await
     }
@@ -2555,11 +2261,9 @@ impl ImportStorage for StorageHandle {
         names: &[String],
     ) -> Result<Vec<HubuumClass>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "classes_by_names", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_classes_by_names(collection_id, names).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.import_classes_by_names(collection_id, names).await
+            })
         })
         .await
     }
@@ -2570,11 +2274,9 @@ impl ImportStorage for StorageHandle {
         name: &str,
     ) -> Result<Option<HubuumObject>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "object_by_name", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_object_by_name(class_id, name).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.import_object_by_name(class_id, name).await
+            })
         })
         .await
     }
@@ -2585,11 +2287,9 @@ impl ImportStorage for StorageHandle {
         names: &[String],
     ) -> Result<Vec<HubuumObject>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "objects_by_names", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.import_objects_by_names(class_id, names).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.import_objects_by_names(class_id, names).await
+            })
         })
         .await
     }
@@ -2604,13 +2304,11 @@ impl ImportStorage for StorageHandle {
             "imports",
             "class_relation_exists",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .import_class_relation_exists(left_class_id, right_class_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .import_class_relation_exists(left_class_id, right_class_id)
+                        .await
+                })
             },
         )
         .await
@@ -2626,13 +2324,11 @@ impl ImportStorage for StorageHandle {
             "imports",
             "object_relation_exists",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .import_object_relation_exists(left_object_id, right_object_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .import_object_relation_exists(left_object_id, right_object_id)
+                        .await
+                })
             },
         )
         .await
@@ -2644,13 +2340,11 @@ impl ImportStorage for StorageHandle {
         group_name: &str,
     ) -> Result<bool, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "group_exists", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .import_group_exists(identity_scope, group_name)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .import_group_exists(identity_scope, group_name)
+                    .await
+            })
         })
         .await
     }
@@ -2661,11 +2355,9 @@ impl ImportStorage for StorageHandle {
         mode: ImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "preflight", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.preflight_import(items, mode).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.preflight_import(items, mode).await
+            })
         })
         .await
     }
@@ -2675,11 +2367,7 @@ impl ImportStorage for StorageHandle {
         items: Vec<StorageImportPlanItem>,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "imports", "apply_strict", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.apply_import_strict(items).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.apply_import_strict(items).await })
         })
         .await
     }
@@ -2690,11 +2378,9 @@ impl ImportStorage for StorageHandle {
         mode: ImportMode,
     ) -> Result<StorageImportApply, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "apply_best_effort", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.apply_import_best_effort(items, mode).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.apply_import_best_effort(items, mode).await
+            })
         })
         .await
     }
@@ -2704,11 +2390,9 @@ impl ImportStorage for StorageHandle {
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "imports", "record_results", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.record_import_results(results).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.record_import_results(results).await
+            })
         })
         .await
     }
@@ -2721,51 +2405,39 @@ impl RestoreStorage for StorageHandle {
         request: StorageRestoreStageCreate,
     ) -> Result<StorageRestoreJob, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "stage", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.stage_restore(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.stage_restore(request).await)
         })
         .await
     }
 
     async fn get_restore_job(&self, job_id: i64) -> Result<StorageRestoreJob, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "get_job", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.get_restore_job(job_id).await,
-            }
+            dispatch_backend!(self, |backend| backend.get_restore_job(job_id).await)
         })
         .await
     }
 
     async fn get_restore_status(&self, job_id: i64) -> Result<StorageRestoreStatus, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "get_status", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.get_restore_status(job_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.get_restore_status(job_id).await })
         })
         .await
     }
 
     async fn expire_restore_stage(&self, job_id: i64) -> Result<bool, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "expire", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.expire_restore_stage(job_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.expire_restore_stage(job_id).await
+            })
         })
         .await
     }
 
     async fn start_restore_draining(&self, job_id: i64) -> Result<NaiveDateTime, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "start_draining", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.start_restore_draining(job_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.start_restore_draining(job_id).await
+            })
         })
         .await
     }
@@ -2775,9 +2447,7 @@ impl RestoreStorage for StorageHandle {
         request: StorageRestoreApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "apply", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.apply_restore(request).await,
-            }
+            dispatch_backend!(self, |backend| backend.apply_restore(request).await)
         })
         .await
     }
@@ -2787,11 +2457,9 @@ impl RestoreStorage for StorageHandle {
         request: StorageRestoreFailure,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "restores", "fail_and_resume", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.fail_restore_and_resume(request).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.fail_restore_and_resume(request).await
+            })
         })
         .await
     }
@@ -2804,11 +2472,9 @@ impl RestoreStorage for StorageHandle {
             "restores",
             "coordinator_snapshot",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.restore_coordinator_snapshot().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.restore_coordinator_snapshot().await
+                })
             },
         )
         .await
@@ -2820,11 +2486,9 @@ impl RestoreStorage for StorageHandle {
             "restores",
             "resume_without_job",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.resume_maintenance_without_restore().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.resume_maintenance_without_restore().await
+                })
             },
         )
         .await
@@ -2832,11 +2496,9 @@ impl RestoreStorage for StorageHandle {
 
     async fn resume_terminal_restore(&self, job_id: i64) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "restores", "resume_terminal", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.resume_terminal_restore(job_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.resume_terminal_restore(job_id).await
+            })
         })
         .await
     }
@@ -2848,17 +2510,15 @@ impl RestoreStorage for StorageHandle {
         expire_validated_jobs: bool,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "tick", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .tick_restore_coordinator(
-                            instance_id,
-                            local_work_is_idle,
-                            expire_validated_jobs,
-                        )
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .tick_restore_coordinator(
+                        instance_id,
+                        local_work_is_idle,
+                        expire_validated_jobs,
+                    )
+                    .await
+            })
         })
         .await
     }
@@ -2868,22 +2528,18 @@ impl RestoreStorage for StorageHandle {
         heartbeat_cutoff: NaiveDateTime,
     ) -> Result<StorageRestoreDrainState, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "drain_state", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.restore_drain_state(heartbeat_cutoff).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.restore_drain_state(heartbeat_cutoff).await
+            })
         })
         .await
     }
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "restores", "remove_instance", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.remove_restore_instance(instance_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.remove_restore_instance(instance_id).await
+            })
         })
         .await
     }
@@ -2892,9 +2548,7 @@ impl RestoreStorage for StorageHandle {
 #[async_trait]
 impl MetricsStorage for StorageHandle {
     fn metrics_pool_state(&self) -> StoragePoolState {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => backend.metrics_pool_state(),
-        }
+        dispatch_backend!(self, |backend| backend.metrics_pool_state())
     }
 
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
@@ -2903,11 +2557,9 @@ impl MetricsStorage for StorageHandle {
             "metrics",
             "inventory_snapshot",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.metrics_inventory_snapshot().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.metrics_inventory_snapshot().await
+                })
             },
         )
         .await
@@ -2915,20 +2567,14 @@ impl MetricsStorage for StorageHandle {
 
     async fn metrics_task_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
         observe_storage_call(self.backend_name(), "metrics", "task_snapshot", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.metrics_task_snapshot().await,
-            }
+            dispatch_backend!(self, |backend| backend.metrics_task_snapshot().await)
         })
         .await
     }
 
     async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
         observe_storage_call(self.backend_name(), "metrics", "event_snapshot", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.metrics_event_snapshot().await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.metrics_event_snapshot().await })
         })
         .await
     }
@@ -2938,9 +2584,7 @@ impl MetricsStorage for StorageHandle {
 impl InventoryStorage for StorageHandle {
     async fn inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
         observe_storage_call(self.backend_name(), "inventory", "counts", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.inventory_counts().await,
-            }
+            dispatch_backend!(self, |backend| backend.inventory_counts().await)
         })
         .await
     }
@@ -2950,20 +2594,16 @@ impl InventoryStorage for StorageHandle {
 impl GroupStorage for StorageHandle {
     async fn load_group(&self, group_id: i32) -> Result<Group, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.load_group(group_id).await,
-            }
+            dispatch_backend!(self, |backend| backend.load_group(group_id).await)
         })
         .await
     }
 
     async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "identity_scope", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.group_identity_scope_name(group_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.group_identity_scope_name(group_id).await
+            })
         })
         .await
     }
@@ -2974,11 +2614,9 @@ impl GroupStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<Group, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.create_group(command, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.create_group(command, context).await
+            })
         })
         .await
     }
@@ -2990,11 +2628,9 @@ impl GroupStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<Group, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "update", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.update_group(group_id, update, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.update_group(group_id, update, context).await
+            })
         })
         .await
     }
@@ -3005,20 +2641,16 @@ impl GroupStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.delete_group(group_id, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.delete_group(group_id, context).await
+            })
         })
         .await
     }
 
     async fn group_members(&self, group_id: i32) -> Result<Vec<Principal>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "members", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.group_members(group_id).await,
-            }
+            dispatch_backend!(self, |backend| backend.group_members(group_id).await)
         })
         .await
     }
@@ -3029,11 +2661,9 @@ impl GroupStorage for StorageHandle {
         query_options: &QueryOptions,
     ) -> Result<Vec<(PrincipalGroup, Principal)>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "members_page", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.group_members_page(group_id, query_options).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.group_members_page(group_id, query_options).await
+            })
         })
         .await
     }
@@ -3044,22 +2674,18 @@ impl GroupStorage for StorageHandle {
         query_options: &QueryOptions,
     ) -> Result<i64, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "members_count", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.count_group_members(group_id, query_options).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.count_group_members(group_id, query_options).await
+            })
         })
         .await
     }
 
     async fn group_member_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "member_principal", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.group_member_principal(principal_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.group_member_principal(principal_id).await
+            })
         })
         .await
     }
@@ -3071,13 +2697,11 @@ impl GroupStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<PrincipalGroup, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "member_add", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .add_group_member(principal_id, group_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .add_group_member(principal_id, group_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3089,13 +2713,11 @@ impl GroupStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "groups", "member_remove", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .remove_group_member(principal_id, group_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .remove_group_member(principal_id, group_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3105,11 +2727,9 @@ impl GroupStorage for StorageHandle {
 impl PrincipalStorage for StorageHandle {
     async fn load_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
         observe_storage_call(self.backend_name(), "principals", "load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_principal(principal_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_principal(principal_id).await
+            })
         })
         .await
     }
@@ -3119,11 +2739,9 @@ impl PrincipalStorage for StorageHandle {
         principal_id: i32,
     ) -> Result<PrincipalSettingsResponse, StorageError> {
         observe_storage_call(self.backend_name(), "principals", "settings_load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_principal_settings(principal_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_principal_settings(principal_id).await
+            })
         })
         .await
     }
@@ -3139,13 +2757,11 @@ impl PrincipalStorage for StorageHandle {
             "principals",
             "settings_replace",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .replace_principal_settings(principal_id, settings, context)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .replace_principal_settings(principal_id, settings, context)
+                        .await
+                })
             },
         )
         .await
@@ -3158,13 +2774,11 @@ impl PrincipalStorage for StorageHandle {
         context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, StorageError> {
         observe_storage_call(self.backend_name(), "principals", "settings_merge", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .merge_principal_settings(principal_id, patch, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .merge_principal_settings(principal_id, patch, context)
+                    .await
+            })
         })
         .await
     }
@@ -3180,13 +2794,11 @@ impl PrincipalStorage for StorageHandle {
             "principals",
             "settings_json_patch",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .apply_principal_settings_patch(principal_id, patch, context)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .apply_principal_settings_patch(principal_id, patch, context)
+                        .await
+                })
             },
         )
         .await
@@ -3198,13 +2810,11 @@ impl PrincipalStorage for StorageHandle {
         context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, StorageError> {
         observe_storage_call(self.backend_name(), "principals", "settings_reset", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .reset_principal_settings(principal_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .reset_principal_settings(principal_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3218,11 +2828,9 @@ impl CollectionRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<Collection, StorageError> {
         observe_storage_call(self.backend_name(), "collection_records", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.create_collection_record(command, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.create_collection_record(command, context).await
+            })
         })
         .await
     }
@@ -3234,13 +2842,11 @@ impl CollectionRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<Collection, StorageError> {
         observe_storage_call(self.backend_name(), "collection_records", "update", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .update_collection_record(update, collection_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .update_collection_record(update, collection_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3251,13 +2857,11 @@ impl CollectionRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "collection_records", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .delete_collection_record(collection_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .delete_collection_record(collection_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3269,13 +2873,11 @@ impl CollectionRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<Collection, StorageError> {
         observe_storage_call(self.backend_name(), "collection_records", "move", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .move_collection_record(collection_id, new_parent_collection_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .move_collection_record(collection_id, new_parent_collection_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3292,11 +2894,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "principal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.principal_collection_permissions(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.principal_collection_permissions(query).await
+                })
             },
         )
         .await
@@ -3311,13 +2911,11 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "principal_all",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .principal_all_collection_permissions(principal_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .principal_all_collection_permissions(principal_id)
+                        .await
+                })
             },
         )
         .await
@@ -3332,11 +2930,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "principal_page",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.principal_collection_permissions_page(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.principal_collection_permissions_page(query).await
+                })
             },
         )
         .await
@@ -3351,13 +2947,11 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "effective_principal",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .effective_principal_collection_permissions(query)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .effective_principal_collection_permissions(query)
+                        .await
+                })
             },
         )
         .await
@@ -3372,11 +2966,7 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "visible",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.visible_collections(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| { backend.visible_collections(query).await })
             },
         )
         .await
@@ -3391,11 +2981,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "group_has",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.group_has_collection_permission(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.group_has_collection_permission(query).await
+                })
             },
         )
         .await
@@ -3411,13 +2999,11 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "effective_group",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .effective_group_collection_permissions(collection_id, group_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .effective_group_collection_permissions(collection_id, group_id)
+                        .await
+                })
             },
         )
         .await
@@ -3432,11 +3018,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "groups",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.groups_with_collection_permission(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.groups_with_collection_permission(query).await
+                })
             },
         )
         .await
@@ -3451,11 +3035,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "groups_page",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.groups_with_collection_permission_page(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.groups_with_collection_permission_page(query).await
+                })
             },
         )
         .await
@@ -3470,11 +3052,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "grants",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_collection_group_permissions(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_collection_group_permissions(query).await
+                })
             },
         )
         .await
@@ -3489,11 +3069,9 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "grants_page",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_collection_group_permissions_page(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_collection_group_permissions_page(query).await
+                })
             },
         )
         .await
@@ -3509,13 +3087,11 @@ impl CollectionPermissionStorage for StorageHandle {
             "collection_permissions",
             "group_grant",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .collection_group_permission(collection_id, group_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .collection_group_permission(collection_id, group_id)
+                        .await
+                })
             },
         )
         .await
@@ -3530,11 +3106,9 @@ impl ClassRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, StorageError> {
         observe_storage_call(self.backend_name(), "class_records", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.create_class_record(class, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.create_class_record(class, context).await
+            })
         })
         .await
     }
@@ -3546,11 +3120,9 @@ impl ClassRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, StorageError> {
         observe_storage_call(self.backend_name(), "class_records", "update", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.update_class_record(update, class_id, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.update_class_record(update, class_id, context).await
+            })
         })
         .await
     }
@@ -3561,33 +3133,25 @@ impl ClassRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "class_records", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.delete_class_record(class, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.delete_class_record(class, context).await
+            })
         })
         .await
     }
 
     async fn load_class_record(&self, class_id: i32) -> Result<HubuumClass, StorageError> {
         observe_storage_call(self.backend_name(), "class_records", "load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_class_record(class_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_class_record(class_id).await
+            })
         })
         .await
     }
 
     async fn class_collection(&self, class_id: i32) -> Result<Collection, StorageError> {
         observe_storage_call(self.backend_name(), "class_records", "collection", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.class_collection(class_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.class_collection(class_id).await })
         })
         .await
     }
@@ -3597,9 +3161,7 @@ impl ClassRecordStorage for StorageHandle {
         class_ids: &ClassIdSet,
     ) -> Result<Vec<(i32, String)>, StorageError> {
         observe_storage_call(self.backend_name(), "class_records", "names", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.class_names(class_ids).await,
-            }
+            dispatch_backend!(self, |backend| backend.class_names(class_ids).await)
         })
         .await
     }
@@ -3609,9 +3171,7 @@ impl ClassRecordStorage for StorageHandle {
 impl ObjectRecordStorage for StorageHandle {
     async fn validate_object(&self, object: &HubuumObject) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "validate", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.validate_object(object).await,
-            }
+            dispatch_backend!(self, |backend| backend.validate_object(object).await)
         })
         .await
     }
@@ -3622,11 +3182,9 @@ impl ObjectRecordStorage for StorageHandle {
             "object_records",
             "validate_new",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.validate_new_object(object).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.validate_new_object(object).await
+                })
             },
         )
         .await
@@ -3642,11 +3200,9 @@ impl ObjectRecordStorage for StorageHandle {
             "object_records",
             "validate_update",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.validate_object_update(update, object_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.validate_object_update(update, object_id).await
+                })
             },
         )
         .await
@@ -3658,11 +3214,9 @@ impl ObjectRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "save", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.save_object_record(object, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.save_object_record(object, context).await
+            })
         })
         .await
     }
@@ -3673,11 +3227,9 @@ impl ObjectRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "create", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.create_object_record(object, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.create_object_record(object, context).await
+            })
         })
         .await
     }
@@ -3689,13 +3241,11 @@ impl ObjectRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "update", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend
-                        .update_object_record(update, object_id, context)
-                        .await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend
+                    .update_object_record(update, object_id, context)
+                    .await
+            })
         })
         .await
     }
@@ -3706,42 +3256,34 @@ impl ObjectRecordStorage for StorageHandle {
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "delete", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.delete_object_record(object, context).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.delete_object_record(object, context).await
+            })
         })
         .await
     }
 
     async fn load_object_record(&self, object_id: i32) -> Result<HubuumObject, StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_object_record(object_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_object_record(object_id).await
+            })
         })
         .await
     }
 
     async fn object_collection(&self, object_id: i32) -> Result<Collection, StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "collection", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.object_collection(object_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.object_collection(object_id).await
+            })
         })
         .await
     }
 
     async fn object_class(&self, object_id: i32) -> Result<HubuumClass, StorageError> {
         observe_storage_call(self.backend_name(), "object_records", "class", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => backend.object_class(object_id).await,
-            }
+            dispatch_backend!(self, |backend| backend.object_class(object_id).await)
         })
         .await
     }
@@ -3754,13 +3296,7 @@ impl OperationalStateStorage for StorageHandle {
             self.backend_name(),
             "operational_state",
             "readiness_snapshot",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.readiness_snapshot().await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.readiness_snapshot().await }) },
         )
         .await
     }
@@ -3770,11 +3306,7 @@ impl OperationalStateStorage for StorageHandle {
             self.backend_name(),
             "operational_state",
             "maintenance_state",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => backend.maintenance_state().await,
-                }
-            },
+            async { dispatch_backend!(self, |backend| backend.maintenance_state().await) },
         )
         .await
     }
@@ -3784,11 +3316,7 @@ impl OperationalStateStorage for StorageHandle {
             self.backend_name(),
             "operational_state",
             "storage_snapshot",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => backend.storage_snapshot().await,
-                }
-            },
+            async { dispatch_backend!(self, |backend| backend.storage_snapshot().await) },
         )
         .await
     }
@@ -3798,13 +3326,7 @@ impl OperationalStateStorage for StorageHandle {
             self.backend_name(),
             "operational_state",
             "task_queue_snapshot",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.task_queue_snapshot().await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.task_queue_snapshot().await }) },
         )
         .await
     }
@@ -3816,13 +3338,7 @@ impl OperationalStateStorage for StorageHandle {
             self.backend_name(),
             "operational_state",
             "export_template_health",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.export_template_health().await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.export_template_health().await }) },
         )
         .await
     }
@@ -3835,11 +3351,9 @@ impl OperationalStateStorage for StorageHandle {
             "operational_state",
             "export_templates_for_audit",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.export_templates_for_audit().await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.export_templates_for_audit().await
+                })
             },
         )
         .await
@@ -3853,13 +3367,7 @@ impl EventHealthStorage for StorageHandle {
             self.backend_name(),
             "event_health",
             "delivery_health",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.event_delivery_health().await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.event_delivery_health().await }) },
         )
         .await
     }
@@ -3872,11 +3380,7 @@ impl AuditEventStorage for StorageHandle {
         query: StorageAuditEventListQuery,
     ) -> Result<StorageEventPage<StorageAuditEvent>, StorageError> {
         observe_storage_call(self.backend_name(), "audit_events", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_audit_events(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| { backend.list_audit_events(query).await })
         })
         .await
     }
@@ -3890,11 +3394,7 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "count_enabled_sinks",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.enabled_event_sink_count().await
-                    }
-                }
+                dispatch_backend!(self, |backend| { backend.enabled_event_sink_count().await })
             },
         )
         .await
@@ -3908,13 +3408,7 @@ impl EventSubscriptionStorage for StorageHandle {
             self.backend_name(),
             "event_subscriptions",
             "list_sinks",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_event_sinks(query).await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.list_event_sinks(query).await }) },
         )
         .await
     }
@@ -3924,13 +3418,7 @@ impl EventSubscriptionStorage for StorageHandle {
             self.backend_name(),
             "event_subscriptions",
             "load_sink",
-            async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.load_event_sink(sink_id).await
-                    }
-                }
-            },
+            async { dispatch_backend!(self, |backend| { backend.load_event_sink(sink_id).await }) },
         )
         .await
     }
@@ -3944,11 +3432,7 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "create_sink",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.create_event_sink(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| { backend.create_event_sink(request).await })
             },
         )
         .await
@@ -3963,11 +3447,7 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "update_sink",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.update_event_sink(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| { backend.update_event_sink(request).await })
             },
         )
         .await
@@ -3979,11 +3459,7 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "delete_sink",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.delete_event_sink(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| { backend.delete_event_sink(request).await })
             },
         )
         .await
@@ -3998,11 +3474,9 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "list_subscriptions",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.list_event_subscriptions(query).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.list_event_subscriptions(query).await
+                })
             },
         )
         .await
@@ -4018,13 +3492,11 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "load_subscription",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .load_event_subscription(collection_id, subscription_id)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .load_event_subscription(collection_id, subscription_id)
+                        .await
+                })
             },
         )
         .await
@@ -4039,11 +3511,9 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "create_subscription",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.create_event_subscription(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.create_event_subscription(request).await
+                })
             },
         )
         .await
@@ -4058,11 +3528,9 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "update_subscription",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.update_event_subscription(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.update_event_subscription(request).await
+                })
             },
         )
         .await
@@ -4077,11 +3545,9 @@ impl EventSubscriptionStorage for StorageHandle {
             "event_subscriptions",
             "delete_subscription",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.delete_event_subscription(request).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.delete_event_subscription(request).await
+                })
             },
         )
         .await
@@ -4095,11 +3561,9 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
         query: StorageEventDeliveryListQuery,
     ) -> Result<StorageEventPage<StorageEventDelivery>, StorageError> {
         observe_storage_call(self.backend_name(), "event_delivery", "list", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.list_event_deliveries(query).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.list_event_deliveries(query).await
+            })
         })
         .await
     }
@@ -4109,11 +3573,9 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
         delivery_id: i64,
     ) -> Result<StorageEventDelivery, StorageError> {
         observe_storage_call(self.backend_name(), "event_delivery", "load", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.load_event_delivery(delivery_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.load_event_delivery(delivery_id).await
+            })
         })
         .await
     }
@@ -4127,11 +3589,9 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
             "event_delivery",
             "release_for_retry",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.release_event_delivery_for_retry(delivery_id).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.release_event_delivery_for_retry(delivery_id).await
+                })
             },
         )
         .await
@@ -4142,11 +3602,9 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
         delivery_id: i64,
     ) -> Result<StorageEventDelivery, StorageError> {
         observe_storage_call(self.backend_name(), "event_delivery", "mark_dead", async {
-            match &self.implementation {
-                BackendImplementation::Postgresql(backend) => {
-                    backend.mark_event_delivery_dead(delivery_id).await
-                }
-            }
+            dispatch_backend!(self, |backend| {
+                backend.mark_event_delivery_dead(delivery_id).await
+            })
         })
         .await
     }
@@ -4163,11 +3621,9 @@ impl EventDeliveryStorage for StorageHandle {
             "event_delivery",
             "claim_batch",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.claim_event_delivery_batch(settings).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.claim_event_delivery_batch(settings).await
+                })
             },
         )
         .await
@@ -4182,11 +3638,9 @@ impl EventDeliveryStorage for StorageHandle {
             "event_delivery",
             "mark_succeeded",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.mark_event_delivery_succeeded(claim).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.mark_event_delivery_succeeded(claim).await
+                })
             },
         )
         .await
@@ -4203,13 +3657,11 @@ impl EventDeliveryStorage for StorageHandle {
             "event_delivery",
             "mark_failed",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .mark_event_delivery_failed(claim, settings, error)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .mark_event_delivery_failed(claim, settings, error)
+                        .await
+                })
             },
         )
         .await
@@ -4227,11 +3679,9 @@ impl EventFanoutStorage for StorageHandle {
             "event_fanout",
             "process_batch",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.process_event_fanout_batch(settings).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.process_event_fanout_batch(settings).await
+                })
             },
         )
         .await
@@ -4250,13 +3700,11 @@ impl EventRetentionStorage for StorageHandle {
             "event_retention",
             "process_batch",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend
-                            .process_event_retention_batch(settings, archive)
-                            .await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .process_event_retention_batch(settings, archive)
+                        .await
+                })
             },
         )
         .await
@@ -4274,11 +3722,9 @@ impl TokenRetentionStorage for StorageHandle {
             "token_retention",
             "purge_expired",
             async {
-                match &self.implementation {
-                    BackendImplementation::Postgresql(backend) => {
-                        backend.purge_expired_tokens(settings).await
-                    }
-                }
+                dispatch_backend!(self, |backend| {
+                    backend.purge_expired_tokens(settings).await
+                })
             },
         )
         .await
@@ -4294,46 +3740,40 @@ fn assert_complete_storage_backend(backend: &impl StorageBackend) {
 /// The trait is sealed so consumers cannot depend on backend implementation
 /// details. The current PostgreSQL adapter is selected at application
 /// composition time and remains hidden behind this capability.
-pub trait StorageContext: private::BackendAccess + Send + Sync {
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        None
-    }
-}
-
-pub(in crate::storage) fn postgres_pool<C>(backend: &C) -> &PostgresPool
-where
-    C: StorageContext + ?Sized,
-{
-    private::BackendAccess::db_pool(backend)
-}
+pub trait StorageContext: private::BackendAccess + Send + Sync {}
 
 /// Normalize any accepted storage context into the opaque application handle.
 pub(crate) fn storage_handle<C>(backend: &C) -> StorageHandle
 where
     C: StorageContext + ?Sized,
 {
-    StorageHandle::postgres(postgres_pool(backend).clone())
+    private::BackendAccess::storage_handle(backend)
 }
 
 impl private::BackendAccess for StorageHandle {
-    fn db_pool(&self) -> &PostgresPool {
-        self.postgres_pool()
+    fn storage_handle(&self) -> StorageHandle {
+        self.clone()
     }
 }
 
 impl StorageContext for StorageHandle {}
 
+// Adapter-focused tests can opt into the historical pool-shaped context. The
+// production adapter and application composition both use their explicit
+// boundaries instead of making a concrete pool an application capability.
+#[cfg(any(test, feature = "integration-test-support"))]
 impl private::BackendAccess for PostgresPool {
-    fn db_pool(&self) -> &PostgresPool {
-        self
+    fn storage_handle(&self) -> StorageHandle {
+        StorageHandle::postgres(self.clone())
     }
 }
 
+#[cfg(any(test, feature = "integration-test-support"))]
 impl StorageContext for PostgresPool {}
 
 impl private::BackendAccess for AppContext {
-    fn db_pool(&self) -> &PostgresPool {
-        private::BackendAccess::db_pool(self.backend())
+    fn storage_handle(&self) -> StorageHandle {
+        self.clone_backend()
     }
 }
 
@@ -4341,34 +3781,20 @@ impl<T> private::BackendAccess for &T
 where
     T: StorageContext + ?Sized,
 {
-    fn db_pool(&self) -> &PostgresPool {
-        private::BackendAccess::db_pool(*self)
+    fn storage_handle(&self) -> StorageHandle {
+        private::BackendAccess::storage_handle(*self)
     }
 }
 
-impl<T> StorageContext for &T
-where
-    T: StorageContext + ?Sized,
-{
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        (*self).permission_backend()
-    }
-}
+impl<T> StorageContext for &T where T: StorageContext + ?Sized {}
 
 impl<T> private::BackendAccess for Data<T>
 where
     T: StorageContext + ?Sized + 'static,
 {
-    fn db_pool(&self) -> &PostgresPool {
-        private::BackendAccess::db_pool(self.as_ref())
+    fn storage_handle(&self) -> StorageHandle {
+        private::BackendAccess::storage_handle(self.as_ref())
     }
 }
 
-impl<T> StorageContext for Data<T>
-where
-    T: StorageContext + ?Sized + 'static,
-{
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        self.as_ref().permission_backend()
-    }
-}
+impl<T> StorageContext for Data<T> where T: StorageContext + ?Sized + 'static {}

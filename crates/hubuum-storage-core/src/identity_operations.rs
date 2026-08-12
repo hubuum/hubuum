@@ -5,7 +5,7 @@ use chrono::NaiveDateTime;
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{AuthenticationTokenScope, StorageError};
+use crate::{AuthenticationTokenScope, StorageError, StorageRecordMetadata};
 
 /// One identity scope owned by the selected storage backend.
 #[derive(Clone, PartialEq, Eq)]
@@ -124,65 +124,126 @@ pub struct StorageIdentityGroup {
 
 impl StorageIdentityGroup {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: i32,
+    pub fn builder(
+        metadata: StorageRecordMetadata,
         name: impl Into<String>,
         description: impl Into<String>,
         identity_scope_id: i32,
         managed_by: impl Into<String>,
-        external_key: Option<String>,
-        last_sync_attempted_at: Option<NaiveDateTime>,
-        last_sync_success_at: Option<NaiveDateTime>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        revision: i64,
-    ) -> Self {
-        Self {
-            id,
+    ) -> StorageIdentityGroupBuilder {
+        StorageIdentityGroupBuilder {
+            metadata,
             name: name.into(),
             description: description.into(),
             identity_scope_id,
             managed_by: managed_by.into(),
-            external_key,
-            last_sync_attempted_at,
-            last_sync_success_at,
-            created_at,
-            updated_at,
-            revision,
+            external_key: None,
+            last_sync_attempted_at: None,
+            last_sync_success_at: None,
         }
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        String,
-        String,
-        i32,
-        String,
-        Option<String>,
-        Option<NaiveDateTime>,
-        Option<NaiveDateTime>,
-        NaiveDateTime,
-        NaiveDateTime,
-        i64,
-    ) {
-        (
-            self.id,
-            self.name,
-            self.description,
-            self.identity_scope_id,
-            self.managed_by,
-            self.external_key,
-            self.last_sync_attempted_at,
-            self.last_sync_success_at,
-            self.created_at,
-            self.updated_at,
-            self.revision,
-        )
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    #[must_use]
+    pub const fn identity_scope_id(&self) -> i32 {
+        self.identity_scope_id
+    }
+
+    #[must_use]
+    pub fn managed_by(&self) -> &str {
+        &self.managed_by
+    }
+
+    #[must_use]
+    pub fn external_key(&self) -> Option<&str> {
+        self.external_key.as_deref()
+    }
+
+    #[must_use]
+    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+        self.last_sync_attempted_at
+    }
+
+    #[must_use]
+    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+        self.last_sync_success_at
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> i64 {
+        self.revision
+    }
+}
+
+pub struct StorageIdentityGroupBuilder {
+    metadata: StorageRecordMetadata,
+    name: String,
+    description: String,
+    identity_scope_id: i32,
+    managed_by: String,
+    external_key: Option<String>,
+    last_sync_attempted_at: Option<NaiveDateTime>,
+    last_sync_success_at: Option<NaiveDateTime>,
+}
+
+impl StorageIdentityGroupBuilder {
+    #[must_use]
+    pub fn external_key(mut self, value: Option<String>) -> Self {
+        self.external_key = value;
+        self
+    }
+
+    #[must_use]
+    pub const fn last_sync_attempted_at(mut self, value: Option<NaiveDateTime>) -> Self {
+        self.last_sync_attempted_at = value;
+        self
+    }
+
+    #[must_use]
+    pub const fn last_sync_success_at(mut self, value: Option<NaiveDateTime>) -> Self {
+        self.last_sync_success_at = value;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> StorageIdentityGroup {
+        StorageIdentityGroup {
+            id: self.metadata.id(),
+            name: self.name,
+            description: self.description,
+            identity_scope_id: self.identity_scope_id,
+            managed_by: self.managed_by,
+            external_key: self.external_key,
+            last_sync_attempted_at: self.last_sync_attempted_at,
+            last_sync_success_at: self.last_sync_success_at,
+            created_at: self.metadata.created_at(),
+            updated_at: self.metadata.updated_at(),
+            revision: self.metadata.revision(),
+        }
     }
 }
 
@@ -230,6 +291,41 @@ impl fmt::Debug for StoragePrincipalGroupListQuery {
             .field("limit", &self.options.limit)
             .field("has_cursor", &self.options.cursor.is_some())
             .field("include_total", &self.options.include_total)
+            .finish()
+    }
+}
+
+/// Stable request for one page of groups and an optional exact total.
+///
+/// Record and count options are supplied separately because cursor pagination
+/// applies only to the returned page. `None` skips the aggregate entirely.
+#[derive(Clone, PartialEq)]
+pub struct StorageGroupListQuery {
+    records: QueryOptions,
+    count: Option<QueryOptions>,
+}
+
+impl StorageGroupListQuery {
+    #[must_use]
+    pub const fn new(records: QueryOptions, count: Option<QueryOptions>) -> Self {
+        Self { records, count }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (QueryOptions, Option<QueryOptions>) {
+        (self.records, self.count)
+    }
+}
+
+impl fmt::Debug for StorageGroupListQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageGroupListQuery")
+            .field("filter_count", &self.records.filters.len())
+            .field("sort_count", &self.records.sort.len())
+            .field("limit", &self.records.limit)
+            .field("has_cursor", &self.records.cursor.is_some())
+            .field("include_total", &self.count.is_some())
             .finish()
     }
 }
@@ -1349,6 +1445,13 @@ pub trait IdentityStorage: Send + Sync {
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError>;
 
+    /// List groups with stable filtering, cursor pagination, and an optional
+    /// exact total in one operation-shaped backend capability.
+    async fn list_groups(
+        &self,
+        query: StorageGroupListQuery,
+    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError>;
+
     /// Return hash-free retained token metadata using the requested lifecycle
     /// state, filters, stable cursor page, and optional exact total.
     async fn list_retained_tokens(
@@ -1441,6 +1544,32 @@ pub trait IdentityStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_group_builder_keeps_record_metadata_and_optional_sync_state() {
+        let created_at = NaiveDateTime::default();
+        let updated_at = created_at + chrono::Duration::seconds(1);
+        let group = StorageIdentityGroup::builder(
+            StorageRecordMetadata::new(7, created_at, updated_at, 3),
+            "operators",
+            "Operations team",
+            2,
+            "local",
+        )
+        .external_key(Some("directory-secret".to_string()))
+        .last_sync_success_at(Some(updated_at))
+        .build();
+
+        assert_eq!(group.id(), 7);
+        assert_eq!(group.name(), "operators");
+        assert_eq!(group.created_at(), created_at);
+        assert_eq!(group.updated_at(), updated_at);
+        assert_eq!(group.revision(), 3);
+        assert_eq!(group.last_sync_success_at(), Some(updated_at));
+        let debug = format!("{group:?}");
+        assert!(!debug.contains("operators"));
+        assert!(!debug.contains("directory-secret"));
+    }
 
     #[test]
     fn query_debug_output_redacts_identity_and_cursor_values() {

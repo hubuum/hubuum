@@ -230,7 +230,7 @@ fn computed_value_matches_result_type(
 }
 
 pub async fn enrich_objects_with_computed(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     objects: Vec<HubuumObject>,
     personal_owner_id: Option<i32>,
 ) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
@@ -298,7 +298,7 @@ pub async fn enrich_objects_with_computed(
 }
 
 pub async fn enrich_objects_with_computed_query_snapshot(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     objects: Vec<HubuumObject>,
     personal_owner_id: Option<i32>,
     snapshot: &ComputedQuerySnapshot,
@@ -338,7 +338,7 @@ pub async fn enrich_objects_with_computed_query_snapshot(
 }
 
 async fn enrich_objects_from_snapshot(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     objects: Vec<HubuumObject>,
     personal_owner_id: Option<i32>,
     definitions: Vec<ComputedFieldDefinition>,
@@ -457,7 +457,7 @@ async fn enrich_objects_from_snapshot(
 }
 
 async fn repair_stale_materializations(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     mut stale_objects: Vec<HubuumObject>,
 ) -> Result<(), ApiError> {
     stale_objects.sort_by_key(|object| object.id);

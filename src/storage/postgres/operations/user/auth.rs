@@ -80,7 +80,7 @@ async fn ensure_user_allows_local_write_conn(
 
 /// Resolve a human user by identity scope and principal name.
 pub(crate) async fn load_user_by_name_record(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     scope_arg: &str,
     name_arg: &str,
 ) -> Result<User, ApiError> {
@@ -122,7 +122,7 @@ async fn set_local_password_conn(
 /// Resolve one local human by name, replace its pre-hashed credential, and
 /// revoke all active bearer tokens in one transaction.
 pub(crate) async fn reset_local_password_record(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_name: &str,
     password_hash: &str,
 ) -> Result<usize, ApiError> {
@@ -147,7 +147,7 @@ pub(crate) async fn reset_local_password_record(
 }
 
 pub(crate) async fn set_user_password_record(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id: PrincipalID,
     password_hash: &str,
 ) -> Result<usize, ApiError> {
@@ -158,7 +158,7 @@ pub(crate) async fn set_user_password_record(
 }
 
 pub async fn count_user_records(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<i64, ApiError> {
     use crate::schema::users::dsl::users;
     with_connection(pool, async |conn| {
@@ -171,7 +171,7 @@ pub async fn count_user_records(
 /// row, group memberships, and tokens. (The FK cascades principal → subtype, so
 /// deleting the `users` row alone would orphan the principal.)
 async fn delete_principal_without_events(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     use crate::schema::principals::dsl::{id, principals};
@@ -186,7 +186,7 @@ async fn delete_principal_without_events(
 }
 
 pub(crate) async fn delete_user_record(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
     context: Option<&EventContext>,
 ) -> Result<usize, ApiError> {
@@ -220,12 +220,12 @@ pub(crate) async fn delete_user_record(
 pub trait CreateUserRecord {
     async fn create_user_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<User, ApiError>;
 
     async fn create_user_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let _ = context;
@@ -238,7 +238,7 @@ impl CreateUserRecord for NewUser {
     /// name) then the `users` row sharing the same id, in one transaction.
     async fn create_user_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<User, ApiError> {
         use crate::schema::users;
 
@@ -285,7 +285,7 @@ impl CreateUserRecord for NewUser {
 
     async fn create_user_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let Some(context) = context else {
@@ -351,13 +351,13 @@ pub trait UpdateUserRecord {
     async fn update_user_record_without_events(
         &self,
         user_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<User, ApiError>;
 
     async fn update_user_record(
         &self,
         user_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let _ = context;
@@ -369,7 +369,7 @@ impl UpdateUserRecord for UpdateUser {
     async fn update_user_record_without_events(
         &self,
         user_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
@@ -401,7 +401,7 @@ impl UpdateUserRecord for UpdateUser {
     async fn update_user_record(
         &self,
         user_id: i32,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let Some(context) = context else {
@@ -458,7 +458,7 @@ impl UpdateUserRecord for UpdateUser {
 }
 
 pub(crate) async fn anonymize_user_record(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_id: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::principals::dsl as p;
@@ -500,7 +500,7 @@ pub(crate) async fn anonymize_user_record(
 }
 
 pub(crate) async fn load_user_record(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     user_id: i32,
 ) -> Result<User, ApiError> {
     use crate::schema::users::dsl::{id, users};
@@ -532,7 +532,7 @@ mod tests {
         (user, vec![first, second])
     }
 
-    async fn assert_tokens_active(pool: &impl crate::storage::StorageContext, tokens: &[Token]) {
+    async fn assert_tokens_active(pool: &crate::storage::postgres::PostgresPool, tokens: &[Token]) {
         for token in tokens {
             authenticate_bearer_token(pool, token)
                 .await
@@ -540,7 +540,10 @@ mod tests {
         }
     }
 
-    async fn assert_tokens_revoked(pool: &impl crate::storage::StorageContext, tokens: &[Token]) {
+    async fn assert_tokens_revoked(
+        pool: &crate::storage::postgres::PostgresPool,
+        tokens: &[Token],
+    ) {
         for token in tokens {
             assert!(matches!(
                 authenticate_bearer_token(pool, token).await,

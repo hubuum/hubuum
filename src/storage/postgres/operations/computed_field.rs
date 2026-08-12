@@ -191,7 +191,7 @@ async fn ensure_computation_state(
 }
 
 pub async fn class_computation_state_for(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
 ) -> Result<ClassComputationState, ApiError> {
     use crate::schema::class_computation_state::dsl::{class_computation_state, class_id};
@@ -209,7 +209,7 @@ pub async fn class_computation_state_for(
 }
 
 pub async fn list_shared_definitions(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
 ) -> Result<Vec<ComputedFieldDefinition>, ApiError> {
     use crate::schema::computed_field_definitions::dsl::{
@@ -229,7 +229,7 @@ pub async fn list_shared_definitions(
 }
 
 pub async fn list_personal_definitions_page(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     owner_id: i32,
     class_filter: Option<i32>,
     query_options: &QueryOptions,
@@ -272,7 +272,7 @@ pub async fn list_personal_definitions_page(
 }
 
 pub async fn get_computed_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     definition_id: i32,
 ) -> Result<ComputedFieldDefinition, ApiError> {
     use crate::schema::computed_field_definitions::dsl::{computed_field_definitions, id};
@@ -444,7 +444,7 @@ pub(crate) async fn advance_revision_and_enqueue(
 }
 
 pub async fn create_shared_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
     authorized_collection_id: i32,
     actor_id: i32,
@@ -538,7 +538,7 @@ async fn apply_definition_patch(
 }
 
 pub async fn update_shared_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
     authorized_collection_id: i32,
     definition_id: i32,
@@ -604,7 +604,7 @@ pub async fn update_shared_definition(
 }
 
 pub async fn delete_shared_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
     authorized_collection_id: i32,
     definition_id: i32,
@@ -642,7 +642,7 @@ pub async fn delete_shared_definition(
 }
 
 pub async fn create_personal_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
     owner_id: i32,
     request: ComputedFieldDefinitionRequest,
@@ -677,7 +677,7 @@ pub async fn create_personal_definition(
 }
 
 pub async fn update_personal_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     owner_id: i32,
     definition_id: i32,
     patch: ComputedFieldDefinitionPatch,
@@ -712,7 +712,7 @@ pub async fn update_personal_definition(
 }
 
 pub async fn delete_personal_definition(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     owner_id: i32,
     definition_id: i32,
 ) -> Result<(), ApiError> {

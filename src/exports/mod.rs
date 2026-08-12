@@ -32,8 +32,8 @@ use crate::pagination::{
     CursorPaginated, count_query_options, page_limits_or_defaults, paginate_in_memory,
 };
 use crate::permissions::{
-    AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
-    ResourceRef,
+    AuthorizationContext, AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest,
+    PrincipalRef, ResourceRef,
 };
 use crate::services::authorization_resources::{
     class_relation_authorization_resources, object_authorization_resources,
@@ -46,9 +46,8 @@ use crate::services::tasks::{
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{
-    ClassRecordStorage, ExportQueryStorage, StorageContext, StorageExportTaskArtifact,
-    StorageQueryBudget, StorageTaskCompletionArtifact, StorageTaskDurations,
-    StorageTaskScopeSnapshot, storage_handle,
+    ClassRecordStorage, ExportQueryStorage, StorageExportTaskArtifact, StorageQueryBudget,
+    StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
 use crate::traits::{
@@ -473,7 +472,7 @@ struct PermissionAwareExport<'a, C: ?Sized, S: ?Sized> {
 
 impl<'a, C, S> PermissionAwareExport<'a, C, S>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
 {
     async fn new(
@@ -1124,7 +1123,7 @@ pub(crate) async fn execute_export_task<C>(
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let pool = backend;
     let payload = task
@@ -1725,7 +1724,7 @@ async fn build_template_items<C, S>(
     relation_hydration: Option<RelationHydrationPlan>,
 ) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
@@ -1865,7 +1864,7 @@ async fn hydrate_related_root<C, S>(
     hydration_budget: &mut HydrationBudget,
 ) -> Result<HydratedTemplateObject, ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
 {
     let max_related_objects = hydration_budget.remaining_related_capacity()?;
@@ -1917,7 +1916,7 @@ async fn load_hydration_class_metadata<C, S>(
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
 ) -> Result<HydrationClassMetadata, ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
@@ -2665,7 +2664,7 @@ async fn execute_scope<C, S>(
     mut query_options: QueryOptions,
 ) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
@@ -2719,7 +2718,7 @@ async fn apply_export_includes<C, S>(
     items: &mut [serde_json::Value],
 ) -> Result<(), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
 {
     let Some(related_objects) = export

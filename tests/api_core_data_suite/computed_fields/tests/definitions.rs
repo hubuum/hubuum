@@ -491,11 +491,13 @@ async fn service_accounts_cannot_manage_or_receive_personal_fields(
     assert_response_status(response, StatusCode::BAD_REQUEST).await;
 
     fixture.cleanup().await.unwrap();
-    crate::models::ServiceAccountID::new(account.id)
-        .unwrap()
-        .delete_without_events(&test_context.pool)
-        .await
-        .unwrap();
+    crate::services::identity::delete_service_account(
+        &test_context.pool,
+        account.id,
+        &EventContext::system(),
+    )
+    .await
+    .unwrap();
     group
         .delete_without_events(&test_context.pool)
         .await

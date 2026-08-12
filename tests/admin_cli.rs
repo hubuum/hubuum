@@ -6,11 +6,14 @@ use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use hubuum::models::{NewUser, TaskKind, TaskStatus};
-use hubuum::schema::{collections, export_task_outputs, export_templates, tasks};
+use hubuum::schema::{
+    collections, export_task_outputs, export_templates, identity_scopes, principals, tasks, users,
+};
 use hubuum::storage::postgres::operations::identity::ensure_identity_scope;
 use hubuum::storage::postgres::operations::task_rows::{
     NewExportTaskOutputRow as NewExportTaskOutputRecord, NewTaskRow as NewTaskRecord,
 };
+use hubuum::storage::postgres::operations::user::CreateUserRecord;
 use hubuum::storage::postgres::prelude::*;
 use hubuum::storage::postgres::{
     PostgresPool, init_postgres_pool_with_statement_timeout, with_connection, with_transaction,
@@ -167,7 +170,10 @@ async fn reset_password_replaces_the_stored_credential() {
         proper_name: None,
         email: None,
     }
-    .save_without_events(&pool)
+    .hash_password()
+    .await
+    .expect("test user password hash")
+    .create_user_record_without_events(&pool)
     .await
     .expect("test user");
 
@@ -185,11 +191,21 @@ async fn reset_password_replaces_the_stored_credential() {
         .expect("generated password in stdout");
     assert_ne!(new_password, old_password);
 
-    let updated =
-        hubuum::services::identity::load_user_by_name(&pool, LOCAL_IDENTITY_SCOPE, &username)
+    let password_hash = with_connection(&pool, async |conn| {
+        users::table
+            .inner_join(principals::table.on(users::id.eq(principals::id)))
+            .inner_join(
+                identity_scopes::table.on(principals::identity_scope_id.eq(identity_scopes::id)),
+            )
+            .filter(principals::name.eq(&username))
+            .filter(identity_scopes::name.eq(LOCAL_IDENTITY_SCOPE))
+            .select(users::password)
+            .first::<Option<String>>(conn)
             .await
-            .expect("updated user");
-    let password_hash = updated.password.expect("stored password hash");
+    })
+    .await
+    .expect("updated user")
+    .expect("stored password hash");
     assert!(verify_password(new_password, &password_hash).expect("new password verification"));
     assert!(!verify_password(&old_password, &password_hash).expect("old password verification"));
 }

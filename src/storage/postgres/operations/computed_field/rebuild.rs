@@ -1,7 +1,7 @@
 use super::*;
 
 pub async fn request_class_rebuild(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
     authorized_collection_id: i32,
     actor_id: Option<i32>,
@@ -63,7 +63,7 @@ enum ReindexBatch {
 }
 
 async fn process_reindex_batch(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task: &TaskRecord,
     payload: &ComputedReindexPayload,
     cursor: i32,
@@ -123,7 +123,7 @@ async fn process_reindex_batch(
 }
 
 pub(crate) async fn execute_computed_reindex_task_row(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task: &TaskRecord,
 ) -> Result<(), ApiError> {
     let started = Instant::now();
@@ -251,7 +251,7 @@ pub(crate) async fn execute_computed_reindex_task_row(
 }
 
 pub async fn execute_computed_reindex_task(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task: &crate::models::TaskRecord,
 ) -> Result<(), ApiError> {
     execute_computed_reindex_task_row(pool, &task.clone().into()).await

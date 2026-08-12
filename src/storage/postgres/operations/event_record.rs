@@ -261,7 +261,7 @@ fn log_event_mutation(event: &Event) {
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn list_events_for_test(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     entity_type_value: crate::events::EntityType,
     entity_id_value: i32,
     action_value: Option<crate::events::Action>,
@@ -285,7 +285,7 @@ pub(crate) async fn list_events_for_test(
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn count_events_for_test(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     entity_type_value: crate::events::EntityType,
     entity_id_value: i32,
     action_value: Option<crate::events::Action>,

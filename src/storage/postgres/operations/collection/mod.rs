@@ -1,5 +1,4 @@
 use crate::storage::postgres::prelude::*;
-use tracing::{debug, trace};
 
 use crate::errors::ApiError;
 use crate::models::group::Group;
@@ -15,9 +14,7 @@ use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::permissions::{PermissionFilter, PermissionRow};
 use crate::storage::postgres::{with_connection, with_transaction};
-use crate::traits::{
-    ClassAccessors, CollectionAccessors, GroupAccessors, ObjectAccessors, SelfAccessors,
-};
+use crate::traits::{GroupAccessors, SelfAccessors};
 
 mod permissions;
 mod records;

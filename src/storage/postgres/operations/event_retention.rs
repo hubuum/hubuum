@@ -4,8 +4,6 @@ use diesel::sql_types::{Array, BigInt, Bool, Timestamp};
 
 use crate::errors::ApiError;
 use crate::events::EventRetentionSettings;
-#[cfg(test)]
-use crate::storage::context::postgres_pool;
 use crate::storage::postgres::PostgresConnection;
 use crate::storage::postgres::operations::event_record::EventRow;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
@@ -136,7 +134,7 @@ pub(crate) async fn process_event_retention_batch(
 
 #[cfg(test)]
 pub(crate) async fn purge_event_retention_without_archive(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     settings: EventRetentionSettings,
 ) -> Result<EventRetentionSummary, ApiError> {
     struct DiscardArchive;
@@ -147,7 +145,7 @@ pub(crate) async fn purge_event_retention_without_archive(
         }
     }
 
-    process_event_retention_batch(postgres_pool(pool), settings, &DiscardArchive).await
+    process_event_retention_batch(pool, settings, &DiscardArchive).await
 }
 
 async fn select_event_ids_for_retention_purge(

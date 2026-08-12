@@ -233,7 +233,7 @@ impl_history_pagination!(HubuumClassHistoryRow, "hubuumclass_history");
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
 pub(crate) async fn resolve_principal_names(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_ids: Vec<i32>,
 ) -> Result<PrincipalNames, ApiError> {
     Ok(resolve_principal_name_rows(pool, principal_ids)
@@ -243,7 +243,7 @@ pub(crate) async fn resolve_principal_names(
 }
 
 pub(crate) async fn resolve_principal_name_rows(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     mut principal_ids: Vec<i32>,
 ) -> Result<Vec<(i32, String)>, ApiError> {
     use crate::schema::principals::dsl::{id, name, principals};
@@ -379,7 +379,7 @@ macro_rules! history_db_fns {
     ) => {
         pub(crate) async fn $paginate_fn(
             entity_id: i32,
-            pool: &impl $crate::storage::StorageContext,
+            pool: &$crate::storage::postgres::PostgresPool,
             query_options: &$crate::models::search::QueryOptions,
             collection_filter: $crate::storage::postgres::operations::history::HistoryCollectionFilter<'_>,
         ) -> Result<(Vec<$ty>, i64), $crate::errors::ApiError> {
@@ -443,7 +443,7 @@ macro_rules! history_db_fns {
         pub(crate) async fn $as_of_fn(
             entity_id: i32,
             at: chrono::DateTime<chrono::Utc>,
-            pool: &impl $crate::storage::StorageContext,
+            pool: &$crate::storage::postgres::PostgresPool,
         ) -> Result<Option<$ty>, $crate::errors::ApiError> {
             use $crate::storage::postgres::prelude::*;
             use $($schema)::+::dsl::*;
@@ -498,7 +498,7 @@ history_db_fns!(
 pub(crate) async fn object_history_paginated_with_total_count(
     object_id: i32,
     class_id: i32,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: &QueryOptions,
     collection_filter: HistoryCollectionFilter<'_>,
 ) -> Result<(Vec<HubuumObjectHistoryRow>, i64), ApiError> {
@@ -565,7 +565,7 @@ pub(crate) async fn object_as_of(
     object_id: i32,
     class_id: i32,
     at: DateTime<Utc>,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Option<HubuumObjectHistoryRow>, ApiError> {
     use crate::schema::hubuumobject_history::dsl as history;
 

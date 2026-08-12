@@ -75,13 +75,16 @@ for package classifications, publishing policy, and promotion requirements.
   Behavioral interfaces used by handlers and models inside the application.
   `StorageContext` is a sealed, opaque persistence capability. Consumers pass
   it to operations but cannot extract or select the database implementation.
-- `src/storage/capabilities.rs`:
-  Test-only adapter fixtures used to construct opaque worker claims. Production
-  application code has no PostgreSQL capability facade; it uses services and
-  mandatory storage traits.
+  Normalization returns the context's existing `StorageHandle`; it never
+  rebuilds a backend from a database pool. It deliberately has no authorization
+  methods; policy-aware workflows accept the stronger `AuthorizationContext`.
 - `src/storage/postgres/operations/*`:
   Diesel/Postgres-backed implementations behind model and storage adapters.
-  This is where query details, joins, filters, and transactions belong.
+  This is where query details, joins, filters, and transactions belong. Helpers
+  in this tree accept the adapter-owned `PostgresPool` explicitly, which makes
+  accidental calls from backend-neutral consumers fail at compile time.
+  Focused tests may opt into pool-shaped context compatibility; production
+  application modules cannot import or depend on it.
 
 Server, administration, and bootstrap entry points build validated
 `StorageSettings` and receive an opaque `StorageHandle`. They must not import

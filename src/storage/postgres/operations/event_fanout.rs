@@ -25,7 +25,7 @@ pub(crate) async fn process_event_fanout_batch(
 }
 
 pub(crate) async fn claim_events_for_fanout(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     settings: EventFanoutSettings,
 ) -> Result<Vec<Event>, ApiError> {
     use crate::schema::events::dsl::{
@@ -81,14 +81,14 @@ pub(crate) async fn claim_events_for_fanout(
 
 #[cfg(any(test, feature = "integration-test-support"))]
 pub async fn fanout_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_id: i64,
 ) -> Result<usize, ApiError> {
     fanout_events(pool, &[event_id]).await
 }
 
 pub async fn fanout_events(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_ids: &[i64],
 ) -> Result<usize, ApiError> {
     use crate::schema::events::dsl::{
@@ -274,7 +274,7 @@ async fn insert_delivery_rows(
 
 #[cfg(test)]
 pub(crate) async fn count_event_deliveries_for_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     event_id_value: i64,
 ) -> Result<i64, ApiError> {
     use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};

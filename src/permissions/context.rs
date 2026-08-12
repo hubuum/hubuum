@@ -79,9 +79,47 @@ impl AppContext {
     }
 }
 
-impl StorageContext for AppContext {
+impl StorageContext for AppContext {}
+
+/// Application capability that combines storage access with authorization
+/// backend selection.
+///
+/// Storage-only services should accept [`StorageContext`]. Use this stronger
+/// contract only when a use case must choose between local storage-backed
+/// authorization and an external policy backend.
+pub trait AuthorizationContext: StorageContext {
+    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
+        None
+    }
+}
+
+impl AuthorizationContext for AppContext {
     fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
         Some(self.permissions.as_ref())
+    }
+}
+
+// Focused tests may use a bare storage handle to exercise the local policy
+// implementation. Production permission-aware workflows must receive an
+// AppContext so configured external-policy selection cannot be bypassed.
+#[cfg(any(test, feature = "integration-test-support"))]
+impl AuthorizationContext for StorageHandle {}
+
+impl<T> AuthorizationContext for &T
+where
+    T: AuthorizationContext + ?Sized,
+{
+    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
+        (*self).permission_backend()
+    }
+}
+
+impl<T> AuthorizationContext for Data<T>
+where
+    T: AuthorizationContext + ?Sized + 'static,
+{
+    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
+        self.as_ref().permission_backend()
     }
 }
 

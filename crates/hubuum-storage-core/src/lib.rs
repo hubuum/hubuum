@@ -22,6 +22,7 @@ mod identity_users;
 mod inventory;
 mod object_aggregate;
 mod operational;
+mod record;
 mod relation_query;
 mod remote_target;
 mod restore;
@@ -100,12 +101,13 @@ pub use identity::{
 pub use identity_operations::{
     IdentityStorage, StorageDefaultAdminBootstrap, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageExternalUserSyncBuilder,
-    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
-    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenMetadata, StorageTokenMetadataBuilder,
+    StorageGroupListQuery, StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityPage,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset,
+    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageTokenMetadataBuilder,
 };
 pub use identity_tokens::{
     StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenRenew,
@@ -133,13 +135,14 @@ pub use operational::{
     OperationalTaskStatusCounts, OperationalTaskTerminalCounts, ReadinessSnapshot,
     TokenRetentionStorage,
 };
+pub use record::StorageRecordMetadata;
 pub use relation_query::{
     BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery, RelatedObjectsForRootsQuery,
     RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
     RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation, StorageGraphClass,
     StorageGraphObject, StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
-    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRelatedSort,
+    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedSort,
 };
 pub use remote_target::{
     RemoteTargetStorage, StorageRemoteTarget, StorageRemoteTargetCreate,
@@ -176,8 +179,9 @@ pub use task_queue::{
     TaskQueueStorage,
 };
 pub use unified_search::{
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage, UnifiedSearchVisibility,
+    UnifiedSearchClass, UnifiedSearchClassBuilder, UnifiedSearchCollection, UnifiedSearchCursor,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage,
+    UnifiedSearchVisibility,
 };
 pub use worker_notifications::{StorageNotification, WorkerNotificationStorage};
 

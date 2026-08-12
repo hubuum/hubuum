@@ -51,7 +51,7 @@ pub(crate) async fn identity_scope_id_by_name_conn(
 }
 
 pub async fn identity_scope_by_name(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     scope_name: &str,
 ) -> Result<IdentityScope, ApiError> {
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
@@ -66,7 +66,7 @@ pub async fn identity_scope_by_name(
 }
 
 pub(crate) async fn identity_scope_name_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     scope_id: i32,
 ) -> Result<String, ApiError> {
     with_connection(pool, async |conn| {
@@ -80,7 +80,7 @@ pub(crate) async fn identity_scope_name_by_id(
 }
 
 pub async fn identity_scope_names_by_ids(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     scope_ids: &[i32],
 ) -> Result<HashMap<i32, String>, ApiError> {
     if scope_ids.is_empty() {
@@ -107,7 +107,7 @@ pub async fn identity_scope_names_by_ids(
 }
 
 pub async fn ensure_identity_scope(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     scope_name: &str,
     provider: &str,
 ) -> Result<IdentityScope, ApiError> {

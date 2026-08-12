@@ -187,7 +187,7 @@ async fn snapshot_history(conn: &mut PostgresConnection) -> Result<BackupHistory
 }
 
 pub(crate) async fn snapshot_backup_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     include_history: bool,
 ) -> Result<(BackupState, Option<BackupHistory>), ApiError> {
     // Ambient provenance would issue `set_config` before the snapshot's

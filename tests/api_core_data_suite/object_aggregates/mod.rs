@@ -8,7 +8,7 @@ use crate::events::EventContext;
 use crate::models::{
     ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, GroupID, HubuumObject,
     HubuumObjectID, MAX_OBJECT_AGGREGATE_CURSOR_LENGTH, NewHubuumClass, NewHubuumObject,
-    Permissions, ServiceAccountID, TokenResourceScope, UpdateHubuumObject,
+    Permissions, TokenResourceScope, UpdateHubuumObject,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
@@ -24,7 +24,7 @@ use crate::tests::{
     ObjectFixture, TestContext, create_test_group, create_test_service_account,
     resource_scoped_token, scoped_token, service_account_token, test_context,
 };
-use crate::traits::{CanDelete, CanUpdate, PermissionController};
+use crate::traits::{CanUpdate, PermissionController};
 
 async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
     let object = |name: &str, description: &str, data: serde_json::Value| NewHubuumObject {

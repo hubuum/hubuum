@@ -8,7 +8,7 @@ use crate::models::token_scope::TokenScope;
 use crate::pagination::CursorSqlMapping;
 use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::storage::postgres::operations::authz::{
-    AuthzSubject as PostgresAuthzSubject, scope_allows,
+    AuthzSubject as PostgresAuthzSubject, principal_is_admin, scope_allows,
 };
 use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::collection::CollectionRow;
@@ -30,7 +30,6 @@ use crate::storage::postgres::operations::search::{
     dynamic_sql_predicate,
 };
 use crate::traits::CursorPaginated;
-use crate::traits::PrincipalIdAccessor;
 use crate::utilities::extensions::CustomStringExtensions;
 use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
@@ -222,7 +221,7 @@ fn related_filter_groups(
 
 async fn related_object_filter_predicate<U>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     filters: &[ParsedQueryParam],
     is_admin: bool,
     scopes: Option<&TokenScope>,
@@ -288,7 +287,7 @@ where
 
 pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: QueryOptions,
     snapshot: &ComputedQuerySnapshot,
     authorized_object_ids: &AuthorizedObjectIds,
@@ -307,7 +306,7 @@ where
 
 pub(crate) async fn count_computed_objects_with_authorized_ids<U>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: QueryOptions,
     snapshot: &ComputedQuerySnapshot,
     authorized_object_ids: &AuthorizedObjectIds,
@@ -344,11 +343,11 @@ macro_rules! bind_raw_sql_query {
 pub trait UserSearchBackend: UserCollectionAccessors {
     async fn search_collections_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_collections_from_backend_with_admin_status(
             pool,
             query_options,
@@ -360,18 +359,18 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_collections_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.count_collections_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
     async fn search_collections_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -483,7 +482,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_collections_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -583,29 +582,29 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_classes_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_classes_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
     async fn count_classes_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.count_classes_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
     async fn search_classes_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -728,7 +727,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_classes_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -819,29 +818,29 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
     async fn count_objects_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
     async fn search_objects_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -853,7 +852,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_with_computed_query_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -866,7 +865,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_from_backend_with_query_plan(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_plan: ObjectQueryPlan<'_>,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1022,7 +1021,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_objects_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1034,7 +1033,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_objects_with_computed_query_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1047,7 +1046,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_objects_from_backend_with_query_plan(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_plan: ObjectQueryPlan<'_>,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1157,11 +1156,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_class_relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_class_relations_from_backend_with_admin_status(
             pool,
             query_options,
@@ -1173,11 +1172,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn class_relations_page_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.class_relations_page_from_backend_with_admin_status(
             pool,
             query_options,
@@ -1189,7 +1188,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_class_relations_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1207,7 +1206,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn class_relations_page_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1413,7 +1412,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn class_relations_touching_page_from_backend<K>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: K,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
@@ -1421,7 +1420,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         K: SelfAccessors<HubuumClass>,
     {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.class_relations_touching_page_from_backend_with_admin_status(
             pool,
             class,
@@ -1434,7 +1433,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn class_relations_touching_page_from_backend_with_admin_status<K>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
@@ -1571,11 +1570,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_class_relations_between_ids_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_ids: &[i32],
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_class_relations_between_ids_from_backend_with_admin_status(
             pool, class_ids, is_admin, scopes,
         )
@@ -1584,7 +1583,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_class_relations_touching_ids_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_ids: &[i32],
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1660,7 +1659,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_class_relations_between_ids_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_ids: &[i32],
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1730,7 +1729,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_classes_related_to_from_backend<K>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: K,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
@@ -1738,7 +1737,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         K: SelfAccessors<HubuumClass>,
     {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_classes_related_to_from_backend_with_admin_status(
             pool,
             class,
@@ -1751,7 +1750,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn classes_related_to_page_from_backend<K>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: K,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
@@ -1759,7 +1758,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         K: SelfAccessors<HubuumClass>,
     {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.classes_related_to_page_from_backend_with_admin_status(
             pool,
             class,
@@ -1772,7 +1771,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_classes_related_to_from_backend_with_admin_status<K>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
@@ -1812,7 +1811,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn classes_related_to_page_from_backend_with_admin_status<K>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
@@ -1867,11 +1866,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_object_relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_object_relations_from_backend_with_admin_status(
             pool,
             query_options,
@@ -1883,11 +1882,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn object_relations_page_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.object_relations_page_from_backend_with_admin_status(
             pool,
             query_options,
@@ -1899,7 +1898,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_object_relations_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -1917,7 +1916,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn object_relations_page_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -2058,7 +2057,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn object_relations_touching_page_from_backend<O>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object: O,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
@@ -2066,7 +2065,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         O: SelfAccessors<HubuumObject>,
     {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.object_relations_touching_page_from_backend_with_admin_status(
             pool,
             object,
@@ -2079,7 +2078,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn object_relations_touching_page_from_backend_with_admin_status<O>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
@@ -2235,11 +2234,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_object_relations_between_ids_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_ids: &[i32],
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_object_relations_between_ids_from_backend_with_admin_status(
             pool, object_ids, is_admin, scopes,
         )
@@ -2248,7 +2247,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_object_relations_touching_ids_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_ids: &[i32],
         excluded_relation_ids: &[i32],
         max_results: usize,
@@ -2331,7 +2330,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_object_relations_between_ids_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_ids: &[i32],
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -2408,7 +2407,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_related_to_from_backend<O>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object: O,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
@@ -2416,7 +2415,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.search_objects_related_to_from_backend_with_admin_status(
             pool,
             object,
@@ -2429,7 +2428,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn objects_related_to_page_from_backend<O>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object: O,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
@@ -2437,7 +2436,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.objects_related_to_page_from_backend_with_admin_status(
             pool,
             object,
@@ -2450,7 +2449,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_related_to_from_backend_with_admin_status<O>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
@@ -2491,7 +2490,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn objects_related_to_page_from_backend_with_admin_status<O>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
@@ -2547,12 +2546,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn related_objects_for_roots_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         root_object_ids: &[i32],
         include: ExportIncludeRelatedQuery,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.related_objects_for_roots_from_backend_with_admin_status(
             pool,
             root_object_ids,
@@ -2565,7 +2564,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn related_objects_for_roots_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         root_object_ids: &[i32],
         include: ExportIncludeRelatedQuery,
         is_admin: bool,
@@ -2587,7 +2586,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         root_object_ids: &[i32],
         include: ExportIncludeRelatedQuery,
         is_admin: bool,
@@ -2609,13 +2608,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn bidirectionally_related_objects_for_roots_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
             pool,
             root_object_ids,
@@ -2629,7 +2628,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
@@ -2653,7 +2652,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn bidirectionally_related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
@@ -2686,7 +2685,7 @@ struct DirectionalRootGraphQuery<'a> {
 
 async fn related_objects_for_roots_query<U>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     request: DirectionalRootGraphQuery<'_>,
 ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
 where
@@ -2767,7 +2766,7 @@ struct BidirectionalRootGraphQuery<'a> {
 
 async fn bidirectionally_related_objects_for_roots_query<U>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     request: BidirectionalRootGraphQuery<'_>,
 ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
 where
@@ -3218,7 +3217,7 @@ where
 
 async fn build_related_classes_query_spec<U, K>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     class: K,
     query_options: QueryOptions,
     is_admin: bool,
@@ -3286,7 +3285,7 @@ where
 
 async fn build_related_objects_query_spec<U, O>(
     user: &U,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     object: O,
     query_options: QueryOptions,
     is_admin: bool,
@@ -4550,7 +4549,7 @@ impl<T: ?Sized> UserSearchBackend for T where T: UserCollectionAccessors {}
 
 impl User {
     pub(crate) async fn search_user_records(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
         use crate::schema::identity_scopes;
@@ -4652,14 +4651,14 @@ impl User {
 
     pub async fn search_users(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
         Self::search_user_records(pool, query_options).await
     }
 
     pub(crate) async fn count_user_search_records(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
         use crate::schema::identity_scopes;
@@ -4715,15 +4714,14 @@ impl User {
 
     pub async fn count_users(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
         Self::count_user_search_records(pool, query_options).await
     }
 
-    pub async fn search_groups(
-        &self,
-        pool: &impl crate::storage::StorageContext,
+    pub(crate) async fn search_group_records(
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
     ) -> Result<Vec<Group>, ApiError> {
         use crate::schema::groups::dsl::{
@@ -4736,7 +4734,6 @@ impl User {
         debug!(
             message = "Searching groups",
             stage = "Starting",
-            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
@@ -4782,9 +4779,8 @@ impl User {
         Ok(result.into_iter().map(Into::into).collect())
     }
 
-    pub async fn count_groups(
-        &self,
-        pool: &impl crate::storage::StorageContext,
+    pub(crate) async fn count_group_search_records(
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
         use crate::schema::groups::dsl::{

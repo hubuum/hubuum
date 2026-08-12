@@ -12,14 +12,16 @@ use crate::models::{
     UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetObject;
-use crate::storage::postgres::operations::class::{HubuumClassRow, lock_resolved_class_target};
+use crate::storage::postgres::operations::class::{
+    HubuumClassRow, LoadClassRecord, lock_resolved_class_target,
+};
 use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::computed_field::{
     acquire_computed_class_shared_lock, materialize_object_in_transaction,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::traits::{ClassAccessors, CursorPaginated, CursorValue, SelfAccessors};
+use crate::traits::{CursorPaginated, CursorValue, SelfAccessors};
 
 /// PostgreSQL representation of an object row.
 ///
@@ -355,7 +357,7 @@ async fn persist_locked_object_delete(
 impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
     async fn object_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::schema::hubuumobject::dsl as obj;
         use crate::schema::hubuumobject_relation::dsl as obj_rel;
@@ -390,7 +392,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
 impl GetObject<(HubuumObject, HubuumObject)> for NewHubuumObjectRelation {
     async fn object_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
         let objects = with_connection(pool, async |conn| {
@@ -417,7 +419,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for NewHubuumObjectRelation {
 impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelation {
     async fn object_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::schema::hubuumobject::dsl as obj;
         use crate::schema::hubuumobject_relation::dsl as obj_rel;
@@ -452,14 +454,14 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelation {
 pub trait LoadObjectRecord {
     async fn load_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError>;
 }
 
 impl LoadObjectRecord for HubuumObject {
     async fn load_object_record(
         &self,
-        _pool: &impl crate::storage::StorageContext,
+        _pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError> {
         Ok(self.clone())
     }
@@ -468,7 +470,7 @@ impl LoadObjectRecord for HubuumObject {
 impl LoadObjectRecord for HubuumObjectID {
     async fn load_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
@@ -486,12 +488,12 @@ impl LoadObjectRecord for HubuumObjectID {
 pub trait CreateObjectRecord {
     async fn create_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError>;
 
     async fn create_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
         let _ = context;
@@ -502,7 +504,7 @@ pub trait CreateObjectRecord {
 impl CreateObjectRecord for NewHubuumObject {
     async fn create_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError> {
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
             persist_new_object(conn, self, None).await
@@ -512,7 +514,7 @@ impl CreateObjectRecord for NewHubuumObject {
 
     async fn create_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
         let Some(context) = context else {
@@ -529,7 +531,7 @@ impl CreateObjectRecord for NewHubuumObject {
 pub trait CreateObjectInResolvedClassRecord {
     async fn create_object_in_resolved_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>;
@@ -538,7 +540,7 @@ pub trait CreateObjectInResolvedClassRecord {
 impl CreateObjectInResolvedClassRecord for NewHubuumObject {
     async fn create_object_in_resolved_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
@@ -571,17 +573,17 @@ impl ValidateObjectSchema for NewHubuumObject {
 pub trait ValidateObjectRecord {
     async fn validate_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 }
 
 impl ValidateObjectRecord for HubuumObject {
     async fn validate_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         let class = HubuumClassID::new(self.hubuum_class_id)?
-            .class(pool)
+            .load_class_record(pool)
             .await?;
 
         if class.validate_schema
@@ -596,10 +598,10 @@ impl ValidateObjectRecord for HubuumObject {
 impl ValidateObjectRecord for NewHubuumObject {
     async fn validate_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         let class = HubuumClassID::new(self.hubuum_class_id)?
-            .class(pool)
+            .load_class_record(pool)
             .await?;
 
         self.validate_for_class(&class)
@@ -609,13 +611,15 @@ impl ValidateObjectRecord for NewHubuumObject {
 impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
     async fn validate_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         let (update_obj, object_id) = self;
-        let original = HubuumObjectID::new(*object_id)?.instance(pool).await?;
+        let original = HubuumObjectID::new(*object_id)?
+            .load_object_record(pool)
+            .await?;
         let merged = original.merge_update(update_obj);
         let class = HubuumClassID::new(merged.hubuum_class_id)?
-            .class(pool)
+            .load_class_record(pool)
             .await?;
 
         if merged.collection_id != class.collection_id {
@@ -637,12 +641,12 @@ impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
 pub trait SaveObjectRecord {
     async fn save_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError>;
 
     async fn save_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
         let _ = context;
@@ -653,7 +657,7 @@ pub trait SaveObjectRecord {
 impl SaveObjectRecord for HubuumObject {
     async fn save_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError> {
         let updated_object = UpdateHubuumObject {
             name: Some(self.name.clone()),
@@ -673,7 +677,7 @@ impl SaveObjectRecord for HubuumObject {
 
     async fn save_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
         let updated_object = UpdateHubuumObject {
@@ -696,7 +700,7 @@ impl SaveObjectRecord for HubuumObject {
 impl SaveObjectRecord for NewHubuumObject {
     async fn save_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObject, ApiError> {
         self.validate_object_record(pool).await?;
         self.create_object_record_without_events(pool).await
@@ -704,7 +708,7 @@ impl SaveObjectRecord for NewHubuumObject {
 
     async fn save_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
         self.validate_object_record(pool).await?;
@@ -715,13 +719,13 @@ impl SaveObjectRecord for NewHubuumObject {
 pub trait UpdateObjectRecord {
     async fn update_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_id: i32,
     ) -> Result<HubuumObject, ApiError>;
 
     async fn update_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_id: i32,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
@@ -734,7 +738,7 @@ pub trait UpdateObjectRecord {
 impl UpdateObjectRecord for UpdateHubuumObject {
     async fn update_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_id: i32,
     ) -> Result<HubuumObject, ApiError> {
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
@@ -746,7 +750,7 @@ impl UpdateObjectRecord for UpdateHubuumObject {
 
     async fn update_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         object_id: i32,
         context: Option<&EventContext>,
     ) -> Result<HubuumObject, ApiError> {
@@ -767,7 +771,7 @@ impl UpdateObjectRecord for UpdateHubuumObject {
 pub trait PatchObjectDataRecord {
     async fn patch_object_data_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>;
@@ -815,14 +819,14 @@ async fn persist_locked_object_data_patch(
 pub trait ResolveObjectSelectorRecord {
     async fn resolve_object_selector_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumClass, HubuumObject), ApiError>;
 }
 
 impl ResolveObjectSelectorRecord for ObjectSelector {
     async fn resolve_object_selector_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumClass, HubuumObject), ApiError> {
         use crate::schema::hubuumclass::dsl as class;
         use crate::schema::hubuumobject::dsl as object;
@@ -948,7 +952,7 @@ async fn lock_resolved_object_target(
 impl PatchObjectDataRecord for ObjectDataPatchDocument {
     async fn patch_object_data_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
@@ -963,7 +967,7 @@ impl PatchObjectDataRecord for ObjectDataPatchDocument {
 pub trait UpdateResolvedObjectRecord {
     async fn update_resolved_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>;
@@ -972,7 +976,7 @@ pub trait UpdateResolvedObjectRecord {
 impl UpdateResolvedObjectRecord for UpdateHubuumObject {
     async fn update_resolved_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
@@ -987,7 +991,7 @@ impl UpdateResolvedObjectRecord for UpdateHubuumObject {
 pub trait DeleteResolvedObjectRecord {
     async fn delete_resolved_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: &EventContext,
     ) -> Result<(), ApiError>;
 }
@@ -995,7 +999,7 @@ pub trait DeleteResolvedObjectRecord {
 impl DeleteResolvedObjectRecord for ResolvedObjectTarget {
     async fn delete_resolved_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: &EventContext,
     ) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
@@ -1009,12 +1013,12 @@ impl DeleteResolvedObjectRecord for ResolvedObjectTarget {
 pub trait DeleteObjectRecord {
     async fn delete_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -1025,7 +1029,7 @@ pub trait DeleteObjectRecord {
 impl DeleteObjectRecord for HubuumObject {
     async fn delete_object_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
@@ -1040,7 +1044,7 @@ impl DeleteObjectRecord for HubuumObject {
 
     async fn delete_object_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -1065,14 +1069,14 @@ impl DeleteObjectRecord for HubuumObject {
 pub trait ObjectCollectionLookup {
     async fn lookup_object_collection(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError>;
 }
 
 impl ObjectCollectionLookup for HubuumObject {
     async fn lookup_object_collection(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
@@ -1090,7 +1094,7 @@ impl ObjectCollectionLookup for HubuumObject {
 impl ObjectCollectionLookup for HubuumObjectID {
     async fn lookup_object_collection(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError> {
         self.load_object_record(pool)
             .await?
@@ -1102,14 +1106,14 @@ impl ObjectCollectionLookup for HubuumObjectID {
 pub trait ObjectClassLookup {
     async fn lookup_object_class(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError>;
 }
 
 impl ObjectClassLookup for HubuumObject {
     async fn lookup_object_class(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
@@ -1127,7 +1131,7 @@ impl ObjectClassLookup for HubuumObject {
 impl ObjectClassLookup for HubuumObjectID {
     async fn lookup_object_class(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         self.load_object_record(pool)
             .await?

@@ -12,7 +12,7 @@ use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
-    PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
+    AuthorizationContext, PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
 use crate::services::unified_search as unified_search_service;
 use crate::storage::StorageContext;
@@ -700,7 +700,7 @@ pub async fn execute_unified_search<C, S>(
     scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: AuthzSubject + ?Sized,
 {
     let search_spec = params.search_spec();
@@ -801,7 +801,7 @@ pub async fn execute_unified_search_batch<C, S>(
     scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
     S: AuthzSubject + ?Sized,
 {
     let search_spec = params.search_spec();

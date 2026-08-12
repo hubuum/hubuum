@@ -1,6 +1,6 @@
 use super::*;
 use crate::models::token_scope::TokenScope;
-use crate::storage::postgres::operations::authz::{AuthzSubject, scope_allows};
+use crate::storage::postgres::operations::authz::{AuthzSubject, principal_is_admin, scope_allows};
 use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::group::GroupRow;
 use diesel_async::RunQueryDsl;
@@ -8,7 +8,7 @@ use diesel_async::RunQueryDsl;
 pub trait LoadUserGroups: AuthzSubject {
     async fn load_user_groups(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<Group>, ApiError>;
 }
 
@@ -18,7 +18,7 @@ where
 {
     async fn load_user_groups(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<Group>, ApiError> {
         use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
         use crate::schema::groups::dsl::*;
@@ -40,7 +40,7 @@ where
 pub trait LoadUserGroupsPaginated: AuthzSubject {
     async fn load_user_groups_paginated_with_total_count(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<Group>, i64), ApiError>;
 }
@@ -51,7 +51,7 @@ where
 {
     async fn load_user_groups_paginated_with_total_count(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<Group>, i64), ApiError> {
         use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
@@ -125,14 +125,14 @@ pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
     ///   select a descendant without exposing its parent collection.
     async fn load_collections_with_permissions<'a, I>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         permissions_list: &'a I,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        let is_admin = crate::traits::AuthzSubject::is_admin(self, pool).await?;
+        let is_admin = principal_is_admin(pool, self.principal_id()).await?;
         self.load_collections_with_permissions_with_admin_status(
             pool,
             permissions_list,
@@ -144,7 +144,7 @@ pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
 
     async fn load_collections_with_permissions_with_admin_status<'a, I>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         permissions_list: &'a I,
         is_admin: bool,
         scopes: Option<&TokenScope>,
@@ -159,7 +159,7 @@ where
 {
     async fn load_collections_with_permissions_with_admin_status<'a, I>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         permissions_list: &'a I,
         is_admin: bool,
         scopes: Option<&TokenScope>,

@@ -36,9 +36,16 @@
   capabilities. Application consumers may pass `AppContext`, `StorageHandle`,
   or a `StorageContext`, but must not acquire, name, or select a
   `PostgresPool`.
-  Backend implementations may recover their configured connection pool behind
-  that sealed boundary; direct `PostgresPool` compatibility is internal migration
-  machinery, not an application-layer escape hatch.
+  A `StorageContext` must preserve and return its already configured opaque
+  handle; it must not expose a pool accessor, reconstruct a backend from one,
+  or carry permission-backend selection. Permission-aware use cases require the
+  stronger `AuthorizationContext`; storage-only code should not depend on it.
+  PostgreSQL adapter helpers accept `PostgresPool` explicitly inside
+  `src/storage/postgres/*`; direct `PostgresPool` context compatibility exists
+  only for focused tests. Application code must not rely on it, and production
+  composition always uses the opaque handle. Likewise, only `AppContext`
+  provides production authorization selection; a bare storage handle must not
+  silently bypass a configured external policy backend.
 - Keep storage capabilities aggregate- or query-shaped rather than table-shaped.
   Every selectable backend must implement the complete storage contract; focused
   in-memory models may exercise shared logical contracts but must not be exposed

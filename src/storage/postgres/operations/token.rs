@@ -147,7 +147,7 @@ struct NewTokenObjectScope {
 }
 
 pub(crate) async fn principal_token_metadata_by_ids_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     token_ids: Vec<i32>,
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     if token_ids.is_empty() {
@@ -197,7 +197,7 @@ pub(crate) async fn principal_token_metadata_conn(
 }
 
 pub async fn principal_token_metadata_by_id_for_principal_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     token_id_value: i32,
     principal_id_value: i32,
 ) -> Result<PrincipalTokenMetadata, ApiError> {
@@ -295,7 +295,7 @@ pub(crate) async fn revoke_all_tokens_for_principal_conn(
 }
 
 pub async fn revoke_token_by_id_for_principal_without_events_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     token_id: i32,
     principal: i32,
 ) -> Result<usize, ApiError> {
@@ -315,7 +315,7 @@ pub async fn revoke_token_by_id_for_principal_without_events_db(
 }
 
 pub async fn revoke_token_by_id_for_principal_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     token_id: i32,
     principal: i32,
     context: Option<&EventContext>,
@@ -384,7 +384,7 @@ pub async fn revoke_token_by_id_for_principal_db(
 }
 
 pub(crate) async fn create_principal_token_hashed_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     request: PrincipalTokenCreateParts,
     token_hash: String,
     issuance_policy: TokenIssuancePolicy,
@@ -406,7 +406,7 @@ pub(crate) async fn create_principal_token_hashed_db(
 }
 
 pub(crate) async fn renew_principal_token_hashed_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     source_token_id: i32,
     principal: i32,
     token_hash: String,
@@ -657,7 +657,7 @@ async fn create_principal_token_parts_conn(
 }
 
 pub(crate) async fn revoke_token_by_hash_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal: Option<i32>,
     token_hash: String,
 ) -> Result<usize, ApiError> {
@@ -689,7 +689,7 @@ pub(crate) async fn revoke_token_by_hash_db(
 }
 
 pub(crate) async fn revoke_all_tokens_for_principal_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal: PrincipalID,
 ) -> Result<usize, ApiError> {
     with_connection(pool, async |conn| {

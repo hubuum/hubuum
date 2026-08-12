@@ -129,7 +129,7 @@ pub async fn remote_call_result(
 
 /// Count audit events through the PostgreSQL test adapter boundary.
 pub async fn audit_event_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &PostgresPool,
     entity_type_value: crate::events::EntityType,
     action_value: crate::events::Action,
     entity_id_value: i32,
@@ -139,7 +139,7 @@ pub async fn audit_event_count(
 
 /// Count all audit events for one typed entity through test support.
 pub async fn audit_event_total(
-    pool: &impl crate::storage::StorageContext,
+    pool: &PostgresPool,
     entity_type: EntityType,
     entity_id: i32,
 ) -> Result<i64, ApiError> {
@@ -148,7 +148,7 @@ pub async fn audit_event_total(
 
 /// Load typed audit responses for one entity through test support.
 pub async fn audit_events(
-    pool: &impl crate::storage::StorageContext,
+    pool: &PostgresPool,
     entity_type: EntityType,
     entity_id: i32,
     action: Option<Action>,
@@ -158,16 +158,29 @@ pub async fn audit_events(
         .map(|events| events.into_iter().map(EventResponse::from).collect())
 }
 
-/// Append one validated audit event through PostgreSQL test support.
+/// Test-fixture capability for appending one validated audit event.
+///
+/// Request-level tests depend on this narrow operation instead of naming the
+/// PostgreSQL pool used by the current integration harness.
+pub trait AuditEventFixture: Send + Sync {
+    async fn create_audit_event(&self, event: &NewEvent) -> Result<EventResponse, ApiError>;
+}
+
+impl AuditEventFixture for PostgresPool {
+    async fn create_audit_event(&self, event: &NewEvent) -> Result<EventResponse, ApiError> {
+        use crate::storage::postgres::with_connection;
+
+        with_connection(self, async |conn| emit_event(conn, event).await)
+            .await
+            .map(EventResponse::from)
+    }
+}
+
 pub async fn create_audit_event(
-    pool: &impl crate::storage::StorageContext,
+    fixture: &impl AuditEventFixture,
     event: &NewEvent,
 ) -> Result<EventResponse, ApiError> {
-    use crate::storage::postgres::with_connection;
-
-    with_connection(pool, async |conn| emit_event(conn, event).await)
-        .await
-        .map(EventResponse::from)
+    fixture.create_audit_event(event).await
 }
 
 /// Emit, fan out, and load one collection event delivery for request tests.

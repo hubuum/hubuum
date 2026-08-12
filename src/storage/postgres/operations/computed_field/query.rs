@@ -1,7 +1,7 @@
 use super::*;
 
 pub async fn resolve_computed_query_fields(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
     personal_owner_id: Option<i32>,
     filters: &mut [ParsedQueryParam],

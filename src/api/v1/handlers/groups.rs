@@ -9,10 +9,11 @@ use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    Group, GroupPointResponse, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse,
+    GroupPointResponse, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
+use crate::services::groups::list as list_groups;
 use crate::services::identity::load_principal_group;
 use crate::storage::with_revision_precondition;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
@@ -44,7 +45,6 @@ pub async fn get_groups(
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user.clone();
     let query_string = req.query_string();
 
     let params = match parse_query_parameter(query_string) {
@@ -58,14 +58,7 @@ pub async fn get_groups(
         params = ?params
     );
 
-    let total_count = if params.include_total {
-        user.count_groups(&context, count_query_options(&params))
-            .await?
-    } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
-    let search_params = prepare_db_pagination::<Group>(&params)?;
-    let groups = user.search_groups(&context, search_params).await?;
+    let (groups, total_count) = list_groups(&context, &params).await?;
     let result = GroupResponse::from_groups(&context, groups).await?;
 
     ApiResponse::paginated(result, total_count, &params)

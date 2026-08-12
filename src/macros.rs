@@ -96,7 +96,7 @@ macro_rules! can {
             return Err($crate::errors::ApiError::Forbidden("Permission denied".to_string()));
         }
 
-        match $crate::storage::StorageContext::permission_backend(backend) {
+        match $crate::permissions::AuthorizationContext::permission_backend(backend) {
             Some(permission_backend) if !permission_backend.uses_local_permission_store() => {
                 $crate::permissions::authorize_resources(
                     permission_backend,

@@ -73,32 +73,19 @@ fn principal_group_from_storage(group: StoragePrincipalGroup) -> Result<Principa
     })
 }
 
-fn identity_group_from_storage(group: StorageIdentityGroup) -> Result<Group, ApiError> {
-    let (
-        id,
-        groupname,
-        description,
-        identity_scope_id,
-        managed_by,
-        external_key,
-        last_sync_attempted_at,
-        last_sync_success_at,
-        created_at,
-        updated_at,
-        group_revision,
-    ) = group.into_parts();
+pub(super) fn identity_group_from_storage(group: StorageIdentityGroup) -> Result<Group, ApiError> {
     Ok(Group {
-        id,
-        groupname,
-        description,
-        created_at,
-        updated_at,
-        identity_scope_id,
-        managed_by,
-        external_key,
-        last_sync_attempted_at,
-        last_sync_success_at,
-        revision: revision(group_revision, "group")?,
+        id: group.id(),
+        groupname: group.name().to_string(),
+        description: group.description().to_string(),
+        created_at: group.created_at(),
+        updated_at: group.updated_at(),
+        identity_scope_id: group.identity_scope_id(),
+        managed_by: group.managed_by().to_string(),
+        external_key: group.external_key().map(ToString::to_string),
+        last_sync_attempted_at: group.last_sync_attempted_at(),
+        last_sync_success_at: group.last_sync_success_at(),
+        revision: revision(group.revision(), "group")?,
     })
 }
 

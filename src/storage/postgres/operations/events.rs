@@ -23,7 +23,7 @@ pub struct EventListFilters {
 }
 
 pub async fn list_events_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     accessible_collection_ids: &[i32],
     include_collection_less: bool,
     filters: &EventListFilters,
@@ -222,7 +222,7 @@ fn event_response_for_visibility(
 }
 
 async fn apply_legacy_task_provenance(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     events_to_enrich: &mut [Event],
 ) -> Result<(), ApiError> {
     let task_ids = events_to_enrich
@@ -255,7 +255,7 @@ async fn apply_legacy_task_provenance(
 }
 
 pub(crate) async fn load_queued_task_initiators(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_ids: &[i32],
 ) -> Result<HashMap<i32, Option<i32>>, ApiError> {
     use crate::schema::events::dsl as stored;

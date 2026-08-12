@@ -12,7 +12,8 @@ use crate::models::{
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
-    PermissionDecision, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
+    AuthorizationContext, PermissionDecision, PrincipalRef, ResourceAttrs, ResourceKind,
+    ResourceRef,
 };
 use crate::storage::{
     AuthenticationStorage, ComputedFieldLifecycleStorage, StorageBackupOutput,
@@ -361,7 +362,7 @@ pub(crate) async fn find_task(
 }
 
 pub(crate) async fn load_authorized_task<S>(
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
 ) -> Result<TaskRecord, ApiError>
@@ -372,7 +373,7 @@ where
 }
 
 pub(crate) async fn load_authorized_import<S>(
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
 ) -> Result<TaskRecord, ApiError>
@@ -391,7 +392,7 @@ where
 }
 
 pub(crate) async fn load_authorized_export<S>(
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
 ) -> Result<TaskRecord, ApiError>
@@ -410,7 +411,7 @@ where
 }
 
 pub(crate) async fn load_authorized_backup<S>(
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
 ) -> Result<TaskRecord, ApiError>
@@ -429,7 +430,7 @@ where
 }
 
 async fn load_authorized_task_of_kind<S>(
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
     required_kind: Option<TaskKind>,

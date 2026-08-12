@@ -39,10 +39,7 @@ use tracing::{debug, warn};
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::events::MutationProvenance;
 use crate::observability::metrics::{self, ResultKind};
-use crate::storage::context::postgres_pool;
-use crate::storage::{
-    StorageCallSite, StorageContext, StorageQueryBudget, StorageRevisionPrecondition,
-};
+use crate::storage::{StorageCallSite, StorageQueryBudget, StorageRevisionPrecondition};
 
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
@@ -489,9 +486,8 @@ impl TransactionLocalContext {
 /// Note: block closures that use `?` and end with `Ok(...)` may require an explicit closure
 /// return type, for example:
 /// `with_connection(pool, async |conn| -> Result<_, diesel::result::Error> { ... }).await`
-pub async fn with_connection<C, F, R, E>(backend: &C, f: F) -> Result<R, ApiError>
+pub async fn with_connection<F, R, E>(pool: &PostgresPool, f: F) -> Result<R, ApiError>
 where
-    C: StorageContext + ?Sized,
     F: for<'conn> AsyncFnOnce(&'conn mut PostgresConnection) -> Result<R, E>
         + for<'conn> SendAsyncFn<&'conn mut PostgresConnection, Result<R, E>, Fut: Send>
         + Send,
@@ -499,14 +495,13 @@ where
     E: Send,
     ApiError: From<E>,
 {
-    with_connection_timeout(backend, ambient_statement_timeout(), f).await
+    with_connection_timeout(pool, ambient_statement_timeout(), f).await
 }
 
 /// Compatibility alias retained while callers migrate from the former
 /// `spawn_blocking` bridge. Both helpers now execute non-blocking database I/O.
-pub async fn with_connection_async<C, F, R, E>(backend: C, f: F) -> Result<R, ApiError>
+pub async fn with_connection_async<F, R, E>(pool: &PostgresPool, f: F) -> Result<R, ApiError>
 where
-    C: StorageContext,
     F: for<'conn> AsyncFnOnce(&'conn mut PostgresConnection) -> Result<R, E>
         + for<'conn> SendAsyncFn<&'conn mut PostgresConnection, Result<R, E>, Fut: Send>
         + Send,
@@ -514,16 +509,15 @@ where
     E: Send,
     ApiError: From<E>,
 {
-    with_connection_context(&backend, TransactionLocalContext::ambient(), f).await
+    with_connection_context(pool, TransactionLocalContext::ambient(), f).await
 }
 
-async fn with_connection_context<C, F, R, E>(
-    backend: &C,
+async fn with_connection_context<F, R, E>(
+    pool: &PostgresPool,
     context: TransactionLocalContext,
     f: F,
 ) -> Result<R, ApiError>
 where
-    C: StorageContext + ?Sized,
     F: for<'conn> AsyncFnOnce(&'conn mut PostgresConnection) -> Result<R, E>
         + for<'conn> SendAsyncFn<&'conn mut PostgresConnection, Result<R, E>, Fut: Send>
         + Send,
@@ -532,7 +526,7 @@ where
     ApiError: From<E>,
 {
     let call_site = ambient_db_call_site();
-    let mut conn = acquire_connection(postgres_pool(backend)).await?;
+    let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
     let result = if context.is_empty() {
         f(&mut conn).await.map_err(ApiError::from)
@@ -586,13 +580,12 @@ pub async fn updated_or_current<T, E>(
 /// [`with_connection`]" guidance, but the transaction here exists solely to
 /// scope `SET LOCAL`, not for multi-statement atomicity, and is encapsulated in
 /// this one helper rather than imposed on callers.
-pub async fn with_connection_timeout<C, F, R, E>(
-    backend: &C,
+pub async fn with_connection_timeout<F, R, E>(
+    pool: &PostgresPool,
     statement_timeout: Option<StorageQueryBudget>,
     f: F,
 ) -> Result<R, ApiError>
 where
-    C: StorageContext + ?Sized,
     F: for<'conn> AsyncFnOnce(&'conn mut PostgresConnection) -> Result<R, E>
         + for<'conn> SendAsyncFn<&'conn mut PostgresConnection, Result<R, E>, Fut: Send>
         + Send,
@@ -601,7 +594,7 @@ where
     ApiError: From<E>,
 {
     with_connection_context(
-        backend,
+        pool,
         TransactionLocalContext::with_statement_timeout(statement_timeout),
         f,
     )
@@ -627,9 +620,8 @@ where
 /// [`ApiError`]. Block closures that end with `Ok(...)` may need an explicit closure return type,
 /// for example:
 /// `with_transaction(pool, async |conn| -> Result<_, ApiError> { ... }).await`
-pub async fn with_transaction<C, F, R, E>(backend: &C, f: F) -> Result<R, ApiError>
+pub async fn with_transaction<F, R, E>(pool: &PostgresPool, f: F) -> Result<R, ApiError>
 where
-    C: StorageContext,
     F: for<'conn> AsyncFnOnce(&'conn mut PostgresConnection) -> Result<R, E>
         + for<'conn> SendAsyncFn<&'conn mut PostgresConnection, Result<R, E>, Fut: Send>
         + Send,
@@ -639,7 +631,7 @@ where
 {
     let context = TransactionLocalContext::ambient();
     let call_site = ambient_db_call_site();
-    let mut conn = acquire_connection(postgres_pool(backend)).await?;
+    let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
     let result = crate::logger::defer_operation_mutation_logs_until_commit(
         conn.transaction::<R, ApiError, _>(async move |conn| {

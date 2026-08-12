@@ -6,10 +6,11 @@ use crate::models::{
     NewTaskEventRecord, TaskResultCounts, TaskStatus, TokenScope,
 };
 use crate::observability::metrics;
+use crate::permissions::AuthorizationContext;
 use crate::services::tasks::{
     ClaimedTask, TaskStateChange, append_task_event, complete_task, update_task_state,
 };
-use crate::storage::{ImportStorage, StorageContext, StorageTaskCompletionArtifact};
+use crate::storage::{ImportStorage, StorageTaskCompletionArtifact};
 
 use super::helpers::{
     flush_import_result_batches, import_failure_outcome, sanitize_error_for_storage,
@@ -24,7 +25,7 @@ pub(super) async fn execute_import_task<C>(
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let total_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Total);
     let pool = backend;

@@ -17,22 +17,24 @@ use crate::models::object_aggregate::{
     ObjectAggregateSort, ObjectAggregateSpec,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::{CollectionID, Permissions, TokenScope, UserID};
+use crate::models::{Permissions, TokenScope, UserID};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, prepare_db_pagination,
 };
-use crate::storage::postgres::operations::authorization::permission_from_storage;
+use crate::storage::postgres::operations::authorization::{
+    authorize_local_collections, permission_from_storage, permission_to_storage,
+};
 use crate::storage::postgres::operations::authz::scope_allows;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, resolve_computed_query_fields,
 };
 use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
 use crate::storage::{
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorageQuery,
-    StorageObjectAggregateMeasureState, StorageObjectAggregateMeasureValue,
-    StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSort,
+    AuthorizationCollectionsAccessQuery, ObjectAggregateAuthorizationMode,
+    ObjectAggregateAuthorizer, ObjectAggregateStorageQuery, StorageObjectAggregateMeasureState,
+    StorageObjectAggregateMeasureValue, StorageObjectAggregatePage, StorageObjectAggregateRow,
+    StorageObjectAggregateSort,
 };
-use crate::traits::UserPermissions;
 
 use self::accumulator::{
     ExternalAggregateAccumulator, create_aggregate_accumulator, merge_aggregate_rows,
@@ -88,7 +90,7 @@ impl ObjectAggregatePaging {
 
     async fn resolve_computed_filters(
         &mut self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_id: i32,
         personal_owner_id: Option<i32>,
     ) -> Result<(), ApiError> {
@@ -223,21 +225,36 @@ where
             "admin",
         );
     } else {
-        let collection = CollectionID::new(execution.target.collection_id)?;
-        match user
-            .can(
-                execution.pool,
-                execution.required_permissions.iter().copied(),
-                [collection],
-                execution.token_scopes,
-            )
-            .await
-        {
-            Ok(()) => {}
-            Err(ApiError::Forbidden(_)) => {
-                return empty_aggregate_page(&execution.paging.query_options);
-            }
-            Err(error) => return Err(error),
+        let allowed = authorize_local_collections(
+            execution.pool,
+            AuthorizationCollectionsAccessQuery::new(
+                user.principal_id(),
+                [execution.target.collection_id],
+                execution
+                    .required_permissions
+                    .iter()
+                    .copied()
+                    .map(permission_to_storage),
+            ),
+        )
+        .await?;
+        if allowed {
+            crate::logger::log_authorization_grant(
+                user.principal_id(),
+                &execution.required_permissions,
+                Some(1),
+                Some(execution.target.collection_id),
+                "permissions",
+            );
+        } else {
+            crate::logger::log_authorization_denial(
+                user.principal_id(),
+                &execution.required_permissions,
+                Some(1),
+                Some(execution.target.collection_id),
+                "permissions",
+            );
+            return empty_aggregate_page(&execution.paging.query_options);
         }
     }
 

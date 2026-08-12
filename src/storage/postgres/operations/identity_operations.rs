@@ -1,15 +1,16 @@
 use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserProfile};
 use hubuum_storage_core::{
     AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityGroup,
-    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupListQuery,
+    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenRenew,
-    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    StorageRecordMetadata, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate,
 };
 
 use crate::errors::ApiError;
@@ -22,13 +23,13 @@ use crate::models::{
 use crate::pagination::count_query_options;
 use crate::storage::postgres::operations::service_account::{
     DisableServiceAccount, SaveServiceAccount,
+    delete_service_account as delete_service_account_record, update_service_account_record,
 };
 use crate::storage::postgres::operations::user::{
     CreateUserRecord, LoadUserGroupsPaginated, UpdateUserRecord,
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
-use crate::traits::crud::{DeleteAdapter, UpdateAdapter};
 
 fn storage_identity_scope(scope: crate::models::IdentityScope) -> StorageIdentityScope {
     StorageIdentityScope::new(
@@ -78,19 +79,22 @@ fn storage_principal_group(group: crate::models::PrincipalGroup) -> StoragePrinc
 }
 
 fn storage_identity_group(group: Group) -> StorageIdentityGroup {
-    StorageIdentityGroup::new(
-        group.id,
+    StorageIdentityGroup::builder(
+        StorageRecordMetadata::new(
+            group.id,
+            group.created_at,
+            group.updated_at,
+            group.revision.get(),
+        ),
         group.groupname,
         group.description,
         group.identity_scope_id,
         group.managed_by,
-        group.external_key,
-        group.last_sync_attempted_at,
-        group.last_sync_success_at,
-        group.created_at,
-        group.updated_at,
-        group.revision.get(),
     )
+    .external_key(group.external_key)
+    .last_sync_attempted_at(group.last_sync_attempted_at)
+    .last_sync_success_at(group.last_sync_success_at)
+    .build()
 }
 
 fn storage_service_account(account: ServiceAccount) -> StorageServiceAccount {
@@ -272,6 +276,23 @@ pub(crate) async fn list_principal_groups(
     ))
 }
 
+pub(crate) async fn list_groups(
+    pool: &PostgresPool,
+    query: StorageGroupListQuery,
+) -> Result<StorageIdentityPage<StorageIdentityGroup>, ApiError> {
+    let (records, count) = query.into_parts();
+    let total = match count {
+        Some(options) => Some(User::count_group_search_records(pool, options).await?),
+        None => None,
+    };
+    let groups = User::search_group_records(pool, records).await?;
+
+    Ok(StorageIdentityPage::new(
+        groups.into_iter().map(storage_identity_group).collect(),
+        total,
+    ))
+}
+
 pub(crate) async fn list_retained_tokens(
     pool: &PostgresPool,
     query: StorageTokenListQuery,
@@ -408,9 +429,9 @@ pub(crate) async fn update_service_account(
         owner_group_id: request.owner_group_id(),
     };
     let id = ServiceAccountID::new(request.id())?;
-    let updated = update
-        .update_adapter(pool, id, request.event_context())
-        .await?;
+    let updated =
+        update_service_account_record(&update, pool, id.id(), Some(request.event_context()))
+            .await?;
     Ok(storage_service_account(updated))
 }
 
@@ -428,7 +449,7 @@ pub(crate) async fn delete_service_account(
     request: StorageServiceAccountMutation,
 ) -> Result<(), ApiError> {
     let id = ServiceAccountID::new(request.id())?;
-    id.delete_adapter(pool, request.event_context()).await
+    delete_service_account_record(&id, pool, Some(request.event_context())).await
 }
 
 pub(crate) async fn external_principal_state(

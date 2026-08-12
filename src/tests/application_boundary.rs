@@ -85,10 +85,27 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         !backend_context_body.contains("fn db_pool"),
         "StorageContext must not expose a database-pool accessor"
     );
+    for forbidden in ["PermissionBackend", "permission_backend"] {
+        assert!(
+            !backend_context_body.contains(forbidden),
+            "storage-only contexts must not select authorization policy: {forbidden}"
+        );
+    }
+    let backend_access_body = trait_source
+        .split_once("pub trait BackendAccess")
+        .and_then(|(_, remainder)| remainder.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .expect("the sealed backend access trait should have a readable body");
     assert!(
-        trait_source.contains("pub(in crate::storage) fn postgres_pool"),
-        "only storage adapter modules may recover the PostgreSQL pool"
+        backend_access_body.contains("fn storage_handle(&self) -> StorageHandle"),
+        "storage contexts must preserve the already configured opaque handle"
     );
+    for forbidden in ["PostgresPool", "postgres_pool", "db_pool"] {
+        assert!(
+            !backend_access_body.contains(forbidden),
+            "the sealed context contract exposes backend detail: {forbidden}"
+        );
+    }
     assert!(
         !application_source.contains(".app_data(Data::new(app_pool"),
         "the production HTTP server must not register a raw database pool"
@@ -97,6 +114,180 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         !application_source.contains("pool: db::PostgresPool"),
         "operational HTTP services must receive AppContext rather than PostgresPool"
     );
+
+    assert_eq!(
+        trait_source
+            .matches("match &$handle.implementation")
+            .count(),
+        1,
+        "backend selection must stay centralized in dispatch_backend"
+    );
+    assert!(
+        trait_source.contains("macro_rules! dispatch_backend"),
+        "the opaque handle must centralize exhaustive backend dispatch"
+    );
+    for test_only_compatibility in [
+        "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl private::BackendAccess for PostgresPool",
+        "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl StorageContext for PostgresPool",
+    ] {
+        assert!(
+            trait_source.contains(test_only_compatibility),
+            "concrete-pool context compatibility must remain test-only"
+        );
+    }
+}
+
+#[test]
+fn authorization_context_is_stronger_than_storage_context() {
+    let root = repository_root();
+    let path = root.join("src/permissions/context.rs");
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+
+    assert!(
+        source.contains("pub trait AuthorizationContext: StorageContext"),
+        "permission-aware workflows need an explicit capability above storage"
+    );
+    assert!(
+        source.contains("impl AuthorizationContext for AppContext"),
+        "AppContext must provide configured authorization selection"
+    );
+    assert!(
+        source.contains(
+            "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl AuthorizationContext for StorageHandle"
+        ),
+        "a bare storage handle must not bypass production authorization selection"
+    );
+}
+
+#[test]
+fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
+    use std::collections::HashSet;
+
+    let root = repository_root();
+    let path = root.join("src/storage/context.rs");
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+    let mut labels = HashSet::new();
+
+    for marker in ["observe_storage_call(", "observe_infallible_storage_call("] {
+        for (offset, _) in source.match_indices(marker) {
+            let call = &source[offset + marker.len()..];
+            let quoted = call
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .take(2)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                quoted.len(),
+                2,
+                "storage observer must have static capability and operation labels"
+            );
+            let pair = (quoted[0], quoted[1]);
+            for label in [pair.0, pair.1] {
+                assert!(
+                    !label.is_empty()
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+                    "storage observation label must be bounded snake_case: {label}"
+                );
+            }
+            assert!(
+                labels.insert(pair),
+                "duplicate storage observation label pair: {}/{}",
+                pair.0,
+                pair.1
+            );
+        }
+    }
+
+    assert!(
+        labels.len() >= 200,
+        "the observation guard unexpectedly missed most storage entrypoints"
+    );
+}
+
+#[test]
+fn all_domain_models_are_free_of_database_implementation_details() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for path in rust_files(&root.join("src/models")) {
+        let source = read_source(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for forbidden in [
+            "crate::storage::postgres",
+            "diesel::",
+            "diesel_async",
+            "crate::schema",
+        ] {
+            if production_source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "domain models crossed into database implementation details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn postgres_adapter_helpers_accept_only_postgres_owned_context() {
+    let root = repository_root();
+    let mut violations = Vec::new();
+
+    for path in rust_files(&root.join("src/storage/postgres")) {
+        let source = read_source(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        if source.contains("StorageContext") {
+            violations.push(format!(
+                "{} uses the application storage context instead of PostgresPool",
+                path.display()
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "PostgreSQL internals must not masquerade as backend-neutral operations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn postgres_benchmark_composes_before_calling_domain_operations() {
+    let root = repository_root();
+    let path = root.join("benches/postgres/storage_postgres_criterion.rs");
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+
+    for required in [
+        "benchmark_support::storage_for_postgres(pool)",
+        "benchmark_support::services_for_storage(&storage)",
+        "storage: BenchmarkStorageContext",
+    ] {
+        assert!(
+            source.contains(required),
+            "PostgreSQL benchmark fixture must compose through {required}"
+        );
+    }
+    for forbidden in [
+        "pool: PostgresPool",
+        "save_without_events(&pool)",
+        "delete_without_events(&self.pool)",
+        "services_for_postgres",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "PostgreSQL benchmark bypasses the opaque boundary through {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -180,7 +371,6 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
         for path in rust_files(&root.join(directory)) {
             if is_storage_adapter(&root, &path)
                 || path == root.join("src/storage/context.rs")
-                || path == root.join("src/storage/capabilities.rs")
                 || path == root.join("src/storage/factory.rs")
             {
                 continue;
@@ -1619,33 +1809,17 @@ fn storage_error_translation_has_one_way_dependency_direction() {
 #[test]
 fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
     let root = repository_root();
-    let backend_path = root.join("src/storage/capabilities.rs");
-    let backend_source = read_source(&backend_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", backend_path.display()));
+    let storage_path = root.join("src/storage/mod.rs");
+    let storage_source = read_source(&storage_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", storage_path.display()));
     let library_path = root.join("src/lib.rs");
     let library_source = read_source(&library_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", library_path.display()));
 
     assert!(
-        !backend_source
-            .contains("pub(crate) use crate::storage::postgres::operations as capabilities"),
-        "the application capability facade must explicitly whitelist operations"
+        !storage_source.contains("mod capabilities"),
+        "backend-neutral consumers must use traits instead of a PostgreSQL capability facade"
     );
-    for forbidden in [
-        "operations::Status",
-        "mod active_tokens",
-        "mod external_identity",
-        "mod identity",
-        "mod service_account",
-        "with_storage_call_site",
-        "with_mutation_provenance_scope",
-        "with_revision_precondition_scope",
-    ] {
-        assert!(
-            !backend_source.contains(forbidden),
-            "authentication and execution context must not cross the PostgreSQL capability facade: {forbidden}"
-        );
-    }
     assert!(
         library_source.contains("#[doc(hidden)]\npub mod storage;"),
         "the internal root storage module must remain hidden from generated API documentation"

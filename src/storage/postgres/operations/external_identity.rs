@@ -24,7 +24,7 @@ pub struct ExternalPrincipalState {
 }
 
 pub async fn external_principal_state(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<Option<ExternalPrincipalState>, ApiError> {
     use crate::schema::{identity_scopes, principals, users};
@@ -89,7 +89,7 @@ pub async fn external_principal_state(
 }
 
 pub async fn mark_external_sync_attempted(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     principal_id_value: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::principals;
@@ -105,7 +105,7 @@ pub async fn mark_external_sync_attempted(
 }
 
 pub async fn sync_external_user(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     scope_name: &str,
     provider_kind: &str,
     authenticated: AuthenticatedExternalUser,
@@ -563,7 +563,7 @@ mod tests {
     }
 
     async fn group_id_by_external_key(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         external_key: &str,
     ) -> i32 {
         with_connection(pool, async |conn| {

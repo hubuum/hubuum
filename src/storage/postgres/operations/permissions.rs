@@ -517,7 +517,7 @@ pub(crate) fn new_permission_from_list(
 }
 
 pub(crate) async fn apply_permission_grant_without_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_collection_id: i32,
     group_id_for_grant: i32,
     permission_list: PermissionsList,
@@ -749,7 +749,7 @@ pub(crate) async fn apply_permission_grant_without_event(
 }
 
 pub(crate) async fn apply_permission_grant(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_collection_id: i32,
     group_id_for_grant: i32,
     permission_list: PermissionsList,
@@ -842,7 +842,7 @@ pub(crate) async fn apply_permission_grant(
 }
 
 pub(crate) async fn revoke_permission_grant_without_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_collection_id: i32,
     group_id_for_revoke: i32,
     permission_list: PermissionsList,
@@ -974,7 +974,7 @@ pub(crate) async fn revoke_permission_grant_without_event(
 }
 
 pub(crate) async fn revoke_permission_grant(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_collection_id: i32,
     group_id_for_revoke: i32,
     permission_list: PermissionsList,
@@ -1038,7 +1038,7 @@ pub(crate) async fn revoke_permission_grant(
 }
 
 pub(crate) async fn revoke_all_permission_grants_without_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection_id_for_revoke: i32,
     group_id_for_revoke: i32,
 ) -> Result<(), ApiError> {
@@ -1058,7 +1058,7 @@ pub(crate) async fn revoke_all_permission_grants_without_event(
 }
 
 pub(crate) async fn revoke_all_permission_grants(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection_id_for_revoke: i32,
     group_id_for_revoke: i32,
     context: Option<&EventContext>,

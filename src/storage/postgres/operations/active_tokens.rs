@@ -19,14 +19,14 @@ where
 {
     async fn tokens(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<PrincipalToken>, ApiError> {
         active_tokens_by_principal_id(self.principal_id(), pool).await
     }
 
     async fn tokens_paginated_with_total_count(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
         tokens_by_principal_id_paginated_with_total_count(
@@ -45,7 +45,7 @@ where
 {
     async fn tokens_paginated_with_total_count_for_state(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
         state: TokenListState,
     ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
@@ -95,7 +95,7 @@ pub(crate) fn active_token_predicate(
 /// lifetime window from `issued`.
 async fn active_tokens_by_principal_id(
     principal: i32,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Vec<PrincipalToken>, ApiError> {
     use crate::schema::tokens::dsl::*;
     let active_after = active_tokens_cutoff()?;
@@ -162,7 +162,7 @@ fn build_tokens_by_principal_query<'a>(
 
 async fn tokens_by_principal_id_paginated_with_total_count(
     principal: i32,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: &QueryOptions,
     state: TokenListState,
 ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
@@ -195,7 +195,7 @@ async fn tokens_by_principal_id_paginated_with_total_count(
 
 pub(crate) async fn retained_token_metadata_by_principal_id_paginated_with_total_count(
     principal: crate::models::PrincipalID,
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: &QueryOptions,
     state: TokenListState,
 ) -> Result<(Vec<PrincipalTokenMetadata>, i64), ApiError> {

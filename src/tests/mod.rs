@@ -79,6 +79,8 @@ use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{init_postgres_pool, with_connection};
 
+impl crate::permissions::AuthorizationContext for PostgresPool {}
+
 use crate::utilities::auth::{generate_random_password, hash_password};
 
 use crate::storage::postgres::operations::service_account::SaveServiceAccount;

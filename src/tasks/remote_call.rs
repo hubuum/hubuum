@@ -21,9 +21,10 @@ use crate::models::{
     TaskResultCounts, TaskStatus, authorize_remote_invocation,
 };
 use crate::observability::metrics;
+use crate::permissions::AuthorizationContext;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update_task_state};
 use crate::storage::{
-    StorageContext, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageTaskCompletionArtifact,
 };
 use crate::traits::AuthzSubject;
@@ -59,7 +60,7 @@ pub(super) async fn execute_remote_call_task<C>(
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let payload = task
         .request_payload
@@ -133,7 +134,7 @@ async fn execute_remote_call<C>(
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError>
 where
-    C: StorageContext,
+    C: AuthorizationContext,
 {
     let target =
         crate::services::remote_targets::get_remote_target(backend, request.target_id.id()).await?;

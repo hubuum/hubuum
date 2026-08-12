@@ -211,7 +211,7 @@ async fn reset_sequence(
 }
 
 pub(crate) async fn insert_restore_job_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     input: NewRestoreJobRow,
 ) -> Result<RestoreJobRow, ApiError> {
     with_connection(pool, async |conn| {
@@ -227,7 +227,7 @@ pub(crate) async fn insert_restore_job_db(
 }
 
 pub(crate) async fn load_restore_job_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
 ) -> Result<RestoreJobRow, ApiError> {
     with_connection(pool, async |conn| {
@@ -245,7 +245,7 @@ pub(crate) async fn load_restore_job_db(
 }
 
 pub(crate) async fn load_restore_status_job_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
 ) -> Result<RestoreJobStatusRecord, ApiError> {
     with_connection(pool, async |conn| {
@@ -263,7 +263,7 @@ pub(crate) async fn load_restore_status_job_db(
 }
 
 pub(crate) async fn expire_restore_stage_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
 ) -> Result<usize, ApiError> {
     with_connection(pool, async |conn| {
@@ -285,7 +285,7 @@ pub(crate) async fn expire_restore_stage_db(
 }
 
 pub(crate) async fn start_restore_draining_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
 ) -> Result<NaiveDateTime, ApiError> {
     with_transaction(pool, async |conn| -> Result<NaiveDateTime, ApiError> {
@@ -334,7 +334,7 @@ pub(crate) async fn start_restore_draining_db(
 }
 
 pub(crate) async fn apply_restore_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
     document: StorageRestoreDocument,
 ) -> Result<StorageRestoreCompletion, ApiError> {
@@ -482,7 +482,7 @@ pub(crate) async fn apply_restore_db(
 }
 
 pub(crate) async fn fail_restore_and_resume_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
     stored_error: &str,
 ) -> Result<(), ApiError> {
@@ -513,7 +513,7 @@ pub(crate) async fn fail_restore_and_resume_db(
 }
 
 pub(crate) async fn load_restore_coordinator_snapshot_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
     with_connection(pool, async |conn| {
         use crate::schema::system_maintenance::dsl::{
@@ -540,7 +540,7 @@ pub(crate) async fn load_restore_coordinator_snapshot_db(
 }
 
 pub(crate) async fn resume_maintenance_without_job_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<(), ApiError> {
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
         diesel::sql_query(
@@ -559,7 +559,7 @@ pub(crate) async fn resume_maintenance_without_job_db(
 }
 
 pub(crate) async fn resume_terminal_restore_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
 ) -> Result<(), ApiError> {
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
@@ -580,7 +580,7 @@ pub(crate) async fn resume_terminal_restore_db(
 }
 
 pub(crate) async fn restore_coordinator_tick_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     instance_id_value: Uuid,
     local_work_is_idle: impl FnOnce() -> bool + Send,
     expire_validated_jobs: bool,
@@ -651,7 +651,7 @@ pub(crate) async fn restore_coordinator_tick_db(
 }
 
 pub(crate) async fn maintenance_generation_and_instances_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     heartbeat_cutoff: NaiveDateTime,
 ) -> Result<(i64, Vec<ServerInstanceRow>), ApiError> {
     with_connection(pool, async |conn| {
@@ -675,7 +675,7 @@ pub(crate) async fn maintenance_generation_and_instances_db(
 }
 
 pub(crate) async fn delete_server_instance_db(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     instance_id: Uuid,
 ) -> Result<(), ApiError> {
     with_connection(pool, async |conn| {

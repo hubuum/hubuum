@@ -12,11 +12,12 @@ use crate::models::{
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation,
     ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind, ObjectRelationSelector,
     ObjectRelationSelectorKind, PreparedClassRelation, PreparedObjectRelation,
-    ResolvedClassRelationTarget, ResolvedObjectRelationTarget, User, user_can_on_any,
+    ResolvedClassRelationTarget, ResolvedObjectRelationTarget, User,
 };
 use crate::storage::postgres::operations::class::HubuumClassRow;
+use crate::storage::postgres::operations::collection::user_can_on_any_from_backend;
 use crate::storage::postgres::operations::event_record::emit_event;
-use crate::storage::postgres::operations::object::HubuumObjectRow;
+use crate::storage::postgres::operations::object::{HubuumObjectRow, LoadObjectRecord};
 use crate::storage::postgres::operations::relation_rows::{
     HubuumClassRelationRow, HubuumClassRelationTransitiveRow, HubuumObjectRelationRow,
     HubuumObjectTransitiveLinkRow, NewHubuumClassRelationRow, NewHubuumObjectRelationRow,
@@ -228,17 +229,17 @@ pub fn parse_transitive_filter_params(
 pub trait SelfRelationsBackend {
     async fn transitive_relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
     async fn relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>;
 
     async fn search_relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>;
 }
@@ -249,7 +250,7 @@ where
 {
     async fn transitive_relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         use diesel::sql_query;
         use diesel::sql_types::Integer;
@@ -274,7 +275,7 @@ where
 
     async fn relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::*;
 
@@ -291,7 +292,7 @@ where
 
     async fn search_relations_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::*;
@@ -350,7 +351,7 @@ where
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
     async fn relations_between(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         from: &C1,
         to: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
@@ -365,7 +366,7 @@ where
 {
     async fn relations_to(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         <C1 as Relations<C1, C2>>::relations_between(pool, self, other).await
@@ -373,7 +374,7 @@ where
 
     async fn relations_to_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         other: &C2,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
@@ -382,7 +383,7 @@ where
 
     async fn direct_relation_to(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         other: &C2,
     ) -> Result<Option<HubuumClassRelation>, ApiError> {
         fetch_relations_direct(pool, self, other)
@@ -398,7 +399,7 @@ where
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
     async fn relations_between(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         from: &C1,
         to: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
@@ -407,7 +408,7 @@ where
 }
 
 async fn fetch_relations_direct<C1, C2>(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     from: &C1,
     to: &C2,
 ) -> Result<HubuumClassRelation, ApiError>
@@ -435,7 +436,7 @@ where
 }
 
 async fn fetch_relations<C1, C2>(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     from: &C1,
     to: &C2,
 ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>
@@ -470,7 +471,7 @@ where
 }
 
 async fn fetch_relations_paginated<C1, C2>(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     from: &C1,
     to: &C2,
     query_options: &QueryOptions,
@@ -540,7 +541,7 @@ where
 {
     async fn get_related_objects<O, C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         source_object: &O,
         target_class: &C,
     ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
@@ -555,7 +556,8 @@ where
         // No token context on this internal traversal helper (production related-
         // object endpoints go through the scope-aware `objects_related_to_page`),
         // so this runs with full principal authority.
-        let collections = user_can_on_any(pool, self, Permissions::ReadObject, None).await?;
+        let collections =
+            user_can_on_any_from_backend(pool, self, Permissions::ReadObject, None).await?;
         let rows = with_connection(pool, async |conn| {
             diesel_async::RunQueryDsl::load::<HubuumObjectTransitiveLinkRow>(
                 sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
@@ -577,13 +579,13 @@ where
 pub trait ObjectRelationMembershipsBackend {
     async fn is_member_of_class_relation_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_relation: &HubuumClassRelation,
     ) -> Result<bool, ApiError>;
 
     async fn object_relation_from_backend<O, C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &C,
         target_object: &O,
     ) -> Result<HubuumObjectRelation, ApiError>
@@ -593,7 +595,7 @@ pub trait ObjectRelationMembershipsBackend {
 
     async fn related_objects_from_backend<C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &C,
         query_params: &[ParsedQueryParam],
     ) -> Result<Vec<HubuumObject>, ApiError>
@@ -607,7 +609,7 @@ where
 {
     async fn is_member_of_class_relation_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_relation: &HubuumClassRelation,
     ) -> Result<bool, ApiError> {
         use crate::schema::hubuumclass_relation::dsl as class_rel;
@@ -633,7 +635,7 @@ where
 
     async fn object_relation_from_backend<O, C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &C,
         target_object: &O,
     ) -> Result<HubuumObjectRelation, ApiError>
@@ -670,7 +672,7 @@ where
 
     async fn related_objects_from_backend<C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &C,
         query_params: &[ParsedQueryParam],
     ) -> Result<Vec<HubuumObject>, ApiError>
@@ -748,14 +750,14 @@ where
 pub trait LoadClassRelationRecord {
     async fn load_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClassRelation, ApiError>;
 }
 
 impl LoadClassRelationRecord for HubuumClassRelationID {
     async fn load_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClassRelation, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
@@ -799,14 +801,14 @@ async fn load_class_relation_endpoint_records(
 pub(crate) trait PrepareClassRelationRecord {
     async fn prepare_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<PreparedClassRelation, ApiError>;
 }
 
 impl PrepareClassRelationRecord for NewHubuumClassRelation {
     async fn prepare_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<PreparedClassRelation, ApiError> {
         let command = self.clone().normalized()?;
         with_connection(pool, async |conn| {
@@ -825,7 +827,7 @@ impl PrepareClassRelationRecord for NewHubuumClassRelation {
 pub(crate) trait ResolveClassRelationTargetRecord {
     async fn resolve_class_relation_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ResolvedClassRelationTarget, ApiError>;
 }
 
@@ -852,7 +854,7 @@ async fn load_resolved_class_relation_target_on_connection(
 impl ResolveClassRelationTargetRecord for HubuumClassRelationID {
     async fn resolve_class_relation_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
         with_connection(pool, async |conn| {
             load_resolved_class_relation_target_on_connection(conn, self.id()).await
@@ -864,12 +866,12 @@ impl ResolveClassRelationTargetRecord for HubuumClassRelationID {
 pub trait DeleteClassRelationRecord {
     async fn delete_class_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -880,7 +882,7 @@ pub trait DeleteClassRelationRecord {
 impl DeleteClassRelationRecord for HubuumClassRelation {
     async fn delete_class_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
@@ -895,7 +897,7 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
 
     async fn delete_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -949,7 +951,7 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
 impl DeleteClassRelationRecord for HubuumClassRelationID {
     async fn delete_class_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
@@ -964,7 +966,7 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
 
     async fn delete_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -1018,12 +1020,12 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
 pub trait SaveClassRelationRecord {
     async fn save_class_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClassRelation, ApiError>;
 
     async fn save_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
         let _ = context;
@@ -1034,7 +1036,7 @@ pub trait SaveClassRelationRecord {
 impl SaveClassRelationRecord for NewHubuumClassRelation {
     async fn save_class_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClassRelation, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
 
@@ -1052,7 +1054,7 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
 
     async fn save_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
         let Some(context) = context else {
@@ -1106,7 +1108,7 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
 pub(crate) trait CreatePreparedClassRelationRecord {
     async fn create_prepared_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError>;
 }
@@ -1114,7 +1116,7 @@ pub(crate) trait CreatePreparedClassRelationRecord {
 impl CreatePreparedClassRelationRecord for PreparedClassRelation {
     async fn create_prepared_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
@@ -1172,7 +1174,7 @@ impl CreatePreparedClassRelationRecord for PreparedClassRelation {
 pub(crate) trait DeleteResolvedClassRelationRecord {
     async fn delete_resolved_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError>;
 }
@@ -1180,7 +1182,7 @@ pub(crate) trait DeleteResolvedClassRelationRecord {
 impl DeleteResolvedClassRelationRecord for ResolvedClassRelationTarget {
     async fn delete_resolved_class_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
@@ -1317,14 +1319,14 @@ fn order_object_relation_endpoints(
 pub(crate) trait PrepareObjectRelationRecord {
     async fn prepare_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<PreparedObjectRelation, ApiError>;
 }
 
 impl PrepareObjectRelationRecord for ObjectRelationCreateSelector {
     async fn prepare_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<PreparedObjectRelation, ApiError> {
         with_connection(pool, async |conn| match self.kind() {
             ObjectRelationCreateSelectorKind::Explicit(command) => {
@@ -1380,14 +1382,14 @@ impl PrepareObjectRelationRecord for ObjectRelationCreateSelector {
 pub(crate) trait ResolveObjectRelationTargetRecord {
     async fn resolve_object_relation_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ResolvedObjectRelationTarget, ApiError>;
 }
 
 impl ResolveObjectRelationTargetRecord for ObjectRelationSelector {
     async fn resolve_object_relation_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{
             from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
@@ -1463,7 +1465,7 @@ fn object_relation_scope_matches(current: &HubuumObject, expected: &HubuumObject
 pub(crate) trait CreatePreparedObjectRelationRecord {
     async fn create_prepared_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError>;
 }
@@ -1471,7 +1473,7 @@ pub(crate) trait CreatePreparedObjectRelationRecord {
 impl CreatePreparedObjectRelationRecord for PreparedObjectRelation {
     async fn create_prepared_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{
@@ -1542,7 +1544,7 @@ impl CreatePreparedObjectRelationRecord for PreparedObjectRelation {
 pub(crate) trait DeleteResolvedObjectRelationRecord {
     async fn delete_resolved_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError>;
 }
@@ -1550,7 +1552,7 @@ pub(crate) trait DeleteResolvedObjectRelationRecord {
 impl DeleteResolvedObjectRelationRecord for ResolvedObjectRelationTarget {
     async fn delete_resolved_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
@@ -1609,14 +1611,14 @@ impl DeleteResolvedObjectRelationRecord for ResolvedObjectRelationTarget {
 pub trait LoadObjectRelationRecord {
     async fn load_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObjectRelation, ApiError>;
 }
 
 impl LoadObjectRelationRecord for HubuumObjectRelationID {
     async fn load_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObjectRelation, ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
@@ -1634,12 +1636,12 @@ impl LoadObjectRelationRecord for HubuumObjectRelationID {
 pub trait DeleteObjectRelationRecord {
     async fn delete_object_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -1651,7 +1653,7 @@ pub trait DeleteObjectRelationRecord {
 impl DeleteObjectRelationRecord for HubuumObjectRelation {
     async fn delete_object_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
@@ -1666,7 +1668,7 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
 
     async fn delete_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -1725,7 +1727,7 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
 impl DeleteObjectRelationRecord for HubuumObjectRelationID {
     async fn delete_object_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
@@ -1740,7 +1742,7 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
 
     async fn delete_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -1799,12 +1801,12 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
 pub trait SaveObjectRelationRecord {
     async fn save_object_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObjectRelation, ApiError>;
 
     async fn save_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError> {
         let _ = context;
@@ -1815,7 +1817,7 @@ pub trait SaveObjectRelationRecord {
 impl SaveObjectRelationRecord for NewHubuumObjectRelation {
     async fn save_object_relation_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumObjectRelation, ApiError> {
         use crate::schema::hubuumobject_relation::dsl::hubuumobject_relation;
 
@@ -1826,7 +1828,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
         }
 
         let obj1 = match HubuumObjectID::new(self.from_hubuum_object_id)?
-            .instance(pool)
+            .load_object_record(pool)
             .await
         {
             Ok(obj1) => obj1,
@@ -1838,7 +1840,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
         };
 
         let obj2 = match HubuumObjectID::new(self.to_hubuum_object_id)?
-            .instance(pool)
+            .load_object_record(pool)
             .await
         {
             Ok(obj2) => obj2,
@@ -1868,7 +1870,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
 
     async fn save_object_relation_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError> {
         let Some(context) = context else {
@@ -1884,7 +1886,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
         }
 
         let obj1 = match HubuumObjectID::new(self.from_hubuum_object_id)?
-            .instance(pool)
+            .load_object_record(pool)
             .await
         {
             Ok(obj1) => obj1,
@@ -1896,7 +1898,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
         };
 
         let obj2 = match HubuumObjectID::new(self.to_hubuum_object_id)?
-            .instance(pool)
+            .load_object_record(pool)
             .await
         {
             Ok(obj2) => obj2,

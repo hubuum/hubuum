@@ -74,11 +74,11 @@ pub trait ActiveTokens {
     /// Get all active tokens for a given structure.
     async fn tokens(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<PrincipalToken>, ApiError>;
     async fn tokens_paginated_with_total_count(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<PrincipalToken>, i64), ApiError>;
 }
@@ -90,7 +90,7 @@ pub trait RetainedTokens {
     /// explicit credential-management queries.
     async fn tokens_paginated_with_total_count_for_state(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
         state: TokenListState,
     ) -> Result<(Vec<PrincipalToken>, i64), ApiError>;
@@ -104,7 +104,7 @@ pub trait RetainedTokens {
 pub trait GetCollection<T = Collection> {
     async fn collection_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<T, ApiError>;
 }
 
@@ -116,7 +116,7 @@ pub trait GetCollection<T = Collection> {
 pub trait GetClass<T = HubuumClass> {
     async fn class_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<T, ApiError>;
 }
 
@@ -128,7 +128,7 @@ pub trait GetClass<T = HubuumClass> {
 pub trait GetObject<T = HubuumObject> {
     async fn object_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<T, ApiError>;
 }
 
@@ -140,7 +140,7 @@ where
 {
     /// Check if a relation exists between two classes.
     async fn relations_between(
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         from: &C1,
         to: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
@@ -156,13 +156,13 @@ where
     /// Check if a relation exists between self and another class
     async fn relations_to(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
     async fn relations_to_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         other: &C2,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
@@ -170,7 +170,7 @@ where
     /// Check if a direct relation exists between self and another class
     async fn direct_relation_to(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         other: &C2,
     ) -> Result<Option<HubuumClassRelation>, ApiError>;
 }
@@ -182,14 +182,14 @@ where
 {
     async fn transitive_relations(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         self.transitive_relations_from_backend(pool).await
     }
 
     async fn transitive_relations_paginated(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
@@ -243,14 +243,14 @@ where
     // We typically end up searching, so this interface is rarely used.
     async fn relations(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         self.relations_from_backend(pool).await
     }
 
     async fn search_relations(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         self.search_relations_from_backend(pool, query_options)
@@ -264,7 +264,7 @@ where
 {
     async fn get_related_objects<O, C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         source_object: &O,
         target_class: &C,
     ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
@@ -279,7 +279,7 @@ where
 {
     async fn is_member_of_class_relation(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_relation: &HubuumClassRelation,
     ) -> Result<bool, ApiError> {
         self.is_member_of_class_relation_from_backend(pool, class_relation)
@@ -288,7 +288,7 @@ where
 
     async fn object_relation<O, C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &C,
         target_object: &O,
     ) -> Result<HubuumObjectRelation, ApiError>
@@ -302,7 +302,7 @@ where
 
     async fn related_objects<C>(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &C,
         query_params: &[ParsedQueryParam],
     ) -> Result<Vec<HubuumObject>, ApiError>

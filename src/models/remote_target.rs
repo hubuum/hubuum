@@ -608,7 +608,7 @@ pub async fn authorize_remote_invocation<C>(
     subject: &RemoteInvocationSubject,
 ) -> Result<ResolvedRemoteInvocationSubject, ApiError>
 where
-    C: crate::storage::StorageContext,
+    C: crate::permissions::AuthorizationContext,
 {
     let pool = backend;
     let target_collection_id = CollectionID::new(target.collection_id)?;

@@ -84,7 +84,7 @@ fn require_existing_import_target<T>(
 }
 
 pub async fn lookup_collections_by_name(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     value: &str,
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, name};
@@ -101,13 +101,13 @@ pub async fn lookup_collections_by_name(
 }
 
 pub async fn lookup_root_collection(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<Collection, ApiError> {
     with_connection(pool, lookup_root_collection_db).await
 }
 
 pub async fn lookup_collection_by_key(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     key: &CollectionKey,
 ) -> Result<Option<Collection>, ApiError> {
     with_connection(pool, async |conn| {
@@ -117,7 +117,7 @@ pub async fn lookup_collection_by_key(
 }
 
 pub async fn lookup_collection_by_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection_id: i32,
 ) -> Result<Option<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, id};
@@ -134,7 +134,7 @@ pub async fn lookup_collection_by_id(
 }
 
 pub async fn lookup_class_by_collection_and_name(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection_id_value: i32,
     class_name: &str,
 ) -> Result<Option<HubuumClass>, ApiError> {
@@ -153,7 +153,7 @@ pub async fn lookup_class_by_collection_and_name(
 }
 
 pub async fn lookup_classes_by_collection_and_names(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     collection_id_value: i32,
     class_names: &[String],
 ) -> Result<Vec<HubuumClass>, ApiError> {
@@ -175,7 +175,7 @@ pub async fn lookup_classes_by_collection_and_names(
 }
 
 pub async fn lookup_object_by_class_and_name(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     class_id_value: i32,
     object_name: &str,
 ) -> Result<Option<HubuumObject>, ApiError> {
@@ -194,7 +194,7 @@ pub async fn lookup_object_by_class_and_name(
 }
 
 pub async fn lookup_objects_by_class_and_names(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     class_id_value: i32,
     object_names: &[String],
 ) -> Result<Vec<HubuumObject>, ApiError> {
@@ -216,7 +216,7 @@ pub async fn lookup_objects_by_class_and_names(
 }
 
 pub async fn lookup_direct_class_relation(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     left: i32,
     right: i32,
 ) -> Result<Option<HubuumClassRelation>, ApiError> {
@@ -238,7 +238,7 @@ pub async fn lookup_direct_class_relation(
 }
 
 pub async fn lookup_object_relation(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     left: i32,
     right: i32,
 ) -> Result<Option<HubuumObjectRelation>, ApiError> {
@@ -260,7 +260,7 @@ pub async fn lookup_object_relation(
 }
 
 pub async fn lookup_group_by_name(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     identity_scope: &str,
     value: &str,
 ) -> Result<Option<Group>, ApiError> {

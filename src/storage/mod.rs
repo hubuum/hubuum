@@ -1,5 +1,3 @@
-#[cfg(test)]
-pub(crate) mod capabilities;
 mod class_relations;
 mod classes;
 mod collections;
@@ -28,6 +26,9 @@ pub(crate) use collections::{
     CollectionPrincipalQuery, CollectionRecordStorage, CollectionStore, CollectionVisibilityQuery,
 };
 pub use context::StorageContext;
+#[cfg(feature = "postgres-bench")]
+#[doc(hidden)]
+pub use context::StorageHandle as BenchmarkStorageContext;
 pub(crate) use context::{StorageHandle, storage_handle};
 #[cfg(test)]
 pub(crate) use contract::STORAGE_CONTRACT_VERSION;
@@ -85,9 +86,9 @@ pub(crate) use hubuum_storage_core::{
     StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
     StorageExportTemplateListQuery, StorageExportTemplatePage, StorageExportTemplateReplace,
     StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageGraphClass, StorageGraphObject, StorageGraphResource, StorageIdentityGroup,
-    StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure, StorageInventoryCounts,
-    StorageLocalPasswordReset, StorageNotification, StorageObject,
+    StorageGraphClass, StorageGraphObject, StorageGraphResource, StorageGroupListQuery,
+    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageInventoryCounts, StorageLocalPasswordReset, StorageNotification, StorageObject,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
     StorageObjectAggregateMeasureState, StorageObjectAggregateMeasureValue,
     StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSort,

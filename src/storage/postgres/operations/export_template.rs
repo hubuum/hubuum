@@ -285,14 +285,14 @@ fn export_template_event(
 pub(crate) trait LoadExportTemplateRecord {
     async fn load_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ExportTemplateRow, ApiError>;
 }
 
 impl LoadExportTemplateRecord for ExportTemplateID {
     async fn load_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ExportTemplateRow, ApiError> {
         use crate::schema::export_templates::dsl::{export_templates, id};
 
@@ -310,12 +310,12 @@ impl LoadExportTemplateRecord for ExportTemplateID {
 pub(crate) trait SaveExportTemplateRecord {
     async fn save_export_template_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ExportTemplateRow, ApiError>;
 
     async fn save_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<ExportTemplateRow, ApiError> {
         let _ = context;
@@ -326,7 +326,7 @@ pub(crate) trait SaveExportTemplateRecord {
 impl SaveExportTemplateRecord for NewExportTemplateRow {
     async fn save_export_template_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<ExportTemplateRow, ApiError> {
         use crate::schema::export_templates::dsl::export_templates;
 
@@ -341,7 +341,7 @@ impl SaveExportTemplateRecord for NewExportTemplateRow {
 
     async fn save_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<ExportTemplateRow, ApiError> {
         let Some(context) = context else {
@@ -373,13 +373,13 @@ impl SaveExportTemplateRecord for NewExportTemplateRow {
 pub(crate) trait UpdateExportTemplateRecord {
     async fn update_export_template_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         template_id: i32,
     ) -> Result<ExportTemplateRow, ApiError>;
 
     async fn update_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         template_id: i32,
         context: Option<&EventContext>,
     ) -> Result<ExportTemplateRow, ApiError> {
@@ -392,7 +392,7 @@ pub(crate) trait UpdateExportTemplateRecord {
 impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
     async fn update_export_template_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         template_id: i32,
     ) -> Result<ExportTemplateRow, ApiError> {
         use crate::schema::export_templates::dsl::{export_templates, id};
@@ -418,7 +418,7 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
 
     async fn update_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         template_id: i32,
         context: Option<&EventContext>,
     ) -> Result<ExportTemplateRow, ApiError> {
@@ -468,12 +468,12 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
 pub(crate) trait DeleteExportTemplateRecord {
     async fn delete_export_template_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -485,7 +485,7 @@ pub(crate) trait DeleteExportTemplateRecord {
 impl DeleteExportTemplateRecord for ExportTemplateID {
     async fn delete_export_template_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::export_templates::dsl::{export_templates, id};
 
@@ -501,7 +501,7 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
 
     async fn delete_export_template_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -537,7 +537,7 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
 
 /// Load all export-template rows in a collection, optionally excluding one template id.
 pub(crate) async fn load_rows_in_collection(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_collection_id: i32,
     exclude_template_id: Option<i32>,
 ) -> Result<Vec<ExportTemplateRow>, ApiError> {
@@ -557,7 +557,7 @@ pub(crate) async fn load_rows_in_collection(
 
 /// The collection a class belongs to, or `None` if the class does not exist.
 pub(crate) async fn class_collection_id(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_class_id: i32,
 ) -> Result<Option<i32>, ApiError> {
     use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id};
@@ -618,7 +618,7 @@ fn build_list_query<'a>(
 /// List export-template rows (sorted/paginated per `query_options`) together with the total count
 /// matching the filters, scoped to the collections the caller may see.
 pub(crate) async fn list_rows_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     allowed_collection_ids: &[i32],
     query_options: &QueryOptions,
 ) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
@@ -627,14 +627,14 @@ pub(crate) async fn list_rows_with_total_count(
 }
 
 pub(crate) async fn list_all_rows_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     query_options: &QueryOptions,
 ) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
     list_rows_with_optional_collection_scope(pool, None, query_options).await
 }
 
 async fn list_rows_with_optional_collection_scope(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     allowed_collection_ids: Option<&[i32]>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {

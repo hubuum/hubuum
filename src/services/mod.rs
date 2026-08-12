@@ -9,6 +9,7 @@ mod collections;
 pub(crate) mod computed_fields;
 pub(crate) mod computed_objects;
 pub(crate) mod event_administration;
+pub(crate) mod groups;
 pub(crate) mod history;
 pub mod identity;
 pub(crate) mod inventory;

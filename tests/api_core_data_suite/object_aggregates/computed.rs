@@ -320,11 +320,13 @@ async fn personal_computed_grouping_rejects_service_accounts(
             .contains("Service accounts")
     );
 
-    ServiceAccountID::new(account.id)
-        .unwrap()
-        .delete_without_events(&test_context.pool)
-        .await
-        .unwrap();
+    crate::services::identity::delete_service_account(
+        &test_context.pool,
+        account.id,
+        &EventContext::system(),
+    )
+    .await
+    .unwrap();
     fixture.cleanup().await.unwrap();
     group
         .delete_without_events(&test_context.pool)

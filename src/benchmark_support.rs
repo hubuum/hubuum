@@ -5,12 +5,17 @@
 
 use crate::services::Services;
 use crate::storage::postgres::PostgresPool;
-use crate::storage::{DynLifecycleStorage, PostgresStorage};
+use crate::storage::{BenchmarkStorageContext, StorageHandle};
 
-/// Build lifecycle services around the PostgreSQL adapter for benchmarks.
+/// Compose a PostgreSQL pool into the same opaque context used by the
+/// application boundary.
 #[must_use]
-pub fn services_for_postgres(pool: PostgresPool) -> Services {
-    Services::from_lifecycle_storage(DynLifecycleStorage::from_backend(PostgresStorage::new(
-        pool,
-    )))
+pub fn storage_for_postgres(pool: PostgresPool) -> BenchmarkStorageContext {
+    StorageHandle::postgres(pool)
+}
+
+/// Build lifecycle services from an already-composed benchmark context.
+#[must_use]
+pub fn services_for_storage(storage: &BenchmarkStorageContext) -> Services {
+    Services::from_lifecycle_storage(storage.lifecycle_storage())
 }

@@ -382,14 +382,14 @@ fn remote_target_event(
 pub(crate) trait LoadRemoteTargetRecord {
     async fn load_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<RemoteTargetRow, ApiError>;
 }
 
 impl LoadRemoteTargetRecord for RemoteTargetID {
     async fn load_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
@@ -406,12 +406,12 @@ impl LoadRemoteTargetRecord for RemoteTargetID {
 pub(crate) trait SaveRemoteTargetRecord {
     async fn save_remote_target_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<RemoteTargetRow, ApiError>;
 
     async fn save_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
         let _ = context;
@@ -422,7 +422,7 @@ pub(crate) trait SaveRemoteTargetRecord {
 impl SaveRemoteTargetRecord for NewRemoteTargetRow {
     async fn save_remote_target_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::remote_targets;
 
@@ -437,7 +437,7 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
 
     async fn save_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
         let Some(context) = context else {
@@ -468,13 +468,13 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
 pub(crate) trait UpdateRemoteTargetRecord {
     async fn update_remote_target_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target_id: i32,
     ) -> Result<RemoteTargetRow, ApiError>;
 
     async fn update_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target_id: i32,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
@@ -487,7 +487,7 @@ pub(crate) trait UpdateRemoteTargetRecord {
 impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
     async fn update_remote_target_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target_id: i32,
     ) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
@@ -508,7 +508,7 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
 
     async fn update_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target_id: i32,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
@@ -557,12 +557,12 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
 pub(crate) trait DeleteRemoteTargetRecord {
     async fn delete_remote_target_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -573,7 +573,7 @@ pub(crate) trait DeleteRemoteTargetRecord {
 impl DeleteRemoteTargetRecord for RemoteTargetID {
     async fn delete_remote_target_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
@@ -588,7 +588,7 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
 
     async fn delete_remote_target_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -621,7 +621,7 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
 }
 
 pub(crate) async fn emit_remote_target_invoked_event(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     target_id: i32,
     context: &EventContext,
     task_id: i32,
@@ -656,7 +656,7 @@ pub(crate) async fn emit_remote_target_invoked_event(
 }
 
 pub(crate) async fn list_rows_with_total_count(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     allowed_collection_ids: &[i32],
     query_options: &QueryOptions,
 ) -> Result<(Vec<RemoteTargetRow>, i64), ApiError> {
@@ -747,7 +747,7 @@ pub(crate) async fn upsert_remote_call_result_conn(
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn load_remote_call_result_for_task(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     task_id_value: i32,
 ) -> Result<RemoteCallResult, ApiError> {
     use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};

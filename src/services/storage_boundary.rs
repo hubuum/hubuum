@@ -4,7 +4,8 @@ use crate::models::{
 };
 use crate::permissions::permission_to_storage;
 use crate::storage::{
-    StorageClass, StorageCollection, StorageObject, StorageResourceScope, StorageVisibility,
+    StorageClass, StorageCollection, StorageObject, StorageRecordMetadata, StorageResourceScope,
+    StorageVisibility,
 };
 
 pub(super) fn visibility(
@@ -115,15 +116,17 @@ pub(super) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, Ap
 
 pub(super) fn object_to_storage(object: HubuumObject) -> StorageObject {
     StorageObject::new(
-        object.id,
+        StorageRecordMetadata::new(
+            object.id,
+            object.created_at,
+            object.updated_at,
+            object.revision.get(),
+        ),
         object.name,
         object.collection_id,
         object.hubuum_class_id,
         object.data,
         object.description,
-        object.created_at,
-        object.updated_at,
-        object.revision.get(),
     )
 }
 

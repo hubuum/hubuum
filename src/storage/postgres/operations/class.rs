@@ -213,7 +213,7 @@ fn class_event(
 impl GetClass for HubuumClass {
     async fn class_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         with_connection(
@@ -234,7 +234,7 @@ impl GetClass for HubuumClass {
 impl GetClass for HubuumClassID {
     async fn class_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         with_connection(
@@ -255,7 +255,7 @@ impl GetClass for HubuumClassID {
 impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelation {
     async fn class_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         with_connection(
@@ -281,7 +281,7 @@ impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelation {
 impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelationID {
     async fn class_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id as hid};
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id as rel_id};
@@ -314,7 +314,7 @@ impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelationID {
 impl GetClass<(HubuumClass, HubuumClass)> for NewHubuumClassRelation {
     async fn class_from_backend(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id as hid};
 
@@ -341,14 +341,14 @@ impl GetClass<(HubuumClass, HubuumClass)> for NewHubuumClassRelation {
 pub trait LoadClassRecord {
     async fn load_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError>;
 }
 
 impl LoadClassRecord for HubuumClass {
     async fn load_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         self.class_from_backend(pool).await
     }
@@ -357,7 +357,7 @@ impl LoadClassRecord for HubuumClass {
 impl LoadClassRecord for HubuumClassID {
     async fn load_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         self.class_from_backend(pool).await
     }
@@ -366,14 +366,14 @@ impl LoadClassRecord for HubuumClassID {
 pub trait ResolveClassSelectorRecord {
     async fn resolve_class_selector_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError>;
 }
 
 impl ResolveClassSelectorRecord for ClassSelector {
     async fn resolve_class_selector_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
 
@@ -399,12 +399,12 @@ impl ResolveClassSelectorRecord for ClassSelector {
 pub trait CreateClassRecord {
     async fn create_class_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError>;
 
     async fn create_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
         let _ = context;
@@ -415,7 +415,7 @@ pub trait CreateClassRecord {
 impl CreateClassRecord for NewHubuumClass {
     async fn create_class_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::hubuumclass;
 
@@ -431,7 +431,7 @@ impl CreateClassRecord for NewHubuumClass {
 
     async fn create_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
         let Some(context) = context else {
@@ -463,13 +463,13 @@ impl CreateClassRecord for NewHubuumClass {
 pub trait UpdateClassRecord {
     async fn update_class_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError>;
 
     async fn update_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_id: i32,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
@@ -482,7 +482,7 @@ pub trait UpdateClassRecord {
 impl UpdateClassRecord for UpdateHubuumClass {
     async fn update_class_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
@@ -509,7 +509,7 @@ impl UpdateClassRecord for UpdateHubuumClass {
 
     async fn update_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         class_id: i32,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
@@ -594,7 +594,7 @@ pub(crate) async fn lock_resolved_class_target(
 pub trait UpdateResolvedClassRecord {
     async fn update_resolved_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError>;
@@ -603,7 +603,7 @@ pub trait UpdateResolvedClassRecord {
 impl UpdateResolvedClassRecord for UpdateHubuumClass {
     async fn update_resolved_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
@@ -638,7 +638,7 @@ impl UpdateResolvedClassRecord for UpdateHubuumClass {
 pub trait DeleteResolvedClassRecord {
     async fn delete_resolved_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: &EventContext,
     ) -> Result<(), ApiError>;
 }
@@ -646,7 +646,7 @@ pub trait DeleteResolvedClassRecord {
 impl DeleteResolvedClassRecord for ResolvedClassTarget {
     async fn delete_resolved_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: &EventContext,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
@@ -673,12 +673,12 @@ impl DeleteResolvedClassRecord for ResolvedClassTarget {
 pub trait DeleteClassRecord {
     async fn delete_class_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError>;
 
     async fn delete_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
@@ -689,7 +689,7 @@ pub trait DeleteClassRecord {
 impl DeleteClassRecord for HubuumClass {
     async fn delete_class_record_without_events(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
@@ -704,7 +704,7 @@ impl DeleteClassRecord for HubuumClass {
 
     async fn delete_class_record(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -740,14 +740,14 @@ impl DeleteClassRecord for HubuumClass {
 pub trait ClassCollectionLookup {
     async fn lookup_class_collection(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError>;
 }
 
 impl ClassCollectionLookup for HubuumClass {
     async fn lookup_class_collection(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
@@ -765,7 +765,7 @@ impl ClassCollectionLookup for HubuumClass {
 impl ClassCollectionLookup for HubuumClassID {
     async fn lookup_class_collection(
         &self,
-        pool: &impl crate::storage::StorageContext,
+        pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Collection, ApiError> {
         self.load_class_record(pool)
             .await?
@@ -777,7 +777,7 @@ impl ClassCollectionLookup for HubuumClassID {
 /// Load `(id, name)` pairs for a normalized class set. Missing ids are absent;
 /// callers that require completeness must check the returned keys.
 pub(crate) async fn load_class_names(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     class_ids: &ClassIdSet,
 ) -> Result<Vec<(i32, String)>, ApiError> {
     use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
