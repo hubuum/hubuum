@@ -112,6 +112,7 @@ fi
 BUILD_FROM_SOURCE="$(read_env_value BUILD_FROM_SOURCE || printf 'false')"
 INSTALL_MODE="$(read_env_value INSTALL_MODE || printf 'all')"
 DATABASE_MANAGED="$(read_env_value DATABASE_MANAGED || printf 'true')"
+API_PORT="$(read_env_value HUBUUM_BIND_PORT || printf '8080')"
 MANAGEMENT_SCRIPT_BASE_URL="$(
   read_env_value MANAGEMENT_SCRIPT_BASE_URL || printf '%s' "$DEFAULT_MANAGEMENT_SCRIPT_BASE_URL"
 )"

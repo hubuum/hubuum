@@ -60,9 +60,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
-- Single-host rolling updates now wait for Caddy to confirm that the recovered
-  API standby is eligible before draining the primary for migrations, avoiding
-  brief public `502`/`503` responses after a failed-candidate recovery.
+- Single-host rolling updates now require Caddy to report the API standby
+  itself eligible before draining the primary for migrations. Unrelated web
+  failure marks no longer block frontend recovery, custom API ports are
+  respected, and expected replicas are checked after each rollout phase.
+- `hubuum-admin --migrate` once again exits with the documented database error
+  code `3` when it cannot connect or apply a migration.
 
 ### Security
 

@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{Duration, Utc};
 use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
+#[cfg(feature = "embedded-migrations")]
+use hubuum::errors::EXIT_CODE_DATABASE_ERROR;
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use hubuum::models::{NewUser, TaskKind, TaskStatus};
 use hubuum::schema::{
@@ -68,6 +70,23 @@ fn admin_help_exposes_reset_password() {
     assert!(stdout.contains("--reset-password"));
     assert!(stdout.contains("--backup"));
     assert!(stdout.contains("--restore"));
+}
+
+#[cfg(feature = "embedded-migrations")]
+#[test]
+fn migration_connection_failures_use_the_database_exit_code() {
+    let output = Command::new(admin_binary())
+        .args([
+            "--migrate",
+            "--database-url",
+            "postgres://hubuum@127.0.0.1:1/unreachable",
+        ])
+        .output()
+        .expect("hubuum-admin --migrate should report its connection failure");
+
+    assert_eq!(output.status.code(), Some(EXIT_CODE_DATABASE_ERROR));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to run storage migrations"));
 }
 
 #[cfg(unix)]

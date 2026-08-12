@@ -11,6 +11,8 @@ use crate::config::{
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     DEFAULT_RESTORE_MAX_UPLOAD_BYTES, DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
 };
+#[cfg(feature = "embedded-migrations")]
+use crate::errors::EXIT_CODE_DATABASE_ERROR;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::logger;
 use crate::models::{
@@ -137,7 +139,12 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
-        let applied = run_storage_migrations(&storage_settings)?;
+        let applied = run_storage_migrations(&storage_settings).unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to run storage migrations: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
         println!("Applied {applied} storage migration(s).");
         return Ok(());
     }
