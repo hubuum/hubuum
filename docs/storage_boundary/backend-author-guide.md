@@ -51,7 +51,7 @@ The following order minimizes rework:
 6. Implement event and operational families.
 7. Add exhaustive dispatch, common observation, administrator projection, and
    the explicit `StorageBackend` implementation.
-8. Run shared compatibility and backend-native certification tests.
+8. Run shared compatibility and backend-native verification tests.
 
 Later families depend conceptually on the earlier facts, but this order does
 not authorize direct trait-to-trait backend recovery. Prefer private adapter
@@ -200,7 +200,7 @@ fallback:
 
 Compilation should fail when any trait or exhaustive match arm is missing.
 
-## Certification Tests
+## Compatibility and Native Tests
 
 A new backend must pass four distinct kinds of checks.
 
@@ -236,7 +236,7 @@ escape hatch.
 Exercise startup, readiness, administrator configuration, workers, metrics,
 feature combinations, production packaging, and representative performance.
 
-See [testing and certification](testing.md) for the current suite and commands.
+See [testing and compatibility](testing.md) for the current suite and commands.
 
 ## Completion Checklist
 

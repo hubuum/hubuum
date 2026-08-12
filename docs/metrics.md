@@ -203,8 +203,8 @@ max by (template_id, template_name) (
 | `hubuum_db_operation_duration_seconds` | `caller`, `operation`, `result` | `with_connection` and `with_transaction` helper duration |
 | `hubuum_db_operation_errors_total` | `caller`, `operation`, `result` | Database helper failures by broad public error class |
 | `hubuum_storage_backend_info` | `backend` | Complete storage backend selected for the process |
-| `hubuum_storage_operation_duration_seconds` | `backend`, `capability`, `operation`, `result` | Backend-neutral lifecycle storage duration |
-| `hubuum_storage_operation_errors_total` | `backend`, `capability`, `operation`, `result` | Backend-neutral lifecycle storage failures |
+| `hubuum_storage_operation_duration_seconds` | `backend`, `capability`, `operation`, `result` | Backend-neutral logical storage duration |
+| `hubuum_storage_operation_errors_total` | `backend`, `capability`, `operation`, `result` | Backend-neutral logical storage failures |
 | `hubuum_metrics_refresh_duration_seconds` | `source` | Duration of the latest refresh attempt |
 | `hubuum_metrics_refresh_last_success_timestamp_seconds` | `source` | Unix timestamp of the latest successful refresh |
 | `hubuum_metrics_refresh_failures_total` | `source` | Best-effort refresh failures |

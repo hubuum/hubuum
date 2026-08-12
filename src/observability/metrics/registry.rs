@@ -190,11 +190,11 @@ pub fn init() -> Result<(), ApiError> {
         storage_operation_duration: duration_histogram(
             &meter,
             STORAGE_OPERATION_DURATION,
-            "Backend-neutral lifecycle storage operation duration",
+            "Backend-neutral logical storage operation duration",
         ),
         storage_operation_errors: meter
             .u64_counter("hubuum_storage_operation_errors")
-            .with_description("Backend-neutral lifecycle storage operation failures")
+            .with_description("Backend-neutral logical storage operation failures")
             .build(),
         task_worker_iterations: meter
             .u64_counter("hubuum_task_worker_iterations")

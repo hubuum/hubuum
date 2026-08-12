@@ -4,8 +4,8 @@ This guide explains where storage-boundary code lives, how a request moves
 through it, and how to decide which layer owns a change.
 
 For contract responsibilities, see the
-[capability family map](capability-families.md). For adapter certification, see
-[testing and certification](testing.md).
+[capability family map](capability-families.md). For adapter acceptance, see
+[testing and compatibility](testing.md).
 
 ## Request Flow
 
@@ -44,7 +44,7 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Extracted PostgreSQL pool, TLS, JSONB, query capture | `crates/hubuum-storage-postgres/src/*` |
 | Complete aggregate and backend opt-in | `src/storage/contract.rs` |
 | Opaque context, dispatch, common observation | `src/storage/context.rs` |
-| Lifecycle and root-domain contracts | `src/storage/*.rs` |
+| Resource-family and root-domain contracts | `src/storage/*.rs` |
 | PostgreSQL adapter implementations | `src/storage/postgres/*.rs` |
 | PostgreSQL operations, rows, and query mapping | `src/storage/postgres/operations/*` |
 | Connection and transaction helpers | `src/storage/postgres/runtime.rs` |
@@ -106,7 +106,7 @@ Adding a family changes the compile-time backend contract. Update:
 - exhaustive dispatch and observation;
 - every selectable adapter;
 - sanitized administrator settings when applicable;
-- shared certification tests; and
+- shared compatibility tests; and
 - the capability and backend-author documentation.
 
 Do not add optional markers, no-op implementations, or generic unsupported

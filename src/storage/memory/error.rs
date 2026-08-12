@@ -4,7 +4,7 @@ use crate::errors::ApiError;
 
 use super::super::{StorageError, StorageErrorKind};
 
-/// Failure produced by the focused in-memory lifecycle contract model.
+/// Failure produced by the focused in-memory resource model.
 #[derive(Debug)]
 pub(super) struct MemoryStorageModelError {
     source: ApiError,

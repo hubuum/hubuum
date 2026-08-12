@@ -112,7 +112,7 @@ pub fn executable_task_kind_values() -> [&'static str; 4] {
     ]
 }
 
-/// Build lifecycle services around the PostgreSQL adapter for integration tests.
+/// Build resource-family services around the PostgreSQL adapter for integration tests.
 pub fn services_for_postgres(pool: PostgresPool) -> Services {
     Services::from_storage(StorageHandle::postgres(pool))
 }

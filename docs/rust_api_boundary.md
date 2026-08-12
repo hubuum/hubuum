@@ -135,8 +135,8 @@ an explicit promotion decision.
 
 The root crate's `services` and `storage` modules are therefore internal
 application boundaries even though Rust visibility is required by binaries and
-benchmarks. See [Service and Storage Boundary](storage_boundary.md) for the
-incremental collection pilot.
+benchmarks. See [Application and Storage Boundary](storage_boundary.md) for the
+complete backend contract, exact service ports, and adapter rules.
 
 ## Promotion policy
 

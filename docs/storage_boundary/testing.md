@@ -1,4 +1,4 @@
-# Storage Testing and Backend Certification
+# Storage Testing and Backend Compatibility
 
 Hubuum's PostgreSQL path has strong practical integration coverage from the
 adapter through the HTTP API. Boundary enforcement is also strong. The main
@@ -13,13 +13,13 @@ This document separates what each test layer proves from what it does not.
 | Area | Confidence | Reason |
 | --- | --- | --- |
 | PostgreSQL behavior on a real database | Strong | The full suite creates and migrates an isolated PostgreSQL database and exercises queries, transactions, triggers, workers, services, and APIs. |
-| Lifecycle semantics | Strong | Focused contracts run against PostgreSQL and a deterministic memory model, with extensive API coverage above them. |
+| Resource lifecycle semantics | Strong | Focused family contracts run against PostgreSQL and a deterministic memory model, with extensive API coverage above them. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
 | Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and the registry covers every selectable kind. |
 | Every method's observable semantics | Good, not mechanical | Shared tests exercise all families and most operations, but method-level behavioral coverage is curated rather than generated from trait definitions. |
 | Application and HTTP behavior | Strong | Large identity, core-data, job, and platform integration suites exercise real storage through handlers and services. |
 | Concurrency and failure recovery | Good | Targeted lease, notification, transaction, restore, retention, and atomicity tests exist; systematic fault injection and schedule exploration do not. |
-| Cross-backend portability | Moderate | Traits and DTOs are neutral and a lifecycle model provides independent evidence, but only PostgreSQL implements the complete contract. |
+| Cross-backend portability | Moderate | Traits and DTOs are neutral and a focused resource model provides independent evidence, but only PostgreSQL implements the complete contract. |
 | Quantified source coverage | Unknown | The project does not currently publish line or branch coverage for the storage adapter. Test counts alone cannot reveal unvisited branches. |
 
 ## The Test Layers
@@ -31,7 +31,7 @@ contract DTO unit tests
 architecture and workspace guards
           |
           v
-shared lifecycle + selectable-backend contracts
+shared resource-family + selectable-backend contracts
           |
           v
 PostgreSQL native integration and query budgets
@@ -72,14 +72,14 @@ guard the dependency direction. Among other checks, they verify that:
   configuration, or `ApiError`;
 - the aggregate contains every required trait;
 - only adapters that explicitly implement the complete aggregate are selectable;
-- the memory lifecycle model is not selectable; and
+- the focused memory resource model is not selectable; and
 - common observation labels cover the known dispatch surface.
 
 These are valuable compile-time-adjacent regression guards. Some inspect
 source text, so they protect known boundaries rather than providing a formal
 module-system proof against every possible indirect dependency.
 
-## Shared Lifecycle Contracts
+## Shared Resource-Family Contracts
 
 Collection, class, object, class-relation, and object-relation service behavior
 runs against both:
@@ -87,7 +87,7 @@ runs against both:
 - the real PostgreSQL adapter; and
 - `MemoryStorageModel`, a deterministic focused model.
 
-This is the strongest independent evidence that lifecycle services rely on
+This is the strongest independent evidence that resource services rely on
 behavior rather than PostgreSQL mechanics. The memory model deliberately stops
 there; it does not stand in for a complete alternative backend.
 
@@ -208,7 +208,7 @@ path. Because they currently compose PostgreSQL, they do not by themselves
 prove that handlers are backend neutral; architecture guards and the shared
 registry provide that complementary evidence.
 
-## CI Certification
+## CI Verification
 
 The pull-request workflows add coverage that a local default build does not:
 
@@ -261,7 +261,7 @@ The next improvements should be:
 4. Produce periodic line and branch coverage reports for diagnosis, focusing
    review on error and rollback paths rather than a repository-wide percentage.
 5. Run the unchanged service and HTTP suites through a second complete adapter
-   as part of its certification.
+   as part of its acceptance testing.
 
 ## Interpreting a Green Suite
 

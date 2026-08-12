@@ -80,7 +80,7 @@ Authorization records include `event_type=authorization`, `decision`, `principal
 
 ## Storage Diagnostics
 
-Lifecycle storage calls run inside a `storage_operation` debug span with the
+Logical storage calls run inside a `storage_operation` debug span with the
 bounded fields `backend`, `capability`, and `operation`. Successful calls emit
 `storage operation complete` at `DEBUG`. Expected domain outcomes such as not
 found, conflict, validation, and stale preconditions emit

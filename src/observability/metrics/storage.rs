@@ -13,7 +13,7 @@ pub fn storage_backend_identity(backend: &'static str) {
     }
 }
 
-/// Record one backend-neutral lifecycle storage operation.
+/// Record one backend-neutral logical storage operation.
 pub fn storage_operation_finished(
     backend: &'static str,
     capability: &'static str,

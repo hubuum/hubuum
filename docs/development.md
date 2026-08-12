@@ -62,7 +62,7 @@ for package classifications, publishing policy, and promotion requirements.
   Complete backend composition, adapter implementations, and the opaque
   application handle. `src/storage/factory.rs` is the only process-composition
   path allowed to select a backend or inspect its connection settings. The
-  test-only memory contract model exercises focused logical behavior. It is not
+  test-only memory resource model exercises focused logical behavior. It is not
   a selectable backend and does not represent partial application support.
 - `crates/hubuum-storage-postgres`:
   PostgreSQL-owned pool construction, TLS setup, endpoint parsing, and other
@@ -95,8 +95,8 @@ export-template health aggregation are mandatory identity and operational
 contract methods, so a selectable backend cannot omit any process-lifecycle
 behavior.
 
-The collection, class, object, class-relation, and object-relation point and
-lifecycle operations are the first backend-neutral service/storage ports.
+Collection, class, object, class-relation, and object-relation services each
+depend on their exact backend-neutral storage trait.
 Metrics, readiness, maintenance state, event persistence health, atomic event
 fan-out, delivery, event retention, and token retention are also expressed as
 required storage traits with backend-neutral inputs and results. Delivery

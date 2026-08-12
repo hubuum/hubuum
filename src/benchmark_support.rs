@@ -14,7 +14,7 @@ pub fn storage_for_postgres(pool: PostgresPool) -> BenchmarkStorageContext {
     StorageHandle::postgres(pool)
 }
 
-/// Build lifecycle services from an already-composed benchmark context.
+/// Build resource-family services from an already-composed benchmark context.
 #[must_use]
 pub fn services_for_storage(storage: &BenchmarkStorageContext) -> Services {
     Services::from_storage(storage.clone())

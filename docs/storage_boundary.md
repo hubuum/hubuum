@@ -4,7 +4,7 @@ Hubuum has one application-facing storage boundary. A selectable storage
 backend implements that boundary in full; it is not a collection of optional
 features.
 
-PostgreSQL is currently the only selectable backend. The in-memory lifecycle
+PostgreSQL is currently the only selectable backend. The in-memory resource
 model is a focused test tool, not a partially implemented backend.
 
 ## Choose a Reading Path
@@ -16,7 +16,7 @@ model is a focused test tool, not a partially implemented backend.
   implementing or evaluating another backend.
 - Read the [maintainer guide](storage_boundary/maintainer-guide.md) to find the
   code that owns a behavior and to change the boundary safely.
-- Read [testing and certification](storage_boundary/testing.md) for the current
+- Read [testing and compatibility](storage_boundary/testing.md) for the current
   test layers, their strengths, and their known limitations.
 
 ## The Boundary in One Page
@@ -68,7 +68,7 @@ supertraits are the complete compile-time contract. An adapter opts in with an
 explicit implementation only after it implements every required family; Rust
 rejects that implementation if any requirement is missing.
 
-The contract groups those traits into 20 stable capability families:
+The documentation groups those traits into 20 capability families:
 
 - lifecycle and identity foundations;
 - permission-aware reads and computed data;
