@@ -241,6 +241,14 @@ hubuum_drain_primary_workers_for_migrations() {
     return 2
   fi
 
+  # Container health can recover before Caddy clears an earlier active or
+  # passive failure mark. Do not drain the primary until the proxy confirms
+  # that the standby can actually carry public traffic.
+  if ! hubuum_wait_for_caddy_upstreams; then
+    echo "ERROR: Caddy does not have an eligible API standby; refusing to drain the primary" >&2
+    return 2
+  fi
+
   echo "Stopping the all-role primary to drain old-version workers..."
   "${COMPOSE_CMD[@]}" stop hubuum-api
 }

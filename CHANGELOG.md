@@ -54,6 +54,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the client. The server, admin, and OpenAPI binaries now call narrow internal
   library entrypoints, and the library owns API/worker/all runtime composition.
 
+### Fixed
+
+- Single-host rolling updates now wait for Caddy to confirm that the recovered
+  API standby is eligible before draining the primary for migrations, avoiding
+  brief public `502`/`503` responses after a failed-candidate recovery.
+
 ### Security
 
 - Treetop authorization failures now redact transport details, response bodies,
