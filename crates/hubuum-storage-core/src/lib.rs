@@ -20,6 +20,7 @@ mod identity_operations;
 mod identity_tokens;
 mod identity_users;
 mod inventory;
+mod metrics;
 mod object_aggregate;
 mod operational;
 mod record;
@@ -118,6 +119,12 @@ pub use identity_users::{
     StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, UserStorage,
 };
 pub use inventory::{InventoryStorage, StorageInventoryCounts, StorageObjectsByClassCount};
+pub use metrics::{
+    EventMetricsSnapshot, ExportTemplateMetricIdentity, InventoryGaugeSnapshot,
+    InventoryMetricsSnapshot, MetricsStorage, StoragePoolAcquisitionState, StoragePoolCapacity,
+    StoragePoolConnectionState, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
+    TaskGaugeLastTerminal, TaskGaugeSnapshot,
+};
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder,
@@ -228,6 +235,11 @@ impl StorageBackendDescriptor {
     pub const fn kind(self) -> StorageBackendKind {
         self.kind
     }
+}
+
+/// Backend identity used for diagnostics and complete-backend composition.
+pub trait StorageIdentity: Send + Sync {
+    fn storage_name(&self) -> &'static str;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

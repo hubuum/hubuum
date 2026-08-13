@@ -136,10 +136,10 @@ pub(crate) async fn load_event_metrics_snapshot(
     pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<EventMetricsSnapshot, ApiError> {
     with_connection(pool, async |conn| {
-        Ok::<EventMetricsSnapshot, ApiError>(EventMetricsSnapshot {
-            fanout: load_fanout_health(conn).await?,
-            delivery: load_delivery_queue_health(conn).await?,
-        })
+        Ok::<EventMetricsSnapshot, ApiError>(EventMetricsSnapshot::new(
+            load_fanout_health(conn).await?,
+            load_delivery_queue_health(conn).await?,
+        ))
     })
     .await
 }

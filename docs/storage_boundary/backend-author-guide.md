@@ -210,6 +210,17 @@ Run every test in `src/tests/storage_contract.rs` through the backend returned
 by `available_backends()`. Do not copy and edit the tests for the new adapter.
 The point of the registry is identical observable behavior.
 
+Extend the backend application fixture in the same exhaustive match. It must
+provision an administrator and bearer token using the backend being certified.
+The shared harness runs application services, readiness, and authenticated
+point and list HTTP requests without registering a native client in Actix.
+
+Update `semantic-coverage.toml` when the contract or a tracked input enum
+changes. Its architecture test requires exact trait-method and variant lists
+plus an existing shared or native scenario. Native evidence is appropriate for
+transaction, notification, and driver mechanics; it must not hide a portable
+behavior that every backend should share.
+
 ### Native behavior
 
 Add adapter-specific tests for mechanics the shared contract cannot express:
@@ -251,6 +262,8 @@ A backend is selectable only when all of the following are true:
 - [ ] Native diagnostics contain no sensitive data.
 - [ ] Administrator settings are useful and redacted.
 - [ ] Shared compatibility tests pass through `available_backends()`.
+- [ ] The service and HTTP smoke contract passes through the backend fixture registry.
+- [ ] `semantic-coverage.toml` exactly inventories methods, variants, and evidence.
 - [ ] Native failure, consistency, concurrency, and recovery tests pass.
 - [ ] Service, API, CLI, worker, feature, and packaging tests pass.
 - [ ] Representative database round trips show no unexplained regression.

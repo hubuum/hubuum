@@ -327,5 +327,7 @@ When a family changes, update all of the following together:
 3. Every selectable adapter.
 4. The shared compatibility behavior.
 5. Backend-native tests where consistency or failure mechanics change.
-6. This document and any sanitized administrator settings affected by the
+6. `semantic-coverage.toml`, including exact methods, tracked variants, and
+   shared or native scenario evidence.
+7. This document and any sanitized administrator settings affected by the
    change.

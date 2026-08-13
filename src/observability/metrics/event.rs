@@ -81,26 +81,26 @@ fn record_event_snapshot(metrics: &Metrics, snapshot: &EventMetricsSnapshot) {
         metrics,
         "fanout",
         "pending",
-        snapshot.fanout.pending_events(),
+        snapshot.fanout().pending_events(),
     );
     record_queue_item(
         metrics,
         "fanout",
         "in_flight",
-        snapshot.fanout.in_flight_events(),
+        snapshot.fanout().in_flight_events(),
     );
-    record_delivery_counts(metrics, snapshot.delivery.counts());
-    record_stale_claims(metrics, "fanout", snapshot.fanout.stale_claims());
-    record_stale_claims(metrics, "delivery", snapshot.delivery.stale_claims());
+    record_delivery_counts(metrics, snapshot.delivery().counts());
+    record_stale_claims(metrics, "fanout", snapshot.fanout().stale_claims());
+    record_stale_claims(metrics, "delivery", snapshot.delivery().stale_claims());
     record_oldest_age(
         metrics,
         "fanout",
-        snapshot.fanout.oldest_pending_age_seconds(),
+        snapshot.fanout().oldest_pending_age_seconds(),
     );
     record_oldest_age(
         metrics,
         "delivery",
-        snapshot.delivery.oldest_due_age_seconds(),
+        snapshot.delivery().oldest_due_age_seconds(),
     );
     record_worker(metrics, "fanout", &event_fanout_worker_health());
     record_worker(metrics, "delivery", &event_delivery_worker_health());

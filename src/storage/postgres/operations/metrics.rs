@@ -5,13 +5,14 @@ use diesel::dsl::{count_star, max, min};
 use diesel::sql_types::BigInt;
 
 use crate::errors::ApiError;
-use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
+use crate::models::TaskStatus;
 use crate::schema::{export_templates, tasks};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
 use crate::storage::{
-    ExportTemplateMetricIdentity, InventoryGaugeSnapshot, InventoryMetricsSnapshot, TaskGaugeAge,
-    TaskGaugeCount, TaskGaugeLastTerminal, TaskGaugeSnapshot,
+    ExportTemplateMetricIdentity, InventoryGaugeSnapshot, InventoryMetricsSnapshot,
+    StorageTaskKind, StorageTaskStatus, TaskGaugeAge, TaskGaugeCount, TaskGaugeLastTerminal,
+    TaskGaugeSnapshot,
 };
 
 #[derive(Debug, Clone, Copy, QueryableByName)]
@@ -34,16 +35,26 @@ struct InventoryMetricsRow {
 
 impl From<InventoryMetricsRow> for InventoryMetricsSnapshot {
     fn from(row: InventoryMetricsRow) -> Self {
-        Self {
-            collections: row.collections,
-            classes: row.classes,
-            objects: row.objects,
-            users: row.users,
-            groups: row.groups,
-            service_accounts: row.service_accounts,
-            remote_targets: row.remote_targets,
-        }
+        Self::new(
+            row.collections,
+            row.classes,
+            row.objects,
+            row.users,
+            row.groups,
+            row.service_accounts,
+            row.remote_targets,
+        )
     }
+}
+
+fn storage_task_kind(value: &str) -> Result<StorageTaskKind, ApiError> {
+    StorageTaskKind::from_persisted(value)
+        .ok_or_else(|| ApiError::DatabaseError(format!("Unknown persisted task kind '{value}'")))
+}
+
+fn storage_task_status(value: &str) -> Result<StorageTaskStatus, ApiError> {
+    StorageTaskStatus::from_persisted(value)
+        .ok_or_else(|| ApiError::DatabaseError(format!("Unknown persisted task status '{value}'")))
 }
 
 pub(crate) async fn load_inventory_gauge_snapshot(
@@ -58,17 +69,13 @@ pub(crate) async fn load_inventory_gauge_snapshot(
             .await?
             .into_iter()
             .map(|(id, name)| {
-                Ok(ExportTemplateMetricIdentity {
-                    id: ExportTemplateID::new(id)?,
-                    name,
+                ExportTemplateMetricIdentity::new(id, name).ok_or_else(|| {
+                    ApiError::DatabaseError(format!("Invalid persisted export template id '{id}'"))
                 })
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
 
-        Ok::<_, ApiError>(InventoryGaugeSnapshot {
-            counts,
-            export_templates,
-        })
+        Ok::<_, ApiError>(InventoryGaugeSnapshot::new(counts, export_templates))
     })
     .await
 }
@@ -81,11 +88,11 @@ pub(crate) async fn load_task_gauge_snapshot(
             .await?
             .into_iter()
             .map(|(kind, status, count)| {
-                Ok(TaskGaugeCount {
-                    kind: TaskKind::from_db(&kind)?,
-                    status: TaskStatus::from_db(&status)?,
+                Ok(TaskGaugeCount::new(
+                    storage_task_kind(&kind)?,
+                    storage_task_status(&status)?,
                     count,
-                })
+                ))
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
 
@@ -109,45 +116,37 @@ pub(crate) async fn load_task_gauge_snapshot(
             .await?
             .into_iter()
             .map(|(kind, status, finished_at)| {
-                Ok(TaskGaugeLastTerminal {
-                    kind: TaskKind::from_db(&kind)?,
-                    status: TaskStatus::from_db(&status)?,
+                Ok(TaskGaugeLastTerminal::new(
+                    storage_task_kind(&kind)?,
+                    storage_task_status(&status)?,
                     finished_at,
-                })
+                ))
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
 
         let mut ages_by_kind = HashMap::new();
         for (kind, timestamp) in oldest_queued {
             ages_by_kind
-                .entry(TaskKind::from_db(&kind)?)
+                .entry(storage_task_kind(&kind)?)
                 .or_insert((None, None))
                 .0 = timestamp;
         }
         for (kind, timestamp) in oldest_active {
             ages_by_kind
-                .entry(TaskKind::from_db(&kind)?)
+                .entry(storage_task_kind(&kind)?)
                 .or_insert((None, None))
                 .1 = timestamp;
         }
-        let ages = TaskKind::ALL
+        let ages = StorageTaskKind::ALL
             .into_iter()
             .map(|kind| {
                 let (oldest_queued_at, oldest_active_at) =
                     ages_by_kind.remove(&kind).unwrap_or((None, None));
-                TaskGaugeAge {
-                    kind,
-                    oldest_queued_at,
-                    oldest_active_at,
-                }
+                TaskGaugeAge::new(kind, oldest_queued_at, oldest_active_at)
             })
             .collect();
 
-        Ok::<_, ApiError>(TaskGaugeSnapshot {
-            counts,
-            ages,
-            last_terminal,
-        })
+        Ok::<_, ApiError>(TaskGaugeSnapshot::new(counts, ages, last_terminal))
     })
     .await
 }

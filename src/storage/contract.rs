@@ -13,12 +13,9 @@ use super::{
     WorkerNotificationStorage,
 };
 
-pub(crate) use hubuum_storage_core::{StorageBackendDescriptor, StorageBackendKind};
-
-/// Identifies a storage implementation for diagnostics and contract tests.
-pub(crate) trait StorageIdentity: Send + Sync {
-    fn storage_name(&self) -> &'static str;
-}
+pub(crate) use hubuum_storage_core::{
+    StorageBackendDescriptor, StorageBackendKind, StorageIdentity,
+};
 
 /// All-or-nothing storage backend accepted by the application composition root.
 ///

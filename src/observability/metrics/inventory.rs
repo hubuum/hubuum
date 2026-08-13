@@ -66,20 +66,20 @@ fn store_inventory_snapshot(metrics: &Metrics, snapshot: InventoryGaugeSnapshot)
 }
 
 fn record_inventory_snapshot(metrics: &Metrics, snapshot: &InventoryGaugeSnapshot) {
-    let counts = &snapshot.counts;
-    record_inventory(metrics, "collections", counts.collections);
-    record_inventory(metrics, "classes", counts.classes);
-    record_inventory(metrics, "objects", counts.objects);
-    record_inventory(metrics, "users", counts.users);
-    record_inventory(metrics, "groups", counts.groups);
-    record_inventory(metrics, "service_accounts", counts.service_accounts);
-    record_inventory(metrics, "remote_targets", counts.remote_targets);
+    let counts = snapshot.counts();
+    record_inventory(metrics, "collections", counts.collections());
+    record_inventory(metrics, "classes", counts.classes());
+    record_inventory(metrics, "objects", counts.objects());
+    record_inventory(metrics, "users", counts.users());
+    record_inventory(metrics, "groups", counts.groups());
+    record_inventory(metrics, "service_accounts", counts.service_accounts());
+    record_inventory(metrics, "remote_targets", counts.remote_targets());
 
     metrics.export_template_info.reset();
-    for template in &snapshot.export_templates {
+    for template in snapshot.export_templates() {
         metrics
             .export_template_info
-            .with_label_values(&[&template.id.id().to_string(), &template.name])
+            .with_label_values(&[&template.id().to_string(), template.name()])
             .set(1);
     }
 }

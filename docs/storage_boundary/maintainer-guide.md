@@ -54,6 +54,7 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Authorization-policy selection | `src/permissions/*` |
 | HTTP presentation and `ApiError` | `src/api/*`, `src/errors/*` |
 | Shared selectable-backend behavior | `src/tests/storage_contract.rs` |
+| Method, variant, and scenario inventory | `docs/storage_boundary/semantic-coverage.toml` |
 | Boundary architecture guards | `src/tests/application_boundary.rs`, `src/tests/workspace_boundaries.rs` |
 | PostgreSQL query budgets | `src/tests/storage_performance.rs` |
 | HTTP integration suites | `tests/api_*_suite/*` |
@@ -214,7 +215,8 @@ authentication configuration, or raw driver option string.
 The current workspace extraction is intentionally incremental:
 
 - `hubuum-domain` owns extracted backend-independent domain values.
-- `hubuum-storage-core` owns extracted contract traits and DTOs.
+- `hubuum-storage-core` owns extracted contract traits and DTOs, including
+  backend-neutral metrics snapshots and pool diagnostics.
 - `hubuum-storage-postgres` owns pool construction and selected native helpers.
 - The root crate owns composition and still contains traits and PostgreSQL
   queries that depend on root domain types.
@@ -250,6 +252,8 @@ The current source guards verify that:
 - only adapters convert implementation errors into `StorageError`;
 - only the application converts `StorageError` into `ApiError`;
 - all required capability traits remain in the aggregate;
+- the semantic inventory exactly matches aggregate traits, trait methods,
+  tracked input variants, and existing evidence functions;
 - PostgreSQL explicitly implements the aggregate and the memory model does not;
 - dispatch labels remain complete, bounded, and unique; and
 - workspace dependencies continue to point from adapters toward neutral

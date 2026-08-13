@@ -1,0 +1,297 @@
+# Machine-checked inventory of the complete storage contract.
+#
+# `methods` must exactly match the named trait. `shared_scenarios` point to
+# registry-driven compatibility tests, resource-service contracts, or focused
+# contract scenarios. `native_scenarios` identify adapter-only evidence for
+# mechanics that should not leak into the logical contract.
+
+[traits.StorageIdentity]
+source = "crates/hubuum-storage-core/src/lib.rs"
+methods = ["storage_name"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http"]
+
+[traits.CollectionStore]
+source = "src/storage/collections.rs"
+methods = ["get_collection", "create_collection", "update_collection", "delete_collection", "collection_children", "collection_ancestors", "move_collection"]
+shared_scenarios = ["src/services/collections.rs::collection_contract_create_is_visible_to_point_reads", "src/services/collections.rs::collection_contract_move_reparents_the_subtree"]
+native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_a_compound_collection_create_at_an_injected_failure"]
+
+[traits.ClassStore]
+source = "src/storage/classes.rs"
+methods = ["resolve_class", "create_class", "update_class", "delete_class"]
+shared_scenarios = ["src/services/classes.rs::class_contract_resolves_explicit_addresses", "src/services/classes.rs::class_contract_delete_removes_the_resolved_class"]
+
+[traits.ObjectStore]
+source = "src/storage/objects.rs"
+methods = ["resolve_object", "create_object", "update_object", "patch_object_data", "delete_object"]
+shared_scenarios = ["src/services/objects.rs::object_contract_resolves_explicit_addresses", "src/services/objects.rs::object_contract_delete_removes_the_resolved_object"]
+
+[traits.ClassRelationStore]
+source = "src/storage/class_relations.rs"
+methods = ["prepare_class_relation", "resolve_class_relation", "create_class_relation", "delete_class_relation", "create_class_relation_from_command", "delete_class_relation_by_id"]
+shared_scenarios = ["src/services/class_relations.rs::class_relation_contract_creates_and_resolves_the_endpoint_aggregate", "src/services/class_relations.rs::class_relation_contract_deletes_the_resolved_relation"]
+
+[traits.ObjectRelationStore]
+source = "src/storage/object_relations.rs"
+methods = ["prepare_object_relation", "resolve_object_relation", "create_object_relation", "delete_object_relation", "create_object_relation_from_command", "delete_object_relation_by_id"]
+shared_scenarios = ["src/services/object_relations.rs::object_relation_contract_prepares_a_normalized_endpoint_aggregate", "src/services/object_relations.rs::object_relation_contract_deletes_the_resolved_relation"]
+
+[traits.AuthenticationStorage]
+source = "crates/hubuum-storage-core/src/identity.rs"
+methods = ["authenticate_bearer_token", "load_authentication_identity", "load_authentication_token_scope"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_authentication_projections"]
+
+[traits.IdentityStorage]
+source = "crates/hubuum-storage-core/src/identity_operations.rs"
+methods = ["default_admin_bootstrap_required", "bootstrap_default_admin", "reset_local_password", "ensure_identity_scope", "identity_scope_name", "identity_scope_names", "load_principal_group", "list_principal_groups", "list_groups", "list_retained_tokens", "is_human_owner_group_member", "principal_is_disabled", "load_service_account", "load_service_account_point", "list_manageable_service_accounts", "create_service_account", "update_service_account", "disable_service_account", "delete_service_account", "external_principal_state", "mark_external_sync_attempted", "sync_external_user"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+
+[traits.UserStorage]
+source = "crates/hubuum-storage-core/src/identity_users.rs"
+methods = ["load_user", "load_user_by_name", "load_user_point", "list_users", "create_user", "update_user", "set_user_password", "delete_user", "anonymize_user"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+
+[traits.TokenStorage]
+source = "crates/hubuum-storage-core/src/identity_tokens.rs"
+methods = ["create_token", "renew_token", "load_token_metadata", "load_token_metadata_batch", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+
+[traits.AuthorizationStorage]
+source = "crates/hubuum-storage-core/src/authorization.rs"
+methods = ["load_authorization_principal", "authorization_principal_is_group_member", "load_authorization_classes", "load_authorization_objects", "authorize_local_collection", "authorize_local_collections", "local_authorized_collections", "list_authorization_collection_candidates", "list_authorization_group_candidates", "authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "load_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
+
+[traits.CatalogStorage]
+source = "crates/hubuum-storage-core/src/catalog.rs"
+methods = ["list_collections", "list_classes", "list_objects"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_catalog_queries"]
+
+[traits.ComputedFieldLifecycleStorage]
+source = "crates/hubuum-storage-core/src/computed_field_lifecycle.rs"
+methods = ["computed_field_state", "list_shared_computed_fields", "list_personal_computed_fields", "get_computed_field", "create_shared_computed_field", "update_shared_computed_field", "delete_shared_computed_field", "create_personal_computed_field", "update_personal_computed_field", "delete_personal_computed_field", "request_computed_field_rebuild", "execute_computed_field_rebuild"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_field_lifecycle"]
+
+[traits.ComputedObjectStorage]
+source = "crates/hubuum-storage-core/src/computed_objects.rs"
+methods = ["list_computed_objects", "enrich_objects_with_computed"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_object_queries"]
+
+[traits.ObjectAggregateStorage]
+source = "crates/hubuum-storage-core/src/object_aggregate.rs"
+methods = ["aggregate_objects"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_object_aggregates"]
+
+[traits.RelationQueryStorage]
+source = "crates/hubuum-storage-core/src/relation_query.rs"
+methods = ["list_class_relations", "list_object_relations", "list_class_relations_touching", "list_object_relations_touching", "class_relations_touching_ids", "class_relations_between_ids", "object_relations_touching_ids", "object_relations_between_ids", "related_classes", "related_objects", "related_objects_for_roots", "bidirectionally_related_objects_for_roots"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_queries"]
+
+[traits.AuditEventStorage]
+source = "crates/hubuum-storage-core/src/event_administration.rs"
+methods = ["list_audit_events"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
+
+[traits.EventSubscriptionStorage]
+source = "crates/hubuum-storage-core/src/event_administration.rs"
+methods = ["enabled_event_sink_count", "list_event_sinks", "load_event_sink", "create_event_sink", "update_event_sink", "delete_event_sink", "list_event_subscriptions", "load_event_subscription", "create_event_subscription", "update_event_subscription", "delete_event_subscription"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
+
+[traits.EventDeliveryAdministrationStorage]
+source = "crates/hubuum-storage-core/src/event_administration.rs"
+methods = ["list_event_deliveries", "load_event_delivery", "release_event_delivery_for_retry", "mark_event_delivery_dead"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
+
+[traits.EventDeliveryStorage]
+source = "crates/hubuum-storage-core/src/events.rs"
+methods = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"]
+native_scenarios = ["src/events/tests.rs::event_delivery_worker_marks_successful_delivery_succeeded", "src/events/tests.rs::event_delivery_worker_retries_with_backoff_then_marks_dead", "src/events/tests.rs::event_delivery_failed_mark_respects_claim_token"]
+
+[traits.EventFanoutStorage]
+source = "crates/hubuum-storage-core/src/events.rs"
+methods = ["process_event_fanout_batch"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_processes_event_fanout"]
+
+[traits.EventHealthStorage]
+source = "crates/hubuum-storage-core/src/operational.rs"
+methods = ["event_delivery_health"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_event_health"]
+
+[traits.EventRetentionStorage]
+source = "crates/hubuum-storage-core/src/events.rs"
+methods = ["process_event_retention_batch"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_processes_event_retention"]
+
+[traits.HistoryStorage]
+source = "crates/hubuum-storage-core/src/history.rs"
+methods = ["resolve_history_principal_names", "list_collection_history", "collection_history_as_of", "list_class_history", "class_history_as_of", "list_object_history", "object_history_as_of", "list_export_template_history", "export_template_history_as_of", "list_remote_target_history", "remote_target_history_as_of"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_temporal_history"]
+
+[traits.InventoryStorage]
+source = "crates/hubuum-storage-core/src/inventory.rs"
+methods = ["inventory_counts"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_consistent_inventory_counts"]
+
+[traits.MetricsStorage]
+source = "crates/hubuum-storage-core/src/metrics.rs"
+methods = ["metrics_pool_state", "metrics_inventory_snapshot", "metrics_task_snapshot", "metrics_event_snapshot"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_metrics_snapshots"]
+
+[traits.OperationalStateStorage]
+source = "crates/hubuum-storage-core/src/operational.rs"
+methods = ["readiness_snapshot", "maintenance_state", "storage_snapshot", "task_queue_snapshot", "export_template_health", "export_templates_for_audit"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_operational_state"]
+
+[traits.TokenRetentionStorage]
+source = "crates/hubuum-storage-core/src/operational.rs"
+methods = ["purge_expired_tokens"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_token_retention"]
+
+[traits.UnifiedSearchStorage]
+source = "crates/hubuum-storage-core/src/unified_search.rs"
+methods = ["search_unified_collections", "search_unified_classes", "search_unified_objects"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_ranked_unified_search"]
+
+[traits.GroupStorage]
+source = "src/storage/groups.rs"
+methods = ["load_group", "group_identity_scope_name", "create_group", "update_group", "delete_group", "group_members", "group_members_page", "count_group_members", "group_member_principal", "add_group_member", "remove_group_member"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
+
+[traits.PrincipalStorage]
+source = "src/storage/principals.rs"
+methods = ["load_principal", "load_principal_settings", "replace_principal_settings", "merge_principal_settings", "apply_principal_settings_patch", "reset_principal_settings"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_principal_behavior"]
+
+[traits.CollectionPermissionStorage]
+source = "src/storage/collections.rs"
+methods = ["principal_collection_permissions", "principal_all_collection_permissions", "principal_collection_permissions_page", "effective_principal_collection_permissions", "visible_collections", "group_has_collection_permission", "effective_group_collection_permissions", "groups_with_collection_permission", "groups_with_collection_permission_page", "list_collection_group_permissions", "list_collection_group_permissions_page", "collection_group_permission"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
+
+[traits.CollectionRecordStorage]
+source = "src/storage/collections.rs"
+methods = ["create_collection_record", "update_collection_record", "delete_collection_record", "move_collection_record"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_collection_record_compatibility"]
+
+[traits.ClassRecordStorage]
+source = "src/storage/classes.rs"
+methods = ["create_class_record", "update_class_record", "delete_class_record", "load_class_record", "class_collection", "class_names"]
+shared_scenarios = ["src/services/classes.rs::class_contract_resolves_explicit_addresses", "src/services/classes.rs::class_contract_delete_removes_the_resolved_class"]
+
+[traits.ObjectRecordStorage]
+source = "src/storage/objects.rs"
+methods = ["validate_object", "validate_new_object", "validate_object_update", "save_object_record", "create_object_record", "update_object_record", "delete_object_record", "load_object_record", "object_collection", "object_class"]
+shared_scenarios = ["src/services/objects.rs::object_contract_resolves_explicit_addresses", "src/services/objects.rs::object_contract_delete_removes_the_resolved_object"]
+
+[traits.RemoteTargetStorage]
+source = "crates/hubuum-storage-core/src/remote_target.rs"
+methods = ["get_remote_target", "list_remote_targets", "create_remote_target", "update_remote_target", "delete_remote_target", "record_remote_target_invocation"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_remote_target_lifecycle"]
+
+[traits.TaskQueueStorage]
+source = "crates/hubuum-storage-core/src/task_queue.rs"
+methods = ["create_task", "get_task_access", "list_tasks", "list_task_events", "list_import_task_results", "list_export_output_summaries", "list_backup_output_summaries", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_queue"]
+
+[traits.TaskExecutionStorage]
+source = "crates/hubuum-storage-core/src/task_execution.rs"
+methods = ["claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure"]
+
+[traits.BackupSnapshotStorage]
+source = "crates/hubuum-storage-core/src/backup_snapshot.rs"
+methods = ["snapshot_backup"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_backup_snapshots"]
+
+[traits.RestoreStorage]
+source = "crates/hubuum-storage-core/src/restore.rs"
+methods = ["stage_restore", "get_restore_job", "get_restore_status", "expire_restore_stage", "start_restore_draining", "apply_restore", "fail_restore_and_resume", "restore_coordinator_snapshot", "resume_maintenance_without_restore", "resume_terminal_restore", "tick_restore_coordinator", "restore_drain_state", "remove_restore_instance"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination"]
+native_scenarios = ["tests/restore_roundtrip.rs::interrupted_restore_is_reconciled_after_the_drain_transition"]
+
+[traits.ImportStorage]
+source = "src/storage/imports.rs"
+methods = ["import_root_collection", "import_collection_by_id", "import_collection_by_key", "import_collections_by_name", "import_collection_child_by_name", "import_class_by_name", "import_classes_by_names", "import_object_by_name", "import_objects_by_names", "import_class_relation_exists", "import_object_relation_exists", "import_group_exists", "preflight_import", "apply_import_strict", "apply_import_best_effort", "record_import_results"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract"]
+
+[traits.ExportQueryStorage]
+source = "crates/hubuum-storage-core/src/export_query.rs"
+methods = ["run_export_queries"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
+
+[traits.ExportTemplateStorage]
+source = "crates/hubuum-storage-core/src/export_template_lifecycle.rs"
+methods = ["get_export_template", "list_export_templates", "list_export_templates_in_collection", "export_template_class_collection_id", "create_export_template", "replace_export_template", "delete_export_template"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_export_template_lifecycle"]
+
+[traits.WorkerNotificationStorage]
+source = "crates/hubuum-storage-core/src/worker_notifications.rs"
+methods = ["spawn_worker_notification_listener"]
+native_scenarios = ["src/storage/postgres/notifications.rs::fanout_trigger_notifies_only_after_commit", "src/storage/postgres/notifications.rs::task_queue_notification_is_delivered_only_after_commit", "src/storage/postgres/notifications.rs::shutdown_releases_postgres_notification_listener"]
+
+[traits.StorageExecution]
+source = "crates/hubuum-storage-core/src/execution.rs"
+methods = ["run_with_call_site", "run_with_call_site_send", "run_with_mutation_provenance", "run_with_revision_precondition"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context"]
+
+# Boundary enums accepted by backend methods or dispatch. The inventory is
+# exact: adding a variant requires consciously extending its semantic evidence.
+
+[enums.StorageImportOperation]
+source = "src/storage/imports.rs"
+variants = ["UpsertIdentityScope", "UpsertGroup", "UpsertPrincipal", "UpsertGroupMembership", "CreateCollection", "UpdateCollection", "CreateClass", "UpdateClass", "CreateObject", "UpdateObject", "UpsertComputedField", "CreateClassRelation", "UpdateClassRelationTimestamps", "CheckClassRelationCondition", "CreateObjectRelation", "UpdateObjectRelationTimestamps", "CheckObjectRelationCondition", "ApplyCollectionPermissions", "UpsertExportTemplate", "UpsertRemoteTarget", "UpsertEventSink", "UpsertEventSubscription"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract", "tests/api_jobs_suite/imports.rs::administrator_imports_deterministic_identity_and_permission_graph"]
+
+[enums.StorageTaskCompletionArtifact]
+source = "crates/hubuum-storage-core/src/task_execution.rs"
+variants = ["None", "Export", "Backup", "RemoteCall"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+
+[enums.StorageRestoreJobStatus]
+source = "crates/hubuum-storage-core/src/restore.rs"
+variants = ["Validated", "Confirmed", "Succeeded", "Failed", "Expired"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination"]
+
+[enums.StorageComputedFieldVisibility]
+source = "crates/hubuum-storage-core/src/computed_field_lifecycle.rs"
+variants = ["Shared", "Personal"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_field_lifecycle"]
+
+[enums.StorageRelatedDirection]
+source = "crates/hubuum-storage-core/src/relation_query.rs"
+variants = ["Any", "Outgoing", "Incoming"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_queries"]
+
+[enums.StorageRelatedSort]
+source = "crates/hubuum-storage-core/src/relation_query.rs"
+variants = ["Path", "Name", "CreatedAt"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_queries"]
+
+[enums.ObjectAggregateAuthorizationMode]
+source = "crates/hubuum-storage-core/src/object_aggregate.rs"
+variants = ["Storage", "Delegated"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_object_aggregates"]
+
+[enums.StorageObjectAggregateSort]
+source = "crates/hubuum-storage-core/src/object_aggregate.rs"
+variants = ["DimensionsAscending", "DimensionsDescending", "ObjectCountAscending", "ObjectCountDescending"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_object_aggregates"]
+
+[enums.StorageCallSite]
+source = "crates/hubuum-storage-core/src/execution.rs"
+variants = ["EventDelivery", "EventFanout", "EventRetention", "HttpRequest", "MetricsRefresh", "Readiness", "RequestMaintenance", "RestoreCoordinator", "TaskLease", "TaskWorker", "TokenRetention", "Unattributed"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context"]
+
+[enums.StorageNotification]
+source = "crates/hubuum-storage-core/src/worker_notifications.rs"
+variants = ["EventFanout", "EventDelivery", "TaskQueue"]
+scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notification_topics_have_stable_bounded_names", "src/storage/postgres/notifications.rs::fanout_trigger_notifies_only_after_commit", "src/storage/postgres/notifications.rs::task_queue_notification_is_delivered_only_after_commit"]
+
+[enums.StorageTaskKind]
+source = "crates/hubuum-storage-core/src/task_queue.rs"
+variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+
+[enums.StorageTaskStatus]
+source = "crates/hubuum-storage-core/src/task_queue.rs"
+variants = ["Queued", "Validating", "Running", "Succeeded", "Failed", "PartiallySucceeded", "Cancelled"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]

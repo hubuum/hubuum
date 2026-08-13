@@ -102,24 +102,27 @@ pub async fn get_db_state(
         message = "DB state requested",
         requestor = requestor.user.id
     );
+    let capacity = state.capacity();
+    let acquisitions = state.acquisitions();
+    let connections = state.connections();
 
     let response = DbStateResponse {
-        max_connections: state.max_connections,
-        total_connections: state.total_connections,
-        available_connections: state.available_connections,
-        idle_connections: state.idle_connections,
-        in_use_connections: state.in_use_connections,
-        pending_acquisitions: state.pending_acquisitions,
-        acquisitions_started: state.acquisitions_started,
-        acquisitions_direct: state.acquisitions_direct,
-        acquisitions_waited: state.acquisitions_waited,
-        acquisitions_timed_out: state.acquisitions_timed_out,
-        acquisition_wait_time_ms: state.acquisition_wait_time_ms,
-        connections_created: state.connections_created,
-        connections_closed_broken: state.connections_closed_broken,
-        connections_closed_invalid: state.connections_closed_invalid,
-        connections_closed_max_lifetime: state.connections_closed_max_lifetime,
-        connections_closed_idle_timeout: state.connections_closed_idle_timeout,
+        max_connections: capacity.max_connections(),
+        total_connections: capacity.total_connections(),
+        available_connections: capacity.available_connections(),
+        idle_connections: capacity.idle_connections(),
+        in_use_connections: capacity.in_use_connections(),
+        pending_acquisitions: acquisitions.pending(),
+        acquisitions_started: acquisitions.started(),
+        acquisitions_direct: acquisitions.direct(),
+        acquisitions_waited: acquisitions.waited(),
+        acquisitions_timed_out: acquisitions.timed_out(),
+        acquisition_wait_time_ms: acquisitions.wait_time_ms(),
+        connections_created: connections.created(),
+        connections_closed_broken: connections.closed_broken(),
+        connections_closed_invalid: connections.closed_invalid(),
+        connections_closed_max_lifetime: connections.closed_max_lifetime(),
+        connections_closed_idle_timeout: connections.closed_idle_timeout(),
         active_connections: row.active_sessions(),
         db_size: row.storage_bytes(),
         last_vacuum_time: row.last_maintenance_at().map(|dt| dt.to_string()),

@@ -700,6 +700,9 @@ impl SaveCollectionForGroupRecord for NewCollection {
 
         with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
             let collection = insert_collection_for_group(conn, self, group_id).await?;
+            crate::storage::postgres::failpoints::check(
+                crate::storage::postgres::failpoints::PostgresFailpoint::CollectionCreateAfterRecords,
+            )?;
 
             let event = collection_event(
                 &collection,

@@ -9,7 +9,6 @@ mod groups;
 mod imports;
 #[cfg(test)]
 mod memory;
-mod metrics;
 mod object_relations;
 mod objects;
 mod observed;
@@ -133,6 +132,12 @@ pub(crate) use hubuum_storage_core::{
     StorageExportTaskArtifact, StorageImportTaskResult, StorageImportTaskResultPage,
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
+pub(crate) use hubuum_storage_core::{
+    EventMetricsSnapshot, ExportTemplateMetricIdentity, InventoryGaugeSnapshot,
+    InventoryMetricsSnapshot, MetricsStorage, StoragePoolAcquisitionState, StoragePoolCapacity,
+    StoragePoolConnectionState, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
+    TaskGaugeLastTerminal, TaskGaugeSnapshot,
+};
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 pub(crate) use imports::{
     ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportOperation,
@@ -140,11 +145,6 @@ pub(crate) use imports::{
 };
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
-pub(crate) use metrics::{
-    EventMetricsSnapshot, ExportTemplateMetricIdentity, InventoryGaugeSnapshot,
-    InventoryMetricsSnapshot, MetricsStorage, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
-    TaskGaugeLastTerminal, TaskGaugeSnapshot,
-};
 pub(crate) use object_relations::ObjectRelationStore;
 pub(crate) use objects::{ObjectRecordStorage, ObjectStore};
 #[cfg(test)]

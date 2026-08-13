@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
-use actix_web::web::Data;
+use actix_web::{App, http, test, web::Data};
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
@@ -28,6 +28,7 @@ use crate::models::{
     UpdateCollection, UpdateGroup,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::{AppContext, LocalPermissionBackend};
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
@@ -58,7 +59,7 @@ use crate::storage::{
     StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StorageDefaultAdminBootstrap, StorageError, StorageEventDeliveryListQuery,
+    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
     StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
     StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
@@ -128,14 +129,52 @@ impl ObjectAggregateAuthorizer for AllowAllObjectAggregateAuthorizer {
 fn available_backends() -> impl Iterator<Item = StorageHandle> {
     let postgres_pool = pool();
     StorageBackendKind::ALL.into_iter().map(move |kind| {
-        let backend = match kind {
-            StorageBackendKind::Postgresql => {
-                StorageHandle::postgres(postgres_pool.get_ref().clone())
-            }
-        };
+        let backend = backend_for_kind(kind, postgres_pool.get_ref());
         assert_eq!(backend.descriptor().kind(), kind);
         backend
     })
+}
+
+fn backend_for_kind(kind: StorageBackendKind, postgres_pool: &PostgresPool) -> StorageHandle {
+    match kind {
+        StorageBackendKind::Postgresql => StorageHandle::postgres(postgres_pool.clone()),
+    }
+}
+
+struct BackendApplicationFixture {
+    backend: StorageHandle,
+    administrator: crate::models::User,
+    bearer_token: String,
+}
+
+async fn backend_application_fixture(
+    kind: StorageBackendKind,
+    postgres_pool: &PostgresPool,
+) -> BackendApplicationFixture {
+    match kind {
+        StorageBackendKind::Postgresql => {
+            let administrator = crate::tests::create_test_admin(postgres_pool).await;
+            let bearer_token = administrator
+                .create_token(postgres_pool)
+                .await
+                .expect("backend compatibility administrator token should be created")
+                .get_token();
+            BackendApplicationFixture {
+                backend: backend_for_kind(kind, postgres_pool),
+                administrator,
+                bearer_token,
+            }
+        }
+    }
+}
+
+impl BackendApplicationFixture {
+    async fn cleanup(self, postgres_pool: &PostgresPool) {
+        self.administrator
+            .delete_without_events(postgres_pool)
+            .await
+            .expect("backend compatibility administrator should be removed");
+    }
 }
 
 #[actix_web::test]
@@ -144,7 +183,7 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
 
     for backend in available_backends() {
         let pool_state = backend.metrics_pool_state();
-        assert!(pool_state.max_connections > 0);
+        assert!(pool_state.capacity().max_connections() > 0);
         backend
             .metrics_inventory_snapshot()
             .await
@@ -158,6 +197,162 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
             .await
             .expect("certified backend should supply event metrics");
     }
+}
+
+#[actix_web::test]
+async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let backend = StorageHandle::postgres(pool.get_ref().clone());
+    let group = backend
+        .create_group(
+            &NewGroup {
+                identity_scope: None,
+                groupname: prefix("collection_failpoint_group"),
+                description: Some("collection rollback owner".to_string()),
+            },
+            None,
+        )
+        .await
+        .expect("collection rollback owner group should be created");
+    let collection_name = prefix("collection_failpoint");
+    let command = NewCollectionWithAssignee {
+        name: collection_name.clone(),
+        description: "must be rolled back".to_string(),
+        group_id: GroupID::new(group.id).expect("fixture group id should be valid"),
+        parent_collection_id: Some(CollectionID::new(1).expect("root id should be valid")),
+    };
+
+    let error = crate::storage::postgres::with_failpoint(
+        crate::storage::postgres::PostgresFailpoint::CollectionCreateAfterRecords,
+        backend
+            .collection_store()
+            .create_collection(command, &EventContext::system()),
+    )
+    .await
+    .expect_err("injected failure should abort collection creation");
+    assert_eq!(error.kind(), StorageErrorKind::Database);
+
+    let persisted = crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+        use crate::schema::collections::dsl::{collections, name};
+        collections
+            .filter(name.eq(&collection_name))
+            .count()
+            .get_result::<i64>(conn)
+            .await
+    })
+    .await
+    .expect("collection rollback should remain queryable");
+    assert_eq!(persisted, 0, "all collection records must roll back");
+
+    backend
+        .delete_group(group.id, None)
+        .await
+        .expect("collection rollback owner group should be removed");
+}
+
+#[actix_web::test]
+async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let backend = StorageHandle::postgres(pool.get_ref().clone());
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("task_failpoint_user"),
+        "testpassword",
+    )
+    .await;
+    let task = backend
+        .create_task(
+            StorageTaskCreateRequest::builder(
+                StorageTaskKind::Import,
+                user.id,
+                serde_json::json!({"failpoint": true}),
+                1,
+            )
+            .idempotency_key(Some(
+                IdempotencyKey::new(prefix("task_failpoint_key"))
+                    .expect("failpoint idempotency key should be valid"),
+            ))
+            .request_hash(Some(prefix("task_failpoint_hash")))
+            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+            .build(10),
+        )
+        .await
+        .expect("task rollback fixture should be created");
+    let claim_token = uuid::Uuid::new_v4();
+    crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+        use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
+        diesel::update(tasks.filter(id.eq(task.id())))
+            .set((
+                status.eq(StorageTaskStatus::Validating.as_str()),
+                lease_token.eq(Some(claim_token)),
+                lease_expires_at.eq(Some(
+                    chrono::Utc::now().naive_utc()
+                        + chrono::Duration::try_minutes(1).expect("valid failpoint lease"),
+                )),
+            ))
+            .execute(conn)
+            .await
+    })
+    .await
+    .expect("task rollback fixture should receive a live claim");
+    let lease = StorageTaskLease::new(
+        task.id(),
+        StorageTaskClaimToken::new(claim_token.to_string()),
+    );
+
+    let error = crate::storage::postgres::with_failpoint(
+        crate::storage::postgres::PostgresFailpoint::TaskFinalizeAfterEvent,
+        backend.complete_task(StorageTaskCompletion::new(
+            StorageTaskStateUpdate::new(
+                lease,
+                StorageTaskStatus::Succeeded,
+                StorageTaskResultCounts::new(1, 1, 0),
+            ),
+            StorageTaskEventInput::new("succeeded", "Must be rolled back"),
+        )),
+    )
+    .await
+    .expect_err("injected failure should abort task finalization");
+    assert_eq!(error.kind(), StorageErrorKind::Database);
+
+    let (persisted, _) = backend
+        .get_task_access(task.id())
+        .await
+        .expect("rolled-back task should remain readable")
+        .into_parts();
+    assert_eq!(persisted.status(), StorageTaskStatus::Validating);
+    let events = backend
+        .list_task_events(StorageTaskPageQuery::new(
+            task.id(),
+            QueryOptions {
+                filters: Vec::new(),
+                sort: Vec::new(),
+                limit: Some(10),
+                cursor: None,
+                include_total: true,
+            },
+        ))
+        .await
+        .expect("rolled-back task events should remain readable");
+    assert_eq!(
+        events.into_parts().0.len(),
+        1,
+        "terminal event must roll back"
+    );
+
+    crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
+        use crate::schema::tasks::dsl::{id, tasks};
+        diesel::delete(tasks.filter(id.eq(task.id())))
+            .execute(conn)
+            .await
+    })
+    .await
+    .expect("task rollback fixture should be removed");
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("task rollback user should be removed");
 }
 
 #[actix_web::test]
@@ -3600,10 +3795,15 @@ async fn every_available_storage_backend_supplies_token_retention() {
 }
 
 #[actix_web::test]
-async fn every_available_storage_backend_composes_through_the_complete_contract() {
+async fn every_available_storage_backend_composes_through_services_and_http() {
     let _permit = postgres_permit().await;
+    let postgres_pool = pool();
+    let config = crate::tests::integration_test_config()
+        .expect("backend compatibility configuration should be valid");
 
-    for backend in available_backends() {
+    for kind in StorageBackendKind::ALL {
+        let fixture = backend_application_fixture(kind, postgres_pool.get_ref()).await;
+        let backend = fixture.backend.clone();
         fn accepts_event_delivery_contract(_backend: &impl EventDeliveryStorage) {}
         fn accepts_worker_notification_contract(_backend: &impl WorkerNotificationStorage) {}
         fn accepts_event_administration_contract(
@@ -3616,7 +3816,7 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
         accepts_worker_notification_contract(&backend);
         accepts_event_administration_contract(&backend);
         let descriptor = backend.descriptor();
-        assert_eq!(descriptor.kind(), StorageBackendKind::Postgresql);
+        assert_eq!(descriptor.kind(), kind);
 
         let services = Services::from_storage(backend.clone());
         let root = services
@@ -3625,6 +3825,49 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
             .await
             .expect("certified backend should serve lifecycle operations");
         assert_eq!(root.id, 1);
+
+        let permissions = Arc::new(LocalPermissionBackend::new(
+            backend.clone(),
+            config.admin_groupname.clone(),
+        ));
+        let app = test::init_service(
+            App::new()
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
+                .app_data(Data::new(AppContext::new(backend, permissions)))
+                .configure(crate::api::config),
+        )
+        .await;
+
+        let ready = test::TestRequest::get().uri("/readyz").to_request();
+        let ready = test::call_service(&app, ready).await;
+        assert_eq!(ready.status(), http::StatusCode::OK);
+
+        let authorization = (
+            http::header::AUTHORIZATION,
+            format!("Bearer {}", fixture.bearer_token),
+        );
+        let point = test::TestRequest::get()
+            .uri("/api/v1/collections/1")
+            .insert_header(authorization.clone())
+            .to_request();
+        let point = test::call_service(&app, point).await;
+        assert_eq!(point.status(), http::StatusCode::OK);
+        let point: crate::models::Collection = test::read_body_json(point).await;
+        assert_eq!(point.id, 1);
+
+        let list = test::TestRequest::get()
+            .uri("/api/v1/collections?limit=10")
+            .insert_header(authorization)
+            .to_request();
+        let list = test::call_service(&app, list).await;
+        assert_eq!(list.status(), http::StatusCode::OK);
+        let listed: Vec<crate::models::Collection> = test::read_body_json(list).await;
+        assert!(listed.iter().any(|collection| collection.id == 1));
+
+        drop(app);
+        fixture.cleanup(postgres_pool.get_ref()).await;
     }
 }
 

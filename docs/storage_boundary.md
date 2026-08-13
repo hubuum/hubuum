@@ -18,6 +18,9 @@ model is a focused test tool, not a partially implemented backend.
   code that owns a behavior and to change the boundary safely.
 - Read [testing and compatibility](storage_boundary/testing.md) for the current
   test layers, their strengths, and their known limitations.
+- Inspect the machine-checked
+  [semantic coverage inventory](storage_boundary/semantic-coverage.toml) for
+  the exact trait methods, tracked input variants, and their test evidence.
 
 ## The Boundary in One Page
 
@@ -175,6 +178,12 @@ The PostgreSQL path is exercised through a real migrated database by shared
 backend contracts, PostgreSQL-specific tests, service tests, HTTP integration
 tests, destructive restore tests, query-budget tests, platform and feature
 builds, production-container tests, and benchmarks.
+
+The contract's methods and selected input variants are inventoried
+mechanically, and every registered backend runs compact service, readiness,
+and authenticated HTTP point/list scenarios. Adapter-private deterministic
+failpoints additionally prove rollback at representative compound-write and
+task-state-machine seams.
 
 That is strong practical coverage, but it is not a formal proof of portability:
 PostgreSQL is the only complete production adapter, and the compatibility suite

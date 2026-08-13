@@ -64,20 +64,21 @@ pub(crate) fn db_operation_finished(
 
 pub(super) fn refresh_pool_gauges(metrics: &Metrics, backend: &(impl MetricsStorage + ?Sized)) {
     let state = backend.metrics_pool_state();
+    let capacity = state.capacity();
     metrics.db_pool_connections.record(
-        u64::from(state.max_connections),
+        u64::from(capacity.max_connections()),
         &[KeyValue::new("state", "configured")],
     );
     metrics.db_pool_connections.record(
-        u64::from(state.total_connections),
+        u64::from(capacity.total_connections()),
         &[KeyValue::new("state", "open")],
     );
     metrics.db_pool_connections.record(
-        u64::from(state.idle_connections),
+        u64::from(capacity.idle_connections()),
         &[KeyValue::new("state", "idle")],
     );
     metrics.db_pool_connections.record(
-        u64::from(state.in_use_connections),
+        u64::from(capacity.in_use_connections()),
         &[KeyValue::new("state", "checked_out")],
     );
 }

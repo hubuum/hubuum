@@ -16,9 +16,9 @@ This document separates what each test layer proves from what it does not.
 | Resource lifecycle semantics | Strong | Focused family contracts run against PostgreSQL and a deterministic memory model, with extensive API coverage above them. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
 | Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and the registry covers every selectable kind. |
-| Every method's observable semantics | Good, not mechanical | Shared tests exercise all families and most operations, but method-level behavioral coverage is curated rather than generated from trait definitions. |
-| Application and HTTP behavior | Strong | Large identity, core-data, job, and platform integration suites exercise real storage through handlers and services. |
-| Concurrency and failure recovery | Good | Targeted lease, notification, transaction, restore, retention, and atomicity tests exist; systematic fault injection and schedule exploration do not. |
+| Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The scenarios still require human review for semantic depth. |
+| Application and HTTP behavior | Strong | Every registered backend runs a service point read, readiness, and representative authenticated point/list HTTP requests. Larger integration suites exercise the remaining real application path. |
+| Concurrency and failure recovery | Good | Targeted lease, notification, transaction, restore, retention, and atomicity tests exist. Task-local PostgreSQL failpoints prove rollback at collection-create and task-finalization seams without changing the public contract. |
 | Cross-backend portability | Moderate | Traits and DTOs are neutral and a focused resource model provides independent evidence, but only PostgreSQL implements the complete contract. |
 | Quantified source coverage | Unknown | The project does not currently publish line or branch coverage for the storage adapter. Test counts alone cannot reveal unvisited branches. |
 
@@ -79,6 +79,13 @@ These are valuable compile-time-adjacent regression guards. Some inspect
 source text, so they protect known boundaries rather than providing a formal
 module-system proof against every possible indirect dependency.
 
+The same architecture suite reads
+`docs/storage_boundary/semantic-coverage.toml`. The inventory must match the
+aggregate trait set, each trait's methods, and each tracked boundary enum's
+variants exactly. Every entry must point to a test function that exists. A new
+method or variant therefore fails locally until its intended semantic evidence
+is recorded.
+
 ## Shared Resource-Family Contracts
 
 Collection, class, object, class-relation, and object-relation service behavior
@@ -97,6 +104,12 @@ there; it does not stand in for a complete alternative backend.
 `available_backends()` iterates `StorageBackendKind::ALL`, constructs each
 backend through `StorageHandle`, and verifies its descriptor before running the
 shared tests.
+
+The application fixture registry also provisions an administrator through each
+backend. Every registered backend is then exercised through `Services`, the
+readiness handler, and authenticated collection point and list routes. The
+Actix application receives only `AppContext`; adapter-native clients remain
+inside the exhaustive fixture-construction match.
 
 The suite covers these family-level behaviors:
 
@@ -123,12 +136,13 @@ The suite covers these family-level behaviors:
 | `event_administration` | Audit visibility, sink/subscription lifecycle, fan-out delivery creation, retry, and dead-letter actions |
 | `operations` | Metrics, readiness and diagnostics, event health/fan-out/retention, token retention, and compile-time worker notification composition |
 
-The aggregate trait guarantees that every method exists. The compatibility
-suite guarantees representative semantics by family and directly invokes most
-methods. It does not currently derive a method inventory from the traits, and
-some native worker operations—especially delivery claims and notification
-listeners—receive their deepest coverage in PostgreSQL-specific tests rather
-than a reusable backend test.
+The aggregate trait guarantees that every method exists. The semantic coverage
+inventory guarantees that the method and tracked input-variant lists cannot
+drift unnoticed. The compatibility suite supplies representative semantics by
+family and directly invokes most methods. Some native worker operations—most
+notably delivery claims and notification listeners—still receive their deepest
+coverage in PostgreSQL-specific tests, and the inventory records that evidence
+as native rather than pretending it is portable.
 
 The suite is not yet a `hubuum-storage-contract-tests` workspace crate. That is
 an extraction target after remaining root-owned domain fixtures are removed.
@@ -154,6 +168,13 @@ Tests alongside `src/storage/postgres` and
 - token retention coordination;
 - restore transactions and recovery; and
 - notification visibility only after commit.
+
+Adapter-private, task-local failpoints interrupt a compound collection create
+after its rows are written and task finalization after its terminal audit event
+is written. Both tests assert that the surrounding PostgreSQL transaction
+rolls back all intermediate state. Failpoint selection does not cross
+`StorageBackend`, and task-local scope prevents parallel tests from injecting
+failures into one another.
 
 Many PostgreSQL operation modules are primarily exercised by integration tests
 rather than inline unit tests. This is appropriate for SQL behavior, but it
@@ -190,6 +211,11 @@ Application services are exercised in three ways:
 3. HTTP integration suites execute handlers, permission checks, services,
    storage DTO conversion, PostgreSQL operations, and response projection as
    one path.
+
+In addition, the selectable-backend registry runs a compact service and HTTP
+smoke contract for every `StorageBackendKind`. That check protects composition
+neutrality when a new adapter is registered; the larger suites protect depth
+for the current PostgreSQL application.
 
 The integration suites are grouped by surface:
 
@@ -235,15 +261,17 @@ The current suite is solid, but these limitations should remain visible:
 1. **Only one complete adapter exists.** Neutral APIs have been designed and
    enforced, but a second production implementation is the best portability
    test.
-2. **Method coverage is curated.** Compilation catches a missing method and the
-   shared suite covers every family, but there is no generated assertion that
-   every trait method has a corresponding semantic scenario.
+2. **Evidence is scenario-level, not path coverage.** The inventory proves
+   that maintainers classified every method and tracked variant and named an
+   existing scenario. It cannot prove that every branch of a method is visited
+   or that a broad family scenario asserts every subtle invariant.
 3. **No published line or branch coverage exists.** A coverage report would
    help identify cold error branches, even if it should not become a simplistic
    merge gate.
-4. **Concurrency testing is targeted rather than exhaustive.** The suite tests
-   important races, but it does not systematically explore task schedules,
-   connection loss, process death, or database failover at every transition.
+4. **Fault and concurrency testing is targeted rather than exhaustive.** The
+   suite tests important races and two deterministic rollback seams, but it
+   does not systematically explore task schedules, connection loss, process
+   death, or database failover at every transition.
 5. **The compatibility harness still uses root fixtures.** Until extracted, an
    external adapter cannot consume it as a normal workspace dependency.
 
@@ -251,16 +279,13 @@ The current suite is solid, but these limitations should remain visible:
 
 The next improvements should be:
 
-1. Maintain an explicit trait-method-to-scenario inventory and fail an
-   architecture test when a required method lacks a compatibility or documented
-   native-only scenario.
-2. Extract `hubuum-storage-contract-tests` once the remaining root-domain DTOs
+1. Extract `hubuum-storage-contract-tests` once the remaining root-domain DTOs
    and fixture interface are neutral.
-3. Add deterministic fault-injection around task leases, event delivery,
-   restore coordination, and connection loss.
-4. Produce periodic line and branch coverage reports for diagnosis, focusing
+2. Extend deterministic fault injection to event delivery, restore
+   coordination, lease loss, and connection failure.
+3. Produce periodic line and branch coverage reports for diagnosis, focusing
    review on error and rollback paths rather than a repository-wide percentage.
-5. Run the unchanged service and HTTP suites through a second complete adapter
+4. Run the unchanged service and HTTP suites through a second complete adapter
    as part of its acceptance testing.
 
 ## Interpreting a Green Suite

@@ -23,6 +23,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   internal crates from becoming publishable and automatically adds rustdoc,
   clean-package, and crates.io-backed semantic compatibility checks when a
   crate is deliberately promoted to a supported public status.
+- Storage compatibility now has a machine-checked trait-method and input-variant
+  evidence inventory, runs representative service and authenticated HTTP paths
+  for every registered backend, and uses adapter-private deterministic
+  failpoints to verify rollback of compound collection and task-finalization
+  writes.
 
 ### Changed
 
@@ -47,6 +52,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   request and response shapes are unchanged; the deprecated administrator
   configuration field `exports.database_statement_timeout_ms` remains as an
   alias for `exports.storage_query_budget_ms`.
+- Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;
+  PostgreSQL pool statistics are converted into private, structured contract
+  values at the adapter boundary rather than being represented by root-owned
+  database-shaped fields.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

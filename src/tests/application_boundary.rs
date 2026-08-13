@@ -1,6 +1,8 @@
 //! Compile-time-adjacent guards for the application/storage boundary.
 
 #[cfg(test)]
+use std::collections::BTreeSet;
+#[cfg(test)]
 use std::fs;
 #[cfg(test)]
 use std::path::{Path, PathBuf};
@@ -13,6 +15,111 @@ fn repository_root() -> PathBuf {
 #[cfg(test)]
 fn read_source(path: &Path) -> std::io::Result<String> {
     fs::read_to_string(path).map(|source| source.replace("\r\n", "\n"))
+}
+
+#[cfg(test)]
+fn item_body<'a>(source: &'a str, keyword: &str, name: &str) -> &'a str {
+    let marker = format!("{keyword} {name}");
+    let declaration = source
+        .find(&marker)
+        .unwrap_or_else(|| panic!("could not find {marker}"));
+    let opening = source[declaration..]
+        .find('{')
+        .map(|offset| declaration + offset)
+        .unwrap_or_else(|| panic!("could not find opening brace for {marker}"));
+    let mut depth = 0_u32;
+    for (offset, character) in source[opening..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[opening + 1..opening + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("could not find closing brace for {marker}");
+}
+
+#[cfg(test)]
+fn trait_methods(source: &str, trait_name: &str) -> BTreeSet<String> {
+    item_body(source, "trait", trait_name)
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let method = line
+                .strip_prefix("async fn ")
+                .or_else(|| line.strip_prefix("fn "))?;
+            Some(
+                method
+                    .chars()
+                    .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn enum_variants(source: &str, enum_name: &str) -> BTreeSet<String> {
+    let mut variants = BTreeSet::new();
+    let mut nested = 0_i32;
+    for line in item_body(source, "enum", enum_name).lines() {
+        let line = line.trim();
+        if nested == 0 && !line.is_empty() && !line.starts_with('#') && !line.starts_with("//") {
+            let candidate = line
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .collect::<String>();
+            if candidate
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_uppercase())
+            {
+                variants.insert(candidate);
+            }
+        }
+        for character in line.chars() {
+            match character {
+                '(' | '[' | '{' => nested += 1,
+                ')' | ']' | '}' => nested -= 1,
+                _ => {}
+            }
+        }
+    }
+    variants
+}
+
+#[cfg(test)]
+fn toml_string_set(table: &toml::Table, key: &str) -> BTreeSet<String> {
+    table
+        .get(key)
+        .and_then(toml::Value::as_array)
+        .unwrap_or_else(|| panic!("semantic coverage entry is missing array '{key}'"))
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("semantic coverage '{key}' entries must be strings"))
+                .to_string()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn assert_scenario_exists(root: &Path, scenario: &str) {
+    let (path, symbol) = scenario.split_once("::").unwrap_or_else(|| {
+        panic!("semantic coverage scenario must use path::symbol syntax: {scenario}")
+    });
+    let path = root.join(path);
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read scenario {}: {error}", path.display()));
+    assert!(
+        source.contains(&format!("fn {symbol}")),
+        "semantic coverage scenario {scenario} does not name a function in its source"
+    );
 }
 
 #[cfg(test)]
@@ -99,6 +206,109 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
             families.contains(required_trait),
             "required storage trait {required_trait} is not mapped to a capability family"
         );
+    }
+}
+
+#[test]
+fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
+    let root = repository_root();
+    let manifest_path = root.join("docs/storage_boundary/semantic-coverage.toml");
+    let manifest_source = read_source(&manifest_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", manifest_path.display()));
+    let manifest = toml::from_str::<toml::Value>(&manifest_source)
+        .expect("storage semantic coverage inventory should be valid TOML");
+    let traits = manifest
+        .get("traits")
+        .and_then(toml::Value::as_table)
+        .expect("semantic coverage inventory should have a traits table");
+    let expected_traits = REQUIRED_STORAGE_BACKEND_TRAITS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<BTreeSet<_>>();
+    let inventoried_traits = traits.keys().cloned().collect::<BTreeSet<_>>();
+    assert_eq!(
+        inventoried_traits, expected_traits,
+        "semantic coverage must inventory every complete-backend trait exactly"
+    );
+
+    let contract = read_source(&root.join("src/storage/contract.rs"))
+        .expect("complete storage contract should be readable");
+    let aggregate = contract
+        .split_once("pub(crate) trait StorageBackend:")
+        .and_then(|(_, remainder)| remainder.split_once("\n{"))
+        .map(|(body, _)| body)
+        .expect("StorageBackend should have a readable aggregate declaration")
+        .split('+')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        aggregate, expected_traits,
+        "the complete backend aggregate and semantic inventory must change together"
+    );
+
+    for (trait_name, value) in traits {
+        let entry = value
+            .as_table()
+            .unwrap_or_else(|| panic!("trait inventory entry {trait_name} must be a table"));
+        let source_path = entry
+            .get("source")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("trait {trait_name} is missing its source"));
+        let source = read_source(&root.join(source_path))
+            .unwrap_or_else(|error| panic!("could not read {source_path}: {error}"));
+        assert_eq!(
+            toml_string_set(entry, "methods"),
+            trait_methods(&source, trait_name),
+            "trait method inventory drifted for {trait_name}"
+        );
+
+        let scenarios = ["shared_scenarios", "native_scenarios"]
+            .into_iter()
+            .filter_map(|key| entry.get(key).map(|_| toml_string_set(entry, key)))
+            .flatten()
+            .collect::<BTreeSet<_>>();
+        assert!(
+            !scenarios.is_empty(),
+            "trait {trait_name} must name shared or adapter-native semantic evidence"
+        );
+        for scenario in scenarios {
+            assert_scenario_exists(&root, &scenario);
+        }
+    }
+
+    let enums = manifest
+        .get("enums")
+        .and_then(toml::Value::as_table)
+        .expect("semantic coverage inventory should have an enums table");
+    assert!(
+        !enums.is_empty(),
+        "input variant inventory must not be empty"
+    );
+    for (enum_name, value) in enums {
+        let entry = value
+            .as_table()
+            .unwrap_or_else(|| panic!("enum inventory entry {enum_name} must be a table"));
+        let source_path = entry
+            .get("source")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("enum {enum_name} is missing its source"));
+        let source = read_source(&root.join(source_path))
+            .unwrap_or_else(|error| panic!("could not read {source_path}: {error}"));
+        assert_eq!(
+            toml_string_set(entry, "variants"),
+            enum_variants(&source, enum_name),
+            "input variant inventory drifted for {enum_name}"
+        );
+        let scenarios = toml_string_set(entry, "scenarios");
+        assert!(
+            !scenarios.is_empty(),
+            "enum {enum_name} must name semantic evidence"
+        );
+        for scenario in scenarios {
+            assert_scenario_exists(&root, &scenario);
+        }
     }
 }
 

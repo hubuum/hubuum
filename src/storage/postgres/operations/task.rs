@@ -833,6 +833,9 @@ pub(crate) async fn finalize_terminal_conn(
         .await?;
     let event_record =
         emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance()).await?;
+    crate::storage::postgres::failpoints::check(
+        crate::storage::postgres::failpoints::PostgresFailpoint::TaskFinalizeAfterEvent,
+    )?;
     let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
         <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
 
