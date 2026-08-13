@@ -43,9 +43,9 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Extracted traits, DTOs, errors, descriptors | `crates/hubuum-storage-core/src/*` |
 | Extracted PostgreSQL pool, TLS, JSONB, query capture | `crates/hubuum-storage-postgres/src/*` |
 | Complete aggregate and backend opt-in | `src/storage/contract.rs` |
-| Opaque context, dispatch, common observation | `src/storage/context.rs` |
+| Opaque context, dispatch, common observation | `src/storage/context/*` |
 | Resource-family and root-domain contracts | `src/storage/*.rs` |
-| PostgreSQL adapter implementations | `src/storage/postgres/*.rs` |
+| PostgreSQL adapter trait implementations | `src/storage/postgres/capabilities/*` |
 | PostgreSQL operations, rows, and query mapping | `src/storage/postgres/operations/*` |
 | Connection and transaction helpers | `src/storage/postgres/runtime.rs` |
 | Adapter error conversion | `src/storage/postgres/error.rs` |
@@ -62,6 +62,19 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 `src/storage/postgres` is an adapter tree even though most of it still resides
 in the root crate. Do not treat root-crate placement as permission for an
 application consumer to import it.
+
+The composition modules are grouped by capability family. In
+`src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource
+ports, and one exhaustive dispatch macro. The sibling modules own forwarding
+implementations for identity, queries, computed fields, tasks, workflows,
+resources, diagnostics, and operations. In
+`src/storage/postgres/capabilities`, the same broad groups hold the PostgreSQL
+trait implementations. SQL and row mapping remain below them in the adapter
+operation modules.
+
+This split is structural, not semantic. A selectable backend still implements
+the single complete `StorageBackend` aggregate, and every application call
+still crosses the same observer and exhaustive dispatch point.
 
 ## Where a Change Belongs
 
@@ -182,15 +195,21 @@ When adding an error path:
 
 ## Logging and Metrics
 
-Every `StorageHandle` method dispatches through the common observer. Give new
-operations one unique pair of static labels:
+Every logical storage operation dispatches through the common observer. Give
+new operations one unique pair of static labels:
 
 ```text
 (capability, operation)
 ```
 
-The pair must be bounded and must not contain data. Architecture tests check
-the expected label inventory and reject duplicates.
+The pair must be bounded and must not contain data. Architecture tests derive
+the expected operation count from the semantic contract inventory, require
+exactly one observer per method, and reject duplicate labels.
+
+Identity metadata and execution-scope helpers are not logical storage
+operations. `metrics_pool_state` is also intentionally unobserved so collecting
+metrics cannot recursively instrument metric collection. Keep such exceptions
+explicit in the architecture guard rather than adding an unlabeled bypass.
 
 PostgreSQL connection and transaction metrics answer different questions from
 storage-operation metrics:
@@ -204,8 +223,10 @@ because native instrumentation exists.
 ## Administrator Configuration
 
 The administrator endpoint, startup logs, and backend-info metric must agree on
-backend identity. Add diagnostic settings only when they are non-sensitive or
-can be represented as a safe boolean.
+backend identity. Composition asserts that the adapter's `StorageIdentity`
+matches its selectable `StorageBackendKind`, so resource-family and aggregate
+operation labels cannot silently diverge. Add diagnostic settings only when
+they are non-sensitive or can be represented as a safe boolean.
 
 Never expose a connection URL, password, token, certificate contents, remote
 authentication configuration, or raw driver option string.

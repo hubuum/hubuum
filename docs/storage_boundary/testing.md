@@ -73,7 +73,8 @@ guard the dependency direction. Among other checks, they verify that:
 - the aggregate contains every required trait;
 - only adapters that explicitly implement the complete aggregate are selectable;
 - the focused memory resource model is not selectable; and
-- common observation labels cover the known dispatch surface.
+- every logical contract method crosses exactly one common observer with a
+  unique, bounded label pair.
 
 These are valuable compile-time-adjacent regression guards. Some inspect
 source text, so they protect known boundaries rather than providing a formal
@@ -84,7 +85,10 @@ The same architecture suite reads
 aggregate trait set, each trait's methods, and each tracked boundary enum's
 variants exactly. Every entry must point to a test function that exists. A new
 method or variant therefore fails locally until its intended semantic evidence
-is recorded.
+is recorded. The observation guard derives its expected method count from this
+same inventory, including resource-family methods observed by
+`ObservedStorage`, rather than maintaining a second hand-written operation
+list.
 
 ## Shared Resource-Family Contracts
 

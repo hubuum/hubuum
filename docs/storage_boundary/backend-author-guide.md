@@ -139,8 +139,10 @@ adapter and are not a pattern for a new backend.
 
 ## Observability
 
-`StorageHandle` applies common tracing and metrics before dispatch. Each entry
-point needs a unique pair of static capability and operation labels.
+`StorageHandle` applies common tracing and metrics before dispatch. Each
+logical storage operation needs a unique pair of static capability and
+operation labels. The maintainer guide documents the small set of metadata and
+execution helpers that are intentionally not logical observed operations.
 
 The common observer records:
 

@@ -109,6 +109,14 @@ fn toml_string_set(table: &toml::Table, key: &str) -> BTreeSet<String> {
 }
 
 #[cfg(test)]
+fn storage_semantic_manifest(root: &Path) -> toml::Value {
+    let path = root.join("docs/storage_boundary/semantic-coverage.toml");
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+    toml::from_str(&source).expect("storage semantic coverage inventory should be valid TOML")
+}
+
+#[cfg(test)]
 fn assert_scenario_exists(root: &Path, scenario: &str) {
     let (path, symbol) = scenario.split_once("::").unwrap_or_else(|| {
         panic!("semantic coverage scenario must use path::symbol syntax: {scenario}")
@@ -212,11 +220,7 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
 #[test]
 fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
     let root = repository_root();
-    let manifest_path = root.join("docs/storage_boundary/semantic-coverage.toml");
-    let manifest_source = read_source(&manifest_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", manifest_path.display()));
-    let manifest = toml::from_str::<toml::Value>(&manifest_source)
-        .expect("storage semantic coverage inventory should be valid TOML");
+    let manifest = storage_semantic_manifest(&root);
     let traits = manifest
         .get("traits")
         .and_then(toml::Value::as_table)
@@ -335,6 +339,18 @@ fn rust_files(directory: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(test)]
+fn read_rust_module_tree(directory: &Path) -> String {
+    rust_files(directory)
+        .into_iter()
+        .map(|path| {
+            read_source(&path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
 fn is_storage_adapter(root: &Path, path: &Path) -> bool {
     ["postgres", "memory"].into_iter().any(|adapter| {
         path == root.join(format!("src/storage/{adapter}.rs"))
@@ -348,9 +364,8 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
     let context_path = root.join("src/permissions/context.rs");
     let context_source = read_source(&context_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
-    let trait_path = root.join("src/storage/context.rs");
-    let trait_source = read_source(&trait_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", trait_path.display()));
+    let trait_path = root.join("src/storage/context");
+    let trait_source = read_rust_module_tree(&trait_path);
     let application_path = root.join("src/application.rs");
     let application_source = read_source(&application_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", application_path.display()));
@@ -414,7 +429,7 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
 
     assert_eq!(
         trait_source
-            .matches("match &$handle.implementation")
+            .matches("match &$handle.inner.implementation")
             .count(),
         1,
         "backend selection must stay centralized in dispatch_backend"
@@ -462,12 +477,16 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
     use std::collections::HashSet;
 
     let root = repository_root();
-    let path = root.join("src/storage/context.rs");
-    let source = read_source(&path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+    let context_source = read_rust_module_tree(&root.join("src/storage/context"));
+    let observed_source = read_source(&root.join("src/storage/observed.rs"))
+        .expect("resource observer should be readable");
     let mut labels = HashSet::new();
 
-    for marker in ["observe_storage_call(", "observe_infallible_storage_call("] {
+    for (source, marker) in [
+        (&context_source, "observe_storage_call("),
+        (&context_source, "observe_infallible_storage_call("),
+        (&observed_source, "self.call("),
+    ] {
         for (offset, _) in source.match_indices(marker) {
             let call = &source[offset + marker.len()..];
             let quoted = call
@@ -481,8 +500,8 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
                 2,
                 "storage observer must have static capability and operation labels"
             );
-            let pair = (quoted[0], quoted[1]);
-            for label in [pair.0, pair.1] {
+            let pair = (quoted[0].to_string(), quoted[1].to_string());
+            for label in [&pair.0, &pair.1] {
                 assert!(
                     !label.is_empty()
                         && label
@@ -492,7 +511,7 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
                 );
             }
             assert!(
-                labels.insert(pair),
+                labels.insert(pair.clone()),
                 "duplicate storage observation label pair: {}/{}",
                 pair.0,
                 pair.1
@@ -500,9 +519,69 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
         }
     }
 
-    assert!(
-        labels.len() >= 200,
-        "the observation guard unexpectedly missed most storage entrypoints"
+    let manifest = storage_semantic_manifest(&root);
+    let traits = manifest
+        .get("traits")
+        .and_then(toml::Value::as_table)
+        .expect("semantic coverage inventory should have a traits table");
+    let unobserved_traits = ["StorageIdentity", "ExportQueryStorage", "StorageExecution"];
+    let mut expected_observations = 0;
+
+    for (trait_name, value) in traits {
+        if unobserved_traits.contains(&trait_name.as_str()) {
+            continue;
+        }
+        let entry = value
+            .as_table()
+            .unwrap_or_else(|| panic!("trait inventory entry {trait_name} must be a table"));
+        let methods = toml_string_set(entry, "methods");
+
+        let (implementation, observer) = match trait_name.as_str() {
+            "CollectionStore"
+            | "ClassStore"
+            | "ObjectStore"
+            | "ClassRelationStore"
+            | "ObjectRelationStore" => (
+                item_body(
+                    &observed_source,
+                    "impl<S>",
+                    &format!("{trait_name} for ObservedStorage<S>"),
+                ),
+                "self.call(",
+            ),
+            _ => (
+                item_body(
+                    &context_source,
+                    "impl",
+                    &format!("{trait_name} for StorageHandle"),
+                ),
+                "observe_storage_call(",
+            ),
+        };
+
+        for method in methods {
+            let body = item_body(implementation, "fn", &method);
+            let observer_count = body.matches(observer).count()
+                + body.matches("observe_infallible_storage_call(").count();
+            if trait_name == "MetricsStorage" && method == "metrics_pool_state" {
+                assert_eq!(
+                    observer_count, 0,
+                    "pool-state collection must not recursively observe metric collection"
+                );
+                continue;
+            }
+            expected_observations += 1;
+            assert_eq!(
+                observer_count, 1,
+                "{trait_name}::{method} must cross exactly one common storage observer"
+            );
+        }
+    }
+
+    assert_eq!(
+        labels.len(),
+        expected_observations,
+        "every observed contract method must have one unique bounded label pair"
     );
 }
 
@@ -667,7 +746,7 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
     for directory in ["src/services", "src/storage"] {
         for path in rust_files(&root.join(directory)) {
             if is_storage_adapter(&root, &path)
-                || path == root.join("src/storage/context.rs")
+                || path.starts_with(root.join("src/storage/context"))
                 || path == root.join("src/storage/factory.rs")
             {
                 continue;
@@ -1307,9 +1386,8 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     let contract_path = root.join("src/storage/contract.rs");
     let contract_source = read_source(&contract_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
-    let context_path = root.join("src/storage/context.rs");
-    let context_source = read_source(&context_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
+    let context_path = root.join("src/storage/context");
+    let context_source = read_rust_module_tree(&context_path);
     let notification_adapter_path = root.join("src/storage/postgres/notifications.rs");
     let notification_adapter_source =
         read_source(&notification_adapter_path).unwrap_or_else(|error| {
@@ -1345,8 +1423,8 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     assert!(
-        context_source.contains("assert_complete_storage_backend(&backend)"),
-        "application composition must enforce the complete storage contract"
+        context_source.contains("assert_complete_storage_backend(&backend, backend_kind)"),
+        "application composition must enforce the complete contract and backend identity"
     );
     let notification_adapter_production = notification_adapter_source
         .split("#[cfg(test)]")
@@ -1355,359 +1433,6 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     assert!(
         !notification_adapter_production.contains("get_config"),
         "the PostgreSQL notification adapter must receive settings through composition"
-    );
-    for operation in ["collections", "classes", "objects"] {
-        assert!(
-            context_source.contains(&format!("\"catalog\", \"{operation}\"")),
-            "catalog operation {operation} must use the common storage observer"
-        );
-    }
-    let compact_context = context_source.split_whitespace().collect::<String>();
-    for operation in [
-        "load",
-        "identity_scope",
-        "create",
-        "update",
-        "delete",
-        "members",
-        "members_page",
-        "members_count",
-        "member_principal",
-        "member_add",
-        "member_remove",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"groups\",\"{operation}\"")),
-            "group operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "load",
-        "settings_load",
-        "settings_replace",
-        "settings_merge",
-        "settings_json_patch",
-        "settings_reset",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"principals\",\"{operation}\"")),
-            "principal operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in ["list", "enrich"] {
-        assert!(
-            context_source.contains(&format!("\"computed_objects\", \"{operation}\"")),
-            "computed-object operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "state",
-        "list_shared",
-        "list_personal",
-        "get",
-        "create_shared",
-        "update_shared",
-        "delete_shared",
-        "create_personal",
-        "update_personal",
-        "delete_personal",
-        "request_rebuild",
-        "execute_rebuild",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"computed_fields\",\"{operation}\"")),
-            "computed-field lifecycle operation {operation} must use the common storage observer"
-        );
-    }
-    assert!(
-        compact_context.contains("\"backup_snapshots\",\"snapshot\""),
-        "backup snapshot creation must use the common storage observer"
-    );
-    for operation in [
-        "stage",
-        "get_job",
-        "get_status",
-        "expire",
-        "start_draining",
-        "apply",
-        "fail_and_resume",
-        "coordinator_snapshot",
-        "resume_without_job",
-        "resume_terminal",
-        "tick",
-        "drain_state",
-        "remove_instance",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"restores\",\"{operation}\"")),
-            "restore operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "root_collection",
-        "collection_by_id",
-        "collection_by_key",
-        "collections_by_name",
-        "collection_child_by_name",
-        "class_by_name",
-        "classes_by_names",
-        "object_by_name",
-        "objects_by_names",
-        "class_relation_exists",
-        "object_relation_exists",
-        "group_exists",
-        "preflight",
-        "apply_strict",
-        "apply_best_effort",
-        "record_results",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"imports\",\"{operation}\"")),
-            "import operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "get",
-        "list",
-        "create",
-        "update",
-        "delete",
-        "record_invocation",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"remote_targets\",\"{operation}\"")),
-            "remote-target operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "get",
-        "list",
-        "list_in_collection",
-        "class_collection",
-        "create",
-        "replace",
-        "delete",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"export_templates\",\"{operation}\"")),
-            "export-template lifecycle operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "claim",
-        "renew_lease",
-        "recover_leases",
-        "append_event",
-        "update_state",
-        "complete",
-        "fail",
-        "purge_export_outputs",
-        "purge_backup_outputs",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"task_execution\",\"{operation}\"")),
-            "task execution operation {operation} must use the common storage observer"
-        );
-    }
-    assert!(
-        compact_context.contains("\"object_aggregates\",\"aggregate\""),
-        "object aggregation must use the common storage observer"
-    );
-    assert!(
-        compact_context.contains("\"inventory\",\"counts\""),
-        "inventory counts must use the common storage observer"
-    );
-    for operation in ["create", "update", "delete", "move"] {
-        assert!(
-            compact_context.contains(&format!("\"collection_records\",\"{operation}\"")),
-            "collection record operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "principal",
-        "principal_all",
-        "principal_page",
-        "effective_principal",
-        "visible",
-        "group_has",
-        "effective_group",
-        "groups",
-        "groups_page",
-        "grants",
-        "grants_page",
-        "group_grant",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"collection_permissions\",\"{operation}\"")),
-            "collection permission operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in ["create", "update", "delete", "load", "collection", "names"] {
-        assert!(
-            compact_context.contains(&format!("\"class_records\",\"{operation}\"")),
-            "class record operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "validate",
-        "validate_new",
-        "validate_update",
-        "save",
-        "create",
-        "update",
-        "delete",
-        "load",
-        "collection",
-        "class",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"object_records\",\"{operation}\"")),
-            "object record operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "create",
-        "get_access",
-        "list",
-        "list_events",
-        "list_import_results",
-        "list_export_outputs",
-        "list_backup_outputs",
-        "get_export_summary",
-        "get_backup_summary",
-        "get_export_output",
-        "get_backup_output",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"tasks\",\"{operation}\"")),
-            "task queue operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "authenticate_bearer_token",
-        "load_identity",
-        "load_token_scope",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"authentication\",\"{operation}\"")),
-            "authentication operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "default_admin_bootstrap_required",
-        "bootstrap_default_admin",
-        "reset_local_password",
-        "ensure_scope",
-        "load_scope_name",
-        "load_scope_names",
-        "load_membership",
-        "list_tokens",
-        "human_owner_group_member",
-        "principal_is_disabled",
-        "load_service_account",
-        "load_service_account_point",
-        "list_service_accounts",
-        "create_service_account",
-        "update_service_account",
-        "disable_service_account",
-        "delete_service_account",
-        "load_external_state",
-        "mark_external_sync_attempted",
-        "sync_external_user",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"identity\",\"{operation}\"")),
-            "identity operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "load_principal",
-        "principal_is_group_member",
-        "load_classes",
-        "load_objects",
-        "authorize_local_collection",
-        "authorize_local_collections",
-        "local_authorized_collections",
-        "list_collection_candidates",
-        "list_group_candidates",
-        "policy_snapshot",
-        "list_local_collection_grants",
-        "get_local_collection_grant",
-        "load_local_collection_permission_set",
-        "apply_local_collection_grant",
-        "revoke_local_collection_grant",
-        "revoke_all_local_collection_grants",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"authorization\",\"{operation}\"")),
-            "authorization operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "readiness_snapshot",
-        "maintenance_state",
-        "storage_snapshot",
-        "task_queue_snapshot",
-        "export_template_health",
-        "export_templates_for_audit",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"operational_state\",\"{operation}\"")),
-            "operational-state operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in [
-        "list_classes",
-        "list_objects",
-        "classes_touching",
-        "objects_touching",
-        "classes_touching_ids",
-        "classes_between_ids",
-        "objects_touching_ids",
-        "objects_between_ids",
-        "related_classes",
-        "related_objects",
-        "related_objects_for_roots",
-        "bidirectional_objects_for_roots",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"relations\",\"{operation}\"")),
-            "relation operation {operation} must use the common storage observer"
-        );
-    }
-    assert!(
-        compact_context.contains("\"audit_events\",\"list\""),
-        "audit event listing must use the common storage observer"
-    );
-    for operation in [
-        "count_enabled_sinks",
-        "list_sinks",
-        "load_sink",
-        "create_sink",
-        "update_sink",
-        "delete_sink",
-        "list_subscriptions",
-        "load_subscription",
-        "create_subscription",
-        "update_subscription",
-        "delete_subscription",
-    ] {
-        assert!(
-            compact_context.contains(&format!("\"event_subscriptions\",\"{operation}\"")),
-            "event-subscription operation {operation} must use the common storage observer"
-        );
-    }
-    for operation in ["list", "load", "release_for_retry", "mark_dead"] {
-        assert!(
-            compact_context.contains(&format!("\"event_delivery\",\"{operation}\"")),
-            "event-delivery administration operation {operation} must use the common storage observer"
-        );
-    }
-    assert!(
-        compact_context.contains(
-            "observe_infallible_storage_call(backend_name,\"worker_notifications\",\"spawn_listener\""
-        ),
-        "worker notification registration must use the common synchronous storage observer"
     );
 }
 
