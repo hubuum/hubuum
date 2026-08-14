@@ -1920,6 +1920,7 @@ fn storage_error_translation_has_one_way_dependency_direction() {
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [
+        "authentication",
         "event_observability",
         "inventory",
         "maintenance",

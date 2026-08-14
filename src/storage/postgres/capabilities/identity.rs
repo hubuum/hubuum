@@ -4,29 +4,38 @@ use super::super::*;
 impl AuthenticationStorage for PostgresStorage {
     async fn authenticate_bearer_token(
         &self,
-        credential: AuthenticationCredential,
+        attempt: AuthenticationAttempt,
     ) -> Result<AuthenticatedToken, StorageError> {
-        operations::authentication::authenticate_bearer_token(&self.pool, credential)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::authentication::authenticate_bearer_token(
+            self.runtime(),
+            attempt,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_authentication_identity(
         &self,
         principal_id: i32,
     ) -> Result<AuthenticationIdentity, StorageError> {
-        operations::authentication::load_authentication_identity(&self.pool, principal_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::authentication::load_authentication_identity(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_authentication_token_scope(
         &self,
         query: AuthenticationTokenScopeQuery,
     ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
-        operations::authentication::load_authentication_token_scope(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::authentication::load_authentication_token_scope(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

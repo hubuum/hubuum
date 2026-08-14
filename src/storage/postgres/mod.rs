@@ -74,7 +74,7 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    AuditEventStorage, AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity,
+    AuditEventStorage, AuthenticatedToken, AuthenticationAttempt, AuthenticationIdentity,
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,

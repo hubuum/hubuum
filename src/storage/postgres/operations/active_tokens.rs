@@ -11,7 +11,7 @@ use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::traits::PrincipalIdAccessor;
 use diesel::pg::Pg;
-use diesel::sql_types::{Bool, Nullable};
+use hubuum_storage_postgres::operations::authentication::active_token_predicate;
 
 impl<S> ActiveTokens for S
 where
@@ -61,33 +61,6 @@ where
 
 pub(crate) fn active_tokens_cutoff() -> Result<chrono::NaiveDateTime, ApiError> {
     Ok(configured_token_lifetime()?.cutoff_from(chrono::Utc::now().naive_utc())?)
-}
-
-/// Boxed Diesel predicate for "token is active": not revoked, and not expired —
-/// an explicit `expires_at` in the future, or, for a legacy null expiry, issued
-/// within the global lifetime window.
-///
-/// Single source for the security-critical validity rule so bearer validation
-/// and active-token listing can never drift apart.
-///
-/// Semantics note: an explicit `expires_at` is authoritative and overrides the
-/// global `token_lifetime_hours` window — a token with a non-null `expires_at`
-/// stays valid until that instant regardless of the global setting, and only
-/// legacy `expires_at IS NULL` tokens are bounded by `cutoff`. Lowering
-/// `token_lifetime_hours` therefore does not shorten newly issued tokens;
-/// revoke them explicitly if that is required.
-pub(crate) fn active_token_predicate(
-    now: chrono::NaiveDateTime,
-    cutoff: chrono::NaiveDateTime,
-) -> Box<dyn BoxableExpression<crate::schema::tokens::table, Pg, SqlType = Nullable<Bool>>> {
-    use crate::schema::tokens::dsl::{expires_at, issued, revoked_at};
-    Box::new(
-        revoked_at.is_null().and(
-            expires_at
-                .gt(now)
-                .or(expires_at.is_null().and(issued.gt(cutoff))),
-        ),
-    )
 }
 
 /// A token is active when it is not revoked and not expired: an explicit

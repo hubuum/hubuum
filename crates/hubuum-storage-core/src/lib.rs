@@ -108,7 +108,8 @@ pub use history::{
     RemoteTargetHistoryRecord,
 };
 pub use identity::{
-    AuthenticatedToken, AuthenticatedTokenBuilder, AuthenticationCredential, AuthenticationHuman,
+    AuthenticatedToken, AuthenticatedTokenBuilder, AuthenticationAttempt,
+    AuthenticationAttemptError, AuthenticationCredential, AuthenticationHuman,
     AuthenticationIdentity, AuthenticationPrincipal, AuthenticationPrincipalKind,
     AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
     AuthenticationTokenScopeQuery,

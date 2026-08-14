@@ -18,7 +18,7 @@ use crate::storage::observed::{
 };
 use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use crate::storage::{
-    AuditEventStorage, AuthenticatedToken, AuthenticationCredential, AuthenticationIdentity,
+    AuditEventStorage, AuthenticatedToken, AuthenticationAttempt, AuthenticationIdentity,
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,

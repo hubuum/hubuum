@@ -4,7 +4,7 @@ use super::*;
 impl AuthenticationStorage for StorageHandle {
     async fn authenticate_bearer_token(
         &self,
-        credential: AuthenticationCredential,
+        attempt: AuthenticationAttempt,
     ) -> Result<AuthenticatedToken, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -12,7 +12,7 @@ impl AuthenticationStorage for StorageHandle {
             "authenticate_bearer_token",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.authenticate_bearer_token(credential).await
+                    backend.authenticate_bearer_token(attempt).await
                 })
             },
         )

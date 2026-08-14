@@ -32,8 +32,8 @@ use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::computed_field_rows::NewComputedFieldDefinitionRow as NewComputedFieldDefinition;
 use crate::storage::{
-    ApplicationImportOperation, AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
-    AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
+    ApplicationImportOperation, AuditEventStorage, AuthenticationAttempt, AuthenticationCredential,
+    AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
     AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrantDelete,
@@ -604,8 +604,15 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         .expect("authentication compatibility token should be created");
 
     for backend in available_backends() {
+        let observed_at = chrono::Utc::now().naive_utc();
+        let attempt = AuthenticationAttempt::new(
+            AuthenticationCredential::new(token.storage_hash()),
+            observed_at,
+            observed_at - chrono::Duration::days(1),
+        )
+        .expect("compatibility authentication window should be valid");
         let authenticated = backend
-            .authenticate_bearer_token(AuthenticationCredential::new(token.storage_hash()))
+            .authenticate_bearer_token(attempt)
             .await
             .expect("certified backend should validate active bearer credentials");
         assert_eq!(authenticated.principal_id(), user.id);

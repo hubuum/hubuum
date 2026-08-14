@@ -37,6 +37,62 @@ impl AuthenticationCredential {
     }
 }
 
+/// Deterministic inputs for one bearer-credential validation.
+///
+/// The application owns time and token-lifetime configuration. Passing the
+/// resulting window explicitly keeps storage adapters independent of global
+/// configuration and makes compatibility tests deterministic.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticationAttempt {
+    credential: AuthenticationCredential,
+    observed_at: NaiveDateTime,
+    legacy_valid_after: NaiveDateTime,
+}
+
+impl std::fmt::Debug for AuthenticationAttempt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticationAttempt")
+            .field("credential", &self.credential)
+            .field("observed_at", &"<redacted>")
+            .field("legacy_valid_after", &"<redacted>")
+            .finish()
+    }
+}
+
+impl AuthenticationAttempt {
+    pub fn new(
+        credential: AuthenticationCredential,
+        observed_at: NaiveDateTime,
+        legacy_valid_after: NaiveDateTime,
+    ) -> Result<Self, AuthenticationAttemptError> {
+        if legacy_valid_after > observed_at {
+            return Err(AuthenticationAttemptError);
+        }
+        Ok(Self {
+            credential,
+            observed_at,
+            legacy_valid_after,
+        })
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (AuthenticationCredential, NaiveDateTime, NaiveDateTime) {
+        (self.credential, self.observed_at, self.legacy_valid_after)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthenticationAttemptError;
+
+impl std::fmt::Display for AuthenticationAttemptError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("legacy token validity cutoff cannot be after the observation time")
+    }
+}
+
+impl std::error::Error for AuthenticationAttemptError {}
+
 /// Hash-free successful bearer-token authentication result.
 ///
 /// The persisted credential representation and backend-only lifecycle columns
@@ -570,7 +626,7 @@ pub trait AuthenticationStorage: Send + Sync {
     /// usage telemetry without failing an otherwise successful validation.
     async fn authenticate_bearer_token(
         &self,
-        credential: AuthenticationCredential,
+        attempt: AuthenticationAttempt,
     ) -> Result<AuthenticatedToken, StorageError>;
 
     async fn load_authentication_identity(
@@ -610,6 +666,21 @@ mod tests {
         assert!(!query.is_scoped());
         assert!(!query.is_permission_scoped());
         assert!(!query.is_resource_scoped());
+    }
+
+    #[test]
+    fn authentication_attempt_rejects_an_inverted_validity_window() {
+        let observed_at = NaiveDateTime::default();
+        let valid_after = observed_at + chrono::Duration::seconds(1);
+
+        assert!(
+            AuthenticationAttempt::new(
+                AuthenticationCredential::new("lookup"),
+                observed_at,
+                valid_after,
+            )
+            .is_err()
+        );
     }
 
     #[test]

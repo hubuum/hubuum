@@ -27,10 +27,10 @@ pub use execution::{
 pub(crate) use factory::run_storage_migrations;
 pub(crate) use factory::{StorageSettings, initialize_storage};
 pub(crate) use hubuum_storage_core::{
-    AuditEventStorage, AuthenticationCredential, AuthenticationHuman, AuthenticationIdentity,
-    AuthenticationPrincipal, AuthenticationResourceScope, AuthenticationStorage,
-    AuthenticationTokenScope, AuthenticationTokenScopeQuery, AuthorizationClassResource,
-    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuditEventStorage, AuthenticationAttempt, AuthenticationCredential, AuthenticationHuman,
+    AuthenticationIdentity, AuthenticationPrincipal, AuthenticationResourceScope,
+    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
+    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
     AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery,
