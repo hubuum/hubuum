@@ -27,12 +27,6 @@ const EVENT_DELIVERY_CHANNEL: NotificationChannel =
     NotificationChannel::new("hubuum_event_delivery");
 const TASK_QUEUE_CHANNEL: NotificationChannel = NotificationChannel::new("hubuum_task_queue");
 
-pub(crate) async fn notify_event_delivery(
-    conn: &mut super::PostgresConnection,
-) -> QueryResult<usize> {
-    notify_channel(conn, EVENT_DELIVERY_CHANNEL, "").await
-}
-
 pub(crate) async fn notify_task_queue(
     conn: &mut super::PostgresConnection,
     task_id: i32,

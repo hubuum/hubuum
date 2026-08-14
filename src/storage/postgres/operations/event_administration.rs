@@ -1,19 +1,16 @@
 use crate::errors::ApiError;
 use crate::events::EventResponse;
-use crate::models::{
-    EventDeliveryID, EventSink, EventSinkID, EventSubscription, EventSubscriptionID,
-};
+use crate::models::{EventSink, EventSinkID, EventSubscription, EventSubscriptionID};
 use crate::storage::postgres::PostgresPool;
 use hubuum_events_core::EventEnvelope;
 use hubuum_storage_core::{
-    StorageAuditEvent, StorageAuditEventListQuery, StorageEventDelivery,
-    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
+    StorageAuditEvent, StorageAuditEventListQuery, StorageEventPage, StorageEventSink,
+    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
+    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate,
 };
 
-use super::event_delivery::EventDeliveryRow;
 use super::event_subscription::{
     DeleteEventSinkRecord, DeleteEventSubscriptionRecord, EventSinkRow, EventSubscriptionRow,
     NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
@@ -306,67 +303,4 @@ pub(crate) async fn delete_event_subscription(
     EventSubscriptionID::new(request.id())?
         .delete_event_subscription_record(pool, request.event_context())
         .await
-}
-
-fn storage_event_delivery(delivery: EventDeliveryRow) -> StorageEventDelivery {
-    StorageEventDelivery::builder(
-        delivery.id,
-        delivery.event_id,
-        delivery.subscription_id,
-        delivery.status,
-        delivery.next_attempt_at,
-        delivery.created_at,
-        delivery.updated_at,
-    )
-    .attempts(delivery.attempts)
-    .last_error(delivery.last_error)
-    .locked_until(delivery.locked_until)
-    .build()
-}
-
-pub(crate) async fn list_event_deliveries(
-    pool: &PostgresPool,
-    query: StorageEventDeliveryListQuery,
-) -> Result<StorageEventPage<StorageEventDelivery>, ApiError> {
-    let include_total = query.options().include_total;
-    let (deliveries, total) = super::event_delivery::list_event_deliveries_with_total_count(
-        pool,
-        query.subscription_id_value(),
-        query.options(),
-    )
-    .await?;
-    Ok(StorageEventPage::new(
-        deliveries.into_iter().map(storage_event_delivery).collect(),
-        include_total.then_some(total),
-    ))
-}
-
-pub(crate) async fn load_event_delivery(
-    pool: &PostgresPool,
-    delivery_id: i64,
-) -> Result<StorageEventDelivery, ApiError> {
-    super::event_delivery::load_event_delivery(pool, EventDeliveryID::new(delivery_id)?)
-        .await
-        .map(storage_event_delivery)
-}
-
-pub(crate) async fn release_event_delivery_for_retry(
-    pool: &PostgresPool,
-    delivery_id: i64,
-) -> Result<StorageEventDelivery, ApiError> {
-    super::event_delivery::release_event_delivery_for_retry(
-        pool,
-        EventDeliveryID::new(delivery_id)?,
-    )
-    .await
-    .map(storage_event_delivery)
-}
-
-pub(crate) async fn mark_event_delivery_dead(
-    pool: &PostgresPool,
-    delivery_id: i64,
-) -> Result<StorageEventDelivery, ApiError> {
-    super::event_delivery::mark_event_delivery_dead(pool, EventDeliveryID::new(delivery_id)?)
-        .await
-        .map(storage_event_delivery)
 }

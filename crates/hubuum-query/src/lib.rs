@@ -1776,6 +1776,36 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, QueryError> {
     parse_integer_list_with_limit(input, MAX_INTEGER_FILTER_VALUES)
 }
 
+/// Parse one boolean query value using the common case-insensitive grammar.
+pub fn parse_boolean_value(input: &str) -> Result<bool, QueryError> {
+    match input.to_ascii_lowercase().as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(QueryError::BadRequest(format!(
+            "Invalid boolean value: '{input}'"
+        ))),
+    }
+}
+
+/// Parse a comma-separated list of RFC 3339 timestamps or UTC calendar dates.
+pub fn parse_datetime_list(input: &str) -> Result<Vec<chrono::NaiveDateTime>, QueryError> {
+    input
+        .split(',')
+        .map(str::trim)
+        .map(|value| {
+            if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(value) {
+                return Ok(timestamp.to_utc().naive_utc());
+            }
+            chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map_err(|_| QueryError::BadRequest(format!("Invalid date format: {value}")))?
+                .and_hms_opt(0, 0, 0)
+                .ok_or_else(|| {
+                    QueryError::BadRequest(format!("Failed to create time for date: {value}"))
+                })
+        })
+        .collect()
+}
+
 /// Parse an integer list while enforcing a caller-provided unique-value cap.
 ///
 /// The limit is checked during insertion rather than after collecting and
@@ -2610,5 +2640,22 @@ mod tests {
             decode_cursor_values(&cursor, &sorts).unwrap(),
             [CursorValue::Decimal("1".to_string())]
         );
+    }
+
+    #[test]
+    fn shared_scalar_parsers_accept_boolean_and_timestamp_forms() {
+        assert!(parse_boolean_value("TRUE").unwrap());
+        assert_eq!(
+            parse_datetime_list("2026-08-14,2026-08-14T12:30:00+02:00")
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn shared_scalar_parsers_reject_invalid_values() {
+        assert!(parse_boolean_value("sometimes").is_err());
+        assert!(parse_datetime_list("14/08/2026").is_err());
     }
 }

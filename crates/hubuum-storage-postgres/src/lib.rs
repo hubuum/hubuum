@@ -6,6 +6,8 @@
 
 pub mod cursor;
 mod error;
+#[doc(hidden)]
+pub mod filters;
 pub mod jsonb;
 #[cfg(feature = "embedded-migrations")]
 mod migrations;

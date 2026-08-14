@@ -232,36 +232,48 @@ impl EventDeliveryAdministrationStorage for PostgresStorage {
         &self,
         query: StorageEventDeliveryListQuery,
     ) -> Result<StorageEventPage<StorageEventDelivery>, StorageError> {
-        operations::event_administration::list_event_deliveries(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_delivery::list_event_deliveries(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_event_delivery(
         &self,
         delivery_id: i64,
     ) -> Result<StorageEventDelivery, StorageError> {
-        operations::event_administration::load_event_delivery(&self.pool, delivery_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_delivery::load_event_delivery(
+            self.runtime(),
+            delivery_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn release_event_delivery_for_retry(
         &self,
         delivery_id: i64,
     ) -> Result<StorageEventDelivery, StorageError> {
-        operations::event_administration::release_event_delivery_for_retry(&self.pool, delivery_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_delivery::release_event_delivery_for_retry(
+            self.runtime(),
+            delivery_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn mark_event_delivery_dead(
         &self,
         delivery_id: i64,
     ) -> Result<StorageEventDelivery, StorageError> {
-        operations::event_administration::mark_event_delivery_dead(&self.pool, delivery_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_delivery::mark_event_delivery_dead(
+            self.runtime(),
+            delivery_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

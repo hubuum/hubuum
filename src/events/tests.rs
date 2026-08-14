@@ -25,17 +25,15 @@ use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::search::{QueryOptions, parse_query_parameter};
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
-    CollectionID, EventDeliveryID, EventDeliveryStatus, EventSinkKind, ExportContentType,
-    ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID,
-    HubuumObjectID, NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
+    CollectionID, EventDeliveryStatus, EventSinkKind, ExportContentType, ExportTemplateID,
+    ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
+    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
     ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
     PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
     UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
-use crate::storage::postgres::operations::event_delivery::{
-    EventDeliveryRow, mark_event_delivery_dead,
-};
+use crate::storage::postgres::operations::event_delivery::EventDeliveryRow;
 use crate::storage::postgres::operations::event_fanout::{
     claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
 };
@@ -58,9 +56,9 @@ use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::storage::storage_handle;
 use crate::storage::{
-    EventArchive, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
-    EventDeliverySubscription, EventDeliveryWorkItem, EventRetentionStorage, RetainedEvent,
-    StorageError, StorageErrorKind,
+    EventArchive, EventDeliveryAdministrationStorage, EventDeliveryClaim, EventDeliverySink,
+    EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem, EventRetentionStorage,
+    RetainedEvent, StorageError, StorageErrorKind,
 };
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
@@ -1292,12 +1290,10 @@ async fn event_delivery_failed_mark_respects_claim_token() {
         .unwrap_err();
 
     assert_eq!(error.kind(), StorageErrorKind::NotFound);
-    mark_event_delivery_dead(
-        &scope.pool,
-        EventDeliveryID::new(claim.delivery_id()).unwrap(),
-    )
-    .await
-    .unwrap();
+    storage_handle(&scope.pool)
+        .mark_event_delivery_dead(claim.delivery_id())
+        .await
+        .unwrap();
 }
 
 #[actix_web::test]

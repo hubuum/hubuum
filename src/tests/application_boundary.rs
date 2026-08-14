@@ -1953,9 +1953,13 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
             let administration = read_source(&old_path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
             for moved_worker_operation in [
-                "claim_event_delivery_batch",
-                "mark_event_delivery_succeeded",
-                "mark_event_delivery_failed",
+                "pub(crate) async fn claim_event_delivery_batch(",
+                "pub(crate) async fn mark_event_delivery_succeeded(",
+                "pub(crate) async fn mark_event_delivery_failed(",
+                "pub(crate) async fn list_event_deliveries_with_total_count(",
+                "pub(crate) async fn load_event_delivery(",
+                "pub(crate) async fn release_event_delivery_for_retry(",
+                "pub(crate) async fn mark_event_delivery_dead(",
             ] {
                 assert!(
                     !administration.contains(moved_worker_operation),

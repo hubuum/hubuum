@@ -10,9 +10,10 @@ use hubuum_domain::{EventDeliverySettings, EventDeliveryStatus};
 use hubuum_events_core::{
     Action, EntityType, EventEnvelope, Provenance, ProvenanceActor, ProvenancePrincipal,
 };
+use hubuum_query::{FilterField, Operator, QueryOptions};
 use hubuum_storage_core::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
-    EventDeliveryWorkItem,
+    EventDeliveryWorkItem, StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventPage,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -117,6 +118,39 @@ struct DeliverySinkRow {
     kind: String,
     configuration: Value,
     secret_ref: Option<String>,
+}
+
+#[derive(Queryable)]
+struct AdministrationDeliveryRow {
+    id: i64,
+    event_id: i64,
+    subscription_id: i32,
+    status: String,
+    attempts: i32,
+    next_attempt_at: NaiveDateTime,
+    last_error: Option<String>,
+    locked_until: Option<NaiveDateTime>,
+    _claim_token: Option<Uuid>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+}
+
+impl From<AdministrationDeliveryRow> for StorageEventDelivery {
+    fn from(row: AdministrationDeliveryRow) -> Self {
+        Self::builder(
+            row.id,
+            row.event_id,
+            row.subscription_id,
+            row.status,
+            row.next_attempt_at,
+            row.created_at,
+            row.updated_at,
+        )
+        .attempts(row.attempts)
+        .last_error(row.last_error)
+        .locked_until(row.locked_until)
+        .build()
+    }
 }
 
 #[derive(QueryableByName)]
@@ -520,6 +554,244 @@ pub async fn mark_event_delivery_failed(
             .map(|_| ())
         })
         .await
+}
+
+/// List administrator-safe delivery projections without exposing claim
+/// tokens or PostgreSQL rows.
+pub async fn list_event_deliveries(
+    runtime: &PostgresRuntime,
+    query: StorageEventDeliveryListQuery,
+) -> Result<StorageEventPage<StorageEventDelivery>, PostgresStorageError> {
+    let include_total = query.options().include_total;
+    runtime
+        .with_read_only_snapshot(
+            async |connection| -> Result<StorageEventPage<StorageEventDelivery>, PostgresStorageError> {
+                let total = if include_total {
+                    Some(
+                        build_administration_delivery_query(
+                            query.subscription_id_value(),
+                            query.options(),
+                        )?
+                        .count()
+                        .get_result::<i64>(connection)
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+                let mut records = build_administration_delivery_query(
+                    query.subscription_id_value(),
+                    query.options(),
+                )?;
+                let fields = query
+                    .options()
+                    .sort
+                    .iter()
+                    .map(|sort| administration_delivery_cursor_field(&sort.field))
+                    .collect::<Result<Vec<_>, _>>()?;
+                crate::apply_query_options_with_fields!(records, query.options(), fields);
+                let rows = records
+                    .load::<AdministrationDeliveryRow>(connection)
+                    .await?
+                    .into_iter()
+                    .map(StorageEventDelivery::from)
+                    .collect();
+                Ok(StorageEventPage::new(rows, total))
+            },
+        )
+        .await
+}
+
+/// Load one administrator-safe delivery projection.
+pub async fn load_event_delivery(
+    runtime: &PostgresRuntime,
+    delivery_id: i64,
+) -> Result<StorageEventDelivery, PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{event_deliveries, id};
+
+    runtime
+        .with_connection(async |connection| {
+            event_deliveries
+                .filter(id.eq(delivery_id))
+                .first::<AdministrationDeliveryRow>(connection)
+                .await
+        })
+        .await
+        .map(StorageEventDelivery::from)
+}
+
+/// Release failed or dead work for immediate retry and notify workers in the
+/// same database operation.
+pub async fn release_event_delivery_for_retry(
+    runtime: &PostgresRuntime,
+    delivery_id: i64,
+) -> Result<StorageEventDelivery, PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        claim_token, event_deliveries, id, last_error, locked_until, next_attempt_at, status,
+    };
+
+    runtime
+        .with_transaction(
+            async |connection| -> Result<StorageEventDelivery, PostgresStorageError> {
+                let delivery = diesel::update(event_deliveries.filter(id.eq(delivery_id)).filter(
+                    status.eq_any([
+                        EventDeliveryStatus::Failed.as_str(),
+                        EventDeliveryStatus::Dead.as_str(),
+                    ]),
+                ))
+                .set((
+                    status.eq(EventDeliveryStatus::Pending.as_str()),
+                    next_attempt_at.eq(Utc::now().naive_utc()),
+                    locked_until.eq::<Option<NaiveDateTime>>(None),
+                    claim_token.eq::<Option<Uuid>>(None),
+                    last_error.eq::<Option<String>>(None),
+                ))
+                .get_result::<AdministrationDeliveryRow>(connection)
+                .await?;
+                notify_event_delivery(connection).await?;
+                Ok(StorageEventDelivery::from(delivery))
+            },
+        )
+        .await
+}
+
+/// Mark any non-succeeded delivery terminal while clearing claim state.
+pub async fn mark_event_delivery_dead(
+    runtime: &PostgresRuntime,
+    delivery_id: i64,
+) -> Result<StorageEventDelivery, PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        claim_token, event_deliveries, id, last_error, locked_until, status,
+    };
+
+    runtime
+        .with_connection(async |connection| {
+            diesel::update(
+                event_deliveries
+                    .filter(id.eq(delivery_id))
+                    .filter(status.ne(EventDeliveryStatus::Succeeded.as_str())),
+            )
+            .set((
+                status.eq(EventDeliveryStatus::Dead.as_str()),
+                locked_until.eq::<Option<NaiveDateTime>>(None),
+                claim_token.eq::<Option<Uuid>>(None),
+                last_error.eq(Some("marked dead by operator".to_string())),
+            ))
+            .get_result::<AdministrationDeliveryRow>(connection)
+            .await
+        })
+        .await
+        .map(StorageEventDelivery::from)
+}
+
+fn build_administration_delivery_query(
+    subscription_filter: Option<i32>,
+    options: &QueryOptions,
+) -> Result<
+    crate::schema::event_deliveries::BoxedQuery<'static, diesel::pg::Pg>,
+    PostgresStorageError,
+> {
+    use crate::schema::event_deliveries::dsl::{
+        created_at, event_deliveries, id, next_attempt_at, status, subscription_id, updated_at,
+    };
+
+    let mut query = event_deliveries.into_boxed();
+    if let Some(subscription_filter) = subscription_filter {
+        query = query.filter(subscription_id.eq(subscription_filter));
+    }
+    for parameter in &options.filters {
+        match parameter.field {
+            FilterField::Id => {
+                let values = hubuum_query::parse_integer_list(&parameter.value)
+                    .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
+                    .into_iter()
+                    .map(i64::from)
+                    .collect::<Vec<_>>();
+                let (operator, negated) = parameter.operator.op_and_neg();
+                match (operator, negated) {
+                    (Operator::Equals | Operator::In, false) => {
+                        query = query.filter(id.eq_any(values));
+                    }
+                    (Operator::Equals | Operator::In, true) => {
+                        query = query.filter(diesel::dsl::not(id.eq_any(values)));
+                    }
+                    _ => {
+                        return Err(PostgresStorageError::bad_request(format!(
+                            "Operator '{:?}' not implemented for field '{}' (type: bigint)",
+                            parameter.operator, parameter.field
+                        )));
+                    }
+                }
+            }
+            FilterField::Status => crate::postgres_string_filter!(query, parameter, status),
+            FilterField::CreatedAt => {
+                crate::postgres_datetime_filter!(query, parameter, created_at)
+            }
+            FilterField::UpdatedAt => {
+                crate::postgres_datetime_filter!(query, parameter, updated_at)
+            }
+            FilterField::NextAttemptAt => {
+                crate::postgres_datetime_filter!(query, parameter, next_attempt_at)
+            }
+            _ => {
+                return Err(PostgresStorageError::bad_request(format!(
+                    "Field '{}' is not searchable for event deliveries",
+                    parameter.field
+                )));
+            }
+        }
+    }
+    Ok(query)
+}
+
+fn administration_delivery_cursor_field(
+    field: &FilterField,
+) -> Result<crate::cursor::CursorSqlField, PostgresStorageError> {
+    use crate::cursor::{CursorSqlField, CursorSqlType};
+
+    Ok(match field {
+        FilterField::Id => CursorSqlField {
+            column: "event_deliveries.id",
+            sql_type: CursorSqlType::BigInt,
+            nullable: false,
+        },
+        FilterField::Status => CursorSqlField {
+            column: "event_deliveries.status",
+            sql_type: CursorSqlType::String,
+            nullable: false,
+        },
+        FilterField::CreatedAt => CursorSqlField {
+            column: "event_deliveries.created_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: false,
+        },
+        FilterField::UpdatedAt => CursorSqlField {
+            column: "event_deliveries.updated_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: false,
+        },
+        FilterField::NextAttemptAt => CursorSqlField {
+            column: "event_deliveries.next_attempt_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: false,
+        },
+        _ => {
+            return Err(PostgresStorageError::bad_request(format!(
+                "Field '{field}' is not orderable for event deliveries"
+            )));
+        }
+    })
+}
+
+async fn notify_event_delivery(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    diesel::sql_query("SELECT pg_notify($1, $2)")
+        .bind::<diesel::sql_types::Text, _>("hubuum_event_delivery")
+        .bind::<diesel::sql_types::Text, _>("")
+        .execute(connection)
+        .await?;
+    Ok(())
 }
 
 fn truncate_delivery_error(error: &str) -> String {
