@@ -8,9 +8,12 @@ mod error;
 pub mod jsonb;
 #[cfg(feature = "embedded-migrations")]
 mod migrations;
+#[doc(hidden)]
+pub mod operations;
 mod pool;
 mod query_capture;
 mod revision;
+mod runtime;
 #[doc(hidden)]
 pub mod schema;
 
@@ -25,3 +28,7 @@ pub use pool::{
 pub use query_capture::{QueryCaptureSnapshot, capture_queries, configure_connection};
 #[doc(hidden)]
 pub use revision::PostgresRevision;
+pub use runtime::{
+    PostgresRuntime, PostgresTelemetry, REQUIRED_DATABASE_MIGRATION_VERSION, SendAsyncFn,
+    schema_is_ready, with_connection, with_storage_call_site, with_transaction,
+};

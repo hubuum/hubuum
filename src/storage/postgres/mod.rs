@@ -26,6 +26,10 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
+
+use hubuum_storage_core::StorageErrorKind;
+use hubuum_storage_postgres::{PostgresRuntime, PostgresTelemetry};
 
 use crate::events::{
     EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
@@ -132,10 +136,42 @@ use super::{
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
 
+#[derive(Debug)]
+struct ApplicationPostgresTelemetry;
+
+impl PostgresTelemetry for ApplicationPostgresTelemetry {
+    fn connection_acquired(&self, call_site: StorageCallSite, duration: Duration) {
+        crate::observability::metrics::db_connection_acquired(call_site.as_str(), duration);
+    }
+
+    fn connection_acquisition_failed(&self, call_site: StorageCallSite, duration: Duration) {
+        crate::observability::metrics::db_connection_acquire_failed(call_site.as_str(), duration);
+    }
+
+    fn operation_finished(
+        &self,
+        call_site: StorageCallSite,
+        operation: &'static str,
+        duration: Duration,
+        error: Option<StorageErrorKind>,
+    ) {
+        let result = error.map_or(crate::observability::metrics::ResultKind::Ok, |kind| {
+            crate::observability::metrics::ResultKind::Error(kind.as_str())
+        });
+        crate::observability::metrics::db_operation_finished(
+            call_site.as_str(),
+            operation,
+            duration,
+            &result,
+        );
+    }
+}
+
 /// Canonical production storage adapter.
 #[derive(Clone)]
 pub(crate) struct PostgresStorage {
     pool: PostgresPool,
+    runtime: PostgresRuntime,
     notification_pool_settings: Option<Arc<PostgresPoolSettings>>,
 }
 
@@ -144,8 +180,11 @@ pub(in crate::storage) use hubuum_storage_postgres::run_embedded_migrations;
 
 impl PostgresStorage {
     pub(crate) fn new(pool: PostgresPool) -> Self {
+        let runtime = PostgresRuntime::new(pool.clone())
+            .with_telemetry(Arc::new(ApplicationPostgresTelemetry));
         Self {
             pool,
+            runtime,
             notification_pool_settings: None,
         }
     }
@@ -161,6 +200,10 @@ impl PostgresStorage {
 
     pub(crate) fn pool(&self) -> &PostgresPool {
         &self.pool
+    }
+
+    fn runtime(&self) -> &PostgresRuntime {
+        &self.runtime
     }
 
     fn notification_listener_pool(&self) -> PostgresPool {

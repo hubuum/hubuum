@@ -72,6 +72,13 @@ impl StorageTaskStatus {
         Self::PartiallySucceeded,
         Self::Cancelled,
     ];
+    pub const ACTIVE: [Self; 2] = [Self::Validating, Self::Running];
+    pub const TERMINAL: [Self; 4] = [
+        Self::Succeeded,
+        Self::Failed,
+        Self::PartiallySucceeded,
+        Self::Cancelled,
+    ];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {

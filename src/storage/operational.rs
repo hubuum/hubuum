@@ -1,9 +1,6 @@
 pub(crate) use hubuum_storage_core::{
-    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
-    EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-    EventSubscriptionHealthSnapshot, OperationalExportTemplateAuditEntry,
-    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
-    OperationalTaskActiveCounts, OperationalTaskKindCounts, OperationalTaskQueueSnapshot,
-    OperationalTaskStatusCounts, OperationalTaskTerminalCounts, ReadinessSnapshot,
+    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventHealthStorage,
+    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
+    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, ReadinessSnapshot,
     TokenRetentionStorage,
 };

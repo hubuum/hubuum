@@ -1,13 +1,13 @@
-use crate::storage::postgres::prelude::*;
+use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
-
-use crate::errors::ApiError;
-use crate::storage::postgres::with_connection;
-use crate::storage::{
+use diesel_async::RunQueryDsl;
+use hubuum_storage_core::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventMetricsSnapshot, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
     EventSubscriptionHealthSnapshot,
 };
+
+use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 #[derive(Debug, QueryableByName)]
 struct FanoutHealthRow {
@@ -113,40 +113,39 @@ struct SubscriptionHealthRow {
     oldest_due_age_seconds: Option<i64>,
 }
 
-pub(crate) async fn load_event_delivery_health(
-    pool: &crate::storage::postgres::PostgresPool,
-) -> Result<EventDeliveryHealthSnapshot, ApiError> {
-    with_connection(pool, async |conn| {
-        let fanout = load_fanout_health(conn).await?;
-        let delivery = load_delivery_queue_health(conn).await?;
-        let sinks = load_sink_health(conn).await?;
-        let subscriptions = load_subscription_health(conn).await?;
+pub async fn load_event_delivery_health(
+    runtime: &PostgresRuntime,
+) -> Result<EventDeliveryHealthSnapshot, PostgresStorageError> {
+    runtime
+        .with_connection(async |conn| {
+            let fanout = load_fanout_health(conn).await?;
+            let delivery = load_delivery_queue_health(conn).await?;
+            let sinks = load_sink_health(conn).await?;
+            let subscriptions = load_subscription_health(conn).await?;
 
-        Ok::<EventDeliveryHealthSnapshot, ApiError>(EventDeliveryHealthSnapshot::new(
-            fanout,
-            delivery,
-            sinks,
-            subscriptions,
-        ))
-    })
-    .await
+            Ok::<EventDeliveryHealthSnapshot, PostgresStorageError>(
+                EventDeliveryHealthSnapshot::new(fanout, delivery, sinks, subscriptions),
+            )
+        })
+        .await
 }
 
-pub(crate) async fn load_event_metrics_snapshot(
-    pool: &crate::storage::postgres::PostgresPool,
-) -> Result<EventMetricsSnapshot, ApiError> {
-    with_connection(pool, async |conn| {
-        Ok::<EventMetricsSnapshot, ApiError>(EventMetricsSnapshot::new(
-            load_fanout_health(conn).await?,
-            load_delivery_queue_health(conn).await?,
-        ))
-    })
-    .await
+pub async fn load_event_metrics_snapshot(
+    runtime: &PostgresRuntime,
+) -> Result<EventMetricsSnapshot, PostgresStorageError> {
+    runtime
+        .with_connection(async |conn| {
+            Ok::<EventMetricsSnapshot, PostgresStorageError>(EventMetricsSnapshot::new(
+                load_fanout_health(conn).await?,
+                load_delivery_queue_health(conn).await?,
+            ))
+        })
+        .await
 }
 
 async fn load_fanout_health(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<EventFanoutSnapshot, ApiError> {
+    conn: &mut PostgresConnection,
+) -> Result<EventFanoutSnapshot, PostgresStorageError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -182,8 +181,8 @@ async fn load_fanout_health(
 }
 
 async fn load_delivery_queue_health(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<EventQueueSnapshot, ApiError> {
+    conn: &mut PostgresConnection,
+) -> Result<EventQueueSnapshot, PostgresStorageError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -230,8 +229,8 @@ async fn load_delivery_queue_health(
 }
 
 async fn load_sink_health(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<Vec<EventSinkHealthSnapshot>, ApiError> {
+    conn: &mut PostgresConnection,
+) -> Result<Vec<EventSinkHealthSnapshot>, PostgresStorageError> {
     let rows = diesel::sql_query(
         r#"
         SELECT
@@ -293,8 +292,8 @@ async fn load_sink_health(
 }
 
 async fn load_subscription_health(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<Vec<EventSubscriptionHealthSnapshot>, ApiError> {
+    conn: &mut PostgresConnection,
+) -> Result<Vec<EventSubscriptionHealthSnapshot>, PostgresStorageError> {
     let rows = diesel::sql_query(
         r#"
         SELECT

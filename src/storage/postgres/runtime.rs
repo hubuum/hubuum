@@ -1,5 +1,6 @@
 pub use hubuum_storage_postgres::{
     PostgresConnection, PostgresPool, PostgresPoolSettings, PostgresRevision,
+    REQUIRED_DATABASE_MIGRATION_VERSION,
 };
 #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
 pub use hubuum_storage_postgres::{QueryCaptureSnapshot, capture_queries};
@@ -42,41 +43,18 @@ use tracing::{debug, warn};
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::events::MutationProvenance;
 use crate::observability::metrics::{self, ResultKind};
-use crate::storage::{StorageCallSite, StorageQueryBudget, StorageRevisionPrecondition};
-
-/// Latest migration required by this binary. The test below keeps this value
-/// synchronized with the migration directory so readiness cannot silently lag
-/// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000025";
-
-#[derive(diesel::QueryableByName)]
-struct DatabaseSchemaReadiness {
-    #[diesel(sql_type = diesel::sql_types::Bool)]
-    ready: bool,
-}
-
-pub(crate) async fn postgres_schema_is_ready(
-    connection: &mut PostgresConnection,
-) -> Result<bool, diesel::result::Error> {
-    Ok(diesel::sql_query(
-        "SELECT EXISTS (\
-            SELECT 1 FROM __diesel_schema_migrations WHERE version = $1\
-        ) AS ready",
-    )
-    .bind::<diesel::sql_types::Text, _>(REQUIRED_DATABASE_MIGRATION_VERSION)
-    .get_result::<DatabaseSchemaReadiness>(connection)
-    .await?
-    .ready)
-}
+use crate::storage::{
+    StorageCallSite, StorageError, StorageQueryBudget, StorageRevisionPrecondition,
+};
 
 /// Verify both database connectivity and the schema version required by this
 /// binary. Distributed API and worker replicas use this without taking
 /// migration ownership from the one-shot migration job.
 pub async fn ensure_postgres_schema_ready(pool: &PostgresPool) -> Result<(), ApiError> {
-    let ready = with_connection(pool, async |connection| {
-        postgres_schema_is_ready(connection).await
-    })
-    .await?;
+    let ready = hubuum_storage_postgres::schema_is_ready(pool)
+        .await
+        .map_err(StorageError::from)
+        .map_err(ApiError::from)?;
     if ready {
         Ok(())
     } else {

@@ -86,14 +86,13 @@ pub(crate) use hubuum_storage_core::{
     StorageObjectDataPatch, StorageObjectGraphRow, StorageObjectRelation,
     StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
     StorageObjectRelationEndpoint, StorageObjectRelationSelector, StorageObjectSelector,
-    StorageObjectUpdate, StorageObjectsByClassCount, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePreparedClassRelation,
-    StoragePreparedObjectRelation, StoragePrincipal, StoragePrincipalGroup,
-    StoragePrincipalGroupListQuery, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
-    StorageQueryBudget, StorageRecordMetadata, StorageRelatedDirection,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRelatedSort,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageObjectUpdate, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StoragePreparedClassRelation, StoragePreparedObjectRelation, StoragePrincipal,
+    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation, StorageQueryBudget, StorageRecordMetadata,
+    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTarget,
     StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
     StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPage,
@@ -133,10 +132,8 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{
-    EventMetricsSnapshot, ExportTemplateMetricIdentity, InventoryGaugeSnapshot,
-    InventoryMetricsSnapshot, MetricsStorage, StoragePoolAcquisitionState, StoragePoolCapacity,
-    StoragePoolConnectionState, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
-    TaskGaugeLastTerminal, TaskGaugeSnapshot,
+    EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage, StoragePoolAcquisitionState,
+    StoragePoolCapacity, StoragePoolConnectionState, StoragePoolState, TaskGaugeSnapshot,
 };
 pub(crate) use hubuum_storage_core::{
     ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportCollectionKey,
@@ -150,12 +147,9 @@ pub(crate) use memory::MemoryStorageModel;
 #[cfg(test)]
 pub(crate) use observed::ObservedStorage;
 pub(crate) use operational::{
-    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
-    EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-    EventSubscriptionHealthSnapshot, OperationalExportTemplateAuditEntry,
-    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
-    OperationalTaskActiveCounts, OperationalTaskKindCounts, OperationalTaskQueueSnapshot,
-    OperationalTaskStatusCounts, OperationalTaskTerminalCounts, ReadinessSnapshot,
+    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventHealthStorage,
+    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
+    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, ReadinessSnapshot,
     TokenRetentionStorage,
 };
 pub(crate) use postgres::PostgresStorage;

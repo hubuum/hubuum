@@ -2306,6 +2306,7 @@ dependencies = [
 name = "hubuum-storage-postgres"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "diesel",
  "diesel-async",
  "diesel_migrations",
@@ -2321,6 +2322,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "tracing",
  "urlparse",
 ]
 

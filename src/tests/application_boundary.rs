@@ -1897,6 +1897,10 @@ fn storage_error_translation_has_one_way_dependency_direction() {
         "the PostgreSQL adapter error must translate at the storage boundary"
     );
     assert!(
+        postgres_error_source.contains("impl From<DieselError> for PostgresStorageError"),
+        "Diesel failures must be classified inside the PostgreSQL crate"
+    );
+    assert!(
         !postgres_error_source.contains("source: ApiError"),
         "the PostgreSQL adapter error must classify, not retain, an application error"
     );
@@ -1909,6 +1913,48 @@ fn storage_error_translation_has_one_way_dependency_direction() {
             postgres_error_source.contains(required),
             "the PostgreSQL adapter error is missing classified field {required}"
         );
+    }
+}
+
+#[test]
+fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
+    let root = repository_root();
+    for operation in [
+        "event_observability",
+        "inventory",
+        "maintenance",
+        "meta",
+        "metrics",
+        "probe",
+    ] {
+        let adapter_path = root.join(format!(
+            "crates/hubuum-storage-postgres/src/operations/{operation}.rs"
+        ));
+        let source = read_source(&adapter_path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+        for forbidden in ["crate::errors", "crate::models", "crate::storage::postgres"] {
+            assert!(
+                !source.contains(forbidden),
+                "{} depends on application path {forbidden}",
+                adapter_path.display()
+            );
+        }
+
+        let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
+        if operation == "maintenance" {
+            let shim = read_source(&old_path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
+            assert!(
+                shim.contains("hubuum_storage_postgres::operations::maintenance"),
+                "the temporary maintenance shim must delegate into the adapter crate"
+            );
+        } else {
+            assert!(
+                !old_path.exists(),
+                "{} must not retain an application-owned implementation",
+                old_path.display()
+            );
+        }
     }
 }
 

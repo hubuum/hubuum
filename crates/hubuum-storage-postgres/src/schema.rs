@@ -1,4 +1,4 @@
-// @generated automatically by Diesel CLI for the PostgreSQL adapter.
+// @generated automatically by Diesel CLI.
 
 diesel::table! {
     backup_task_outputs (id) {

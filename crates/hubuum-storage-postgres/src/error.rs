@@ -1,6 +1,11 @@
 use std::fmt;
 
+use diesel::result::{DatabaseErrorKind, Error as DieselError};
+use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_storage_core::{StorageError, StorageErrorKind};
+use tracing::{debug, error};
+
+const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
 
 /// Failure classified by the PostgreSQL adapter before crossing the storage
 /// contract.
@@ -32,6 +37,21 @@ impl PostgresStorageError {
     pub const fn kind(&self) -> StorageErrorKind {
         self.kind
     }
+
+    #[must_use]
+    pub fn database(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::Database, message, None)
+    }
+
+    #[must_use]
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::NotFound, message, None)
+    }
+
+    #[must_use]
+    pub fn precondition_failed(message: impl Into<String>, current_etag: Option<String>) -> Self {
+        Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
+    }
 }
 
 impl fmt::Display for PostgresStorageError {
@@ -41,6 +61,75 @@ impl fmt::Display for PostgresStorageError {
 }
 
 impl std::error::Error for PostgresStorageError {}
+
+impl From<PoolError> for PostgresStorageError {
+    fn from(error: PoolError) -> Self {
+        error!(
+            message = "Unable to get a PostgreSQL connection from the pool",
+            backend = "postgresql",
+            error = ?error,
+        );
+        Self::database(error.to_string())
+    }
+}
+
+impl From<DieselError> for PostgresStorageError {
+    fn from(error: DieselError) -> Self {
+        match error {
+            DieselError::NotFound => {
+                debug!(
+                    message = "PostgreSQL entity not found",
+                    backend = "postgresql"
+                );
+                Self::not_found("Entity not found")
+            }
+            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => Self::new(
+                StorageErrorKind::Conflict,
+                "Unique constraint not met",
+                None,
+            ),
+            DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
+                Self::not_found("Attempt to associate to a non-existent entity")
+            }
+            DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
+                if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
+                    return Self::new(StorageErrorKind::Conflict, info.message(), None);
+                }
+                Self::new(
+                    StorageErrorKind::BadRequest,
+                    "Check constraint not met",
+                    None,
+                )
+            }
+            DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
+                let message = info.message();
+                if message == "hubuum_stale_resource" {
+                    return Self::precondition_failed(
+                        "The resource changed since the supplied validator was issued",
+                        None,
+                    );
+                }
+                if message.starts_with("Invalid object relation:") {
+                    return Self::new(StorageErrorKind::BadRequest, message, None);
+                }
+                error!(
+                    message = "PostgreSQL query failed",
+                    backend = "postgresql",
+                    error = ?error,
+                );
+                Self::database(error.to_string())
+            }
+            _ => {
+                error!(
+                    message = "PostgreSQL query failed",
+                    backend = "postgresql",
+                    error = ?error,
+                );
+                Self::database(error.to_string())
+            }
+        }
+    }
+}
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
@@ -64,5 +153,12 @@ mod tests {
         assert_eq!(kind, StorageErrorKind::PreconditionFailed);
         assert_eq!(message, "stale resource");
         assert_eq!(current_etag.as_deref(), Some("etag"));
+    }
+
+    #[test]
+    fn diesel_errors_are_classified_before_crossing_the_boundary() {
+        let error = PostgresStorageError::from(DieselError::NotFound);
+
+        assert_eq!(error.kind(), StorageErrorKind::NotFound);
     }
 }

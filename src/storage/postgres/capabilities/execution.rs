@@ -30,7 +30,10 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_storage_call_site_scope(call_site, future))
+        Box::pin(runtime::with_storage_call_site_scope(
+            call_site,
+            hubuum_storage_postgres::with_storage_call_site(call_site, future),
+        ))
     }
 
     fn run_with_call_site_send<'a, F, R>(
@@ -42,7 +45,10 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        Box::pin(runtime::with_storage_call_site_scope(call_site, future))
+        Box::pin(runtime::with_storage_call_site_scope(
+            call_site,
+            hubuum_storage_postgres::with_storage_call_site(call_site, future),
+        ))
     }
 
     fn run_with_mutation_provenance<'a, F, R>(

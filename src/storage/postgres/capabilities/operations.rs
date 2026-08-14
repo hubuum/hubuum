@@ -33,82 +33,86 @@ impl MetricsStorage for PostgresStorage {
     }
 
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
-        operations::metrics::load_inventory_gauge_snapshot(&self.pool)
+        hubuum_storage_postgres::operations::metrics::load_inventory_gauge_snapshot(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn metrics_task_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
-        operations::metrics::load_task_gauge_snapshot(&self.pool)
+        hubuum_storage_postgres::operations::metrics::load_task_gauge_snapshot(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
-        operations::event_observability::load_event_metrics_snapshot(&self.pool)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_observability::load_event_metrics_snapshot(
+            self.runtime(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 
 #[async_trait]
 impl InventoryStorage for PostgresStorage {
     async fn inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
-        operations::inventory::load_inventory_counts(&self.pool)
+        hubuum_storage_postgres::operations::inventory::load_inventory_counts(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
 
 #[async_trait]
 impl OperationalStateStorage for PostgresStorage {
     async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
-        operations::probe::load_readiness_snapshot(&self.pool)
+        hubuum_storage_postgres::operations::probe::load_readiness_snapshot(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
-        operations::maintenance::load_maintenance_state(&self.pool)
+        hubuum_storage_postgres::operations::maintenance::load_maintenance_state(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError> {
-        operations::meta::load_storage_snapshot(&self.pool)
+        hubuum_storage_postgres::operations::meta::load_storage_snapshot(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
-        operations::meta::load_task_queue_snapshot(&self.pool)
+        hubuum_storage_postgres::operations::meta::load_task_queue_snapshot(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
-        operations::meta::load_export_template_health(&self.pool)
+        hubuum_storage_postgres::operations::meta::load_export_template_health(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
-        operations::meta::load_export_templates_for_audit(&self.pool)
+        hubuum_storage_postgres::operations::meta::load_export_templates_for_audit(self.runtime())
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
 
 #[async_trait]
 impl EventHealthStorage for PostgresStorage {
     async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
-        operations::event_observability::load_event_delivery_health(&self.pool)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_observability::load_event_delivery_health(
+            self.runtime(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

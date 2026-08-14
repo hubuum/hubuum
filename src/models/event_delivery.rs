@@ -270,7 +270,7 @@ impl EventDeliveryHealthResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{
+    use hubuum_storage_core::{
         EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
         EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
         EventSubscriptionHealthSnapshot,
