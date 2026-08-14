@@ -3,6 +3,9 @@ use crate::models::group::Group;
 use crate::models::principal::Principal;
 
 use crate::errors::ApiError;
+use crate::services::storage_boundary::{
+    group_from_storage, principal_from_storage, principal_group_from_storage,
+};
 use crate::storage::{GroupStorage, StorageContext, storage_handle};
 
 use crate::traits::crud::SaveAdapter;
@@ -36,6 +39,7 @@ impl SaveAdapter for NewPrincipalGroup {
             .add_group_member(self.principal_id, self.group_id, None)
             .await
             .map_err(ApiError::from)
+            .and_then(principal_group_from_storage)
     }
 }
 
@@ -48,6 +52,7 @@ impl PrincipalGroup {
             .group_member_principal(self.principal_id)
             .await
             .map_err(ApiError::from)
+            .and_then(principal_from_storage)
     }
 
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
@@ -58,6 +63,7 @@ impl PrincipalGroup {
             .load_group(self.group_id)
             .await
             .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 
     pub async fn save<C>(&self, backend: &C) -> Result<PrincipalGroup, ApiError>
@@ -68,6 +74,7 @@ impl PrincipalGroup {
             .add_group_member(self.principal_id, self.group_id, None)
             .await
             .map_err(ApiError::from)
+            .and_then(principal_group_from_storage)
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>

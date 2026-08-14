@@ -314,6 +314,26 @@ impl UnifiedSearchCollection {
             self.revision,
         )
     }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    #[must_use]
+    pub const fn parent_collection_id(&self) -> Option<i32> {
+        self.parent_collection_id
+    }
 }
 
 /// Class projection returned by unified search, including its collection.
@@ -374,6 +394,21 @@ impl UnifiedSearchClass {
             self.updated_at,
             self.revision,
         )
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn collection(&self) -> &UnifiedSearchCollection {
+        &self.collection
     }
 }
 
@@ -478,6 +513,26 @@ impl UnifiedSearchObject {
             self.updated_at,
             self.revision,
         )
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> i32 {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub const fn class_id(&self) -> i32 {
+        self.class_id
     }
 }
 

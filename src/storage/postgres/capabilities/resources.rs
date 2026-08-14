@@ -1,12 +1,51 @@
 use super::super::*;
+use crate::services::storage_boundary::{
+    group_create_from_storage, group_to_storage, group_update_from_storage,
+    principal_group_to_storage, principal_settings_mutation_from_storage,
+    principal_settings_to_storage, principal_to_storage,
+};
+use crate::storage::postgres::operations::authorization::{
+    collection_to_storage as authorization_collection_to_storage,
+    grant_to_storage as authorization_grant_to_storage,
+    group_grant_to_storage as authorization_group_grant_to_storage,
+    group_to_storage as authorization_group_to_storage, permission_from_storage,
+};
+use crate::storage::postgres::operations::relation_rows::{
+    class_relation_create_from_storage, class_relation_to_storage,
+    object_relation_create_from_storage, object_relation_create_selector_from_storage,
+    object_relation_selector_from_storage, object_relation_to_storage,
+    prepared_class_relation_from_storage, prepared_class_relation_to_storage,
+    prepared_object_relation_from_storage, prepared_object_relation_to_storage,
+    resolved_class_relation_from_storage, resolved_class_relation_to_storage,
+    resolved_object_relation_from_storage, resolved_object_relation_to_storage,
+};
+use crate::storage::postgres::operations::resource_rows::{
+    class_create_from_storage, class_record_to_storage, class_selector_from_storage,
+    class_update_from_storage, collection_create_from_storage, collection_to_storage,
+    collection_update_from_storage, object_create_from_storage, object_patch_from_storage,
+    object_to_storage, object_update_from_storage, resolved_class_from_storage,
+    resolved_class_to_storage, resolved_object_from_storage, resolved_object_to_storage,
+};
+
+fn effective_grant_to_storage(row: EffectiveGroupPermission) -> AuthorizationEffectiveGroupGrant {
+    AuthorizationEffectiveGroupGrant::new(
+        authorization_collection_to_storage(row.target_collection),
+        authorization_collection_to_storage(row.source_collection),
+        row.depth,
+        row.inherited,
+        authorization_group_to_storage(row.group),
+        authorization_grant_to_storage(row.permission),
+    )
+}
 
 #[async_trait]
 impl GroupStorage for PostgresStorage {
-    async fn load_group(&self, group_id: i32) -> Result<Group, StorageError> {
+    async fn load_group(&self, group_id: i32) -> Result<StorageIdentityGroup, StorageError> {
         GroupID::new(group_id)
             .map_err(map_postgres_error)?
             .load_group_record(&self.pool)
             .await
+            .map(group_to_storage)
             .map_err(map_postgres_error)
     }
 
@@ -19,25 +58,27 @@ impl GroupStorage for PostgresStorage {
 
     async fn create_group(
         &self,
-        command: &NewGroup,
+        command: StorageGroupCreate,
         context: Option<&EventContext>,
-    ) -> Result<Group, StorageError> {
-        command
+    ) -> Result<StorageIdentityGroup, StorageError> {
+        group_create_from_storage(command)
             .save_group_record(&self.pool, context)
             .await
+            .map(group_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn update_group(
         &self,
         group_id: i32,
-        update: &UpdateGroup,
+        update: StorageGroupUpdate,
         context: Option<&EventContext>,
-    ) -> Result<Group, StorageError> {
+    ) -> Result<StorageIdentityGroup, StorageError> {
         let group_id = GroupID::new(group_id).map_err(map_postgres_error)?;
-        update
+        group_update_from_storage(update)
             .update_group_record(group_id.id(), &self.pool, context)
             .await
+            .map(group_to_storage)
             .map_err(map_postgres_error)
     }
 
@@ -53,42 +94,70 @@ impl GroupStorage for PostgresStorage {
             .map_err(map_postgres_error)
     }
 
-    async fn group_members(&self, group_id: i32) -> Result<Vec<Principal>, StorageError> {
-        let group = self.load_group(group_id).await?;
+    async fn group_members(&self, group_id: i32) -> Result<Vec<StoragePrincipal>, StorageError> {
+        let group = GroupID::new(group_id)
+            .map_err(map_postgres_error)?
+            .load_group_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)?;
         group
             .load_group_members(&self.pool)
             .await
+            .map(|members| members.into_iter().map(principal_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
     async fn group_members_page(
         &self,
         group_id: i32,
-        query_options: &QueryOptions,
-    ) -> Result<Vec<(PrincipalGroup, Principal)>, StorageError> {
-        let group = self.load_group(group_id).await?;
-        group
-            .load_group_members_paginated(&self.pool, query_options)
+        query_options: QueryOptions,
+    ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError> {
+        let group = GroupID::new(group_id)
+            .map_err(map_postgres_error)?
+            .load_group_record(&self.pool)
             .await
+            .map_err(map_postgres_error)?;
+        group
+            .load_group_members_paginated(&self.pool, &query_options)
+            .await
+            .map(|members| {
+                members
+                    .into_iter()
+                    .map(|(membership, principal)| {
+                        (
+                            principal_group_to_storage(membership),
+                            principal_to_storage(principal),
+                        )
+                    })
+                    .collect()
+            })
             .map_err(map_postgres_error)
     }
 
     async fn count_group_members(
         &self,
         group_id: i32,
-        query_options: &QueryOptions,
+        query_options: QueryOptions,
     ) -> Result<i64, StorageError> {
-        let group = self.load_group(group_id).await?;
+        let group = GroupID::new(group_id)
+            .map_err(map_postgres_error)?
+            .load_group_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)?;
         group
-            .count_group_members_paginated(&self.pool, query_options)
+            .count_group_members_paginated(&self.pool, &query_options)
             .await
             .map_err(map_postgres_error)
     }
 
-    async fn group_member_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
+    async fn group_member_principal(
+        &self,
+        principal_id: i32,
+    ) -> Result<StoragePrincipal, StorageError> {
         PrincipalID::new(principal_id).map_err(map_postgres_error)?;
         operations::group::group_member_principal(&self.pool, principal_id)
             .await
+            .map(principal_to_storage)
             .map_err(map_postgres_error)
     }
 
@@ -97,11 +166,12 @@ impl GroupStorage for PostgresStorage {
         principal_id: i32,
         group_id: i32,
         context: Option<&EventContext>,
-    ) -> Result<PrincipalGroup, StorageError> {
+    ) -> Result<StoragePrincipalGroup, StorageError> {
         GroupID::new(group_id).map_err(map_postgres_error)?;
         PrincipalID::new(principal_id).map_err(map_postgres_error)?;
         operations::group::save_manual_membership(&self.pool, principal_id, group_id, context)
             .await
+            .map(principal_group_to_storage)
             .map_err(map_postgres_error)
     }
 
@@ -112,7 +182,11 @@ impl GroupStorage for PostgresStorage {
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        let group = self.load_group(group_id).await?;
+        let group = GroupID::new(group_id)
+            .map_err(map_postgres_error)?
+            .load_group_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)?;
         group
             .remove_group_member_from_backend(principal_id, &self.pool, context)
             .await
@@ -122,154 +196,78 @@ impl GroupStorage for PostgresStorage {
 
 #[async_trait]
 impl PrincipalStorage for PostgresStorage {
-    async fn load_principal(&self, principal_id: i32) -> Result<Principal, StorageError> {
+    async fn load_principal(&self, principal_id: i32) -> Result<StoragePrincipal, StorageError> {
         PrincipalID::new(principal_id).map_err(map_postgres_error)?;
         operations::principal::load_principal_by_id(&self.pool, principal_id)
             .await
+            .map(principal_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn load_principal_settings(
         &self,
         principal_id: i32,
-    ) -> Result<PrincipalSettingsResponse, StorageError> {
+    ) -> Result<StoragePrincipalSettings, StorageError> {
         PrincipalID::new(principal_id).map_err(map_postgres_error)?;
         operations::principal::load_principal_settings(&self.pool, principal_id)
             .await
+            .map(principal_settings_to_storage)
             .map_err(map_postgres_error)
     }
 
-    async fn replace_principal_settings(
+    async fn mutate_principal_settings(
         &self,
         principal_id: i32,
-        settings: PrincipalSettings,
+        mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<PrincipalSettingsResponse, StorageError> {
+    ) -> Result<StoragePrincipalSettings, StorageError> {
         PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::principal::mutate_principal_settings(
-            &self.pool,
-            principal_id,
-            operations::principal::PrincipalSettingsMutation::Replace,
-            settings,
-            context,
-        )
-        .await
-        .map_err(map_postgres_error)
-    }
-
-    async fn merge_principal_settings(
-        &self,
-        principal_id: i32,
-        patch: PrincipalSettings,
-        context: &EventContext,
-    ) -> Result<PrincipalSettingsResponse, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::principal::mutate_principal_settings(
-            &self.pool,
-            principal_id,
-            operations::principal::PrincipalSettingsMutation::Patch,
-            patch,
-            context,
-        )
-        .await
-        .map_err(map_postgres_error)
-    }
-
-    async fn apply_principal_settings_patch(
-        &self,
-        principal_id: i32,
-        patch: PrincipalSettingsPatch,
-        context: &EventContext,
-    ) -> Result<PrincipalSettingsResponse, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::principal::apply_principal_settings_patch(
-            &self.pool,
-            principal_id,
-            patch,
-            context,
-        )
-        .await
-        .map_err(map_postgres_error)
-    }
-
-    async fn reset_principal_settings(
-        &self,
-        principal_id: i32,
-        context: &EventContext,
-    ) -> Result<PrincipalSettingsResponse, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::principal::mutate_principal_settings(
-            &self.pool,
-            principal_id,
-            operations::principal::PrincipalSettingsMutation::Reset,
-            PrincipalSettings::default(),
-            context,
-        )
-        .await
-        .map_err(map_postgres_error)
+        let result = match mutation {
+            StoragePrincipalSettingsMutation::Replace(value) => {
+                operations::principal::mutate_principal_settings(
+                    &self.pool,
+                    principal_id,
+                    operations::principal::PrincipalSettingsMutation::Replace,
+                    PrincipalSettings::new(value).map_err(map_postgres_error)?,
+                    context,
+                )
+                .await
+            }
+            StoragePrincipalSettingsMutation::Reset => {
+                operations::principal::mutate_principal_settings(
+                    &self.pool,
+                    principal_id,
+                    operations::principal::PrincipalSettingsMutation::Reset,
+                    PrincipalSettings::default(),
+                    context,
+                )
+                .await
+            }
+            patch => {
+                let patch = principal_settings_mutation_from_storage(patch)
+                    .map_err(map_postgres_error)?
+                    .expect("merge and JSON Patch mutations contain a patch");
+                operations::principal::apply_principal_settings_patch(
+                    &self.pool,
+                    principal_id,
+                    patch,
+                    context,
+                )
+                .await
+            }
+        };
+        result
+            .map(principal_settings_to_storage)
+            .map_err(map_postgres_error)
     }
 }
 
 #[async_trait]
-impl CollectionRecordStorage for PostgresStorage {
-    async fn create_collection_record(
-        &self,
-        command: &NewCollectionWithAssignee,
-        context: Option<&EventContext>,
-    ) -> Result<Collection, StorageError> {
-        command
-            .save_collection_with_assignee_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn update_collection_record(
-        &self,
-        update: &UpdateCollection,
-        collection_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<Collection, StorageError> {
-        update
-            .update_collection_record(&self.pool, collection_id, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn delete_collection_record(
-        &self,
-        collection_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
-        CollectionID::new(collection_id)
-            .map_err(map_postgres_error)?
-            .delete_collection_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn move_collection_record(
-        &self,
-        collection_id: i32,
-        new_parent_collection_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<Collection, StorageError> {
-        move_collection_record_from_backend(
-            &self.pool,
-            collection_id,
-            new_parent_collection_id,
-            context,
-        )
-        .await
-        .map_err(map_postgres_error)
-    }
-}
-
-#[async_trait]
-impl CollectionPermissionStorage for PostgresStorage {
+impl CollectionAuthorizationStorage for PostgresStorage {
     async fn principal_collection_permissions(
         &self,
-        query: CollectionPrincipalQuery,
-    ) -> Result<Vec<GroupPermission>, StorageError> {
+        query: AuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
         principal_on_from_backend(
             &self.pool,
             PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
@@ -278,26 +276,42 @@ impl CollectionPermissionStorage for PostgresStorage {
                 .id(),
         )
         .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(authorization_group_grant_to_storage)
+                .collect()
+        })
         .map_err(map_postgres_error)
     }
 
     async fn principal_all_collection_permissions(
         &self,
         principal_id: i32,
-    ) -> Result<Vec<(Collection, Group, Permission)>, StorageError> {
+    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
         principal_all_permissions_from_backend(
             &self.pool,
             PrincipalID::new(principal_id).map_err(map_postgres_error)?,
         )
         .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(collection, group, grant)| {
+                    AuthorizationPolicySnapshotRow::new(
+                        authorization_grant_to_storage(grant),
+                        authorization_group_to_storage(group),
+                        authorization_collection_to_storage(collection),
+                    )
+                })
+                .collect()
+        })
         .map_err(map_postgres_error)
     }
 
     async fn principal_collection_permissions_page(
         &self,
-        query: CollectionPrincipalPageQuery,
-    ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
-        principal_on_paginated_with_total_count_from_backend(
+        query: AuthorizationPrincipalCollectionPageQuery,
+    ) -> Result<AuthorizationGroupGrantPage, StorageError> {
+        let (rows, total) = principal_on_paginated_with_total_count_from_backend(
             &self.pool,
             PrincipalID::new(query.principal().principal_id()).map_err(map_postgres_error)?,
             CollectionID::new(query.principal().collection_id())
@@ -306,13 +320,19 @@ impl CollectionPermissionStorage for PostgresStorage {
             query.query_options(),
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(map_postgres_error)?;
+        Ok(AuthorizationGroupGrantPage::new(
+            rows.into_iter()
+                .map(authorization_group_grant_to_storage)
+                .collect(),
+            total,
+        ))
     }
 
     async fn effective_principal_collection_permissions(
         &self,
-        query: CollectionPrincipalQuery,
-    ) -> Result<Vec<EffectiveGroupPermission>, StorageError> {
+        query: AuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
         effective_principal_on_from_backend(
             &self.pool,
             PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
@@ -321,26 +341,38 @@ impl CollectionPermissionStorage for PostgresStorage {
                 .id(),
         )
         .await
+        .map(|rows| rows.into_iter().map(effective_grant_to_storage).collect())
         .map_err(map_postgres_error)
     }
 
     async fn visible_collections(
         &self,
-        query: CollectionVisibilityQuery,
-    ) -> Result<Vec<Collection>, StorageError> {
+        query: AuthorizationCollectionVisibilityQuery,
+    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        let scope = query
+            .scope()
+            .cloned()
+            .map(operations::identity_operations::token_scope_from_storage)
+            .transpose()
+            .map_err(map_postgres_error)?;
         user_can_on_any_from_backend(
             &self.pool,
             PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
-            query.permission(),
-            query.scopes(),
+            permission_from_storage(query.permission()),
+            scope.as_ref(),
         )
         .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(authorization_collection_to_storage)
+                .collect()
+        })
         .map_err(map_postgres_error)
     }
 
     async fn group_has_collection_permission(
         &self,
-        query: CollectionGroupPermissionQuery,
+        query: AuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
         group_can_on_from_backend(
             &self.pool,
@@ -348,7 +380,7 @@ impl CollectionPermissionStorage for PostgresStorage {
             CollectionID::new(query.collection_id())
                 .map_err(map_postgres_error)?
                 .id(),
-            query.permission(),
+            permission_from_storage(query.permission()),
         )
         .await
         .map_err(map_postgres_error)
@@ -358,205 +390,193 @@ impl CollectionPermissionStorage for PostgresStorage {
         &self,
         collection_id: i32,
         group_id: i32,
-    ) -> Result<Vec<EffectiveGroupPermission>, StorageError> {
+    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
         effective_group_on_from_backend(&self.pool, collection_id, group_id)
             .await
+            .map(|rows| rows.into_iter().map(effective_grant_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
     async fn groups_with_collection_permission(
         &self,
-        query: CollectionGroupsQuery,
-    ) -> Result<Vec<Group>, StorageError> {
-        groups_can_on_from_backend(&self.pool, query.collection_id(), query.permission())
-            .await
-            .map_err(map_postgres_error)
+        query: AuthorizationCollectionGroupsQuery,
+    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        groups_can_on_from_backend(
+            &self.pool,
+            query.collection_id(),
+            permission_from_storage(query.permission()),
+        )
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(authorization_group_to_storage)
+                .collect()
+        })
+        .map_err(map_postgres_error)
     }
 
     async fn groups_with_collection_permission_page(
         &self,
-        query: CollectionGroupsPageQuery,
-    ) -> Result<(Vec<Group>, i64), StorageError> {
-        groups_can_on_paginated_with_total_count_from_backend(
+        query: AuthorizationCollectionGroupsPageQuery,
+    ) -> Result<AuthorizationGroupPage, StorageError> {
+        let (rows, total) = groups_can_on_paginated_with_total_count_from_backend(
             &self.pool,
             query.groups().collection_id(),
-            query.groups().permission(),
+            permission_from_storage(query.groups().permission()),
             query.query_options(),
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(map_postgres_error)?;
+        Ok(AuthorizationGroupPage::new(
+            rows.into_iter()
+                .map(authorization_group_to_storage)
+                .collect(),
+            total,
+        ))
     }
 
     async fn list_collection_group_permissions(
         &self,
-        query: CollectionGrantListQuery,
-    ) -> Result<Vec<GroupPermission>, StorageError> {
+        query: AuthorizationCollectionGrantListQuery,
+    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
         groups_on_from_backend(
             &self.pool,
             CollectionID::new(query.collection_id())
                 .map_err(map_postgres_error)?
                 .id(),
-            query.permissions().to_vec(),
+            query
+                .required_permissions()
+                .iter()
+                .copied()
+                .map(permission_from_storage)
+                .collect(),
             query.query_options().clone(),
         )
         .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(authorization_group_grant_to_storage)
+                .collect()
+        })
         .map_err(map_postgres_error)
     }
 
     async fn list_collection_group_permissions_page(
         &self,
-        query: CollectionGrantListQuery,
-    ) -> Result<(Vec<GroupPermission>, i64), StorageError> {
-        groups_on_paginated_with_total_count_from_backend(
+        query: AuthorizationCollectionGrantListQuery,
+    ) -> Result<AuthorizationGroupGrantPage, StorageError> {
+        let (rows, total) = groups_on_paginated_with_total_count_from_backend(
             &self.pool,
             CollectionID::new(query.collection_id())
                 .map_err(map_postgres_error)?
                 .id(),
-            query.permissions().to_vec(),
+            query
+                .required_permissions()
+                .iter()
+                .copied()
+                .map(permission_from_storage)
+                .collect(),
             query.query_options(),
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(map_postgres_error)?;
+        Ok(AuthorizationGroupGrantPage::new(
+            rows.into_iter()
+                .map(authorization_group_grant_to_storage)
+                .collect(),
+            total,
+        ))
     }
 
     async fn collection_group_permission(
         &self,
         collection_id: i32,
         group_id: i32,
-    ) -> Result<Permission, StorageError> {
+    ) -> Result<AuthorizationGrant, StorageError> {
         group_on_from_backend(&self.pool, collection_id, group_id)
             .await
+            .map(authorization_grant_to_storage)
             .map_err(map_postgres_error)
     }
 }
 
 #[async_trait]
 impl CollectionStore for PostgresStorage {
-    async fn get_collection(&self, id: CollectionID) -> Result<Collection, StorageError> {
-        id.collection_from_backend(&self.pool)
+    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
+        CollectionID::new(id)
+            .map_err(map_postgres_error)?
+            .collection_from_backend(&self.pool)
             .await
+            .map(collection_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn create_collection(
         &self,
-        command: NewCollectionWithAssignee,
-        context: &EventContext,
-    ) -> Result<Collection, StorageError> {
+        command: StorageCollectionCreate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
+        let command = collection_create_from_storage(&command).map_err(map_postgres_error)?;
         command
-            .save_collection_with_assignee_record(&self.pool, Some(context))
+            .save_collection_with_assignee_record(&self.pool, context)
             .await
+            .map(collection_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn update_collection(
         &self,
-        id: CollectionID,
-        changes: UpdateCollection,
-        context: &EventContext,
-    ) -> Result<Collection, StorageError> {
-        changes
-            .update_collection_record(&self.pool, id.id(), Some(context))
+        id: i32,
+        changes: StorageCollectionUpdate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
+        CollectionID::new(id).map_err(map_postgres_error)?;
+        collection_update_from_storage(&changes)
+            .update_collection_record(&self.pool, id, context)
             .await
+            .map(collection_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn delete_collection(
         &self,
-        id: CollectionID,
-        context: &EventContext,
+        id: i32,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        id.delete_collection_record(&self.pool, Some(context))
+        CollectionID::new(id)
+            .map_err(map_postgres_error)?
+            .delete_collection_record(&self.pool, context)
             .await
             .map_err(map_postgres_error)
     }
 
-    async fn collection_children(&self, id: CollectionID) -> Result<Vec<Collection>, StorageError> {
-        collection_children_from_backend(&self.pool, id.id())
+    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+        CollectionID::new(id).map_err(map_postgres_error)?;
+        collection_children_from_backend(&self.pool, id)
             .await
+            .map(|rows| rows.into_iter().map(collection_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
-    async fn collection_ancestors(
-        &self,
-        id: CollectionID,
-    ) -> Result<Vec<Collection>, StorageError> {
-        collection_ancestors_from_backend(&self.pool, id.id())
+    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+        CollectionID::new(id).map_err(map_postgres_error)?;
+        collection_ancestors_from_backend(&self.pool, id)
             .await
+            .map(|rows| rows.into_iter().map(collection_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
     async fn move_collection(
         &self,
-        id: CollectionID,
-        new_parent_id: CollectionID,
-        context: &EventContext,
-    ) -> Result<Collection, StorageError> {
-        move_collection_record_from_backend(&self.pool, id.id(), new_parent_id.id(), Some(context))
-            .await
-            .map_err(map_postgres_error)
-    }
-}
-
-#[async_trait]
-impl ClassRecordStorage for PostgresStorage {
-    async fn create_class_record(
-        &self,
-        class: &NewHubuumClass,
+        id: i32,
+        new_parent_id: i32,
         context: Option<&EventContext>,
-    ) -> Result<HubuumClass, StorageError> {
-        class.validate_schema().map_err(map_postgres_error)?;
-        class
-            .create_class_record(&self.pool, context)
+    ) -> Result<StorageCollection, StorageError> {
+        CollectionID::new(id).map_err(map_postgres_error)?;
+        CollectionID::new(new_parent_id).map_err(map_postgres_error)?;
+        move_collection_record_from_backend(&self.pool, id, new_parent_id, context)
             .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn update_class_record(
-        &self,
-        update: &UpdateHubuumClass,
-        class_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<HubuumClass, StorageError> {
-        update
-            .update_class_record(&self.pool, class_id, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn delete_class_record(
-        &self,
-        class: &HubuumClass,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
-        class
-            .delete_class_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn load_class_record(&self, class_id: i32) -> Result<HubuumClass, StorageError> {
-        HubuumClassID::new(class_id)
-            .map_err(map_postgres_error)?
-            .load_class_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn class_collection(&self, class_id: i32) -> Result<Collection, StorageError> {
-        HubuumClassID::new(class_id)
-            .map_err(map_postgres_error)?
-            .lookup_class_collection(&self.pool)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn class_names(
-        &self,
-        class_ids: &ClassIdSet,
-    ) -> Result<Vec<(i32, String)>, StorageError> {
-        load_class_names(&self.pool, class_ids)
-            .await
+            .map(collection_to_storage)
             .map_err(map_postgres_error)
     }
 }
@@ -565,46 +585,77 @@ impl ClassRecordStorage for PostgresStorage {
 impl ClassStore for PostgresStorage {
     async fn resolve_class(
         &self,
-        selector: ClassSelector,
-    ) -> Result<ResolvedClassTarget, StorageError> {
+        selector: StorageClassSelector,
+    ) -> Result<StorageResolvedClass, StorageError> {
+        let selector = class_selector_from_storage(selector).map_err(map_postgres_error)?;
         let class = selector
             .resolve_class_selector_record(&self.pool)
             .await
             .map_err(map_postgres_error)?;
-        Ok(ResolvedClassTarget::new(selector, class))
+        Ok(resolved_class_to_storage(ResolvedClassTarget::new(
+            selector, class,
+        )))
     }
 
     async fn create_class(
         &self,
-        command: NewHubuumClass,
-        context: &EventContext,
-    ) -> Result<HubuumClass, StorageError> {
+        command: StorageClassCreate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageClassRecord, StorageError> {
+        let command = class_create_from_storage(&command);
         command.validate_schema().map_err(map_postgres_error)?;
         command
-            .create_class_record(&self.pool, Some(context))
+            .create_class_record(&self.pool, context)
             .await
+            .map(class_record_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn update_class(
         &self,
-        target: &ResolvedClassTarget,
-        changes: UpdateHubuumClass,
-        context: &EventContext,
-    ) -> Result<HubuumClass, StorageError> {
-        changes
-            .update_resolved_class_record(&self.pool, target, context)
-            .await
+        target: &StorageResolvedClass,
+        changes: StorageClassUpdate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageClassRecord, StorageError> {
+        let target = resolved_class_from_storage(target).map_err(map_postgres_error)?;
+        let update = class_update_from_storage(&changes);
+        let result = if let Some(context) = context {
+            update
+                .update_resolved_class_record(&self.pool, &target, context)
+                .await
+        } else {
+            update
+                .update_class_record(&self.pool, target.class().id, None)
+                .await
+        };
+        result
+            .map(class_record_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn delete_class(
         &self,
-        target: &ResolvedClassTarget,
-        context: &EventContext,
+        target: &StorageResolvedClass,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        target
-            .delete_resolved_class_record(&self.pool, context)
+        let target = resolved_class_from_storage(target).map_err(map_postgres_error)?;
+        if let Some(context) = context {
+            target
+                .delete_resolved_class_record(&self.pool, context)
+                .await
+                .map_err(map_postgres_error)
+        } else {
+            target
+                .class()
+                .delete_class_record(&self.pool, None)
+                .await
+                .map_err(map_postgres_error)
+        }
+    }
+
+    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+        let class_ids = ClassIdSet::new(class_ids).map_err(map_postgres_error)?;
+        load_class_names(&self.pool, &class_ids)
             .await
             .map_err(map_postgres_error)
     }
@@ -614,28 +665,35 @@ impl ClassStore for PostgresStorage {
 impl ClassRelationStore for PostgresStorage {
     async fn prepare_class_relation(
         &self,
-        command: NewHubuumClassRelation,
-    ) -> Result<PreparedClassRelation, StorageError> {
-        command
+        command: StorageClassRelationCreate,
+    ) -> Result<StoragePreparedClassRelation, StorageError> {
+        class_relation_create_from_storage(&command)
+            .map_err(map_postgres_error)?
             .prepare_class_relation_record(&self.pool)
             .await
+            .map(prepared_class_relation_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn resolve_class_relation(
         &self,
-        id: HubuumClassRelationID,
-    ) -> Result<ResolvedClassRelationTarget, StorageError> {
-        id.resolve_class_relation_target_record(&self.pool)
+        id: i32,
+    ) -> Result<StorageResolvedClassRelation, StorageError> {
+        HubuumClassRelationID::new(id)
+            .map_err(map_postgres_error)?
+            .resolve_class_relation_target_record(&self.pool)
             .await
+            .map(resolved_class_relation_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn create_class_relation(
         &self,
-        prepared: &PreparedClassRelation,
+        prepared: &StoragePreparedClassRelation,
         context: Option<&EventContext>,
-    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+    ) -> Result<StorageResolvedClassRelation, StorageError> {
+        let prepared =
+            prepared_class_relation_from_storage(prepared).map_err(map_postgres_error)?;
         let relation = prepared
             .create_prepared_class_relation_record(&self.pool, context)
             .await
@@ -645,14 +703,16 @@ impl ClassRelationStore for PostgresStorage {
             prepared.from_class().clone(),
             prepared.to_class().clone(),
         )
+        .map(resolved_class_relation_to_storage)
         .map_err(map_postgres_error)
     }
 
     async fn delete_class_relation(
         &self,
-        target: &ResolvedClassRelationTarget,
+        target: &StorageResolvedClassRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
+        let target = resolved_class_relation_from_storage(target).map_err(map_postgres_error)?;
         target
             .delete_resolved_class_relation_record(&self.pool, context)
             .await
@@ -661,21 +721,25 @@ impl ClassRelationStore for PostgresStorage {
 
     async fn create_class_relation_from_command(
         &self,
-        command: NewHubuumClassRelation,
+        command: StorageClassRelationCreate,
         context: Option<&EventContext>,
-    ) -> Result<HubuumClassRelation, StorageError> {
-        command
+    ) -> Result<StorageClassRelation, StorageError> {
+        class_relation_create_from_storage(&command)
+            .map_err(map_postgres_error)?
             .save_class_relation_record(&self.pool, context)
             .await
+            .map(class_relation_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn delete_class_relation_by_id(
         &self,
-        id: HubuumClassRelationID,
+        id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        id.delete_class_relation_record(&self.pool, context)
+        HubuumClassRelationID::new(id)
+            .map_err(map_postgres_error)?
+            .delete_class_relation_record(&self.pool, context)
             .await
             .map_err(map_postgres_error)
     }
@@ -685,29 +749,35 @@ impl ClassRelationStore for PostgresStorage {
 impl ObjectRelationStore for PostgresStorage {
     async fn prepare_object_relation(
         &self,
-        selector: ObjectRelationCreateSelector,
-    ) -> Result<PreparedObjectRelation, StorageError> {
-        selector
+        selector: StorageObjectRelationCreateSelector,
+    ) -> Result<StoragePreparedObjectRelation, StorageError> {
+        object_relation_create_selector_from_storage(selector)
+            .map_err(map_postgres_error)?
             .prepare_object_relation_record(&self.pool)
             .await
+            .map(prepared_object_relation_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn resolve_object_relation(
         &self,
-        selector: ObjectRelationSelector,
-    ) -> Result<ResolvedObjectRelationTarget, StorageError> {
-        selector
+        selector: StorageObjectRelationSelector,
+    ) -> Result<StorageResolvedObjectRelation, StorageError> {
+        object_relation_selector_from_storage(selector)
+            .map_err(map_postgres_error)?
             .resolve_object_relation_target_record(&self.pool)
             .await
+            .map(resolved_object_relation_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn create_object_relation(
         &self,
-        prepared: &PreparedObjectRelation,
+        prepared: &StoragePreparedObjectRelation,
         context: Option<&EventContext>,
-    ) -> Result<ResolvedObjectRelationTarget, StorageError> {
+    ) -> Result<StorageResolvedObjectRelation, StorageError> {
+        let prepared =
+            prepared_object_relation_from_storage(prepared).map_err(map_postgres_error)?;
         let relation = prepared
             .create_prepared_object_relation_record(&self.pool, context)
             .await
@@ -718,15 +788,17 @@ impl ObjectRelationStore for PostgresStorage {
             prepared.to_object().clone(),
             prepared.class_relation().clone(),
         )
+        .map(resolved_object_relation_to_storage)
         .map_err(map_postgres_error)
     }
 
     async fn delete_object_relation(
         &self,
-        target: &ResolvedObjectRelationTarget,
+        target: &StorageResolvedObjectRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        target
+        resolved_object_relation_from_storage(target)
+            .map_err(map_postgres_error)?
             .delete_resolved_object_relation_record(&self.pool, context)
             .await
             .map_err(map_postgres_error)
@@ -734,21 +806,24 @@ impl ObjectRelationStore for PostgresStorage {
 
     async fn create_object_relation_from_command(
         &self,
-        command: NewHubuumObjectRelation,
+        command: StorageObjectRelationCreate,
         context: Option<&EventContext>,
-    ) -> Result<HubuumObjectRelation, StorageError> {
-        command
+    ) -> Result<StorageObjectRelation, StorageError> {
+        object_relation_create_from_storage(command)
             .save_object_relation_record(&self.pool, context)
             .await
+            .map(object_relation_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn delete_object_relation_by_id(
         &self,
-        id: HubuumObjectRelationID,
+        id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        id.delete_object_relation_record(&self.pool, context)
+        HubuumObjectRelationID::new(id)
+            .map_err(map_postgres_error)?
+            .delete_object_relation_record(&self.pool, context)
             .await
             .map_err(map_postgres_error)
     }
@@ -756,76 +831,131 @@ impl ObjectRelationStore for PostgresStorage {
 
 #[async_trait]
 impl ObjectStore for PostgresStorage {
+    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
+        let object_id = HubuumObjectID::new(object_id).map_err(map_postgres_error)?;
+        let object = object_id
+            .load_object_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)?;
+        let class = HubuumClassID::new(object.hubuum_class_id)
+            .map_err(map_postgres_error)?
+            .load_class_record(&self.pool)
+            .await
+            .map_err(map_postgres_error)?;
+        Ok(StorageResolvedObject::new(
+            StorageObjectSelector::Ids {
+                class_id: class.id,
+                object_id: object.id,
+            },
+            class_record_to_storage(class),
+            object_to_storage(object),
+        ))
+    }
+
     async fn resolve_object(
         &self,
-        selector: ObjectSelector,
-    ) -> Result<ResolvedObjectTarget, StorageError> {
+        selector: StorageObjectSelector,
+    ) -> Result<StorageResolvedObject, StorageError> {
+        let selector =
+            crate::storage::postgres::operations::resource_rows::object_selector_from_storage(
+                selector,
+            )
+            .map_err(map_postgres_error)?;
         let (class, object) = selector
             .resolve_object_selector_record(&self.pool)
             .await
             .map_err(map_postgres_error)?;
-        Ok(ResolvedObjectTarget::new(selector, class, object))
+        Ok(resolved_object_to_storage(ResolvedObjectTarget::new(
+            selector, class, object,
+        )))
     }
 
     async fn create_object(
         &self,
-        class: &ResolvedClassTarget,
-        command: NewHubuumObject,
-        context: &EventContext,
-    ) -> Result<HubuumObject, StorageError> {
-        command
-            .create_object_in_resolved_class_record(&self.pool, class, context)
-            .await
-            .map_err(map_postgres_error)
+        class: &StorageResolvedClass,
+        command: StorageObjectCreate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageObject, StorageError> {
+        let class = resolved_class_from_storage(class).map_err(map_postgres_error)?;
+        let command = object_create_from_storage(&command);
+        let result = if let Some(context) = context {
+            command
+                .create_object_in_resolved_class_record(&self.pool, &class, context)
+                .await
+        } else {
+            command.save_object_record(&self.pool, None).await
+        };
+        result.map(object_to_storage).map_err(map_postgres_error)
     }
 
     async fn update_object(
         &self,
-        target: &ResolvedObjectTarget,
-        changes: UpdateHubuumObject,
-        context: &EventContext,
-    ) -> Result<HubuumObject, StorageError> {
-        changes
-            .update_resolved_object_record(&self.pool, target, context)
-            .await
-            .map_err(map_postgres_error)
+        target: &StorageResolvedObject,
+        changes: StorageObjectUpdate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageObject, StorageError> {
+        let target = resolved_object_from_storage(target).map_err(map_postgres_error)?;
+        let update = object_update_from_storage(&changes);
+        let result = if let Some(context) = context {
+            update
+                .update_resolved_object_record(&self.pool, &target, context)
+                .await
+        } else {
+            update
+                .update_object_record(&self.pool, target.object().id, None)
+                .await
+        };
+        result.map(object_to_storage).map_err(map_postgres_error)
     }
 
     async fn patch_object_data(
         &self,
-        target: &ResolvedObjectTarget,
-        patch: ObjectDataPatchDocument,
+        target: &StorageResolvedObject,
+        patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<HubuumObject, StorageError> {
-        patch
-            .patch_object_data_record(&self.pool, target, context)
+    ) -> Result<StorageObject, StorageError> {
+        let target = resolved_object_from_storage(target).map_err(map_postgres_error)?;
+        object_patch_from_storage(&patch)
+            .map_err(map_postgres_error)?
+            .patch_object_data_record(&self.pool, &target, context)
             .await
+            .map(object_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn delete_object(
         &self,
-        target: &ResolvedObjectTarget,
-        context: &EventContext,
+        target: &StorageResolvedObject,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        target
-            .delete_resolved_object_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        let target = resolved_object_from_storage(target).map_err(map_postgres_error)?;
+        if let Some(context) = context {
+            target
+                .delete_resolved_object_record(&self.pool, context)
+                .await
+                .map_err(map_postgres_error)
+        } else {
+            target
+                .object()
+                .delete_object_record(&self.pool, None)
+                .await
+                .map_err(map_postgres_error)
+        }
     }
-}
 
-#[async_trait]
-impl ObjectRecordStorage for PostgresStorage {
-    async fn validate_object(&self, object: &HubuumObject) -> Result<(), StorageError> {
-        object
+    async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
+        crate::services::storage_boundary::object_from_storage(object)
+            .map_err(map_postgres_error)?
             .validate_object_record(&self.pool)
             .await
             .map_err(map_postgres_error)
     }
 
-    async fn validate_new_object(&self, object: &NewHubuumObject) -> Result<(), StorageError> {
-        object
+    async fn validate_object_create(
+        &self,
+        command: StorageObjectCreate,
+    ) -> Result<(), StorageError> {
+        object_create_from_storage(&command)
             .validate_object_record(&self.pool)
             .await
             .map_err(map_postgres_error)
@@ -833,80 +963,12 @@ impl ObjectRecordStorage for PostgresStorage {
 
     async fn validate_object_update(
         &self,
-        update: &UpdateHubuumObject,
         object_id: i32,
+        changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
-        (update, object_id)
+        let update = object_update_from_storage(&changes);
+        (&update, object_id)
             .validate_object_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn save_object_record(
-        &self,
-        object: &HubuumObject,
-        context: Option<&EventContext>,
-    ) -> Result<HubuumObject, StorageError> {
-        object
-            .save_object_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn create_object_record(
-        &self,
-        object: &NewHubuumObject,
-        context: Option<&EventContext>,
-    ) -> Result<HubuumObject, StorageError> {
-        object
-            .save_object_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn update_object_record(
-        &self,
-        update: &UpdateHubuumObject,
-        object_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<HubuumObject, StorageError> {
-        update
-            .update_object_record(&self.pool, object_id, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn delete_object_record(
-        &self,
-        object: &HubuumObject,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
-        object
-            .delete_object_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn load_object_record(&self, object_id: i32) -> Result<HubuumObject, StorageError> {
-        HubuumObjectID::new(object_id)
-            .map_err(map_postgres_error)?
-            .load_object_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn object_collection(&self, object_id: i32) -> Result<Collection, StorageError> {
-        HubuumObjectID::new(object_id)
-            .map_err(map_postgres_error)?
-            .lookup_object_collection(&self.pool)
-            .await
-            .map_err(map_postgres_error)
-    }
-
-    async fn object_class(&self, object_id: i32) -> Result<HubuumClass, StorageError> {
-        HubuumObjectID::new(object_id)
-            .map_err(map_postgres_error)?
-            .lookup_object_class(&self.pool)
             .await
             .map_err(map_postgres_error)
     }

@@ -11,28 +11,28 @@ methods = ["storage_name"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http"]
 
 [traits.CollectionStore]
-source = "src/storage/collections.rs"
+source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
 methods = ["get_collection", "create_collection", "update_collection", "delete_collection", "collection_children", "collection_ancestors", "move_collection"]
 shared_scenarios = ["src/services/collections.rs::collection_contract_create_is_visible_to_point_reads", "src/services/collections.rs::collection_contract_move_reparents_the_subtree"]
 native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_a_compound_collection_create_at_an_injected_failure"]
 
 [traits.ClassStore]
-source = "src/storage/classes.rs"
-methods = ["resolve_class", "create_class", "update_class", "delete_class"]
+source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
+methods = ["resolve_class", "create_class", "update_class", "delete_class", "class_names"]
 shared_scenarios = ["src/services/classes.rs::class_contract_resolves_explicit_addresses", "src/services/classes.rs::class_contract_delete_removes_the_resolved_class"]
 
 [traits.ObjectStore]
-source = "src/storage/objects.rs"
-methods = ["resolve_object", "create_object", "update_object", "patch_object_data", "delete_object"]
+source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
+methods = ["get_object", "resolve_object", "create_object", "update_object", "patch_object_data", "delete_object", "validate_object", "validate_object_create", "validate_object_update"]
 shared_scenarios = ["src/services/objects.rs::object_contract_resolves_explicit_addresses", "src/services/objects.rs::object_contract_delete_removes_the_resolved_object"]
 
 [traits.ClassRelationStore]
-source = "src/storage/class_relations.rs"
+source = "crates/hubuum-storage-core/src/relation_lifecycle.rs"
 methods = ["prepare_class_relation", "resolve_class_relation", "create_class_relation", "delete_class_relation", "create_class_relation_from_command", "delete_class_relation_by_id"]
 shared_scenarios = ["src/services/class_relations.rs::class_relation_contract_creates_and_resolves_the_endpoint_aggregate", "src/services/class_relations.rs::class_relation_contract_deletes_the_resolved_relation"]
 
 [traits.ObjectRelationStore]
-source = "src/storage/object_relations.rs"
+source = "crates/hubuum-storage-core/src/relation_lifecycle.rs"
 methods = ["prepare_object_relation", "resolve_object_relation", "create_object_relation", "delete_object_relation", "create_object_relation_from_command", "delete_object_relation_by_id"]
 shared_scenarios = ["src/services/object_relations.rs::object_relation_contract_prepares_a_normalized_endpoint_aggregate", "src/services/object_relations.rs::object_relation_contract_deletes_the_resolved_relation"]
 
@@ -152,34 +152,19 @@ methods = ["search_unified_collections", "search_unified_classes", "search_unifi
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_ranked_unified_search"]
 
 [traits.GroupStorage]
-source = "src/storage/groups.rs"
+source = "crates/hubuum-storage-core/src/identity_resources.rs"
 methods = ["load_group", "group_identity_scope_name", "create_group", "update_group", "delete_group", "group_members", "group_members_page", "count_group_members", "group_member_principal", "add_group_member", "remove_group_member"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
 
 [traits.PrincipalStorage]
-source = "src/storage/principals.rs"
-methods = ["load_principal", "load_principal_settings", "replace_principal_settings", "merge_principal_settings", "apply_principal_settings_patch", "reset_principal_settings"]
+source = "crates/hubuum-storage-core/src/identity_resources.rs"
+methods = ["load_principal", "load_principal_settings", "mutate_principal_settings"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_principal_behavior"]
 
-[traits.CollectionPermissionStorage]
-source = "src/storage/collections.rs"
+[traits.CollectionAuthorizationStorage]
+source = "crates/hubuum-storage-core/src/collection_authorization.rs"
 methods = ["principal_collection_permissions", "principal_all_collection_permissions", "principal_collection_permissions_page", "effective_principal_collection_permissions", "visible_collections", "group_has_collection_permission", "effective_group_collection_permissions", "groups_with_collection_permission", "groups_with_collection_permission_page", "list_collection_group_permissions", "list_collection_group_permissions_page", "collection_group_permission"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
-
-[traits.CollectionRecordStorage]
-source = "src/storage/collections.rs"
-methods = ["create_collection_record", "update_collection_record", "delete_collection_record", "move_collection_record"]
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_collection_record_compatibility"]
-
-[traits.ClassRecordStorage]
-source = "src/storage/classes.rs"
-methods = ["create_class_record", "update_class_record", "delete_class_record", "load_class_record", "class_collection", "class_names"]
-shared_scenarios = ["src/services/classes.rs::class_contract_resolves_explicit_addresses", "src/services/classes.rs::class_contract_delete_removes_the_resolved_class"]
-
-[traits.ObjectRecordStorage]
-source = "src/storage/objects.rs"
-methods = ["validate_object", "validate_new_object", "validate_object_update", "save_object_record", "create_object_record", "update_object_record", "delete_object_record", "load_object_record", "object_collection", "object_class"]
-shared_scenarios = ["src/services/objects.rs::object_contract_resolves_explicit_addresses", "src/services/objects.rs::object_contract_delete_removes_the_resolved_object"]
 
 [traits.RemoteTargetStorage]
 source = "crates/hubuum-storage-core/src/remote_target.rs"

@@ -6,6 +6,11 @@ use crate::models::{
     HubuumObject, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
     ResolvedObjectTarget, UpdateHubuumObject,
 };
+use crate::services::storage_boundary::{
+    object_create_to_storage, object_from_storage, object_patch_to_storage,
+    object_selector_to_storage, object_update_to_storage, resolved_class_to_storage,
+    resolved_object_from_storage, resolved_object_to_storage,
+};
 use crate::storage::ObjectStore;
 
 /// Application-facing object resolution and lifecycle use cases.
@@ -24,9 +29,10 @@ impl ObjectService {
         selector: ObjectSelector,
     ) -> Result<ResolvedObjectTarget, ApiError> {
         self.storage
-            .resolve_object(selector)
+            .resolve_object(object_selector_to_storage(selector))
             .await
             .map_err(ApiError::from)
+            .and_then(resolved_object_from_storage)
     }
 
     pub async fn create(
@@ -35,10 +41,12 @@ impl ObjectService {
         command: NewHubuumObject,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
+        let class = resolved_class_to_storage(class);
         self.storage
-            .create_object(class, command, context)
+            .create_object(&class, object_create_to_storage(command), Some(context))
             .await
             .map_err(ApiError::from)
+            .and_then(object_from_storage)
     }
 
     pub async fn update(
@@ -47,10 +55,12 @@ impl ObjectService {
         changes: UpdateHubuumObject,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
+        let target = resolved_object_to_storage(target);
         self.storage
-            .update_object(target, changes, context)
+            .update_object(&target, object_update_to_storage(changes), Some(context))
             .await
             .map_err(ApiError::from)
+            .and_then(object_from_storage)
     }
 
     pub async fn patch_data(
@@ -59,10 +69,12 @@ impl ObjectService {
         patch: ObjectDataPatchDocument,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
+        let target = resolved_object_to_storage(target);
         self.storage
-            .patch_object_data(target, patch, context)
+            .patch_object_data(&target, object_patch_to_storage(patch)?, context)
             .await
             .map_err(ApiError::from)
+            .and_then(object_from_storage)
     }
 
     pub async fn delete(
@@ -70,8 +82,9 @@ impl ObjectService {
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
+        let target = resolved_object_to_storage(target);
         self.storage
-            .delete_object(target, context)
+            .delete_object(&target, Some(context))
             .await
             .map_err(ApiError::from)
     }

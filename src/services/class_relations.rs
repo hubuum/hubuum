@@ -6,6 +6,11 @@ use crate::models::{
     HubuumClassRelationID, NewHubuumClassRelation, PreparedClassRelation,
     ResolvedClassRelationTarget,
 };
+use crate::services::storage_boundary::{
+    class_relation_create_to_storage, prepared_class_relation_from_storage,
+    prepared_class_relation_to_storage, resolved_class_relation_from_storage,
+    resolved_class_relation_to_storage,
+};
 use crate::storage::ClassRelationStore;
 
 /// Application-facing class-relation lifecycle use cases.
@@ -24,9 +29,10 @@ impl ClassRelationService {
         command: NewHubuumClassRelation,
     ) -> Result<PreparedClassRelation, ApiError> {
         self.storage
-            .prepare_class_relation(command)
+            .prepare_class_relation(class_relation_create_to_storage(command))
             .await
             .map_err(ApiError::from)
+            .and_then(prepared_class_relation_from_storage)
     }
 
     pub async fn resolve(
@@ -34,9 +40,10 @@ impl ClassRelationService {
         id: HubuumClassRelationID,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
         self.storage
-            .resolve_class_relation(id)
+            .resolve_class_relation(id.id())
             .await
             .map_err(ApiError::from)
+            .and_then(resolved_class_relation_from_storage)
     }
 
     pub async fn create(
@@ -44,10 +51,12 @@ impl ClassRelationService {
         prepared: &PreparedClassRelation,
         context: &EventContext,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
+        let prepared = prepared_class_relation_to_storage(prepared);
         self.storage
-            .create_class_relation(prepared, Some(context))
+            .create_class_relation(&prepared, Some(context))
             .await
             .map_err(ApiError::from)
+            .and_then(resolved_class_relation_from_storage)
     }
 
     pub async fn delete(
@@ -55,8 +64,9 @@ impl ClassRelationService {
         target: &ResolvedClassRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
+        let target = resolved_class_relation_to_storage(target);
         self.storage
-            .delete_class_relation(target, Some(context))
+            .delete_class_relation(&target, Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -302,10 +312,17 @@ mod tests {
         let to_class = harness.create_class("to").await;
         let lifecycle = &harness.services.class_relations().storage;
         let created = lifecycle
-            .create_class_relation_from_command(harness.command(&from_class, &to_class), None)
+            .create_class_relation_from_command(
+                crate::services::storage_boundary::class_relation_create_to_storage(
+                    harness.command(&from_class, &to_class),
+                ),
+                None,
+            )
             .await
             .expect("event-suppressed relation should create");
-        let relation_id = HubuumClassRelationID::new(created.id).expect("valid class relation id");
+        let relation_id = crate::services::storage_boundary::class_relation_from_storage(created)
+            .expect("valid stored class relation")
+            .id;
         lifecycle
             .resolve_class_relation(relation_id)
             .await

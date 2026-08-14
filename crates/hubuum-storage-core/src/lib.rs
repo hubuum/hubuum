@@ -7,6 +7,7 @@
 mod authorization;
 mod backup_snapshot;
 mod catalog;
+mod collection_authorization;
 mod computed_field_lifecycle;
 mod computed_objects;
 mod event_administration;
@@ -17,6 +18,7 @@ mod export_template_lifecycle;
 mod history;
 mod identity;
 mod identity_operations;
+mod identity_resources;
 mod identity_tokens;
 mod identity_users;
 mod inventory;
@@ -24,8 +26,10 @@ mod metrics;
 mod object_aggregate;
 mod operational;
 mod record;
+mod relation_lifecycle;
 mod relation_query;
 mod remote_target;
+mod resource_lifecycle;
 mod restore;
 mod task_execution;
 mod task_queue;
@@ -45,6 +49,13 @@ pub use authorization::{
 };
 pub use backup_snapshot::{BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot};
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
+pub use collection_authorization::{
+    AuthorizationCollectionGroupsPageQuery, AuthorizationCollectionGroupsQuery,
+    AuthorizationCollectionVisibilityQuery, AuthorizationEffectiveGroupGrant,
+    AuthorizationGroupCollectionQuery, AuthorizationGroupPage,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    CollectionAuthorizationStorage,
+};
 pub use computed_field_lifecycle::{
     ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
     StorageComputedFieldDefinitionContent, StorageComputedFieldDefinitionInput,
@@ -110,6 +121,11 @@ pub use identity_operations::{
     StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
     StorageTokenMetadataBuilder,
 };
+pub use identity_resources::{
+    GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupUpdate, StoragePrincipal,
+    StoragePrincipalBuilder, StoragePrincipalParts, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation,
+};
 pub use identity_tokens::{
     StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenRenew,
     StorageTokenRevoke, TokenStorage,
@@ -143,6 +159,13 @@ pub use operational::{
     TokenRetentionStorage,
 };
 pub use record::StorageRecordMetadata;
+pub use relation_lifecycle::{
+    ClassRelationStore, ObjectRelationStore, StorageClassRelationCreate,
+    StorageClassRelationCreateBuilder, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
+    StorageObjectRelationSelector, StoragePreparedClassRelation, StoragePreparedObjectRelation,
+    StorageResolvedClassRelation, StorageResolvedObjectRelation,
+};
 pub use relation_query::{
     BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery, RelatedObjectsForRootsQuery,
     RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
@@ -157,6 +180,13 @@ pub use remote_target::{
     StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetPatch,
     StorageRemoteTargetPatchParts, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
     StorageRemoteTargetUpdate,
+};
+pub use resource_lifecycle::{
+    ClassStore, CollectionStore, ObjectStore, StorageClassCreate, StorageClassCreateBuilder,
+    StorageClassRecord, StorageClassRecordBuilder, StorageClassSelector, StorageClassUpdate,
+    StorageClassUpdateBuilder, StorageCollectionCreate, StorageCollectionUpdate,
+    StorageObjectCreate, StorageObjectDataPatch, StorageObjectSelector, StorageObjectUpdate,
+    StorageObjectUpdateBuilder, StorageResolvedClass, StorageResolvedObject,
 };
 pub use restore::{
     RestoreStorage, StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
@@ -200,42 +230,6 @@ pub type StorageResourceScope = UnifiedSearchResourceScope;
 pub type StorageVisibility = UnifiedSearchVisibility;
 
 use std::fmt;
-
-/// Stable identity of a selectable storage backend.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StorageBackendKind {
-    Postgresql,
-}
-
-impl StorageBackendKind {
-    /// Every backend kind that can be selected by application composition.
-    pub const ALL: [Self; 1] = [Self::Postgresql];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Postgresql => "postgresql",
-        }
-    }
-}
-
-/// Non-secret metadata for the backend selected at application composition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StorageBackendDescriptor {
-    kind: StorageBackendKind,
-}
-
-impl StorageBackendDescriptor {
-    #[must_use]
-    pub const fn new(kind: StorageBackendKind) -> Self {
-        Self { kind }
-    }
-
-    #[must_use]
-    pub const fn kind(self) -> StorageBackendKind {
-        self.kind
-    }
-}
 
 /// Backend identity used for diagnostics and complete-backend composition.
 pub trait StorageIdentity: Send + Sync {
@@ -357,13 +351,6 @@ impl std::error::Error for StorageError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn descriptor_reports_the_selected_backend() {
-        let descriptor = StorageBackendDescriptor::new(StorageBackendKind::Postgresql);
-
-        assert_eq!(descriptor.kind(), StorageBackendKind::Postgresql);
-    }
 
     #[test]
     fn storage_errors_keep_classification_and_precondition_metadata() {

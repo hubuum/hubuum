@@ -22,10 +22,8 @@ use crate::models::search::{
 use crate::models::{
     CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, GroupID,
     HubuumClassHistory, HubuumObjectHistory, ImportAtomicity, ImportClassInput,
-    ImportCollectionInput, ImportMode, NewCollectionWithAssignee, NewGroup, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, RemoteTargetHistory,
-    UpdateCollection, UpdateGroup,
+    ImportCollectionInput, ImportMode, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, RemoteTargetHistory,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, LocalPermissionBackend};
@@ -36,41 +34,43 @@ use crate::storage::postgres::operations::computed_field_rows::NewComputedFieldD
 use crate::storage::{
     AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
     AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrantDelete, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
-    AuthorizationPermissionSetQuery, AuthorizationResourceIds, AuthorizationStorage,
-    BackupSnapshotStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
-    CollectionGrantListQuery, CollectionGroupPermissionQuery, CollectionGroupsPageQuery,
-    CollectionGroupsQuery, CollectionPermissionStorage, CollectionPrincipalPageQuery,
-    CollectionPrincipalQuery, CollectionRecordStorage, CollectionVisibilityQuery,
-    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
-    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
-    EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
-    ExportTemplateStorage, GroupStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage,
-    MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, RetainedEvent, StorageAuditEventFilters, StorageAuditEventListQuery,
-    StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
-    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageGroupListQuery, StorageImportOperation, StorageImportPlanItem, StorageImportResult,
-    StorageLocalPasswordReset, StorageObject, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePrincipalGroupListQuery, StorageQueryBudget,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
+    AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
+    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupCollectionQuery,
+    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationPermissionSetQuery,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
+    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
+    CollectionAuthorizationStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectStorage,
+    ComputedObjectVisibility, EventArchive, EventDeliveryAdministrationStorage,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
+    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, GroupStorage,
+    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage, IdentityStorage,
+    ImportStorage, InventoryStorage, MetricsStorage, ObjectAggregateAuthorizationMode,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
+    OperationalStateStorage, PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery,
+    RelationIdsQuery, RelationListQuery, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetStorage, RestoreStorage, RetainedEvent, StorageAuditEventFilters,
+    StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
+    StorageCollectionCreate, StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
+    StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecution, StorageExportTaskArtifact,
+    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
+    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
+    StorageGroupListQuery, StorageGroupUpdate, StorageImportOperation, StorageImportPlanItem,
+    StorageImportResult, StorageLocalPasswordReset, StorageObject,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StorageQueryBudget,
     StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
@@ -206,31 +206,34 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
     let backend = StorageHandle::postgres(pool.get_ref().clone());
     let group = backend
         .create_group(
-            &NewGroup {
-                identity_scope: None,
-                groupname: prefix("collection_failpoint_group"),
-                description: Some("collection rollback owner".to_string()),
-            },
+            StorageGroupCreate::new(
+                None,
+                prefix("collection_failpoint_group"),
+                Some("collection rollback owner".to_string()),
+            ),
             None,
         )
         .await
         .expect("collection rollback owner group should be created");
     let collection_name = prefix("collection_failpoint");
-    let command = NewCollectionWithAssignee {
-        name: collection_name.clone(),
-        description: "must be rolled back".to_string(),
-        group_id: GroupID::new(group.id).expect("fixture group id should be valid"),
-        parent_collection_id: Some(CollectionID::new(1).expect("root id should be valid")),
-    };
+    let command = StorageCollectionCreate::new(
+        collection_name.clone(),
+        "must be rolled back",
+        GroupID::new(group.id())
+            .expect("fixture group id should be valid")
+            .id(),
+        Some(CollectionID::new(1).expect("root id should be valid").id()),
+    );
 
     let error = crate::storage::postgres::with_failpoint(
         crate::storage::postgres::PostgresFailpoint::CollectionCreateAfterRecords,
         backend
             .collection_store()
-            .create_collection(command, &EventContext::system()),
+            .create_collection(command, Some(&EventContext::system())),
     )
     .await
-    .expect_err("injected failure should abort collection creation");
+    .err()
+    .expect("injected failure should abort collection creation");
     assert_eq!(error.kind(), StorageErrorKind::Database);
 
     let persisted = crate::storage::postgres::with_connection(pool.get_ref(), async |conn| {
@@ -246,7 +249,7 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
     assert_eq!(persisted, 0, "all collection records must roll back");
 
     backend
-        .delete_group(group.id, None)
+        .delete_group(group.id(), None)
         .await
         .expect("collection rollback owner group should be removed");
 }
@@ -393,24 +396,24 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         let renamed = prefix("group_contract_renamed");
         let created = backend
             .create_group(
-                &NewGroup {
-                    identity_scope: None,
-                    groupname: initial_name,
-                    description: Some("storage compatibility group".to_string()),
-                },
+                StorageGroupCreate::new(
+                    None,
+                    initial_name,
+                    Some("storage compatibility group".to_string()),
+                ),
                 None,
             )
             .await
             .expect("certified backend should create groups");
 
         let loaded = backend
-            .load_group(created.id)
+            .load_group(created.id())
             .await
             .expect("certified backend should load groups");
-        assert_eq!(loaded.id, created.id);
+        assert_eq!(loaded.id(), created.id());
         assert_eq!(
             backend
-                .group_identity_scope_name(created.id)
+                .group_identity_scope_name(created.id())
                 .await
                 .expect("certified backend should resolve group identity scopes"),
             LOCAL_IDENTITY_SCOPE
@@ -418,15 +421,13 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
 
         let updated = backend
             .update_group(
-                created.id,
-                &UpdateGroup {
-                    groupname: Some(renamed.clone()),
-                },
+                created.id(),
+                StorageGroupUpdate::new(Some(renamed.clone())),
                 None,
             )
             .await
             .expect("certified backend should update groups");
-        assert_eq!(updated.groupname, renamed);
+        assert_eq!(updated.name(), renamed);
 
         let list_options = QueryOptions {
             filters: Vec::new(),
@@ -443,7 +444,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .await
             .expect("certified backend should list and count groups")
             .into_parts();
-        assert!(listed.iter().any(|group| group.id() == created.id));
+        assert!(listed.iter().any(|group| group.id() == created.id()));
         assert!(total_count.is_some_and(|count| count >= listed.len() as i64));
 
         let user = crate::tests::create_user_with_params(
@@ -453,21 +454,21 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         )
         .await;
         backend
-            .add_group_member(user.id, created.id, None)
+            .add_group_member(user.id, created.id(), None)
             .await
             .expect("certified backend should add group members");
 
         let members = backend
-            .group_members(created.id)
+            .group_members(created.id())
             .await
             .expect("certified backend should list group members");
-        assert!(members.iter().any(|member| member.id == user.id));
+        assert!(members.iter().any(|member| member.id() == user.id));
         assert_eq!(
             backend
                 .group_member_principal(user.id)
                 .await
                 .expect("certified backend should load a membership principal")
-                .id,
+                .id(),
             user.id
         );
 
@@ -479,32 +480,32 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             include_total: true,
         };
         let page = backend
-            .group_members_page(created.id, &query_options)
+            .group_members_page(created.id(), query_options.clone())
             .await
             .expect("certified backend should page group members");
-        assert!(page.iter().any(|(_, member)| member.id == user.id));
+        assert!(page.iter().any(|(_, member)| member.id() == user.id));
         assert_eq!(
             backend
-                .count_group_members(created.id, &query_options)
+                .count_group_members(created.id(), query_options.clone())
                 .await
                 .expect("certified backend should count group members"),
             1
         );
 
         backend
-            .remove_group_member(user.id, created.id, None)
+            .remove_group_member(user.id, created.id(), None)
             .await
             .expect("certified backend should remove group members");
         assert_eq!(
             backend
-                .count_group_members(created.id, &query_options)
+                .count_group_members(created.id(), query_options)
                 .await
                 .expect("certified backend should recount group members"),
             0
         );
         assert_eq!(
             backend
-                .delete_group(created.id, None)
+                .delete_group(created.id(), None)
                 .await
                 .expect("certified backend should delete groups"),
             1
@@ -529,62 +530,61 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
             .load_principal(user.id)
             .await
             .expect("certified backend should load principals");
-        assert_eq!(loaded.id, user.id);
+        assert_eq!(loaded.id(), user.id);
 
         let initial = backend
             .load_principal_settings(user.id)
             .await
             .expect("certified backend should load principal settings");
-        assert_eq!(initial.as_value(), &serde_json::json!({}));
+        assert_eq!(initial.document(), &serde_json::json!({}));
 
         let replaced = backend
-            .replace_principal_settings(
+            .mutate_principal_settings(
                 user.id,
-                PrincipalSettings::new(serde_json::json!({
+                StoragePrincipalSettingsMutation::Replace(serde_json::json!({
                     "theme": "light",
                     "notifications": {"email": true}
-                }))
-                .expect("valid principal settings"),
+                })),
                 &event_context,
             )
             .await
             .expect("certified backend should replace principal settings");
-        assert_eq!(replaced.as_value()["theme"], "light");
+        assert_eq!(replaced.document()["theme"], "light");
 
         let merged = backend
-            .merge_principal_settings(
+            .mutate_principal_settings(
                 user.id,
-                PrincipalSettings::new(serde_json::json!({
+                StoragePrincipalSettingsMutation::MergePatch(serde_json::json!({
                     "notifications": {"push": true}
-                }))
-                .expect("valid principal settings patch"),
+                })),
                 &event_context,
             )
             .await
             .expect("certified backend should merge principal settings");
-        assert_eq!(merged.as_value()["notifications"]["email"], true);
-        assert_eq!(merged.as_value()["notifications"]["push"], true);
+        assert_eq!(merged.document()["notifications"]["email"], true);
+        assert_eq!(merged.document()["notifications"]["push"], true);
 
-        let patch_document =
-            serde_json::from_value::<PrincipalSettingsPatchDocument>(serde_json::json!([
-                {"op": "replace", "path": "/theme", "value": "dark"}
-            ]))
-            .expect("valid bounded principal settings JSON Patch");
         let patched = backend
-            .apply_principal_settings_patch(
+            .mutate_principal_settings(
                 user.id,
-                PrincipalSettingsPatch::JsonPatch(patch_document),
+                StoragePrincipalSettingsMutation::JsonPatch(serde_json::json!([
+                    {"op": "replace", "path": "/theme", "value": "dark"}
+                ])),
                 &event_context,
             )
             .await
             .expect("certified backend should apply principal settings JSON Patch");
-        assert_eq!(patched.as_value()["theme"], "dark");
+        assert_eq!(patched.document()["theme"], "dark");
 
         let reset = backend
-            .reset_principal_settings(user.id, &event_context)
+            .mutate_principal_settings(
+                user.id,
+                StoragePrincipalSettingsMutation::Reset,
+                &event_context,
+            )
             .await
             .expect("certified backend should reset principal settings");
-        assert_eq!(reset.as_value(), &serde_json::json!({}));
+        assert_eq!(reset.document(), &serde_json::json!({}));
     }
 }
 
@@ -2137,46 +2137,45 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
 }
 
 #[actix_web::test]
-async fn every_available_storage_backend_supplies_collection_record_compatibility() {
+async fn every_available_storage_backend_supplies_collection_lifecycle() {
     let _permit = postgres_permit().await;
     let pool = pool();
     let group = crate::tests::create_test_group(pool.get_ref()).await;
 
     for backend in available_backends() {
-        let command = NewCollectionWithAssignee {
-            name: prefix("collection_record_compatibility"),
-            description: "collection record compatibility".to_string(),
-            group_id: GroupID::new(group.id).expect("valid compatibility group id"),
-            parent_collection_id: None,
-        };
+        let command = StorageCollectionCreate::new(
+            prefix("collection_lifecycle"),
+            "collection lifecycle",
+            group.id,
+            None,
+        );
+        let collections = backend.collection_store();
         let created = backend
-            .create_collection_record(&command, None)
+            .collection_store()
+            .create_collection(command, None)
             .await
-            .expect("certified backend should create collection records");
-        let updated = backend
-            .update_collection_record(
-                &UpdateCollection {
-                    name: None,
-                    description: Some("updated collection record compatibility".to_string()),
-                },
-                created.id,
+            .expect("certified backend should create collections");
+        let updated = collections
+            .update_collection(
+                created.id(),
+                StorageCollectionUpdate::new(
+                    None,
+                    Some("updated collection lifecycle".to_string()),
+                ),
                 Some(&EventContext::system()),
             )
             .await
-            .expect("certified backend should update collection records");
-        assert_eq!(
-            updated.description,
-            "updated collection record compatibility"
-        );
-        let moved = backend
-            .move_collection_record(created.id, 1, None)
+            .expect("certified backend should update collections");
+        assert_eq!(updated.description(), "updated collection lifecycle");
+        let moved = collections
+            .move_collection(created.id(), 1, None)
             .await
-            .expect("certified backend should move collection records");
-        assert_eq!(moved.parent_collection_id, Some(1));
-        backend
-            .delete_collection_record(created.id, Some(&EventContext::system()))
+            .expect("certified backend should move collections");
+        assert_eq!(moved.parent_collection_id(), Some(1));
+        collections
+            .delete_collection(created.id(), Some(&EventContext::system()))
             .await
-            .expect("certified backend should delete collection records");
+            .expect("certified backend should delete collections");
     }
 
     group
@@ -2349,7 +2348,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             cursor: None,
             include_total: true,
         };
-        let principal_query = || CollectionPrincipalQuery::new(user.id, collection_id);
+        let principal_query = || AuthorizationPrincipalCollectionQuery::new(user.id, collection_id);
 
         let principal_permissions = backend
             .principal_collection_permissions(principal_query())
@@ -2358,24 +2357,27 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(
             principal_permissions
                 .iter()
-                .any(|row| row.group.id == group.id)
+                .cloned()
+                .any(|row| row.into_parts().0.id() == group.id)
         );
 
         let all_permissions = backend
             .principal_all_collection_permissions(user.id)
             .await
             .expect("certified backend should project all principal collection grants");
-        assert!(all_permissions.iter().any(|(collection, row_group, _)| {
-            collection.id == collection_id && row_group.id == group.id
+        assert!(all_permissions.iter().cloned().any(|row| {
+            let (_, row_group, collection) = row.into_parts();
+            collection.id() == collection_id && row_group.id() == group.id
         }));
 
         let (principal_page, principal_total) = backend
-            .principal_collection_permissions_page(CollectionPrincipalPageQuery::new(
+            .principal_collection_permissions_page(AuthorizationPrincipalCollectionPageQuery::new(
                 principal_query(),
                 page_options(),
             ))
             .await
-            .expect("certified backend should page principal collection grants");
+            .expect("certified backend should page principal collection grants")
+            .into_parts();
         assert!(principal_total >= 1);
         assert!(!principal_page.is_empty());
 
@@ -2386,13 +2388,14 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(
             effective_principal
                 .iter()
-                .any(|row| row.group.id == group.id)
+                .cloned()
+                .any(|row| row.into_parts().4.id() == group.id)
         );
 
         let visible = backend
-            .visible_collections(CollectionVisibilityQuery::new(
+            .visible_collections(AuthorizationCollectionVisibilityQuery::new(
                 user.id,
-                Permissions::ReadCollection,
+                AuthorizationPermission::ReadCollection,
                 None,
             ))
             .await
@@ -2400,13 +2403,13 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(
             visible
                 .iter()
-                .any(|collection| collection.id == collection_id)
+                .any(|collection| collection.id() == collection_id)
         );
 
-        let group_query = CollectionGroupPermissionQuery::new(
+        let group_query = AuthorizationGroupCollectionQuery::new(
             collection_id,
             group.id,
-            Permissions::ReadCollection,
+            AuthorizationPermission::ReadCollection,
         );
         assert!(
             backend
@@ -2421,28 +2424,33 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             .expect("certified backend should project effective group grants");
         assert!(!effective_group.is_empty());
 
-        let groups_query =
-            || CollectionGroupsQuery::new(collection_id, Permissions::ReadCollection);
+        let groups_query = || {
+            AuthorizationCollectionGroupsQuery::new(
+                collection_id,
+                AuthorizationPermission::ReadCollection,
+            )
+        };
         let groups = backend
             .groups_with_collection_permission(groups_query())
             .await
             .expect("certified backend should list groups with collection grants");
-        assert!(groups.iter().any(|candidate| candidate.id == group.id));
+        assert!(groups.iter().any(|candidate| candidate.id() == group.id));
 
         let (groups_page, groups_total) = backend
-            .groups_with_collection_permission_page(CollectionGroupsPageQuery::new(
+            .groups_with_collection_permission_page(AuthorizationCollectionGroupsPageQuery::new(
                 groups_query(),
                 page_options(),
             ))
             .await
-            .expect("certified backend should page groups with collection grants");
+            .expect("certified backend should page groups with collection grants")
+            .into_parts();
         assert!(groups_total >= 1);
         assert!(!groups_page.is_empty());
 
         let grant_query = || {
-            CollectionGrantListQuery::new(
+            AuthorizationCollectionGrantListQuery::new(
                 collection_id,
-                vec![Permissions::ReadCollection],
+                [AuthorizationPermission::ReadCollection],
                 page_options(),
             )
         };
@@ -2450,12 +2458,18 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             .list_collection_group_permissions(grant_query())
             .await
             .expect("certified backend should list collection grants");
-        assert!(grants.iter().any(|row| row.group.id == group.id));
+        assert!(
+            grants
+                .iter()
+                .cloned()
+                .any(|row| row.into_parts().0.id() == group.id)
+        );
 
         let (grant_page, grant_total) = backend
             .list_collection_group_permissions_page(grant_query())
             .await
-            .expect("certified backend should page collection grants");
+            .expect("certified backend should page collection grants")
+            .into_parts();
         assert!(grant_total >= 1);
         assert!(!grant_page.is_empty());
 
@@ -2463,8 +2477,8 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             .collection_group_permission(collection_id, group.id)
             .await
             .expect("certified backend should load a collection grant");
-        assert_eq!(grant.collection_id, collection_id);
-        assert_eq!(grant.group_id, group.id);
+        assert_eq!(grant.collection_id(), collection_id);
+        assert_eq!(grant.group_id(), group.id);
 
         let collections = backend
             .local_authorized_collections(AuthorizationCollectionsQuery::new(

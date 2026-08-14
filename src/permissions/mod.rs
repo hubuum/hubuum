@@ -20,7 +20,13 @@ pub mod test_support;
 pub use backend::PermissionBackend;
 pub use context::{AppContext, AuthorizationContext};
 pub use local::LocalPermissionBackend;
-pub(crate) use storage::{grant_from_storage, permission_from_storage, permission_to_storage};
+pub(crate) use storage::{
+    collection_from_storage as authorization_collection_from_storage,
+    effective_group_grant_from_storage as authorization_effective_group_grant_from_storage,
+    grant_from_storage, group_from_storage as authorization_group_from_storage,
+    group_grant_from_storage as authorization_group_grant_from_storage, permission_from_storage,
+    permission_to_storage,
+};
 pub use types::{
     AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
     ResourceRef,

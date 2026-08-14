@@ -149,7 +149,7 @@ pub(crate) fn permission_to_storage(permission: Permissions) -> AuthorizationPer
     }
 }
 
-fn collection_to_storage(collection: Collection) -> AuthorizationCollection {
+pub(crate) fn collection_to_storage(collection: Collection) -> AuthorizationCollection {
     AuthorizationCollection::new(
         collection.id,
         collection.name,
@@ -161,7 +161,7 @@ fn collection_to_storage(collection: Collection) -> AuthorizationCollection {
     )
 }
 
-fn group_to_storage(group: impl Into<Group>) -> AuthorizationGroup {
+pub(crate) fn group_to_storage(group: impl Into<Group>) -> AuthorizationGroup {
     let group = group.into();
     AuthorizationGroup::new(
         AuthorizationGroupIdentity::new(
@@ -181,7 +181,7 @@ fn group_to_storage(group: impl Into<Group>) -> AuthorizationGroup {
     )
 }
 
-fn grant_to_storage(grant: impl Into<Permission>) -> AuthorizationGrant {
+pub(crate) fn grant_to_storage(grant: impl Into<Permission>) -> AuthorizationGrant {
     let grant = grant.into();
     AuthorizationGrant::new(
         grant.id,
@@ -193,7 +193,7 @@ fn grant_to_storage(grant: impl Into<Permission>) -> AuthorizationGrant {
     )
 }
 
-fn group_grant_to_storage(row: GroupPermission) -> AuthorizationGroupGrant {
+pub(crate) fn group_grant_to_storage(row: GroupPermission) -> AuthorizationGroupGrant {
     AuthorizationGroupGrant::new(
         group_to_storage(row.group),
         grant_to_storage(row.permission),

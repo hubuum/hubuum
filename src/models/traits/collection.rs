@@ -5,7 +5,10 @@ use crate::models::collection::{
 };
 use crate::models::group::GroupID;
 use crate::models::search::{FilterField, SortParam};
-use crate::storage::{CollectionRecordStorage, StorageContext, storage_handle};
+use crate::services::storage_boundary::{
+    collection_create_to_storage, collection_from_storage, collection_update_to_storage,
+};
+use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{CollectionAccessors, CursorPaginated, PermissionController};
@@ -22,9 +25,15 @@ impl SaveAdapter for Collection {
             description: Some(self.description.clone()),
         };
         storage_handle(pool)
-            .update_collection_record(&updated_collection, self.id, None)
+            .collection_store()
+            .update_collection(
+                self.id,
+                collection_update_to_storage(updated_collection),
+                None,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 
     async fn save_adapter(
@@ -37,9 +46,15 @@ impl SaveAdapter for Collection {
             description: Some(self.description.clone()),
         };
         storage_handle(pool)
-            .update_collection_record(&updated_collection, self.id, Some(context))
+            .collection_store()
+            .update_collection(
+                self.id,
+                collection_update_to_storage(updated_collection),
+                Some(context),
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 }
 
@@ -49,7 +64,8 @@ impl DeleteAdapter for Collection {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_collection_record(self.id, None)
+            .collection_store()
+            .delete_collection(self.id, None)
             .await
             .map_err(ApiError::from)
     }
@@ -60,7 +76,8 @@ impl DeleteAdapter for Collection {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_collection_record(self.id, Some(context))
+            .collection_store()
+            .delete_collection(self.id, Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -72,7 +89,8 @@ impl DeleteAdapter for CollectionID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_collection_record(self.id(), None)
+            .collection_store()
+            .delete_collection(self.id(), None)
             .await
             .map_err(ApiError::from)
     }
@@ -83,7 +101,8 @@ impl DeleteAdapter for CollectionID {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_collection_record(self.id(), Some(context))
+            .collection_store()
+            .delete_collection(self.id(), Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -99,9 +118,15 @@ impl UpdateAdapter for UpdateCollection {
         target_collection_id: CollectionID,
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
-            .update_collection_record(self, target_collection_id.id(), None)
+            .collection_store()
+            .update_collection(
+                target_collection_id.id(),
+                collection_update_to_storage(self.clone()),
+                None,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 
     async fn update_adapter(
@@ -111,9 +136,15 @@ impl UpdateAdapter for UpdateCollection {
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
-            .update_collection_record(self, target_collection_id.id(), Some(context))
+            .collection_store()
+            .update_collection(
+                target_collection_id.id(),
+                collection_update_to_storage(self.clone()),
+                Some(context),
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 }
 
@@ -125,9 +156,11 @@ impl SaveAdapter for NewCollectionWithAssignee {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
-            .create_collection_record(self, None)
+            .collection_store()
+            .create_collection(collection_create_to_storage(self.clone()), None)
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 
     async fn save_adapter(
@@ -136,9 +169,11 @@ impl SaveAdapter for NewCollectionWithAssignee {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
-            .create_collection_record(self, Some(context))
+            .collection_store()
+            .create_collection(collection_create_to_storage(self.clone()), Some(context))
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 }
 
@@ -205,9 +240,10 @@ impl CollectionAdapter for CollectionID {
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
             .collection_store()
-            .get_collection(*self)
+            .get_collection(self.id())
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 }
 
@@ -234,9 +270,11 @@ impl NewCollection {
                 .transpose()?,
         };
         storage_handle(backend)
-            .create_collection_record(&command, None)
+            .collection_store()
+            .create_collection(collection_create_to_storage(command), None)
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 
     /// Persist the collection and apply permissions using the assignee embedded in the supplied
@@ -262,9 +300,11 @@ impl NewCollection {
                 .transpose()?,
         };
         storage_handle(backend)
-            .create_collection_record(&command, None)
+            .collection_store()
+            .create_collection(collection_create_to_storage(command), None)
             .await
             .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 }
 

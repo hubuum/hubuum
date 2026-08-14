@@ -20,7 +20,7 @@ pub(crate) mod operational_administration;
 pub(crate) mod related_filter_authorization;
 pub(crate) mod relation_queries;
 pub(crate) mod remote_targets;
-mod storage_boundary;
+pub(crate) mod storage_boundary;
 pub(crate) mod tasks;
 pub(crate) mod unified_search;
 

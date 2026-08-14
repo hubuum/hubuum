@@ -1,21 +1,20 @@
 use super::{
     AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRecordStorage, ClassRelationStore, ClassStore,
-    CollectionPermissionStorage, CollectionRecordStorage, CollectionStore,
-    ComputedFieldLifecycleStorage, ComputedObjectStorage, EventDeliveryAdministrationStorage,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateStorage, GroupStorage,
-    HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage, MetricsStorage,
-    ObjectAggregateStorage, ObjectRecordStorage, ObjectRelationStore, ObjectStore,
+    CatalogStorage, ClassRelationStore, ClassStore, CollectionAuthorizationStorage,
+    CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
+    ExportTemplateStorage, GroupStorage, HistoryStorage, IdentityStorage, ImportStorage,
+    InventoryStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
     OperationalStateStorage, PostgresStorage, PrincipalStorage, RelationQueryStorage,
     RemoteTargetStorage, RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
     TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
     WorkerNotificationStorage,
 };
 
-pub(crate) use hubuum_storage_core::{
-    StorageBackendDescriptor, StorageBackendKind, StorageIdentity,
-};
+pub(crate) use hubuum_storage_core::StorageIdentity;
+
+pub(crate) use super::registry::{StorageBackendDescriptor, StorageBackendKind};
 
 /// All-or-nothing storage backend accepted by the application composition root.
 ///
@@ -54,10 +53,7 @@ pub(crate) trait StorageBackend:
     + UnifiedSearchStorage
     + GroupStorage
     + PrincipalStorage
-    + CollectionPermissionStorage
-    + CollectionRecordStorage
-    + ClassRecordStorage
-    + ObjectRecordStorage
+    + CollectionAuthorizationStorage
     + RemoteTargetStorage
     + TaskQueueStorage
     + TaskExecutionStorage

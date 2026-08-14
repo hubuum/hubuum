@@ -1,6 +1,6 @@
 use hubuum_storage_core::{
-    AuthorizationCollection, AuthorizationGrant, AuthorizationGroup, AuthorizationGroupGrant,
-    AuthorizationPermission,
+    AuthorizationCollection, AuthorizationEffectiveGroupGrant, AuthorizationGrant,
+    AuthorizationGroup, AuthorizationGroupGrant, AuthorizationPermission,
 };
 
 use crate::errors::ApiError;
@@ -80,7 +80,7 @@ pub(crate) const fn permission_from_storage(permission: AuthorizationPermission)
     }
 }
 
-pub(super) fn collection_from_storage(
+pub(crate) fn collection_from_storage(
     collection: AuthorizationCollection,
 ) -> Result<Collection, ApiError> {
     Ok(Collection {
@@ -94,7 +94,7 @@ pub(super) fn collection_from_storage(
     })
 }
 
-pub(super) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, ApiError> {
+pub(crate) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, ApiError> {
     Ok(Group {
         id: group.id(),
         groupname: group.group_name().to_string(),
@@ -152,11 +152,25 @@ pub(crate) fn grant_from_storage(grant: AuthorizationGrant) -> Permission {
     }
 }
 
-pub(super) fn group_grant_from_storage(
+pub(crate) fn group_grant_from_storage(
     row: AuthorizationGroupGrant,
 ) -> Result<GroupPermission, ApiError> {
     let (group, grant) = row.into_parts();
     Ok(GroupPermission {
+        group: group_from_storage(group)?,
+        permission: grant_from_storage(grant),
+    })
+}
+
+pub(crate) fn effective_group_grant_from_storage(
+    row: AuthorizationEffectiveGroupGrant,
+) -> Result<crate::models::EffectiveGroupPermission, ApiError> {
+    let (target, source, depth, inherited, group, grant) = row.into_parts();
+    Ok(crate::models::EffectiveGroupPermission {
+        target_collection: collection_from_storage(target)?,
+        source_collection: collection_from_storage(source)?,
+        depth,
+        inherited,
         group: group_from_storage(group)?,
         permission: grant_from_storage(grant),
     })

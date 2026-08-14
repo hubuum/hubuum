@@ -3,14 +3,20 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     ClassGraphRow, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObjectRelation,
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation,
-    ObjectRelationLimit, RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow,
+    ObjectRelationCreateSelector, ObjectRelationEndpoint, ObjectRelationLimit,
+    ObjectRelationSelector, PreparedClassRelation, PreparedObjectRelation, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, ResolvedClassRelationTarget,
+    ResolvedObjectRelationTarget,
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 use crate::storage::{
-    StorageClassGraphRow, StorageClassRelation, StorageGraphClass, StorageGraphObject,
-    StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation, StorageRecordMetadata,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageClassGraphRow, StorageClassRelation, StorageClassRelationCreate, StorageGraphClass,
+    StorageGraphObject, StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
+    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePreparedClassRelation,
+    StoragePreparedObjectRelation, StorageRecordMetadata, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageResolvedClassRelation, StorageResolvedObjectRelation,
 };
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -811,7 +817,9 @@ fn metadata(
     StorageRecordMetadata::new(id, created_at, updated_at, revision)
 }
 
-pub(super) fn class_relation_to_storage(row: HubuumClassRelation) -> StorageClassRelation {
+pub(in crate::storage::postgres) fn class_relation_to_storage(
+    row: HubuumClassRelation,
+) -> StorageClassRelation {
     StorageClassRelation::new(
         metadata(row.id, row.created_at, row.updated_at, row.revision.get()),
         row.from_hubuum_class_id,
@@ -824,12 +832,237 @@ pub(super) fn class_relation_to_storage(row: HubuumClassRelation) -> StorageClas
     )
 }
 
-pub(super) fn object_relation_to_storage(row: HubuumObjectRelation) -> StorageObjectRelation {
+pub(in crate::storage::postgres) fn object_relation_to_storage(
+    row: HubuumObjectRelation,
+) -> StorageObjectRelation {
     StorageObjectRelation::new(
         metadata(row.id, row.created_at, row.updated_at, row.revision.get()),
         row.from_hubuum_object_id,
         row.to_hubuum_object_id,
         row.class_relation_id,
+    )
+}
+
+pub(in crate::storage::postgres) fn class_relation_from_storage(
+    row: StorageClassRelation,
+) -> Result<HubuumClassRelation, ApiError> {
+    let (
+        id,
+        from_hubuum_class_id,
+        to_hubuum_class_id,
+        forward_template_alias,
+        reverse_template_alias,
+        created_at,
+        updated_at,
+        from_max_relations,
+        to_max_relations,
+        revision,
+    ) = row.into_parts();
+    Ok(HubuumClassRelation {
+        id,
+        from_hubuum_class_id,
+        to_hubuum_class_id,
+        forward_template_alias,
+        reverse_template_alias,
+        created_at,
+        updated_at,
+        from_max_relations: persisted_relation_limit(from_max_relations)?,
+        to_max_relations: persisted_relation_limit(to_max_relations)?,
+        revision: crate::models::ResourceRevision::new(revision)?,
+    })
+}
+
+pub(in crate::storage::postgres) fn class_relation_create_from_storage(
+    command: &StorageClassRelationCreate,
+) -> Result<NewHubuumClassRelation, ApiError> {
+    Ok(NewHubuumClassRelation {
+        from_hubuum_class_id: command.from_class_id(),
+        to_hubuum_class_id: command.to_class_id(),
+        forward_template_alias: command.forward_template_alias().map(str::to_string),
+        reverse_template_alias: command.reverse_template_alias().map(str::to_string),
+        from_max_relations: persisted_relation_limit(command.from_max_relations())?,
+        to_max_relations: persisted_relation_limit(command.to_max_relations())?,
+    })
+}
+
+pub(in crate::storage::postgres) fn class_relation_create_to_storage(
+    command: NewHubuumClassRelation,
+) -> StorageClassRelationCreate {
+    StorageClassRelationCreate::builder(command.from_hubuum_class_id, command.to_hubuum_class_id)
+        .template_aliases(
+            command.forward_template_alias,
+            command.reverse_template_alias,
+        )
+        .relation_limits(
+            command.from_max_relations.map(ObjectRelationLimit::value),
+            command.to_max_relations.map(ObjectRelationLimit::value),
+        )
+        .build()
+}
+
+pub(in crate::storage::postgres) fn prepared_class_relation_from_storage(
+    prepared: &StoragePreparedClassRelation,
+) -> Result<PreparedClassRelation, ApiError> {
+    PreparedClassRelation::new(
+        class_relation_create_from_storage(prepared.command())?,
+        super::resource_rows::class_record_from_storage(prepared.from_class().clone())?,
+        super::resource_rows::class_record_from_storage(prepared.to_class().clone())?,
+    )
+}
+
+pub(in crate::storage::postgres) fn prepared_class_relation_to_storage(
+    prepared: PreparedClassRelation,
+) -> StoragePreparedClassRelation {
+    StoragePreparedClassRelation::new(
+        class_relation_create_to_storage(prepared.command().clone()),
+        super::resource_rows::class_record_to_storage(prepared.from_class().clone()),
+        super::resource_rows::class_record_to_storage(prepared.to_class().clone()),
+    )
+}
+
+pub(in crate::storage::postgres) fn resolved_class_relation_from_storage(
+    target: &StorageResolvedClassRelation,
+) -> Result<ResolvedClassRelationTarget, ApiError> {
+    ResolvedClassRelationTarget::new(
+        class_relation_from_storage(target.relation().clone())?,
+        super::resource_rows::class_record_from_storage(target.from_class().clone())?,
+        super::resource_rows::class_record_from_storage(target.to_class().clone())?,
+    )
+}
+
+pub(in crate::storage::postgres) fn resolved_class_relation_to_storage(
+    target: ResolvedClassRelationTarget,
+) -> StorageResolvedClassRelation {
+    StorageResolvedClassRelation::new(
+        class_relation_to_storage(target.relation().clone()),
+        super::resource_rows::class_record_to_storage(target.from_class().clone()),
+        super::resource_rows::class_record_to_storage(target.to_class().clone()),
+    )
+}
+
+pub(in crate::storage::postgres) fn object_relation_from_storage(
+    row: StorageObjectRelation,
+) -> Result<HubuumObjectRelation, ApiError> {
+    let (
+        id,
+        from_hubuum_object_id,
+        to_hubuum_object_id,
+        class_relation_id,
+        created_at,
+        updated_at,
+        revision,
+    ) = row.into_parts();
+    Ok(HubuumObjectRelation {
+        id,
+        from_hubuum_object_id,
+        to_hubuum_object_id,
+        class_relation_id,
+        created_at,
+        updated_at,
+        revision: crate::models::ResourceRevision::new(revision)?,
+    })
+}
+
+pub(in crate::storage::postgres) fn object_relation_create_from_storage(
+    command: StorageObjectRelationCreate,
+) -> NewHubuumObjectRelation {
+    NewHubuumObjectRelation {
+        from_hubuum_object_id: command.from_object_id(),
+        to_hubuum_object_id: command.to_object_id(),
+        class_relation_id: command.class_relation_id(),
+    }
+}
+
+pub(in crate::storage::postgres) fn object_relation_create_to_storage(
+    command: NewHubuumObjectRelation,
+) -> StorageObjectRelationCreate {
+    StorageObjectRelationCreate::new(
+        command.from_hubuum_object_id,
+        command.to_hubuum_object_id,
+        command.class_relation_id,
+    )
+}
+
+fn endpoint_from_storage(
+    endpoint: StorageObjectRelationEndpoint,
+) -> Result<ObjectRelationEndpoint, ApiError> {
+    Ok(ObjectRelationEndpoint::new(
+        crate::models::HubuumClassID::new(endpoint.class_id())?,
+        crate::models::HubuumObjectID::new(endpoint.object_id())?,
+    ))
+}
+
+pub(in crate::storage::postgres) fn object_relation_create_selector_from_storage(
+    selector: StorageObjectRelationCreateSelector,
+) -> Result<ObjectRelationCreateSelector, ApiError> {
+    Ok(match selector {
+        StorageObjectRelationCreateSelector::Explicit(command) => {
+            ObjectRelationCreateSelector::explicit(object_relation_create_from_storage(command))
+        }
+        StorageObjectRelationCreateSelector::Between { from, to } => {
+            ObjectRelationCreateSelector::between(
+                endpoint_from_storage(from)?,
+                endpoint_from_storage(to)?,
+            )
+        }
+    })
+}
+
+pub(in crate::storage::postgres) fn object_relation_selector_from_storage(
+    selector: StorageObjectRelationSelector,
+) -> Result<ObjectRelationSelector, ApiError> {
+    Ok(match selector {
+        StorageObjectRelationSelector::Id(id) => {
+            ObjectRelationSelector::by_id(crate::models::HubuumObjectRelationID::new(id)?)
+        }
+        StorageObjectRelationSelector::Between { from, to } => ObjectRelationSelector::between(
+            endpoint_from_storage(from)?,
+            endpoint_from_storage(to)?,
+        ),
+    })
+}
+
+pub(in crate::storage::postgres) fn prepared_object_relation_from_storage(
+    prepared: &StoragePreparedObjectRelation,
+) -> Result<PreparedObjectRelation, ApiError> {
+    PreparedObjectRelation::new(
+        object_relation_create_from_storage(*prepared.command()),
+        super::resource_rows::object_from_storage(prepared.from_object().clone())?,
+        super::resource_rows::object_from_storage(prepared.to_object().clone())?,
+        resolved_class_relation_from_storage(prepared.class_relation())?,
+    )
+}
+
+pub(in crate::storage::postgres) fn prepared_object_relation_to_storage(
+    prepared: PreparedObjectRelation,
+) -> StoragePreparedObjectRelation {
+    StoragePreparedObjectRelation::new(
+        object_relation_create_to_storage(prepared.command().clone()),
+        super::resource_rows::object_to_storage(prepared.from_object().clone()),
+        super::resource_rows::object_to_storage(prepared.to_object().clone()),
+        resolved_class_relation_to_storage(prepared.class_relation().clone()),
+    )
+}
+
+pub(in crate::storage::postgres) fn resolved_object_relation_from_storage(
+    target: &StorageResolvedObjectRelation,
+) -> Result<ResolvedObjectRelationTarget, ApiError> {
+    ResolvedObjectRelationTarget::new(
+        object_relation_from_storage(target.relation().clone())?,
+        super::resource_rows::object_from_storage(target.from_object().clone())?,
+        super::resource_rows::object_from_storage(target.to_object().clone())?,
+        resolved_class_relation_from_storage(target.class_relation())?,
+    )
+}
+
+pub(in crate::storage::postgres) fn resolved_object_relation_to_storage(
+    target: ResolvedObjectRelationTarget,
+) -> StorageResolvedObjectRelation {
+    StorageResolvedObjectRelation::new(
+        object_relation_to_storage(*target.relation()),
+        super::resource_rows::object_to_storage(target.from_object().clone()),
+        super::resource_rows::object_to_storage(target.to_object().clone()),
+        resolved_class_relation_to_storage(target.class_relation().clone()),
     )
 }
 

@@ -10,6 +10,13 @@ use crate::models::{
     PreparedClassRelation, PreparedObjectRelation, RelatedObjectGraphRow,
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
+use crate::services::storage_boundary::collection_from_storage;
+use crate::services::storage_boundary::{
+    class_relation_create_to_storage, class_relation_from_storage,
+    object_relation_create_selector_to_storage, object_relation_selector_to_storage,
+    prepared_class_relation_from_storage, prepared_object_relation_from_storage,
+    resolved_class_relation_from_storage, resolved_object_relation_from_storage,
+};
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{
     ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter, ObjectAdapter,
@@ -26,9 +33,10 @@ async fn prepare_class_relation(
 ) -> Result<PreparedClassRelation, ApiError> {
     storage_handle(backend)
         .class_relation_store()
-        .prepare_class_relation(command.clone())
+        .prepare_class_relation(class_relation_create_to_storage(command.clone()))
         .await
         .map_err(ApiError::from)
+        .and_then(prepared_class_relation_from_storage)
 }
 
 async fn resolve_class_relation(
@@ -37,9 +45,10 @@ async fn resolve_class_relation(
 ) -> Result<ResolvedClassRelationTarget, ApiError> {
     storage_handle(backend)
         .class_relation_store()
-        .resolve_class_relation(id)
+        .resolve_class_relation(id.id())
         .await
         .map_err(ApiError::from)
+        .and_then(resolved_class_relation_from_storage)
 }
 
 async fn prepare_object_relation(
@@ -48,9 +57,12 @@ async fn prepare_object_relation(
 ) -> Result<PreparedObjectRelation, ApiError> {
     storage_handle(backend)
         .object_relation_store()
-        .prepare_object_relation(ObjectRelationCreateSelector::explicit(command.clone()))
+        .prepare_object_relation(object_relation_create_selector_to_storage(
+            ObjectRelationCreateSelector::explicit(command.clone()),
+        ))
         .await
         .map_err(ApiError::from)
+        .and_then(prepared_object_relation_from_storage)
 }
 
 async fn resolve_object_relation(
@@ -59,9 +71,12 @@ async fn resolve_object_relation(
 ) -> Result<ResolvedObjectRelationTarget, ApiError> {
     storage_handle(backend)
         .object_relation_store()
-        .resolve_object_relation(ObjectRelationSelector::by_id(id))
+        .resolve_object_relation(object_relation_selector_to_storage(
+            ObjectRelationSelector::by_id(id),
+        ))
         .await
         .map_err(ApiError::from)
+        .and_then(resolved_object_relation_from_storage)
 }
 
 async fn relation_collections(
@@ -71,13 +86,15 @@ async fn relation_collections(
 ) -> Result<(Collection, Collection), ApiError> {
     let storage = storage_handle(backend).collection_store();
     let from_collection = storage
-        .get_collection(CollectionID::new(from_collection_id)?)
+        .get_collection(CollectionID::new(from_collection_id)?.id())
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApiError::from)
+        .and_then(collection_from_storage)?;
     let to_collection = storage
-        .get_collection(CollectionID::new(to_collection_id)?)
+        .get_collection(CollectionID::new(to_collection_id)?.id())
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApiError::from)
+        .and_then(collection_from_storage)?;
     Ok((from_collection, to_collection))
 }
 
@@ -123,7 +140,7 @@ impl DeleteAdapter for HubuumClassRelation {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .class_relation_store()
-            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?, None)
+            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?.id(), None)
             .await
             .map_err(ApiError::from)
     }
@@ -135,7 +152,7 @@ impl DeleteAdapter for HubuumClassRelation {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .class_relation_store()
-            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?, Some(context))
+            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?.id(), Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -150,9 +167,13 @@ impl SaveAdapter for NewHubuumClassRelation {
     ) -> Result<HubuumClassRelation, ApiError> {
         storage_handle(pool)
             .class_relation_store()
-            .create_class_relation_from_command(self.clone(), None)
+            .create_class_relation_from_command(
+                class_relation_create_to_storage(self.clone()),
+                None,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(class_relation_from_storage)
     }
 
     async fn save_adapter(
@@ -162,9 +183,13 @@ impl SaveAdapter for NewHubuumClassRelation {
     ) -> Result<HubuumClassRelation, ApiError> {
         storage_handle(pool)
             .class_relation_store()
-            .create_class_relation_from_command(self.clone(), Some(context))
+            .create_class_relation_from_command(
+                class_relation_create_to_storage(self.clone()),
+                Some(context),
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(class_relation_from_storage)
     }
 }
 
@@ -175,7 +200,7 @@ impl DeleteAdapter for HubuumClassRelationID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .class_relation_store()
-            .delete_class_relation_by_id(*self, None)
+            .delete_class_relation_by_id(self.id(), None)
             .await
             .map_err(ApiError::from)
     }
@@ -187,7 +212,7 @@ impl DeleteAdapter for HubuumClassRelationID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .class_relation_store()
-            .delete_class_relation_by_id(*self, Some(context))
+            .delete_class_relation_by_id(self.id(), Some(context))
             .await
             .map_err(ApiError::from)
     }

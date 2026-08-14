@@ -5,21 +5,18 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tracing::{Instrument, debug, debug_span, warn};
 
-use crate::events::EventContext;
-use crate::models::{
-    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelation,
-    HubuumClassRelationID, HubuumObject, HubuumObjectRelation, HubuumObjectRelationID,
-    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, ObjectDataPatchDocument, ObjectRelationCreateSelector,
-    ObjectRelationSelector, ObjectSelector, PreparedClassRelation, PreparedObjectRelation,
-    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
-    ResolvedObjectTarget, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
-};
-
 use super::{
     ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
-    StorageError, StorageIdentity,
+    StorageClassCreate, StorageClassRecord, StorageClassRelation, StorageClassRelationCreate,
+    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageIdentity, StorageObject, StorageObjectCreate,
+    StorageObjectDataPatch, StorageObjectRelation, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
+    StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
+    StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
+    StorageResolvedObjectRelation,
 };
+use crate::events::EventContext;
 
 /// Uniform diagnostics around whichever storage capabilities `S` implements.
 ///
@@ -137,16 +134,16 @@ impl<S> CollectionStore for ObservedStorage<S>
 where
     S: CollectionStore + StorageIdentity,
 {
-    async fn get_collection(&self, id: CollectionID) -> Result<Collection, StorageError> {
+    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
         self.call("collections", "get", self.inner.get_collection(id))
             .await
     }
 
     async fn create_collection(
         &self,
-        command: NewCollectionWithAssignee,
-        context: &EventContext,
-    ) -> Result<Collection, StorageError> {
+        command: StorageCollectionCreate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
         self.call(
             "collections",
             "create",
@@ -157,10 +154,10 @@ where
 
     async fn update_collection(
         &self,
-        id: CollectionID,
-        changes: UpdateCollection,
-        context: &EventContext,
-    ) -> Result<Collection, StorageError> {
+        id: i32,
+        changes: StorageCollectionUpdate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
         self.call(
             "collections",
             "update",
@@ -171,8 +168,8 @@ where
 
     async fn delete_collection(
         &self,
-        id: CollectionID,
-        context: &EventContext,
+        id: i32,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
             "collections",
@@ -182,7 +179,7 @@ where
         .await
     }
 
-    async fn collection_children(&self, id: CollectionID) -> Result<Vec<Collection>, StorageError> {
+    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "children",
@@ -191,10 +188,7 @@ where
         .await
     }
 
-    async fn collection_ancestors(
-        &self,
-        id: CollectionID,
-    ) -> Result<Vec<Collection>, StorageError> {
+    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "ancestors",
@@ -205,10 +199,10 @@ where
 
     async fn move_collection(
         &self,
-        id: CollectionID,
-        new_parent_id: CollectionID,
-        context: &EventContext,
-    ) -> Result<Collection, StorageError> {
+        id: i32,
+        new_parent_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
         self.call(
             "collections",
             "move",
@@ -225,17 +219,17 @@ where
 {
     async fn resolve_class(
         &self,
-        selector: ClassSelector,
-    ) -> Result<ResolvedClassTarget, StorageError> {
+        selector: StorageClassSelector,
+    ) -> Result<StorageResolvedClass, StorageError> {
         self.call("classes", "resolve", self.inner.resolve_class(selector))
             .await
     }
 
     async fn create_class(
         &self,
-        command: NewHubuumClass,
-        context: &EventContext,
-    ) -> Result<HubuumClass, StorageError> {
+        command: StorageClassCreate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageClassRecord, StorageError> {
         self.call(
             "classes",
             "create",
@@ -246,10 +240,10 @@ where
 
     async fn update_class(
         &self,
-        target: &ResolvedClassTarget,
-        changes: UpdateHubuumClass,
-        context: &EventContext,
-    ) -> Result<HubuumClass, StorageError> {
+        target: &StorageResolvedClass,
+        changes: StorageClassUpdate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageClassRecord, StorageError> {
         self.call(
             "classes",
             "update",
@@ -260,8 +254,8 @@ where
 
     async fn delete_class(
         &self,
-        target: &ResolvedClassTarget,
-        context: &EventContext,
+        target: &StorageResolvedClass,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
             "classes",
@@ -270,6 +264,11 @@ where
         )
         .await
     }
+
+    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+        self.call("classes", "names", self.inner.class_names(class_ids))
+            .await
+    }
 }
 
 #[async_trait]
@@ -277,20 +276,25 @@ impl<S> ObjectStore for ObservedStorage<S>
 where
     S: ObjectStore + StorageIdentity,
 {
+    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
+        self.call("objects", "get", self.inner.get_object(object_id))
+            .await
+    }
+
     async fn resolve_object(
         &self,
-        selector: ObjectSelector,
-    ) -> Result<ResolvedObjectTarget, StorageError> {
+        selector: StorageObjectSelector,
+    ) -> Result<StorageResolvedObject, StorageError> {
         self.call("objects", "resolve", self.inner.resolve_object(selector))
             .await
     }
 
     async fn create_object(
         &self,
-        class: &ResolvedClassTarget,
-        command: NewHubuumObject,
-        context: &EventContext,
-    ) -> Result<HubuumObject, StorageError> {
+        class: &StorageResolvedClass,
+        command: StorageObjectCreate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageObject, StorageError> {
         self.call(
             "objects",
             "create",
@@ -301,10 +305,10 @@ where
 
     async fn update_object(
         &self,
-        target: &ResolvedObjectTarget,
-        changes: UpdateHubuumObject,
-        context: &EventContext,
-    ) -> Result<HubuumObject, StorageError> {
+        target: &StorageResolvedObject,
+        changes: StorageObjectUpdate,
+        context: Option<&EventContext>,
+    ) -> Result<StorageObject, StorageError> {
         self.call(
             "objects",
             "update",
@@ -315,10 +319,10 @@ where
 
     async fn patch_object_data(
         &self,
-        target: &ResolvedObjectTarget,
-        patch: ObjectDataPatchDocument,
+        target: &StorageResolvedObject,
+        patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<HubuumObject, StorageError> {
+    ) -> Result<StorageObject, StorageError> {
         self.call(
             "objects",
             "patch_data",
@@ -329,13 +333,43 @@ where
 
     async fn delete_object(
         &self,
-        target: &ResolvedObjectTarget,
-        context: &EventContext,
+        target: &StorageResolvedObject,
+        context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
             "objects",
             "delete",
             self.inner.delete_object(target, context),
+        )
+        .await
+    }
+
+    async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
+        self.call("objects", "validate", self.inner.validate_object(object))
+            .await
+    }
+
+    async fn validate_object_create(
+        &self,
+        command: StorageObjectCreate,
+    ) -> Result<(), StorageError> {
+        self.call(
+            "objects",
+            "validate_create",
+            self.inner.validate_object_create(command),
+        )
+        .await
+    }
+
+    async fn validate_object_update(
+        &self,
+        object_id: i32,
+        changes: StorageObjectUpdate,
+    ) -> Result<(), StorageError> {
+        self.call(
+            "objects",
+            "validate_update",
+            self.inner.validate_object_update(object_id, changes),
         )
         .await
     }
@@ -348,8 +382,8 @@ where
 {
     async fn prepare_class_relation(
         &self,
-        command: NewHubuumClassRelation,
-    ) -> Result<PreparedClassRelation, StorageError> {
+        command: StorageClassRelationCreate,
+    ) -> Result<StoragePreparedClassRelation, StorageError> {
         self.call(
             "class_relations",
             "prepare_create",
@@ -360,8 +394,8 @@ where
 
     async fn resolve_class_relation(
         &self,
-        id: HubuumClassRelationID,
-    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+        id: i32,
+    ) -> Result<StorageResolvedClassRelation, StorageError> {
         self.call(
             "class_relations",
             "resolve",
@@ -372,9 +406,9 @@ where
 
     async fn create_class_relation(
         &self,
-        prepared: &PreparedClassRelation,
+        prepared: &StoragePreparedClassRelation,
         context: Option<&EventContext>,
-    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+    ) -> Result<StorageResolvedClassRelation, StorageError> {
         self.call(
             "class_relations",
             "create",
@@ -385,7 +419,7 @@ where
 
     async fn delete_class_relation(
         &self,
-        target: &ResolvedClassRelationTarget,
+        target: &StorageResolvedClassRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
@@ -398,9 +432,9 @@ where
 
     async fn create_class_relation_from_command(
         &self,
-        command: NewHubuumClassRelation,
+        command: StorageClassRelationCreate,
         context: Option<&EventContext>,
-    ) -> Result<HubuumClassRelation, StorageError> {
+    ) -> Result<StorageClassRelation, StorageError> {
         self.call(
             "class_relations",
             "create_from_command",
@@ -412,7 +446,7 @@ where
 
     async fn delete_class_relation_by_id(
         &self,
-        id: HubuumClassRelationID,
+        id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
@@ -431,8 +465,8 @@ where
 {
     async fn prepare_object_relation(
         &self,
-        selector: ObjectRelationCreateSelector,
-    ) -> Result<PreparedObjectRelation, StorageError> {
+        selector: StorageObjectRelationCreateSelector,
+    ) -> Result<StoragePreparedObjectRelation, StorageError> {
         self.call(
             "object_relations",
             "prepare_create",
@@ -443,8 +477,8 @@ where
 
     async fn resolve_object_relation(
         &self,
-        selector: ObjectRelationSelector,
-    ) -> Result<ResolvedObjectRelationTarget, StorageError> {
+        selector: StorageObjectRelationSelector,
+    ) -> Result<StorageResolvedObjectRelation, StorageError> {
         self.call(
             "object_relations",
             "resolve",
@@ -455,9 +489,9 @@ where
 
     async fn create_object_relation(
         &self,
-        prepared: &PreparedObjectRelation,
+        prepared: &StoragePreparedObjectRelation,
         context: Option<&EventContext>,
-    ) -> Result<ResolvedObjectRelationTarget, StorageError> {
+    ) -> Result<StorageResolvedObjectRelation, StorageError> {
         self.call(
             "object_relations",
             "create",
@@ -468,7 +502,7 @@ where
 
     async fn delete_object_relation(
         &self,
-        target: &ResolvedObjectRelationTarget,
+        target: &StorageResolvedObjectRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
@@ -481,9 +515,9 @@ where
 
     async fn create_object_relation_from_command(
         &self,
-        command: NewHubuumObjectRelation,
+        command: StorageObjectRelationCreate,
         context: Option<&EventContext>,
-    ) -> Result<HubuumObjectRelation, StorageError> {
+    ) -> Result<StorageObjectRelation, StorageError> {
         self.call(
             "object_relations",
             "create_from_command",
@@ -495,7 +529,7 @@ where
 
     async fn delete_object_relation_by_id(
         &self,
-        id: HubuumObjectRelationID,
+        id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(

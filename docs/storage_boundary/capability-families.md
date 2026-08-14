@@ -92,18 +92,19 @@ the atomic operations each use case requires.
 Required traits:
 
 - `StorageIdentity`;
-- `CollectionStore`, `ClassStore`, `ObjectStore`, `ClassRelationStore`, and
-  `ObjectRelationStore` directly;
-- `CollectionRecordStorage`, `ClassRecordStorage`, and `ObjectRecordStorage`.
+- `CollectionStore`, `ClassStore`, and `ObjectStore`; and
+- `ClassRelationStore` and `ObjectRelationStore`.
 
 This family owns collection, class, object, and relation resolution and
 mutation. Implementations own locking, hierarchy maintenance, JSON validation
 coordination, relation cardinality, cascades, initial grants, revisions, and
 atomic lifecycle events.
 
-The record traits support backend-neutral validation, bulk lookup, and
-event-suppressed fixture or workflow operations. They are mandatory migration
-surfaces, not permission to expose table repositories.
+The resource traits include the validation, bulk lookup, and event-suppressed
+operations needed by imports, fixtures, and other application workflows. These
+are operation-shaped capabilities, not table repositories: a backend decides
+how each operation is implemented and never exposes rows, connections, or a
+query builder.
 
 ### `identity_and_authorization_data`
 
@@ -111,7 +112,7 @@ Required traits:
 
 - `AuthenticationStorage`;
 - `IdentityStorage`, `UserStorage`, and `TokenStorage`;
-- `AuthorizationStorage` and `CollectionPermissionStorage`; and
+- `AuthorizationStorage` and `CollectionAuthorizationStorage`; and
 - `GroupStorage` and `PrincipalStorage`.
 
 This family owns authentication projections, identity scopes, humans, service

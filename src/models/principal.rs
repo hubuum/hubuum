@@ -10,7 +10,12 @@ use crate::models::json_patch::{
     MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
 };
 use crate::models::search::{FilterField, SortParam};
-use crate::storage::{PrincipalStorage, StorageContext, storage_handle};
+use crate::services::storage_boundary::{
+    principal_from_storage, principal_settings_from_storage, principal_settings_mutation_to_storage,
+};
+use crate::storage::{
+    PrincipalStorage, StorageContext, StoragePrincipalSettingsMutation, storage_handle,
+};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -495,6 +500,7 @@ impl PrincipalID {
             .load_principal_settings(self.id())
             .await
             .map_err(ApiError::from)
+            .and_then(principal_settings_from_storage)
     }
 
     pub async fn replace_settings<C>(
@@ -507,9 +513,14 @@ impl PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .replace_principal_settings(self.id(), settings, event_context)
+            .mutate_principal_settings(
+                self.id(),
+                StoragePrincipalSettingsMutation::Replace(settings.as_value().clone()),
+                event_context,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(principal_settings_from_storage)
     }
 
     pub async fn patch_settings<C>(
@@ -522,9 +533,14 @@ impl PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .merge_principal_settings(self.id(), patch, event_context)
+            .mutate_principal_settings(
+                self.id(),
+                StoragePrincipalSettingsMutation::MergePatch(patch.as_value().clone()),
+                event_context,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(principal_settings_from_storage)
     }
 
     pub(crate) async fn apply_settings_patch<C>(
@@ -537,9 +553,14 @@ impl PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .apply_principal_settings_patch(self.id(), patch, event_context)
+            .mutate_principal_settings(
+                self.id(),
+                principal_settings_mutation_to_storage(patch)?,
+                event_context,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(principal_settings_from_storage)
     }
 
     pub async fn reset_settings<C>(
@@ -551,9 +572,14 @@ impl PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .reset_principal_settings(self.id(), event_context)
+            .mutate_principal_settings(
+                self.id(),
+                StoragePrincipalSettingsMutation::Reset,
+                event_context,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(principal_settings_from_storage)
     }
 }
 
@@ -566,6 +592,7 @@ pub async fn load_principal_by_id(
         .load_principal(principal_id)
         .await
         .map_err(ApiError::from)
+        .and_then(principal_from_storage)
 }
 
 impl CursorPaginated for Principal {

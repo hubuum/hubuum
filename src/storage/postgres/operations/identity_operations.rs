@@ -170,7 +170,9 @@ fn storage_token_metadata(metadata: PrincipalTokenMetadata) -> StorageTokenMetad
     .build()
 }
 
-fn token_scope_from_storage(scope: AuthenticationTokenScope) -> Result<TokenScope, ApiError> {
+pub(crate) fn token_scope_from_storage(
+    scope: AuthenticationTokenScope,
+) -> Result<TokenScope, ApiError> {
     let (permissions, resources) = scope.into_parts();
     let permissions = permissions
         .map(|permissions| {

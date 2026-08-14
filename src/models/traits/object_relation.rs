@@ -1,5 +1,9 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
+use crate::services::storage_boundary::{
+    object_relation_create_to_storage, object_relation_from_storage,
+    object_relation_selector_to_storage, resolved_object_relation_from_storage,
+};
 
 use crate::models::{
     HubuumObjectRelation, HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation,
@@ -16,9 +20,12 @@ async fn resolve_object_relation(
 ) -> Result<ResolvedObjectRelationTarget, ApiError> {
     storage_handle(backend)
         .object_relation_store()
-        .resolve_object_relation(ObjectRelationSelector::by_id(id))
+        .resolve_object_relation(object_relation_selector_to_storage(
+            ObjectRelationSelector::by_id(id),
+        ))
         .await
         .map_err(ApiError::from)
+        .and_then(resolved_object_relation_from_storage)
 }
 
 impl IdAccessor for HubuumObjectRelationID {
@@ -60,7 +67,7 @@ impl DeleteAdapter for HubuumObjectRelation {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?, None)
+            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?.id(), None)
             .await
             .map_err(ApiError::from)
     }
@@ -72,7 +79,7 @@ impl DeleteAdapter for HubuumObjectRelation {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?, Some(context))
+            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?.id(), Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -85,7 +92,7 @@ impl DeleteAdapter for HubuumObjectRelationID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(*self, None)
+            .delete_object_relation_by_id(self.id(), None)
             .await
             .map_err(ApiError::from)
     }
@@ -97,7 +104,7 @@ impl DeleteAdapter for HubuumObjectRelationID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(*self, Some(context))
+            .delete_object_relation_by_id(self.id(), Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -112,9 +119,13 @@ impl SaveAdapter for NewHubuumObjectRelation {
     ) -> Result<HubuumObjectRelation, ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .create_object_relation_from_command(self.clone(), None)
+            .create_object_relation_from_command(
+                object_relation_create_to_storage(self.clone()),
+                None,
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(object_relation_from_storage)
     }
 
     async fn save_adapter(
@@ -124,9 +135,13 @@ impl SaveAdapter for NewHubuumObjectRelation {
     ) -> Result<HubuumObjectRelation, ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .create_object_relation_from_command(self.clone(), Some(context))
+            .create_object_relation_from_command(
+                object_relation_create_to_storage(self.clone()),
+                Some(context),
+            )
             .await
             .map_err(ApiError::from)
+            .and_then(object_relation_from_storage)
     }
 }
 

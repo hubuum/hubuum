@@ -229,7 +229,7 @@ fn user_point_from_storage(point: StorageUserPoint) -> Result<UserPointResponse,
     })
 }
 
-fn token_scope_to_storage(scope: &TokenScope) -> AuthenticationTokenScope {
+pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> AuthenticationTokenScope {
     let permissions = scope.permissions().map(|permissions| {
         permissions
             .iter()

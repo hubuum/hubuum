@@ -10,11 +10,18 @@ use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, ResourceRevision};
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{
+    AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef, authorization_collection_from_storage,
+    authorization_effective_group_grant_from_storage, authorization_group_from_storage,
+    authorization_group_grant_from_storage, grant_from_storage, permission_to_storage,
+};
+use crate::services::identity::token_scope_to_storage;
+use crate::services::storage_boundary::collection_from_storage;
 use crate::storage::{
-    CollectionGrantListQuery, CollectionGroupPermissionQuery, CollectionGroupsPageQuery,
-    CollectionGroupsQuery, CollectionPermissionStorage, CollectionPrincipalPageQuery,
-    CollectionPrincipalQuery, CollectionRecordStorage, CollectionVisibilityQuery, StorageContext,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
+    AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
+    AuthorizationGroupCollectionQuery, AuthorizationPrincipalCollectionPageQuery,
+    AuthorizationPrincipalCollectionQuery, CollectionAuthorizationStorage, StorageContext,
     storage_handle,
 };
 use crate::traits::AuthzSubject;
@@ -123,7 +130,7 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    let query = CollectionPrincipalQuery::new(
+    let query = AuthorizationPrincipalCollectionQuery::new(
         principal.principal_id(),
         collection_ref.collection_id(backend).await?.id(),
     );
@@ -131,6 +138,11 @@ where
         .principal_collection_permissions(query)
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_group_grant_from_storage)
+                .collect()
+        })
 }
 
 /// All of a principal's direct permission rows across every collection, as
@@ -147,6 +159,18 @@ where
         .principal_all_collection_permissions(principal.principal_id())
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let (grant, group, collection) = row.into_parts();
+                    Ok((
+                        authorization_collection_from_storage(collection)?,
+                        authorization_group_from_storage(group)?,
+                        grant_from_storage(grant),
+                    ))
+                })
+                .collect()
+        })
 }
 
 pub async fn principal_on_paginated_with_total_count<C, S, T>(
@@ -160,17 +184,26 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    let principal = CollectionPrincipalQuery::new(
+    let principal = AuthorizationPrincipalCollectionQuery::new(
         principal.principal_id(),
         collection_ref.collection_id(backend).await?.id(),
     );
     storage_handle(backend)
-        .principal_collection_permissions_page(CollectionPrincipalPageQuery::new(
+        .principal_collection_permissions_page(AuthorizationPrincipalCollectionPageQuery::new(
             principal,
             query_options.clone(),
         ))
         .await
         .map_err(ApiError::from)
+        .and_then(|page| {
+            let (rows, total) = page.into_parts();
+            Ok((
+                rows.into_iter()
+                    .map(authorization_group_grant_from_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                total,
+            ))
+        })
 }
 
 pub async fn effective_principal_on<C, S, T>(
@@ -183,7 +216,7 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    let query = CollectionPrincipalQuery::new(
+    let query = AuthorizationPrincipalCollectionQuery::new(
         principal.principal_id(),
         collection_ref.collection_id(backend).await?.id(),
     );
@@ -191,6 +224,11 @@ where
         .effective_principal_collection_permissions(query)
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_effective_group_grant_from_storage)
+                .collect()
+        })
 }
 
 /// Check if a user has a specific permission to any collection
@@ -215,13 +253,18 @@ where
     U: GroupAccessors + AuthzSubject,
 {
     storage_handle(backend)
-        .visible_collections(CollectionVisibilityQuery::new(
+        .visible_collections(AuthorizationCollectionVisibilityQuery::new(
             user_id.principal_id(),
-            permission_type,
-            scopes,
+            permission_to_storage(permission_type),
+            scopes.map(token_scope_to_storage),
         ))
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_collection_from_storage)
+                .collect()
+        })
 }
 
 /// Check if a group has a specific permission to a given collection ID
@@ -246,10 +289,10 @@ where
     T: CollectionAccessors,
 {
     storage_handle(backend)
-        .group_has_collection_permission(CollectionGroupPermissionQuery::new(
+        .group_has_collection_permission(AuthorizationGroupCollectionQuery::new(
             collection_ref.collection_id(backend).await?.id(),
             gid,
-            permission_type,
+            permission_to_storage(permission_type),
         ))
         .await
         .map_err(ApiError::from)
@@ -267,6 +310,11 @@ where
         .effective_group_collection_permissions(target_collection_id, gid)
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_effective_group_grant_from_storage)
+                .collect()
+        })
 }
 
 /// Check what groups have a specific permission to a given collection ID
@@ -288,12 +336,17 @@ where
     C: StorageContext,
 {
     storage_handle(backend)
-        .groups_with_collection_permission(CollectionGroupsQuery::new(
+        .groups_with_collection_permission(AuthorizationCollectionGroupsQuery::new(
             target_collection_id,
-            permission_type,
+            permission_to_storage(permission_type),
         ))
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_group_from_storage)
+                .collect()
+        })
 }
 
 pub async fn groups_can_on_paginated_with_total_count<C>(
@@ -306,12 +359,24 @@ where
     C: StorageContext,
 {
     storage_handle(backend)
-        .groups_with_collection_permission_page(CollectionGroupsPageQuery::new(
-            CollectionGroupsQuery::new(target_collection_id, permission_type),
+        .groups_with_collection_permission_page(AuthorizationCollectionGroupsPageQuery::new(
+            AuthorizationCollectionGroupsQuery::new(
+                target_collection_id,
+                permission_to_storage(permission_type),
+            ),
             query_options.clone(),
         ))
         .await
         .map_err(ApiError::from)
+        .and_then(|page| {
+            let (rows, total) = page.into_parts();
+            Ok((
+                rows.into_iter()
+                    .map(authorization_group_from_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                total,
+            ))
+        })
 }
 
 /// List all groups and their permissions for a collection
@@ -334,13 +399,18 @@ where
     T: CollectionAccessors,
 {
     storage_handle(backend)
-        .list_collection_group_permissions(CollectionGrantListQuery::new(
+        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
             collection_ref.collection_id(backend).await?.id(),
-            permissions_filter,
+            permissions_filter.into_iter().map(permission_to_storage),
             query_options,
         ))
         .await
         .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_group_grant_from_storage)
+                .collect()
+        })
 }
 
 pub async fn groups_on_paginated<C, T>(
@@ -353,15 +423,19 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    let (items, _) = storage_handle(backend)
-        .list_collection_group_permissions_page(CollectionGrantListQuery::new(
+    let page = storage_handle(backend)
+        .list_collection_group_permissions_page(AuthorizationCollectionGrantListQuery::new(
             collection_ref.collection_id(backend).await?.id(),
-            permissions_filter,
+            permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
         ))
         .await
         .map_err(ApiError::from)?;
-    Ok(items)
+    let (items, _) = page.into_parts();
+    items
+        .into_iter()
+        .map(authorization_group_grant_from_storage)
+        .collect()
 }
 
 pub async fn groups_on_paginated_with_total_count<C, T>(
@@ -375,13 +449,22 @@ where
     T: CollectionAccessors,
 {
     storage_handle(backend)
-        .list_collection_group_permissions_page(CollectionGrantListQuery::new(
+        .list_collection_group_permissions_page(AuthorizationCollectionGrantListQuery::new(
             collection_ref.collection_id(backend).await?.id(),
-            permissions_filter,
+            permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
         ))
         .await
         .map_err(ApiError::from)
+        .and_then(|page| {
+            let (rows, total) = page.into_parts();
+            Ok((
+                rows.into_iter()
+                    .map(authorization_group_grant_from_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                total,
+            ))
+        })
 }
 
 pub async fn count_groups_on_paginated<C, T>(
@@ -395,13 +478,14 @@ where
     T: CollectionAccessors,
 {
     let (_, total) = storage_handle(backend)
-        .list_collection_group_permissions_page(CollectionGrantListQuery::new(
+        .list_collection_group_permissions_page(AuthorizationCollectionGrantListQuery::new(
             collection_ref.collection_id(backend).await?.id(),
-            permissions_filter,
+            permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
         ))
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApiError::from)?
+        .into_parts();
     Ok(total)
 }
 
@@ -418,6 +502,7 @@ where
         .collection_group_permission(target_collection_id, gid)
         .await
         .map_err(ApiError::from)
+        .map(grant_from_storage)
 }
 
 pub async fn collection_children<C, T>(
@@ -431,9 +516,12 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .collection_children(collection_id)
+        .collection_children(collection_id.id())
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(collection_from_storage)
+        .collect()
 }
 
 pub async fn collection_ancestors<C, T>(
@@ -447,9 +535,12 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .collection_ancestors(collection_id)
+        .collection_ancestors(collection_id.id())
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(collection_from_storage)
+        .collect()
 }
 
 pub async fn move_collection<C>(
@@ -462,9 +553,11 @@ where
     C: StorageContext,
 {
     storage_handle(backend)
-        .move_collection_record(collection_id, new_parent_collection_id, context)
+        .collection_store()
+        .move_collection(collection_id, new_parent_collection_id, context)
         .await
         .map_err(ApiError::from)
+        .and_then(collection_from_storage)
 }
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]

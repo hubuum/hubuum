@@ -5,6 +5,10 @@ use crate::events::EventContext;
 use crate::models::principal::Principal;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
+use crate::services::storage_boundary::{
+    group_create_to_storage, group_from_storage, group_update_to_storage, principal_from_storage,
+    principal_group_from_storage,
+};
 use crate::storage::{GroupStorage, StorageContext, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 use serde::{Deserialize, Serialize};
@@ -43,6 +47,7 @@ impl GroupID {
             .load_group(self.id())
             .await
             .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 
     /// Delete this group without emitting domain events.
@@ -270,6 +275,7 @@ impl Group {
             .group_members(self.id)
             .await
             .map_err(ApiError::from)
+            .and_then(|members| members.into_iter().map(principal_from_storage).collect())
     }
 
     pub async fn members_paginated<C>(
@@ -281,9 +287,20 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .group_members_page(self.id, query_options)
+            .group_members_page(self.id, query_options.clone())
             .await
             .map_err(ApiError::from)
+            .and_then(|members| {
+                members
+                    .into_iter()
+                    .map(|(membership, principal)| {
+                        Ok((
+                            principal_group_from_storage(membership)?,
+                            principal_from_storage(principal)?,
+                        ))
+                    })
+                    .collect()
+            })
     }
 
     pub async fn count_members_paginated<C>(
@@ -295,7 +312,7 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .count_group_members(self.id, query_options)
+            .count_group_members(self.id, query_options.clone())
             .await
             .map_err(ApiError::from)
     }
@@ -347,6 +364,7 @@ impl Group {
             .add_group_member(member.principal_id(), self.id, context)
             .await
             .map_err(ApiError::from)
+            .and_then(principal_group_from_storage)
     }
 
     /// Remove a member from this group without emitting domain events.
@@ -420,9 +438,10 @@ impl NewGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .create_group(self, None)
+            .create_group(group_create_to_storage(self), None)
             .await
             .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 
     pub async fn save<C>(
@@ -434,9 +453,10 @@ impl NewGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .create_group(self, context)
+            .create_group(group_create_to_storage(self), context)
             .await
             .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 }
 
@@ -470,9 +490,10 @@ impl UpdateGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .update_group(group_id.id(), self, None)
+            .update_group(group_id.id(), group_update_to_storage(self), None)
             .await
             .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 
     pub async fn save<C>(
@@ -485,9 +506,10 @@ impl UpdateGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .update_group(group_id.id(), self, context)
+            .update_group(group_id.id(), group_update_to_storage(self), context)
             .await
             .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 }
 

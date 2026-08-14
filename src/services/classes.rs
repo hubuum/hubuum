@@ -5,6 +5,10 @@ use crate::events::EventContext;
 use crate::models::{
     ClassSelector, HubuumClass, NewHubuumClass, ResolvedClassTarget, UpdateHubuumClass,
 };
+use crate::services::storage_boundary::{
+    class_create_to_storage, class_record_from_storage, class_selector_to_storage,
+    class_update_to_storage, resolved_class_from_storage, resolved_class_to_storage,
+};
 use crate::storage::ClassStore;
 
 /// Application-facing class resolution and lifecycle use cases.
@@ -20,9 +24,10 @@ impl ClassService {
 
     pub async fn resolve(&self, selector: ClassSelector) -> Result<ResolvedClassTarget, ApiError> {
         self.storage
-            .resolve_class(selector)
+            .resolve_class(class_selector_to_storage(selector))
             .await
             .map_err(ApiError::from)
+            .and_then(resolved_class_from_storage)
     }
 
     pub async fn create(
@@ -31,9 +36,10 @@ impl ClassService {
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
         self.storage
-            .create_class(command, context)
+            .create_class(class_create_to_storage(command), Some(context))
             .await
             .map_err(ApiError::from)
+            .and_then(class_record_from_storage)
     }
 
     pub async fn update(
@@ -42,10 +48,12 @@ impl ClassService {
         changes: UpdateHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
+        let target = resolved_class_to_storage(target);
         self.storage
-            .update_class(target, changes, context)
+            .update_class(&target, class_update_to_storage(changes), Some(context))
             .await
             .map_err(ApiError::from)
+            .and_then(class_record_from_storage)
     }
 
     pub async fn delete(
@@ -53,8 +61,9 @@ impl ClassService {
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
+        let target = resolved_class_to_storage(target);
         self.storage
-            .delete_class(target, context)
+            .delete_class(&target, Some(context))
             .await
             .map_err(ApiError::from)
     }

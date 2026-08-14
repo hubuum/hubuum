@@ -46,7 +46,7 @@ use crate::services::tasks::{
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{
-    ClassRecordStorage, ExportQueryStorage, StorageExportTaskArtifact, StorageQueryBudget,
+    ExportQueryStorage, StorageExportTaskArtifact, StorageQueryBudget,
     StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
@@ -2113,7 +2113,8 @@ async fn ensure_class_name_ids(
     }
 
     for (class_id, class_name) in storage_handle(pool)
-        .class_names(&missing)
+        .class_store()
+        .class_names(missing.as_slice().to_vec())
         .await
         .map_err(ApiError::from)?
     {
