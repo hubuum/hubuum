@@ -14,6 +14,7 @@ mod tests {
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,
         scoped_token, service_account_token,
     };
+    use crate::traits::PrincipalIdApplicationExt;
 
     const ME_SETTINGS: &str = "/api/v1/iam/me/settings";
     const PRINCIPALS: &str = "/api/v1/iam/principals";

@@ -17,15 +17,11 @@ use utoipa::ToSchema;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{CursorPaginated, CursorValue};
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Group`].
-    pub struct GroupID;
-    noun = "group id";
-}
+pub use hubuum_domain::GroupId as GroupID;
 
 impl IdAccessor for GroupID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
@@ -38,8 +34,27 @@ impl InstanceAdapter<Group> for GroupID {
     }
 }
 
-impl GroupID {
-    pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+/// Application behavior for a backend-neutral group identifier.
+pub trait GroupIdApplicationExt {
+    async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+    where
+        C: StorageContext;
+
+    async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
+    where
+        C: StorageContext;
+
+    async fn delete<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
+    where
+        C: StorageContext;
+}
+
+impl GroupIdApplicationExt for GroupID {
+    async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
         C: StorageContext,
     {
@@ -54,8 +69,9 @@ impl GroupID {
     ///
     /// Intended only for internal infrastructure paths such as bootstrap/setup,
     /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`GroupID::delete`] so event subscribers observe the change.
-    pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
+    /// use [`GroupIdApplicationExt::delete`] so event subscribers observe the
+    /// change.
+    async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
@@ -65,7 +81,7 @@ impl GroupID {
             .map_err(ApiError::from)
     }
 
-    pub async fn delete<C>(
+    async fn delete<C>(
         &self,
         backend: &C,
         context: Option<&EventContext>,

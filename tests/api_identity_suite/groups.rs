@@ -21,6 +21,7 @@ mod tests {
     use crate::tests::{
         TestContext, create_test_admin, create_test_group, create_test_user, test_context,
     };
+    use crate::traits::{GroupIdApplicationExt, PrincipalIdApplicationExt};
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";

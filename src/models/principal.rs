@@ -463,15 +463,11 @@ pub struct NewPrincipal<'a> {
     pub name: &'a str,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Principal`].
-    pub struct PrincipalID;
-    noun = "principal id";
-}
+pub use hubuum_domain::PrincipalId as PrincipalID;
 
 impl IdAccessor for PrincipalID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
@@ -484,15 +480,52 @@ impl InstanceAdapter<Principal> for PrincipalID {
     }
 }
 
-impl PrincipalID {
-    pub async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
+/// Application behavior for a backend-neutral principal identifier.
+pub trait PrincipalIdApplicationExt {
+    async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
+    where
+        C: StorageContext;
+
+    async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext;
+
+    async fn replace_settings<C>(
+        &self,
+        backend: &C,
+        settings: PrincipalSettings,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext;
+
+    async fn patch_settings<C>(
+        &self,
+        backend: &C,
+        patch: PrincipalSettings,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext;
+
+    async fn reset_settings<C>(
+        &self,
+        backend: &C,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext;
+}
+
+impl PrincipalIdApplicationExt for PrincipalID {
+    async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
     where
         C: StorageContext,
     {
         load_principal_by_id(backend, self.id()).await
     }
 
-    pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
+    async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
     where
         C: StorageContext,
     {
@@ -503,7 +536,7 @@ impl PrincipalID {
             .and_then(principal_settings_from_storage)
     }
 
-    pub async fn replace_settings<C>(
+    async fn replace_settings<C>(
         &self,
         backend: &C,
         settings: PrincipalSettings,
@@ -523,7 +556,7 @@ impl PrincipalID {
             .and_then(principal_settings_from_storage)
     }
 
-    pub async fn patch_settings<C>(
+    async fn patch_settings<C>(
         &self,
         backend: &C,
         patch: PrincipalSettings,
@@ -543,27 +576,7 @@ impl PrincipalID {
             .and_then(principal_settings_from_storage)
     }
 
-    pub(crate) async fn apply_settings_patch<C>(
-        &self,
-        backend: &C,
-        patch: PrincipalSettingsPatch,
-        event_context: &EventContext,
-    ) -> Result<PrincipalSettingsResponse, ApiError>
-    where
-        C: StorageContext,
-    {
-        storage_handle(backend)
-            .mutate_principal_settings(
-                self.id(),
-                principal_settings_mutation_to_storage(patch)?,
-                event_context,
-            )
-            .await
-            .map_err(ApiError::from)
-            .and_then(principal_settings_from_storage)
-    }
-
-    pub async fn reset_settings<C>(
+    async fn reset_settings<C>(
         &self,
         backend: &C,
         event_context: &EventContext,
@@ -581,6 +594,26 @@ impl PrincipalID {
             .map_err(ApiError::from)
             .and_then(principal_settings_from_storage)
     }
+}
+
+pub(crate) async fn apply_principal_settings_patch<C>(
+    principal_id: PrincipalID,
+    backend: &C,
+    patch: PrincipalSettingsPatch,
+    event_context: &EventContext,
+) -> Result<PrincipalSettingsResponse, ApiError>
+where
+    C: StorageContext,
+{
+    storage_handle(backend)
+        .mutate_principal_settings(
+            principal_id.id(),
+            principal_settings_mutation_to_storage(patch)?,
+            event_context,
+        )
+        .await
+        .map_err(ApiError::from)
+        .and_then(principal_settings_from_storage)
 }
 
 /// Load a principal by id.

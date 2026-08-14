@@ -203,11 +203,7 @@ impl From<TaskResultCounts> for (i32, i32, i32) {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a task.
-    pub struct TaskID;
-    noun = "task id";
-}
+pub use hubuum_domain::TaskId as TaskID;
 
 #[derive(Clone)]
 pub struct TaskRecord {
@@ -969,7 +965,7 @@ mod tests {
     #[test]
     fn task_id_new_rejects_non_positive() {
         for invalid in [0, -1, i32::MIN] {
-            let err = TaskID::new(invalid).unwrap_err();
+            let err: ApiError = TaskID::new(invalid).unwrap_err().into();
             assert!(matches!(err, ApiError::BadRequest(_)), "got {err:?}");
         }
     }

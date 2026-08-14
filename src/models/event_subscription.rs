@@ -10,17 +10,7 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision};
 use crate::pagination::{CursorPaginated, CursorValue};
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for an event sink.
-    pub struct EventSinkID;
-    noun = "event sink id";
-}
-
-crate::int_id_newtype! {
-    /// Identifier wrapper for an event subscription.
-    pub struct EventSubscriptionID;
-    noun = "event subscription id";
-}
+pub use hubuum_domain::{EventSinkId as EventSinkID, EventSubscriptionId as EventSubscriptionID};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]

@@ -1342,6 +1342,92 @@ fn workflow_domain_types_are_free_of_persistence_implementation_details() {
 }
 
 #[test]
+fn validated_identifiers_are_owned_by_the_publishable_domain_crate() {
+    let root = repository_root();
+    let identifier_source = read_source(&root.join("crates/hubuum-domain/src/identifier.rs"))
+        .expect("domain identifier source should be readable");
+
+    for (domain_name, model_path, application_name) in [
+        ("CollectionId", "src/models/collection.rs", "CollectionID"),
+        ("ClassId", "src/models/class.rs", "HubuumClassID"),
+        ("ObjectId", "src/models/object.rs", "HubuumObjectID"),
+        (
+            "ClassRelationId",
+            "src/models/relation.rs",
+            "HubuumClassRelationID",
+        ),
+        (
+            "ObjectRelationId",
+            "src/models/relation.rs",
+            "HubuumObjectRelationID",
+        ),
+        ("GroupId", "src/models/group.rs", "GroupID"),
+        ("PrincipalId", "src/models/principal.rs", "PrincipalID"),
+        ("UserId", "src/models/user.rs", "UserID"),
+        ("TokenId", "src/models/token.rs", "TokenID"),
+        ("TaskId", "src/models/task.rs", "TaskID"),
+        (
+            "EventSinkId",
+            "src/models/event_subscription.rs",
+            "EventSinkID",
+        ),
+        (
+            "EventSubscriptionId",
+            "src/models/event_subscription.rs",
+            "EventSubscriptionID",
+        ),
+        (
+            "EventDeliveryId",
+            "src/models/event_delivery.rs",
+            "EventDeliveryID",
+        ),
+        ("RestoreJobId", "src/models/backup.rs", "RestoreJobID"),
+        (
+            "ExportTemplateId",
+            "src/models/export_template.rs",
+            "ExportTemplateID",
+        ),
+        (
+            "RemoteTargetId",
+            "src/models/remote_target.rs",
+            "RemoteTargetID",
+        ),
+        (
+            "ServiceAccountId",
+            "src/models/service_account.rs",
+            "ServiceAccountID",
+        ),
+        (
+            "ComputedFieldDefinitionId",
+            "src/models/computed_field.rs",
+            "ComputedFieldDefinitionID",
+        ),
+    ] {
+        assert!(
+            identifier_source.contains(domain_name),
+            "hubuum-domain is missing {domain_name}"
+        );
+        let model_source = read_source(&root.join(model_path))
+            .unwrap_or_else(|error| panic!("could not read {model_path}: {error}"));
+        assert!(
+            model_source.contains(&format!("{domain_name} as {application_name}")),
+            "{model_path} must only alias {domain_name} as {application_name}"
+        );
+        assert!(
+            !model_source.contains(&format!("struct {application_name}")),
+            "{model_path} must not redefine {application_name}"
+        );
+    }
+
+    assert!(
+        !read_source(&root.join("src/macros.rs"))
+            .expect("application macro source should be readable")
+            .contains("macro_rules! int_id_newtype"),
+        "the application crate must not own a second identifier generator"
+    );
+}
+
+#[test]
 fn resource_services_depend_on_their_exact_storage_families() {
     let root = repository_root();
 

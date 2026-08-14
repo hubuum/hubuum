@@ -57,7 +57,7 @@ mod tests {
         create_test_service_account, create_test_user, ensure_admin_group, lock_test_mutex,
         resource_scoped_token, scoped_token, scoped_token_with_resources, service_account_token,
     };
-    use crate::traits::{CanSave, PermissionController};
+    use crate::traits::{CanSave, PermissionController, TaskAuthorizationExt};
     use crate::utilities::auth::generate_random_password;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";

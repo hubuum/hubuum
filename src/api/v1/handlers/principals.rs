@@ -13,6 +13,7 @@ use crate::extractors::{
 use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{
     Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsPatchDocument,
+    apply_principal_settings_patch,
 };
 use crate::models::search::{
     QueryOptions, parse_query_parameter, parse_query_parameter_with_passthrough,
@@ -30,7 +31,7 @@ use crate::services::identity::{
 };
 use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
-use crate::traits::{AuthzSubject, GroupAccessors};
+use crate::traits::{AuthzSubject, GroupAccessors, PrincipalIdApplicationExt};
 use std::collections::BTreeMap;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -614,7 +615,7 @@ pub async fn patch_principal_settings(
     let settings = with_revision_precondition(
         &context,
         precondition,
-        principal_id.apply_settings_patch(&context, patch.into_inner(), &event_context),
+        apply_principal_settings_patch(principal_id, &context, patch.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)

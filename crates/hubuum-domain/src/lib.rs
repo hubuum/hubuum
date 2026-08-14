@@ -15,8 +15,10 @@ pub use event_policy::{
     EventRetentionSettings,
 };
 pub use identifier::{
-    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, ExportTemplateId, ObjectId,
-    ObjectRelationId, PositiveIdError, RemoteTargetId, ServiceAccountId, TokenId,
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventDeliveryId,
+    EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, ObjectId, ObjectRelationId,
+    PositiveIdError, PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId,
+    UserId,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};

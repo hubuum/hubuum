@@ -4,11 +4,11 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PositiveIdError {
     noun: &'static str,
-    value: i32,
+    value: i64,
 }
 
 impl PositiveIdError {
-    const fn new(noun: &'static str, value: i32) -> Self {
+    const fn new(noun: &'static str, value: i64) -> Self {
         Self { noun, value }
     }
 
@@ -20,7 +20,7 @@ impl PositiveIdError {
 
     /// Rejected raw identifier.
     #[must_use]
-    pub const fn value(self) -> i32 {
+    pub const fn value(self) -> i64 {
         self.value
     }
 }
@@ -47,7 +47,7 @@ macro_rules! positive_id {
             /// Construct an identifier after validating that it is positive.
             pub const fn new(id: i32) -> Result<Self, PositiveIdError> {
                 if id <= 0 {
-                    return Err(PositiveIdError::new($noun, id));
+                    return Err(PositiveIdError::new($noun, id as i64));
                 }
                 Ok(Self(id))
             }
@@ -78,6 +78,62 @@ macro_rules! positive_id {
                 ObjectBuilder::new()
                     .schema_type(Type::Integer)
                     .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int32)))
+                    .minimum(Some(1))
+                    .description(Some(concat!("Validated positive ", $noun, ".")))
+                    .into()
+            }
+        }
+
+        #[cfg(feature = "openapi")]
+        impl utoipa::ToSchema for $name {
+            fn name() -> std::borrow::Cow<'static, str> {
+                std::borrow::Cow::Borrowed($schema_name)
+            }
+        }
+    };
+}
+
+macro_rules! positive_i64_id {
+    ($(#[$meta:meta])* $name:ident, $noun:literal, $schema_name:literal) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq, Hash)]
+        pub struct $name(i64);
+
+        impl $name {
+            /// Construct an identifier after validating that it is positive.
+            pub const fn new(id: i64) -> Result<Self, PositiveIdError> {
+                if id <= 0 {
+                    return Err(PositiveIdError::new($noun, id));
+                }
+                Ok(Self(id))
+            }
+
+            /// Return the validated raw identifier.
+            #[must_use]
+            pub const fn id(self) -> i64 {
+                self.0
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let id = <i64 as serde::Deserialize>::deserialize(deserializer)?;
+                Self::new(id).map_err(serde::de::Error::custom)
+            }
+        }
+
+        #[cfg(feature = "openapi")]
+        impl utoipa::PartialSchema for $name {
+            fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+                use utoipa::openapi::schema::{SchemaFormat, Type};
+                use utoipa::openapi::{KnownFormat, ObjectBuilder};
+
+                ObjectBuilder::new()
+                    .schema_type(Type::Integer)
+                    .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int64)))
                     .minimum(Some(1))
                     .description(Some(concat!("Validated positive ", $noun, ".")))
                     .into()
@@ -153,6 +209,54 @@ positive_id!(
     "computed field definition id",
     "ComputedFieldDefinitionID"
 );
+positive_id!(
+    /// Identifier for a task.
+    TaskId,
+    "task id",
+    "TaskID"
+);
+positive_id!(
+    /// Identifier for an event sink.
+    EventSinkId,
+    "event sink id",
+    "EventSinkID"
+);
+positive_id!(
+    /// Identifier for an event subscription.
+    EventSubscriptionId,
+    "event subscription id",
+    "EventSubscriptionID"
+);
+positive_id!(
+    /// Identifier for a group.
+    GroupId,
+    "group id",
+    "GroupID"
+);
+positive_id!(
+    /// Identifier for a principal.
+    PrincipalId,
+    "principal id",
+    "PrincipalID"
+);
+positive_id!(
+    /// Identifier for a human user.
+    UserId,
+    "user id",
+    "UserID"
+);
+positive_i64_id!(
+    /// Identifier for a staged restore job.
+    RestoreJobId,
+    "restore job id",
+    "RestoreJobID"
+);
+positive_i64_id!(
+    /// Identifier for an event delivery.
+    EventDeliveryId,
+    "event delivery id",
+    "EventDeliveryID"
+);
 
 #[cfg(test)]
 mod tests {
@@ -182,8 +286,9 @@ mod tests {
     #[test]
     fn schema_names_preserve_the_http_contract() {
         use super::{
-            ClassId, ClassRelationId, ComputedFieldDefinitionId, ExportTemplateId, ObjectId,
-            ObjectRelationId, RemoteTargetId, ServiceAccountId, TokenId,
+            ClassId, ClassRelationId, ComputedFieldDefinitionId, EventDeliveryId, EventSinkId,
+            EventSubscriptionId, ExportTemplateId, GroupId, ObjectId, ObjectRelationId,
+            PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
         };
         use utoipa::ToSchema;
 
@@ -198,6 +303,14 @@ mod tests {
             RemoteTargetId::name(),
             ServiceAccountId::name(),
             ComputedFieldDefinitionId::name(),
+            TaskId::name(),
+            EventSinkId::name(),
+            EventSubscriptionId::name(),
+            GroupId::name(),
+            PrincipalId::name(),
+            UserId::name(),
+            RestoreJobId::name(),
+            EventDeliveryId::name(),
         ];
 
         assert_eq!(
@@ -213,6 +326,14 @@ mod tests {
                 "RemoteTargetID",
                 "ServiceAccountID",
                 "ComputedFieldDefinitionID",
+                "TaskID",
+                "EventSinkID",
+                "EventSubscriptionID",
+                "GroupID",
+                "PrincipalID",
+                "UserID",
+                "RestoreJobID",
+                "EventDeliveryID",
             ]
         );
     }

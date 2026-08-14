@@ -20978,7 +20978,8 @@
       "EventSinkID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for an event sink."
+        "description": "Validated positive event sink id.",
+        "minimum": 1
       },
       "EventSinkKey": {
         "type": "object",
@@ -26956,7 +26957,8 @@
       "PrincipalID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`Principal`]."
+        "description": "Validated positive principal id.",
+        "minimum": 1
       },
       "PrincipalKey": {
         "type": "object",

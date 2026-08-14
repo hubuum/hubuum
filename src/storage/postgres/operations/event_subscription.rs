@@ -974,22 +974,21 @@ fn build_event_subscription_query(
     Ok(query)
 }
 
-impl EventSinkID {
-    pub async fn instance(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-    ) -> Result<EventSink, ApiError> {
-        self.load_event_sink_record(pool).await?.try_into()
-    }
+pub(crate) async fn load_event_sink_instance(
+    pool: &crate::storage::postgres::PostgresPool,
+    sink_id: &EventSinkID,
+) -> Result<EventSink, ApiError> {
+    sink_id.load_event_sink_record(pool).await?.try_into()
 }
 
-impl EventSubscriptionID {
-    pub async fn instance(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-    ) -> Result<EventSubscription, ApiError> {
-        self.load_event_subscription_record(pool).await?.try_into()
-    }
+pub(crate) async fn load_event_subscription_instance(
+    pool: &crate::storage::postgres::PostgresPool,
+    subscription_id: &EventSubscriptionID,
+) -> Result<EventSubscription, ApiError> {
+    subscription_id
+        .load_event_subscription_record(pool)
+        .await?
+        .try_into()
 }
 
 impl EventSink {

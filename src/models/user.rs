@@ -452,21 +452,36 @@ impl NewUser {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`User`].
-    pub struct UserID;
-    noun = "user id";
+pub use hubuum_domain::UserId as UserID;
+
+/// Application behavior for a backend-neutral user identifier.
+pub trait UserIdApplicationExt {
+    async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+    where
+        C: StorageContext;
+
+    async fn delete<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
+    where
+        C: StorageContext;
+
+    async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: StorageContext;
 }
 
-impl UserID {
-    pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+impl UserIdApplicationExt for UserID {
+    async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
     where
         C: StorageContext,
     {
         crate::services::identity::load_user(backend, self.id()).await
     }
 
-    pub async fn delete<C>(
+    async fn delete<C>(
         &self,
         backend: &C,
         context: Option<&EventContext>,
@@ -477,7 +492,7 @@ impl UserID {
         crate::services::identity::delete_user(backend, self.id(), context).await
     }
 
-    pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: StorageContext,
     {

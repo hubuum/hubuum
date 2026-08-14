@@ -12,7 +12,7 @@ use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
 };
-use crate::models::principal::load_principal_by_id;
+use crate::models::principal::{apply_principal_settings_patch, load_principal_by_id};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Group, GroupResponse, PrincipalID, PrincipalSettings, PrincipalSettingsPatchDocument,
@@ -22,7 +22,7 @@ use crate::pagination::{effective_page_limit, finalize_page, prepare_db_paginati
 use crate::permissions::AppContext;
 use crate::services::identity::list_retained_tokens;
 use crate::storage::with_revision_precondition;
-use crate::traits::GroupAccessors;
+use crate::traits::{GroupAccessors, PrincipalIdApplicationExt};
 
 pub use crate::models::CurrentTokenMetadata;
 
@@ -261,7 +261,7 @@ pub async fn patch_my_settings(
     let settings = with_revision_precondition(
         &context,
         precondition,
-        principal_id.apply_settings_patch(&context, patch.into_inner(), &event_context),
+        apply_principal_settings_patch(principal_id, &context, patch.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)

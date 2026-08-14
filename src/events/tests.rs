@@ -63,7 +63,7 @@ use crate::storage::{EventDeliverySink, EventDeliverySubscription};
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
+use crate::traits::{CanDelete, CanSave, CanUpdate, GroupIdApplicationExt, PermissionController};
 
 static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
 static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();

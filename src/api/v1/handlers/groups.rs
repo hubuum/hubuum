@@ -16,6 +16,7 @@ use crate::permissions::AppContext;
 use crate::services::groups::list as list_groups;
 use crate::services::identity::load_principal_group;
 use crate::storage::with_revision_precondition;
+use crate::traits::{GroupIdApplicationExt, PrincipalIdApplicationExt};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
 use tracing::debug;

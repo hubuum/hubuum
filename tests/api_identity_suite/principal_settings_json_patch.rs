@@ -16,6 +16,7 @@ mod tests {
         get_request, patch_request_with_content_type, patch_request_with_raw_body, put_request,
     };
     use crate::tests::{TestContext, create_test_group, create_test_service_account, scoped_token};
+    use crate::traits::PrincipalIdApplicationExt;
 
     const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
     const JSON_MERGE_PATCH_MEDIA_TYPE: &str = "application/merge-patch+json";

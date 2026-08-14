@@ -18,7 +18,7 @@ use super::event_subscription::{
     DeleteEventSinkRecord, DeleteEventSubscriptionRecord, EventSinkRow, EventSubscriptionRow,
     NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
     UpdateEventSinkRecord, UpdateEventSinkRow, UpdateEventSubscriptionRecord,
-    UpdateEventSubscriptionRow,
+    UpdateEventSubscriptionRow, load_event_sink_instance, load_event_subscription_instance,
 };
 
 fn storage_audit_event(event: EventResponse) -> StorageAuditEvent {
@@ -132,8 +132,7 @@ pub(crate) async fn load_event_sink(
     pool: &PostgresPool,
     sink_id: i32,
 ) -> Result<StorageEventSink, ApiError> {
-    EventSinkID::new(sink_id)?
-        .instance(pool)
+    load_event_sink_instance(pool, &EventSinkID::new(sink_id)?)
         .await
         .map(storage_event_sink)
 }
@@ -228,9 +227,8 @@ async fn load_scoped_event_subscription(
     collection_id: i32,
     subscription_id: i32,
 ) -> Result<EventSubscription, ApiError> {
-    let subscription = EventSubscriptionID::new(subscription_id)?
-        .instance(pool)
-        .await?;
+    let subscription =
+        load_event_subscription_instance(pool, &EventSubscriptionID::new(subscription_id)?).await?;
     if subscription.collection_id != collection_id {
         return Err(ApiError::NotFound(
             "Event subscription not found in collection".to_string(),

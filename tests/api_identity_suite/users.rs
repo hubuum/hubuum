@@ -14,6 +14,7 @@ mod tests {
     use crate::storage::postgres::prelude::*;
     use crate::storage::postgres::with_connection;
     use crate::test_support::sync_external_user;
+    use crate::traits::UserIdApplicationExt;
     use actix_web::{http::StatusCode, test};
     use hubuum_auth_core::{AuthenticatedExternalUser, ExternalUserProfile};
     use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};

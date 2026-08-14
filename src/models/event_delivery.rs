@@ -8,34 +8,7 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::pagination::{CursorPaginated, CursorValue};
 
-/// Identifier wrapper for an event delivery.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
-pub struct EventDeliveryID(i64);
-
-impl EventDeliveryID {
-    pub fn new(id: i64) -> Result<Self, ApiError> {
-        if id <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid event delivery id '{id}': must be a positive integer"
-            )));
-        }
-        Ok(Self(id))
-    }
-
-    pub fn id(self) -> i64 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for EventDeliveryID {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let id = <i64 as Deserialize>::deserialize(deserializer)?;
-        Self::new(id).map_err(serde::de::Error::custom)
-    }
-}
+pub use hubuum_domain::EventDeliveryId as EventDeliveryID;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]

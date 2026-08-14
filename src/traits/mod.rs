@@ -1,4 +1,5 @@
-pub use crate::models::traits::{GroupAccessors, Search};
+pub use crate::models::traits::{GroupAccessors, Search, TaskAuthorizationExt};
+pub use crate::models::{GroupIdApplicationExt, PrincipalIdApplicationExt, UserIdApplicationExt};
 pub mod accessors;
 mod authz;
 pub mod crud;

@@ -2,7 +2,7 @@ use crate::models::{HubuumClassID, NewHubuumClass, UpdateHubuumClass};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
 use crate::tests::TestScope;
-use crate::traits::{CanSave, CanUpdate};
+use crate::traits::{CanSave, CanUpdate, UserIdApplicationExt};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 

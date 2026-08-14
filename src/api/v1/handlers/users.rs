@@ -11,6 +11,7 @@ use crate::models::user::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::storage::with_revision_precondition;
+use crate::traits::UserIdApplicationExt;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 

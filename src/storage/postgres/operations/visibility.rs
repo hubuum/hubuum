@@ -6,7 +6,7 @@ use crate::storage::StorageVisibility;
 use crate::storage::postgres::operations::authorization::permission_from_storage;
 
 pub(super) fn principal(visibility: &StorageVisibility) -> Result<UserID, ApiError> {
-    UserID::new(visibility.principal_id())
+    Ok(UserID::new(visibility.principal_id())?)
 }
 
 pub(super) fn token_scope(visibility: &StorageVisibility) -> Result<Option<TokenScope>, ApiError> {
