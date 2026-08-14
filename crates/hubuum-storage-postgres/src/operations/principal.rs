@@ -18,7 +18,7 @@ const SERVICE_ACCOUNT_PRINCIPAL_KIND: &str = "service_account";
 
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::principals)]
-struct PrincipalRow {
+pub(crate) struct PrincipalRow {
     id: i32,
     kind: String,
     name: String,
@@ -34,7 +34,7 @@ struct PrincipalRow {
 }
 
 impl PrincipalRow {
-    fn into_storage(self) -> StoragePrincipal {
+    pub(crate) fn into_storage(self) -> StoragePrincipal {
         StoragePrincipal::builder(
             StorageRecordMetadata::new(
                 self.id,

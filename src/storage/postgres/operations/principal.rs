@@ -1,10 +1,7 @@
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{
-    NewPrincipal, Principal, PrincipalMemberResponse, ServiceAccountPointResponse,
-    UserPointResponse,
-};
+use crate::models::{NewPrincipal, Principal, ServiceAccountPointResponse, UserPointResponse};
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::service_account::ServiceAccountRow;
 use crate::storage::postgres::operations::user::UserRow;
@@ -109,64 +106,6 @@ impl CursorSqlMapping for PrincipalRow {
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for principals",
-                    field
-                )));
-            }
-        })
-    }
-}
-
-pub(crate) struct PrincipalMemberQueryRow(PrincipalMemberResponse);
-
-impl CursorPaginated for PrincipalMemberQueryRow {
-    fn supports_sort(field: &FilterField) -> bool {
-        PrincipalMemberResponse::supports_sort(field)
-    }
-
-    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
-        self.0.cursor_value(field)
-    }
-
-    fn default_sort() -> Vec<SortParam> {
-        PrincipalMemberResponse::default_sort()
-    }
-
-    fn tie_breaker_sort() -> Vec<SortParam> {
-        PrincipalMemberResponse::tie_breaker_sort()
-    }
-}
-
-impl CursorSqlMapping for PrincipalMemberQueryRow {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "principals.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "group_memberships.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "group_memberships.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "group_memberships.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for memberships",
                     field
                 )));
             }

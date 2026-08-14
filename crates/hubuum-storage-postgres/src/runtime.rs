@@ -318,6 +318,29 @@ pub(crate) async fn assert_locked_revision_precondition(
     Ok(())
 }
 
+/// Reject a conditional mutation when its authoritative row disappeared
+/// before the adapter could lock it. Unconditional callers may continue with
+/// their operation-specific missing-target behavior.
+pub(crate) fn assert_revision_precondition_allows_missing_target(
+    owner_key: &str,
+) -> Result<(), PostgresStorageError> {
+    let has_matching_precondition = AMBIENT_REVISION_PRECONDITION
+        .try_with(|precondition| {
+            precondition
+                .as_ref()
+                .is_some_and(|precondition| precondition.owner_key() == owner_key)
+        })
+        .unwrap_or(false);
+    if has_matching_precondition {
+        Err(PostgresStorageError::precondition_failed(
+            "The resource changed since the supplied validator was issued",
+            None,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn require_existing_revision_target<T>(
     target: Option<T>,
     owner_key: &str,
@@ -325,21 +348,8 @@ pub(crate) fn require_existing_revision_target<T>(
     match target {
         Some(target) => Ok(target),
         None => {
-            let has_matching_precondition = AMBIENT_REVISION_PRECONDITION
-                .try_with(|precondition| {
-                    precondition
-                        .as_ref()
-                        .is_some_and(|precondition| precondition.owner_key() == owner_key)
-                })
-                .unwrap_or(false);
-            if has_matching_precondition {
-                Err(PostgresStorageError::precondition_failed(
-                    "The resource changed since the supplied validator was issued",
-                    None,
-                ))
-            } else {
-                Err(PostgresStorageError::not_found("Entity not found"))
-            }
+            assert_revision_precondition_allows_missing_target(owner_key)?;
+            Err(PostgresStorageError::not_found("Entity not found"))
         }
     }
 }

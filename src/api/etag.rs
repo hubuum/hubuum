@@ -87,10 +87,6 @@ impl RevisionOwner {
     pub(crate) fn key(self, resource_key: impl fmt::Display) -> String {
         format!("{}:{resource_key}", self.as_str())
     }
-
-    pub(crate) fn membership_key(principal_id: i32, group_id: i32) -> String {
-        Self::Membership.key(format_args!("{principal_id}:{group_id}"))
-    }
 }
 
 impl EtagResourceKind {

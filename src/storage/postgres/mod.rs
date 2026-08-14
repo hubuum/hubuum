@@ -97,7 +97,7 @@ use crate::events::{
 };
 use crate::models::output::EffectiveGroupPermission;
 use crate::models::search::QueryOptions;
-use crate::models::{CollectionID, GroupID, MaintenanceState, PrincipalID, TokenRetentionSettings};
+use crate::models::{CollectionID, MaintenanceState, PrincipalID, TokenRetentionSettings};
 use crate::storage::postgres::operations::collection::{
     effective_group_on_from_backend, effective_principal_on_from_backend,
     group_can_on_from_backend, group_on_from_backend, groups_can_on_from_backend,
@@ -105,9 +105,6 @@ use crate::storage::postgres::operations::collection::{
     groups_on_paginated_with_total_count_from_backend, principal_all_permissions_from_backend,
     principal_on_from_backend, principal_on_paginated_with_total_count_from_backend,
     user_can_on_any_from_backend,
-};
-use crate::storage::postgres::operations::group::{
-    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord, UpdateGroupRecord,
 };
 use error::map_postgres_error;
 

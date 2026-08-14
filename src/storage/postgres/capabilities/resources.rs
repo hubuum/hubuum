@@ -1,8 +1,4 @@
 use super::super::*;
-use crate::services::storage_boundary::{
-    group_create_from_storage, group_to_storage, group_update_from_storage,
-    principal_group_to_storage, principal_to_storage,
-};
 use crate::storage::postgres::operations::authorization::{
     collection_to_storage as authorization_collection_to_storage,
     grant_to_storage as authorization_grant_to_storage,
@@ -23,19 +19,18 @@ fn effective_grant_to_storage(row: EffectiveGroupPermission) -> AuthorizationEff
 #[async_trait]
 impl GroupStorage for PostgresStorage {
     async fn load_group(&self, group_id: i32) -> Result<StorageIdentityGroup, StorageError> {
-        GroupID::new(group_id)
-            .map_err(map_postgres_error)?
-            .load_group_record(&self.pool)
+        hubuum_storage_postgres::operations::group::load_group(self.runtime(), group_id)
             .await
-            .map(group_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError> {
-        GroupID::new(group_id).map_err(map_postgres_error)?;
-        operations::group::group_identity_scope_name(&self.pool, group_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::group_identity_scope_name(
+            self.runtime(),
+            group_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn create_group(
@@ -43,11 +38,9 @@ impl GroupStorage for PostgresStorage {
         command: StorageGroupCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageIdentityGroup, StorageError> {
-        group_create_from_storage(command)
-            .save_group_record(&self.pool, context)
+        hubuum_storage_postgres::operations::group::create_group(self.runtime(), command, context)
             .await
-            .map(group_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn update_group(
@@ -56,12 +49,14 @@ impl GroupStorage for PostgresStorage {
         update: StorageGroupUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageIdentityGroup, StorageError> {
-        let group_id = GroupID::new(group_id).map_err(map_postgres_error)?;
-        group_update_from_storage(update)
-            .update_group_record(group_id.id(), &self.pool, context)
-            .await
-            .map(group_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::update_group(
+            self.runtime(),
+            group_id,
+            update,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_group(
@@ -69,24 +64,15 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<usize, StorageError> {
-        GroupID::new(group_id)
-            .map_err(map_postgres_error)?
-            .delete_group_record(&self.pool, context)
+        hubuum_storage_postgres::operations::group::delete_group(self.runtime(), group_id, context)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn group_members(&self, group_id: i32) -> Result<Vec<StoragePrincipal>, StorageError> {
-        let group = GroupID::new(group_id)
-            .map_err(map_postgres_error)?
-            .load_group_record(&self.pool)
+        hubuum_storage_postgres::operations::group::group_members(self.runtime(), group_id)
             .await
-            .map_err(map_postgres_error)?;
-        group
-            .load_group_members(&self.pool)
-            .await
-            .map(|members| members.into_iter().map(principal_to_storage).collect())
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn group_members_page(
@@ -94,26 +80,13 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         query_options: QueryOptions,
     ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError> {
-        let group = GroupID::new(group_id)
-            .map_err(map_postgres_error)?
-            .load_group_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)?;
-        group
-            .load_group_members_paginated(&self.pool, &query_options)
-            .await
-            .map(|members| {
-                members
-                    .into_iter()
-                    .map(|(membership, principal)| {
-                        (
-                            principal_group_to_storage(membership),
-                            principal_to_storage(principal),
-                        )
-                    })
-                    .collect()
-            })
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::group_members_page(
+            self.runtime(),
+            group_id,
+            query_options,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn count_group_members(
@@ -121,26 +94,25 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         query_options: QueryOptions,
     ) -> Result<i64, StorageError> {
-        let group = GroupID::new(group_id)
-            .map_err(map_postgres_error)?
-            .load_group_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)?;
-        group
-            .count_group_members_paginated(&self.pool, &query_options)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::count_group_members(
+            self.runtime(),
+            group_id,
+            query_options,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn group_member_principal(
         &self,
         principal_id: i32,
     ) -> Result<StoragePrincipal, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::group::group_member_principal(&self.pool, principal_id)
-            .await
-            .map(principal_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::group_member_principal(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn add_group_member(
@@ -149,12 +121,14 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<StoragePrincipalGroup, StorageError> {
-        GroupID::new(group_id).map_err(map_postgres_error)?;
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::group::save_manual_membership(&self.pool, principal_id, group_id, context)
-            .await
-            .map(principal_group_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::add_group_member(
+            self.runtime(),
+            principal_id,
+            group_id,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn remove_group_member(
@@ -163,16 +137,14 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        let group = GroupID::new(group_id)
-            .map_err(map_postgres_error)?
-            .load_group_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)?;
-        group
-            .remove_group_member_from_backend(principal_id, &self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::group::remove_group_member(
+            self.runtime(),
+            principal_id,
+            group_id,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

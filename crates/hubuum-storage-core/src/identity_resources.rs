@@ -202,6 +202,11 @@ impl StorageGroupUpdate {
     }
 
     #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    #[must_use]
     pub fn into_name(self) -> Option<String> {
         self.name
     }

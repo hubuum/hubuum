@@ -5,7 +5,7 @@ use hubuum_storage_core::StorageIdentityScope;
 use crate::errors::ApiError;
 use crate::models::{IdentityScope, ResourceRevision};
 use crate::storage::StorageError;
-use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
+use crate::storage::postgres::{PostgresPool, with_connection};
 
 fn identity_scope_from_storage(scope: StorageIdentityScope) -> Result<IdentityScope, ApiError> {
     let revision = ResourceRevision::new(scope.revision()).map_err(|_| {
@@ -19,18 +19,6 @@ fn identity_scope_from_storage(scope: StorageIdentityScope) -> Result<IdentitySc
         updated_at: scope.updated_at(),
         revision,
     })
-}
-
-pub(crate) async fn identity_scope_id_by_name_conn(
-    connection: &mut PostgresConnection,
-    scope_name: &str,
-) -> Result<i32, ApiError> {
-    hubuum_storage_postgres::operations::identity_scope::identity_scope_id_by_name_on_connection(
-        connection, scope_name,
-    )
-    .await
-    .map_err(StorageError::from)
-    .map_err(ApiError::from)
 }
 
 pub async fn identity_scope_by_name(

@@ -100,25 +100,6 @@ pub(crate) fn group_from_storage(row: StorageIdentityGroup) -> Result<Group, Api
     })
 }
 
-pub(crate) fn group_to_storage(group: Group) -> StorageIdentityGroup {
-    StorageIdentityGroup::builder(
-        StorageRecordMetadata::new(
-            group.id,
-            group.created_at,
-            group.updated_at,
-            group.revision.get(),
-        ),
-        group.groupname,
-        group.description,
-        group.identity_scope_id,
-        group.managed_by,
-    )
-    .external_key(group.external_key)
-    .last_sync_attempted_at(group.last_sync_attempted_at)
-    .last_sync_success_at(group.last_sync_success_at)
-    .build()
-}
-
 pub(crate) fn group_create_to_storage(command: &NewGroup) -> StorageGroupCreate {
     StorageGroupCreate::new(
         command.identity_scope.clone(),
@@ -127,23 +108,8 @@ pub(crate) fn group_create_to_storage(command: &NewGroup) -> StorageGroupCreate 
     )
 }
 
-pub(crate) fn group_create_from_storage(command: StorageGroupCreate) -> NewGroup {
-    let (identity_scope, groupname, description) = command.into_parts();
-    NewGroup {
-        identity_scope,
-        groupname,
-        description,
-    }
-}
-
 pub(crate) fn group_update_to_storage(update: &UpdateGroup) -> StorageGroupUpdate {
     StorageGroupUpdate::new(update.groupname.clone())
-}
-
-pub(crate) fn group_update_from_storage(update: StorageGroupUpdate) -> UpdateGroup {
-    UpdateGroup {
-        groupname: update.into_name(),
-    }
 }
 
 pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal, ApiError> {
@@ -164,26 +130,6 @@ pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal,
     })
 }
 
-pub(crate) fn principal_to_storage(principal: Principal) -> StoragePrincipal {
-    StoragePrincipal::builder(
-        StorageRecordMetadata::new(
-            principal.id,
-            principal.created_at,
-            principal.updated_at,
-            principal.revision.get(),
-        ),
-        principal.kind,
-        principal.name,
-        principal.identity_scope_id,
-    )
-    .provider_managed(principal.provider_managed)
-    .settings(principal.settings)
-    .external_subject(principal.external_subject)
-    .last_sync_attempted_at(principal.last_sync_attempted_at)
-    .last_sync_success_at(principal.last_sync_success_at)
-    .build()
-}
-
 pub(crate) fn principal_group_from_storage(
     row: StoragePrincipalGroup,
 ) -> Result<PrincipalGroup, ApiError> {
@@ -194,16 +140,6 @@ pub(crate) fn principal_group_from_storage(
         updated_at: row.updated_at(),
         revision: ResourceRevision::new(row.revision())?,
     })
-}
-
-pub(crate) fn principal_group_to_storage(row: PrincipalGroup) -> StoragePrincipalGroup {
-    StoragePrincipalGroup::new(
-        row.principal_id,
-        row.group_id,
-        row.created_at,
-        row.updated_at,
-        row.revision.get(),
-    )
 }
 
 pub(crate) fn principal_settings_from_storage(

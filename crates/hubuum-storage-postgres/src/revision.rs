@@ -32,6 +32,7 @@ pub(crate) enum RevisionOwner {
     CollectionPermissions,
     EventSink,
     EventSubscription,
+    Group,
     Object,
     Principal,
     RemoteTarget,
@@ -45,6 +46,7 @@ impl RevisionOwner {
             Self::CollectionPermissions => "collection_permissions",
             Self::EventSink => "event_sinks",
             Self::EventSubscription => "event_subscriptions",
+            Self::Group => "groups",
             Self::Object => "hubuumobject",
             Self::Principal => "principals",
             Self::RemoteTarget => "remote_targets",
@@ -53,6 +55,10 @@ impl RevisionOwner {
 
     pub(crate) fn key(self, resource_id: i32) -> String {
         format!("{}:{resource_id}", self.table_name())
+    }
+
+    pub(crate) fn membership_key(principal_id: i32, group_id: i32) -> String {
+        format!("group_memberships:{principal_id}:{group_id}")
     }
 }
 
