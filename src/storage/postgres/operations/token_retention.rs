@@ -1,291 +1,53 @@
-use crate::storage::postgres::prelude::*;
-use chrono::{NaiveDateTime, Utc};
-use diesel::sql_types::{BigInt, Bool, Integer, Timestamp};
+#[cfg(test)]
+use chrono::NaiveDateTime;
+#[cfg(test)]
+use diesel::QueryableByName;
+#[cfg(test)]
+use diesel::sql_types::Integer;
 
-use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, NewEvent};
-use crate::models::{PrincipalToken, TokenRetentionSettings, TokenScope};
-use crate::schema::tokens;
-use crate::storage::postgres::operations::authz::load_token_scopes_for_tokens_conn;
-use crate::storage::postgres::operations::event_record::emit_events;
-use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
-use crate::storage::postgres::operations::token::{PrincipalTokenRow, token_snapshot};
-use crate::storage::postgres::{PostgresConnection, with_transaction};
-
-const TOKEN_RETENTION_LOCK_KEY: i64 = 4_850_188_191_125_219;
-
-#[derive(Debug, QueryableByName)]
-struct AdvisoryLockRow {
-    #[diesel(sql_type = Bool)]
-    locked: bool,
-}
-
+#[cfg(test)]
 #[derive(Debug, QueryableByName)]
 struct TokenRetentionCandidate {
     #[diesel(sql_type = Integer)]
     id: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum TokenRetentionBasis {
-    Revocation,
-    ExplicitExpiry,
-    ImplicitExpiry,
-}
-
-impl TokenRetentionBasis {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Revocation => "revocation",
-            Self::ExplicitExpiry => "explicit_expiry",
-            Self::ImplicitExpiry => "implicit_expiry",
-        }
-    }
-}
-
-pub(crate) async fn try_acquire_token_retention_lock(
-    conn: &mut PostgresConnection,
-) -> Result<bool, ApiError> {
-    Ok(
-        diesel::sql_query("SELECT pg_try_advisory_xact_lock($1) AS locked")
-            .bind::<BigInt, _>(TOKEN_RETENTION_LOCK_KEY)
-            .get_result::<AdvisoryLockRow>(conn)
-            .await?
-            .locked,
-    )
-}
-
-/// Delete one bounded batch of tokens whose terminal time is older than the
-/// configured retention window.
-///
-/// Terminal time is the earlier of revocation and effective expiry. Explicit
-/// `expires_at` values remain authoritative; tokens without one use `issued +
-/// token_lifetime_hours`, matching the authentication predicate. Foreign keys
-/// cascade scope-row deletion and set task `submitted_token_id` provenance to
-/// null.
-pub(crate) async fn purge_expired_token_batch(
-    pool: &crate::storage::postgres::PostgresPool,
-    settings: TokenRetentionSettings,
-) -> Result<usize, ApiError> {
-    purge_expired_token_batch_at(pool, settings, Utc::now().naive_utc()).await
-}
-
+#[cfg(test)]
 async fn purge_expired_token_batch_at(
     pool: &crate::storage::postgres::PostgresPool,
-    settings: TokenRetentionSettings,
+    settings: crate::models::TokenRetentionSettings,
     now: NaiveDateTime,
-) -> Result<usize, ApiError> {
-    let cutoffs = settings.cutoffs(now)?;
-    let batch_size = settings.batch_size().as_i64();
-
-    with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-        if !maintenance_state_conn(conn).await?.is_normal() {
-            return Ok(0);
-        }
-        if !try_acquire_token_retention_lock(conn).await? {
-            return Ok(0);
-        }
-
-        purge_expired_token_batch_conn(
-            conn,
-            cutoffs.explicit_expiry(),
-            cutoffs.implicit_issue(),
-            batch_size,
-        )
-        .await
-    })
+) -> Result<usize, crate::errors::ApiError> {
+    hubuum_storage_postgres::operations::token_retention::purge_expired_tokens_at(
+        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        settings,
+        now,
+    )
     .await
-}
-
-async fn purge_expired_token_batch_conn(
-    conn: &mut PostgresConnection,
-    explicit_expiry_cutoff: NaiveDateTime,
-    implicit_issue_cutoff: NaiveDateTime,
-    batch_size: i64,
-) -> Result<usize, ApiError> {
-    // Give revoked, explicit-expiry, and implicit-expiry index streams an
-    // initial share. Then offer every stream the remaining capacity so a
-    // one-sided backlog still uses the configured batch size.
-    let revoked_share = batch_size / 3 + i64::from(batch_size % 3 > 0);
-    let explicit_share = batch_size / 3 + i64::from(batch_size % 3 > 1);
-    let implicit_share = batch_size / 3;
-
-    let mut deleted = purge_revoked_tokens(conn, explicit_expiry_cutoff, revoked_share).await?;
-    let remaining = batch_size.saturating_sub(deleted as i64);
-    deleted +=
-        purge_explicit_expired_tokens(conn, explicit_expiry_cutoff, explicit_share.min(remaining))
-            .await?;
-    let remaining = batch_size.saturating_sub(deleted as i64);
-    deleted +=
-        purge_implicit_expired_tokens(conn, implicit_issue_cutoff, implicit_share.min(remaining))
-            .await?;
-
-    let remaining = batch_size.saturating_sub(deleted as i64);
-    deleted += purge_revoked_tokens(conn, explicit_expiry_cutoff, remaining).await?;
-    let remaining = batch_size.saturating_sub(deleted as i64);
-    deleted += purge_explicit_expired_tokens(conn, explicit_expiry_cutoff, remaining).await?;
-    let remaining = batch_size.saturating_sub(deleted as i64);
-    deleted += purge_implicit_expired_tokens(conn, implicit_issue_cutoff, remaining).await?;
-
-    Ok(deleted)
-}
-
-async fn purge_revoked_tokens(
-    conn: &mut PostgresConnection,
-    revocation_cutoff: NaiveDateTime,
-    limit: i64,
-) -> Result<usize, ApiError> {
-    if limit == 0 {
-        return Ok(0);
-    }
-
-    let candidates = diesel::sql_query(
-        "SELECT id
-         FROM tokens
-         WHERE revoked_at IS NOT NULL
-           AND revoked_at <= $1
-         ORDER BY revoked_at ASC, id ASC
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED",
-    )
-    .bind::<Timestamp, _>(revocation_cutoff)
-    .bind::<BigInt, _>(limit)
-    .load::<TokenRetentionCandidate>(conn)
-    .await?;
-    purge_selected_tokens(conn, candidates, TokenRetentionBasis::Revocation).await
-}
-
-async fn purge_explicit_expired_tokens(
-    conn: &mut PostgresConnection,
-    expiry_cutoff: NaiveDateTime,
-    limit: i64,
-) -> Result<usize, ApiError> {
-    if limit == 0 {
-        return Ok(0);
-    }
-
-    let candidates = diesel::sql_query(
-        "SELECT id
-         FROM tokens
-         WHERE expires_at IS NOT NULL
-           AND expires_at <= $1
-         ORDER BY expires_at ASC, id ASC
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED",
-    )
-    .bind::<Timestamp, _>(expiry_cutoff)
-    .bind::<BigInt, _>(limit)
-    .load::<TokenRetentionCandidate>(conn)
-    .await?;
-    purge_selected_tokens(conn, candidates, TokenRetentionBasis::ExplicitExpiry).await
-}
-
-async fn purge_implicit_expired_tokens(
-    conn: &mut PostgresConnection,
-    issue_cutoff: NaiveDateTime,
-    limit: i64,
-) -> Result<usize, ApiError> {
-    if limit == 0 {
-        return Ok(0);
-    }
-
-    let candidates = diesel::sql_query(
-        "SELECT id
-         FROM tokens
-         WHERE expires_at IS NULL
-           AND issued <= $1
-         ORDER BY issued ASC, id ASC
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED",
-    )
-    .bind::<Timestamp, _>(issue_cutoff)
-    .bind::<BigInt, _>(limit)
-    .load::<TokenRetentionCandidate>(conn)
-    .await?;
-    purge_selected_tokens(conn, candidates, TokenRetentionBasis::ImplicitExpiry).await
-}
-
-async fn purge_selected_tokens(
-    conn: &mut PostgresConnection,
-    candidates: Vec<TokenRetentionCandidate>,
-    basis: TokenRetentionBasis,
-) -> Result<usize, ApiError> {
-    if candidates.is_empty() {
-        return Ok(0);
-    }
-
-    let token_ids = candidates
-        .into_iter()
-        .map(|candidate| candidate.id)
-        .collect::<Vec<_>>();
-    let retained = tokens::table
-        .filter(tokens::id.eq_any(&token_ids))
-        .order_by(tokens::id.asc())
-        .load::<PrincipalTokenRow>(conn)
-        .await?
-        .into_iter()
-        .map(Into::into)
-        .collect::<Vec<PrincipalToken>>();
-    let scopes = load_token_scopes_for_tokens_conn(conn, &retained).await?;
-    let events = retained
-        .iter()
-        .zip(scopes.iter())
-        .map(|(token, scope)| token_purge_event(token, scope.as_ref(), basis))
-        .collect::<Result<Vec<_>, _>>()?;
-    emit_events(conn, &events).await?;
-
-    let deleted = diesel::delete(tokens::table.filter(tokens::id.eq_any(&token_ids)))
-        .execute(conn)
-        .await?;
-    if deleted != token_ids.len() {
-        return Err(ApiError::InternalServerError(format!(
-            "Token retention selected {} locked rows but deleted {deleted}",
-            token_ids.len()
-        )));
-    }
-    Ok(deleted)
-}
-
-fn token_purge_event(
-    token: &PrincipalToken,
-    scope: Option<&TokenScope>,
-    basis: TokenRetentionBasis,
-) -> Result<NewEvent, ApiError> {
-    Ok(NewEvent::new(
-        EntityType::Token,
-        Action::Purged,
-        ActorKind::System,
-        format!(
-            "Token {} purged after retention for principal {}",
-            token.id, token.principal_id
-        ),
-    )?
-    .with_entity_id(token.id)
-    .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
-    .with_before(token_snapshot(token, scope)?)
-    .with_metadata(serde_json::json!({
-        "principal_id": token.principal_id,
-        "retention_basis": basis.as_str(),
-    })))
+    .map_err(hubuum_storage_core::StorageError::from)
+    .map_err(crate::errors::ApiError::from)
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
+    use chrono::{Duration, Utc};
     use diesel::sql_types::{Bool, Text};
     use rstest::rstest;
 
+    use crate::errors::ApiError;
     use crate::events::{Action, ActorKind, EntityType};
     use crate::models::search::QueryOptions;
     use crate::models::{
-        MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, Permissions, PrincipalID,
+        MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, Permissions, PrincipalID, PrincipalToken,
         PrincipalTokenCreateRequest, PrincipalTokenMetadata, Token, TokenID, TokenListState,
-        TokenScope,
+        TokenRetentionSettings, TokenScope,
     };
     use crate::schema::{events, token_scopes, tokens};
     use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
     use crate::storage::postgres::operations::event_record::EventRow;
-    use crate::storage::postgres::with_connection;
+    use crate::storage::postgres::operations::token::PrincipalTokenRow;
+    use crate::storage::postgres::prelude::*;
+    use crate::storage::postgres::{with_connection, with_transaction};
     use crate::tests::{TestMutex, create_test_user, lock_test_mutex, test_mutex};
 
     use super::*;
@@ -383,6 +145,7 @@ mod tests {
                     .bind::<Integer, _>(token_id)
                     .load::<TokenRetentionCandidate>(conn)
                     .await
+                    .map(|rows| rows.into_iter().map(|row| row.id).collect::<Vec<_>>())
             })
             .await;
             if result.is_err() {

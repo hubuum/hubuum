@@ -6,7 +6,7 @@ use crate::models::{CollectionID, HubuumClassID, HubuumObjectID, Permissions};
 use crate::permissions::{ResourceKind, ResourceRef};
 
 /// Maximum number of collection, class, and object entries in one token boundary.
-pub const MAX_TOKEN_RESOURCE_SCOPES: usize = 1_000;
+pub use hubuum_domain::MAX_TOKEN_RESOURCE_SCOPES;
 
 /// One resource explicitly included in a token's resource boundary.
 ///

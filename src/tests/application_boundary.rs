@@ -2295,6 +2295,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "metrics",
         "probe",
         "remote_target",
+        "token_retention",
         "unified_search",
     ] {
         let adapter_file = root.join(format!(
@@ -2427,7 +2428,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
             }
         } else if matches!(
             operation,
-            "event_fanout" | "event_retention" | "maintenance"
+            "event_fanout" | "event_retention" | "maintenance" | "token_retention"
         ) {
             let shim = read_source(&old_path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
@@ -2443,6 +2444,23 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
             );
         }
     }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/operations.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "TokenRetentionStorage for PostgresStorage",
+    );
+    assert!(
+        implementation.contains("hubuum_storage_postgres::operations::token_retention"),
+        "the token-retention trait implementation must delegate into the adapter crate"
+    );
+    assert!(
+        !implementation.contains("&self.pool"),
+        "the token-retention trait implementation must not expose the PostgreSQL pool"
+    );
 
     let identity_scope_shim = root.join("src/storage/postgres/operations/identity.rs");
     let shim = read_source(&identity_scope_shim).unwrap_or_else(|error| {

@@ -1,4 +1,7 @@
 use chrono::{Duration, NaiveDateTime};
+
+/// Maximum number of persisted resource entries in one token boundary.
+pub const MAX_TOKEN_RESOURCE_SCOPES: usize = 1_000;
 use std::fmt;
 
 /// Validation failure for token issuance and retention policy values.

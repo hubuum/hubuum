@@ -178,23 +178,6 @@ pub(crate) async fn emit_event(
     Ok(event)
 }
 
-/// Append a bounded batch of events in one PostgreSQL statement.
-pub(crate) async fn emit_events(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    events: &[NewEvent],
-) -> Result<Vec<Event>, ApiError> {
-    let persisted = hubuum_storage_postgres::operations::event_record::append_events(conn, events)
-        .await
-        .map_err(hubuum_storage_core::StorageError::from)?
-        .into_iter()
-        .map(event_from_storage)
-        .collect::<Result<Vec<_>, _>>()?;
-    for event in &persisted {
-        log_event_mutation(event);
-    }
-    Ok(persisted)
-}
-
 fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Result<Event, ApiError> {
     let (event, before_revision, after_revision) = event.into_parts();
     Ok(Event {

@@ -29,4 +29,5 @@ pub mod principal;
 pub mod probe;
 pub mod relation;
 pub mod remote_target;
+pub mod token_retention;
 pub mod unified_search;

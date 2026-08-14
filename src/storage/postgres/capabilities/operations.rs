@@ -387,8 +387,11 @@ impl TokenRetentionStorage for PostgresStorage {
         &self,
         settings: TokenRetentionSettings,
     ) -> Result<usize, StorageError> {
-        operations::token_retention::purge_expired_token_batch(&self.pool, settings)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::token_retention::purge_expired_tokens(
+            self.runtime(),
+            settings,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }

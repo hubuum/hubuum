@@ -47,7 +47,7 @@ pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};
 pub use token::{
-    MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TokenIssuancePolicy, TokenLifetime, TokenPolicyError,
-    TokenRetentionBatchSize, TokenRetentionCutoffs, TokenRetentionPeriod, TokenRetentionSettings,
-    TokenRetentionSettingsBuilder,
+    MAX_TOKEN_RESOURCE_SCOPES, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TokenIssuancePolicy,
+    TokenLifetime, TokenPolicyError, TokenRetentionBatchSize, TokenRetentionCutoffs,
+    TokenRetentionPeriod, TokenRetentionSettings, TokenRetentionSettingsBuilder,
 };
