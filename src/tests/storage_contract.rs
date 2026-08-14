@@ -2689,6 +2689,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         let visible = backend
             .visible_collections(AuthorizationCollectionVisibilityQuery::new(
                 user.id,
+                false,
                 AuthorizationPermission::ReadCollection,
                 None,
             ))

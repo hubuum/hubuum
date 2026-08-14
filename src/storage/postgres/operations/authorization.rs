@@ -5,13 +5,9 @@
 //! application services whose own contracts have not yet moved to storage DTOs.
 
 use crate::errors::ApiError;
-use crate::models::{Collection, Group, GroupPermission, Permission, Permissions};
+use crate::models::Permissions;
 use crate::storage::postgres::PostgresPool;
-use crate::storage::{
-    AuthorizationCollection, AuthorizationCollectionsAccessQuery, AuthorizationGrant,
-    AuthorizationGroup, AuthorizationGroupGrant, AuthorizationGroupIdentity,
-    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission, StorageError,
-};
+use crate::storage::{AuthorizationCollectionsAccessQuery, AuthorizationPermission, StorageError};
 
 pub(crate) const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
     match permission {
@@ -83,57 +79,6 @@ pub(crate) fn permission_to_storage(permission: Permissions) -> AuthorizationPer
         Permissions::ReadAudit => AuthorizationPermission::ReadAudit,
         Permissions::ManageEventSubscription => AuthorizationPermission::ManageEventSubscription,
     }
-}
-
-pub(crate) fn collection_to_storage(collection: Collection) -> AuthorizationCollection {
-    AuthorizationCollection::new(
-        collection.id,
-        collection.name,
-        collection.description,
-        collection.created_at,
-        collection.updated_at,
-        collection.parent_collection_id,
-        collection.revision.get(),
-    )
-}
-
-pub(crate) fn group_to_storage(group: impl Into<Group>) -> AuthorizationGroup {
-    let group = group.into();
-    AuthorizationGroup::new(
-        AuthorizationGroupIdentity::new(
-            group.id,
-            group.groupname,
-            group.identity_scope_id,
-            group.managed_by,
-            group.external_key,
-        ),
-        AuthorizationGroupProfile::new(
-            group.description,
-            group.created_at,
-            group.updated_at,
-            group.revision.get(),
-        ),
-        AuthorizationGroupSyncState::new(group.last_sync_attempted_at, group.last_sync_success_at),
-    )
-}
-
-pub(crate) fn grant_to_storage(grant: impl Into<Permission>) -> AuthorizationGrant {
-    let grant = grant.into();
-    AuthorizationGrant::new(
-        grant.id,
-        grant.collection_id,
-        grant.group_id,
-        grant.granted().into_iter().map(permission_to_storage),
-        grant.created_at,
-        grant.updated_at,
-    )
-}
-
-pub(crate) fn group_grant_to_storage(row: GroupPermission) -> AuthorizationGroupGrant {
-    AuthorizationGroupGrant::new(
-        group_to_storage(row.group),
-        grant_to_storage(row.permission),
-    )
 }
 
 pub(crate) async fn authorize_local_collections(

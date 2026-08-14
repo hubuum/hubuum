@@ -90,6 +90,7 @@ impl fmt::Debug for AuthorizationPrincipalCollectionPageQuery {
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationCollectionVisibilityQuery {
     principal_id: i32,
+    is_admin: bool,
     permission: AuthorizationPermission,
     scope: Option<AuthenticationTokenScope>,
 }
@@ -98,11 +99,13 @@ impl AuthorizationCollectionVisibilityQuery {
     #[must_use]
     pub const fn new(
         principal_id: i32,
+        is_admin: bool,
         permission: AuthorizationPermission,
         scope: Option<AuthenticationTokenScope>,
     ) -> Self {
         Self {
             principal_id,
+            is_admin,
             permission,
             scope,
         }
@@ -119,8 +122,30 @@ impl AuthorizationCollectionVisibilityQuery {
     }
 
     #[must_use]
+    pub const fn is_admin(&self) -> bool {
+        self.is_admin
+    }
+
+    #[must_use]
     pub const fn scope(&self) -> Option<&AuthenticationTokenScope> {
         self.scope.as_ref()
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        i32,
+        bool,
+        AuthorizationPermission,
+        Option<AuthenticationTokenScope>,
+    ) {
+        (
+            self.principal_id,
+            self.is_admin,
+            self.permission,
+            self.scope,
+        )
     }
 }
 
@@ -129,6 +154,7 @@ impl fmt::Debug for AuthorizationCollectionVisibilityQuery {
         formatter
             .debug_struct("AuthorizationCollectionVisibilityQuery")
             .field("principal_id", &"<redacted>")
+            .field("is_admin", &self.is_admin)
             .field("permission", &self.permission)
             .field("has_scope", &self.scope.is_some())
             .finish()

@@ -8,12 +8,50 @@ use diesel::sql_types::BigInt;
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
     ExportTemplateMetricIdentity, InventoryGaugeSnapshot, InventoryMetricsSnapshot,
+    StoragePoolAcquisitionState, StoragePoolCapacity, StoragePoolConnectionState, StoragePoolState,
     StorageTaskKind, StorageTaskStatus, TaskGaugeAge, TaskGaugeCount, TaskGaugeLastTerminal,
     TaskGaugeSnapshot,
 };
 
 use crate::schema::{export_templates, tasks};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
+
+/// Return the backend-neutral projection of the PostgreSQL connection pool.
+///
+/// Pool implementation details stay inside the adapter even though collecting
+/// this snapshot does not require an asynchronous database call.
+#[must_use]
+pub fn pool_state(runtime: &PostgresRuntime) -> StoragePoolState {
+    let pool = runtime.pool();
+    let state = pool.state();
+    let max_connections = pool.config().max_size;
+    let in_use_connections = state.connections.saturating_sub(state.idle_connections);
+
+    StoragePoolState::new(
+        StoragePoolCapacity::new(
+            max_connections,
+            state.connections,
+            max_connections.saturating_sub(in_use_connections),
+            state.idle_connections,
+            in_use_connections,
+        ),
+        StoragePoolAcquisitionState::new(
+            state.statistics.pending_gets(),
+            state.statistics.get_started,
+            state.statistics.get_direct,
+            state.statistics.get_waited,
+            state.statistics.get_timed_out,
+            u64::try_from(state.statistics.get_wait_time.as_millis()).unwrap_or(u64::MAX),
+        ),
+        StoragePoolConnectionState::new(
+            state.statistics.connections_created,
+            state.statistics.connections_closed_broken,
+            state.statistics.connections_closed_invalid,
+            state.statistics.connections_closed_max_lifetime,
+            state.statistics.connections_closed_idle_timeout,
+        ),
+    )
+}
 
 #[derive(Debug, Clone, Copy, QueryableByName)]
 struct InventoryMetricsRow {

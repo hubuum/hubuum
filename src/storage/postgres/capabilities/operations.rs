@@ -3,33 +3,7 @@ use super::super::*;
 #[async_trait]
 impl MetricsStorage for PostgresStorage {
     fn metrics_pool_state(&self) -> StoragePoolState {
-        let state = self.pool.state();
-        let max_connections = self.pool.config().max_size;
-        let in_use_connections = state.connections.saturating_sub(state.idle_connections);
-        StoragePoolState::new(
-            StoragePoolCapacity::new(
-                max_connections,
-                state.connections,
-                max_connections.saturating_sub(in_use_connections),
-                state.idle_connections,
-                in_use_connections,
-            ),
-            StoragePoolAcquisitionState::new(
-                state.statistics.pending_gets(),
-                state.statistics.get_started,
-                state.statistics.get_direct,
-                state.statistics.get_waited,
-                state.statistics.get_timed_out,
-                u64::try_from(state.statistics.get_wait_time.as_millis()).unwrap_or(u64::MAX),
-            ),
-            StoragePoolConnectionState::new(
-                state.statistics.connections_created,
-                state.statistics.connections_closed_broken,
-                state.statistics.connections_closed_invalid,
-                state.statistics.connections_closed_max_lifetime,
-                state.statistics.connections_closed_idle_timeout,
-            ),
-        )
+        hubuum_storage_postgres::operations::metrics::pool_state(self.runtime())
     }
 
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {

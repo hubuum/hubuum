@@ -248,9 +248,11 @@ where
     C: StorageContext,
     U: GroupAccessors + AuthzSubject,
 {
+    let is_admin = user_id.is_admin(backend).await?;
     storage_handle(backend)
         .visible_collections(AuthorizationCollectionVisibilityQuery::new(
             user_id.principal_id(),
+            is_admin,
             permission_to_storage(permission_type),
             scopes.map(token_scope_to_storage),
         ))

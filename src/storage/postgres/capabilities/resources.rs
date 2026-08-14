@@ -1,20 +1,4 @@
 use super::super::*;
-use crate::storage::postgres::operations::authorization::{
-    collection_to_storage as authorization_collection_to_storage,
-    grant_to_storage as authorization_grant_to_storage,
-    group_grant_to_storage as authorization_group_grant_to_storage,
-    group_to_storage as authorization_group_to_storage, permission_from_storage,
-};
-fn effective_grant_to_storage(row: EffectiveGroupPermission) -> AuthorizationEffectiveGroupGrant {
-    AuthorizationEffectiveGroupGrant::new(
-        authorization_collection_to_storage(row.target_collection),
-        authorization_collection_to_storage(row.source_collection),
-        row.depth,
-        row.inherited,
-        authorization_group_to_storage(row.group),
-        authorization_grant_to_storage(row.permission),
-    )
-}
 
 #[async_trait]
 impl GroupStorage for PostgresStorage {
@@ -191,122 +175,72 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        principal_on_from_backend(
-            &self.pool,
-            PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
-            CollectionID::new(query.collection_id())
-                .map_err(map_postgres_error)?
-                .id(),
+        hubuum_storage_postgres::operations::authorization::principal_collection_permissions(
+            self.runtime(),
+            query,
         )
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(authorization_group_grant_to_storage)
-                .collect()
-        })
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn principal_all_collection_permissions(
         &self,
         principal_id: i32,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
-        principal_all_permissions_from_backend(
-            &self.pool,
-            PrincipalID::new(principal_id).map_err(map_postgres_error)?,
+        hubuum_storage_postgres::operations::authorization::principal_all_collection_permissions(
+            self.runtime(),
+            principal_id,
         )
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(|(collection, group, grant)| {
-                    AuthorizationPolicySnapshotRow::new(
-                        authorization_grant_to_storage(grant),
-                        authorization_group_to_storage(group),
-                        authorization_collection_to_storage(collection),
-                    )
-                })
-                .collect()
-        })
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn principal_collection_permissions_page(
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        let (rows, total) = principal_on_paginated_with_total_count_from_backend(
-            &self.pool,
-            PrincipalID::new(query.principal().principal_id()).map_err(map_postgres_error)?,
-            CollectionID::new(query.principal().collection_id())
-                .map_err(map_postgres_error)?
-                .id(),
-            query.query_options(),
+        hubuum_storage_postgres::operations::authorization::principal_collection_permissions_page(
+            self.runtime(),
+            query,
         )
         .await
-        .map_err(map_postgres_error)?;
-        Ok(AuthorizationGroupGrantPage::new(
-            rows.into_iter()
-                .map(authorization_group_grant_to_storage)
-                .collect(),
-            total,
-        ))
+        .map_err(StorageError::from)
     }
 
     async fn effective_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
-        effective_principal_on_from_backend(
-            &self.pool,
-            PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
-            CollectionID::new(query.collection_id())
-                .map_err(map_postgres_error)?
-                .id(),
+        hubuum_storage_postgres::operations::authorization::effective_principal_collection_permissions(
+            self.runtime(),
+            query,
         )
         .await
-        .map(|rows| rows.into_iter().map(effective_grant_to_storage).collect())
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn visible_collections(
         &self,
         query: AuthorizationCollectionVisibilityQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        let scope = query
-            .scope()
-            .cloned()
-            .map(operations::identity_operations::token_scope_from_storage)
-            .transpose()
-            .map_err(map_postgres_error)?;
-        user_can_on_any_from_backend(
-            &self.pool,
-            PrincipalID::new(query.principal_id()).map_err(map_postgres_error)?,
-            permission_from_storage(query.permission()),
-            scope.as_ref(),
+        hubuum_storage_postgres::operations::authorization::visible_collections(
+            self.runtime(),
+            query,
         )
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(authorization_collection_to_storage)
-                .collect()
-        })
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn group_has_collection_permission(
         &self,
         query: AuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
-        group_can_on_from_backend(
-            &self.pool,
-            query.group_id(),
-            CollectionID::new(query.collection_id())
-                .map_err(map_postgres_error)?
-                .id(),
-            permission_from_storage(query.permission()),
+        hubuum_storage_postgres::operations::authorization::group_has_collection_permission(
+            self.runtime(),
+            query,
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn effective_group_collection_permissions(
@@ -314,101 +248,64 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         collection_id: i32,
         group_id: i32,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
-        effective_group_on_from_backend(&self.pool, collection_id, group_id)
-            .await
-            .map(|rows| rows.into_iter().map(effective_grant_to_storage).collect())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::authorization::effective_group_collection_permissions(
+            self.runtime(),
+            collection_id,
+            group_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn groups_with_collection_permission(
         &self,
         query: AuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
-        groups_can_on_from_backend(
-            &self.pool,
-            query.collection_id(),
-            permission_from_storage(query.permission()),
+        hubuum_storage_postgres::operations::authorization::groups_with_collection_permission(
+            self.runtime(),
+            query,
         )
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(authorization_group_to_storage)
-                .collect()
-        })
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn groups_with_collection_permission_page(
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
     ) -> Result<AuthorizationGroupPage, StorageError> {
-        let (rows, total) = groups_can_on_paginated_with_total_count_from_backend(
-            &self.pool,
-            query.groups().collection_id(),
-            permission_from_storage(query.groups().permission()),
-            query.query_options(),
+        hubuum_storage_postgres::operations::authorization::groups_with_collection_permission_page(
+            self.runtime(),
+            query,
         )
         .await
-        .map_err(map_postgres_error)?;
-        Ok(AuthorizationGroupPage::new(
-            rows.into_iter()
-                .map(authorization_group_to_storage)
-                .collect(),
-            total,
-        ))
+        .map_err(StorageError::from)
     }
 
     async fn list_collection_group_permissions(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        groups_on_from_backend(
-            &self.pool,
-            CollectionID::new(query.collection_id())
-                .map_err(map_postgres_error)?
-                .id(),
-            query
-                .required_permissions()
-                .iter()
-                .copied()
-                .map(permission_from_storage)
-                .collect(),
-            query.query_options().clone(),
-        )
-        .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(authorization_group_grant_to_storage)
-                .collect()
-        })
-        .map_err(map_postgres_error)
+        let (rows, _) =
+            hubuum_storage_postgres::operations::authorization::list_local_collection_grants(
+                self.runtime(),
+                query,
+            )
+            .await
+            .map_err(StorageError::from)?
+            .into_parts();
+        Ok(rows)
     }
 
     async fn list_collection_group_permissions_page(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        let (rows, total) = groups_on_paginated_with_total_count_from_backend(
-            &self.pool,
-            CollectionID::new(query.collection_id())
-                .map_err(map_postgres_error)?
-                .id(),
-            query
-                .required_permissions()
-                .iter()
-                .copied()
-                .map(permission_from_storage)
-                .collect(),
-            query.query_options(),
+        hubuum_storage_postgres::operations::authorization::list_local_collection_grants(
+            self.runtime(),
+            query,
         )
         .await
-        .map_err(map_postgres_error)?;
-        Ok(AuthorizationGroupGrantPage::new(
-            rows.into_iter()
-                .map(authorization_group_grant_to_storage)
-                .collect(),
-            total,
-        ))
+        .map_err(StorageError::from)
     }
 
     async fn collection_group_permission(
@@ -416,10 +313,13 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         collection_id: i32,
         group_id: i32,
     ) -> Result<AuthorizationGrant, StorageError> {
-        group_on_from_backend(&self.pool, collection_id, group_id)
-            .await
-            .map(authorization_grant_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::authorization::collection_group_permission(
+            self.runtime(),
+            collection_id,
+            group_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

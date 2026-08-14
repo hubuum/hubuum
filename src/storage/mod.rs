@@ -37,8 +37,7 @@ pub(crate) use hubuum_storage_core::{
     AuthorizationEffectiveGroupGrant, AuthorizationGrant, AuthorizationGrantDelete,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupCollectionQuery, AuthorizationGroupGrant, AuthorizationGroupGrantPage,
-    AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery, AuthorizationGroupPage,
-    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationObjectResource,
+    AuthorizationGroupMembershipQuery, AuthorizationGroupPage, AuthorizationObjectResource,
     AuthorizationPermission, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
     AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
@@ -133,8 +132,8 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{
-    EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage, StoragePoolAcquisitionState,
-    StoragePoolCapacity, StoragePoolConnectionState, StoragePoolState, TaskGaugeSnapshot,
+    EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage, StoragePoolState,
+    TaskGaugeSnapshot,
 };
 pub(crate) use hubuum_storage_core::{
     ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportCollectionKey,

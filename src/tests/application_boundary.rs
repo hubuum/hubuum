@@ -2007,6 +2007,61 @@ fn collection_catalog_queries_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/authorization/queries.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+        "get_config",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application detail {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "CollectionAuthorizationStorage for PostgresStorage",
+    );
+    for method in [
+        "principal_collection_permissions",
+        "principal_all_collection_permissions",
+        "principal_collection_permissions_page",
+        "effective_principal_collection_permissions",
+        "visible_collections",
+        "group_has_collection_permission",
+        "effective_group_collection_permissions",
+        "groups_with_collection_permission",
+        "groups_with_collection_permission_page",
+        "list_collection_group_permissions",
+        "list_collection_group_permissions_page",
+        "collection_group_permission",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::authorization"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+}
+
+#[test]
 fn class_lifecycle_is_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/class.rs");
