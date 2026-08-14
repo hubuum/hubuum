@@ -3,7 +3,8 @@
 use crate::cursor::{
     CursorSqlField, CursorSqlType, cursor_filter_sql_for_fields, order_sql_clause_for_field,
 };
-use crate::operations::json_filter::{SqlValue, json_filter_sql};
+use crate::operations::dynamic_sql::SqlValue;
+use crate::operations::json_filter::json_filter_sql;
 use crate::operations::relation::{ClassRelationRow, ObjectRelationRow};
 use crate::operations::visibility::{authorized_collection_ids, required_permissions};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
@@ -34,6 +35,7 @@ macro_rules! bind_raw_sql_query {
         for value in spec.bind_variables {
             query = match value {
                 SqlValue::Integer(value) => query.bind::<diesel::sql_types::Integer, _>(value),
+                SqlValue::BigInteger(value) => query.bind::<diesel::sql_types::BigInt, _>(value),
                 SqlValue::String(value) => query.bind::<diesel::sql_types::Text, _>(value),
                 SqlValue::Boolean(value) => query.bind::<diesel::sql_types::Bool, _>(value),
                 SqlValue::DateTime(value) => query.bind::<diesel::sql_types::Timestamp, _>(value),

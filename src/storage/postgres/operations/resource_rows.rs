@@ -1,8 +1,6 @@
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClass, HubuumObject};
-use crate::storage::{
-    StorageClassRecord, StorageCollection, StorageObject, StorageRecordMetadata,
-};
+use crate::storage::{StorageClassRecord, StorageCollection, StorageObject, StorageRecordMetadata};
 use hubuum_storage_postgres::PostgresRevision;
 
 pub(in crate::storage::postgres) fn collection_to_storage(

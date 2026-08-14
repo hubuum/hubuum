@@ -1959,7 +1959,7 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
 }
 
 #[test]
-fn extracted_catalog_queries_are_owned_by_the_postgres_adapter() {
+fn catalog_queries_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/catalog.rs");
     let adapter = read_source(&adapter_path)
@@ -1981,7 +1981,7 @@ fn extracted_catalog_queries_are_owned_by_the_postgres_adapter() {
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "CatalogStorage for PostgresStorage");
-    for method in ["list_collections", "list_classes"] {
+    for method in ["list_collections", "list_classes", "list_objects"] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
             method_body.contains("hubuum_storage_postgres::operations::catalog"),
@@ -1996,15 +1996,9 @@ fn extracted_catalog_queries_are_owned_by_the_postgres_adapter() {
     }
 
     let legacy_path = root.join("src/storage/postgres/operations/catalog.rs");
-    let legacy = read_source(&legacy_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
     assert!(
-        !legacy.contains("fn list_collections"),
-        "the application-owned PostgreSQL facade still owns collection catalog queries"
-    );
-    assert!(
-        !legacy.contains("fn list_classes"),
-        "the application-owned PostgreSQL facade still owns class catalog queries"
+        !legacy_path.exists(),
+        "the application-owned PostgreSQL catalog facade still exists"
     );
 }
 

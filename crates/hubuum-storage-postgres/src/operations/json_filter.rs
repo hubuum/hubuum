@@ -1,14 +1,8 @@
-//! Typed Diesel predicate for PostgreSQL JSON filters.
+//! PostgreSQL JSON filter compilation.
 
-use std::iter::from_fn;
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping};
-use diesel::pg::Pg;
-use diesel::query_builder::{AstPass, QueryFragment, QueryId};
-use diesel::result::QueryResult;
-use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use hubuum_query::{
     JsonFieldPathRef, Operator, ParsedQueryParam, SQLMappedType,
     get_jsonb_field_type_from_value_and_operator,
@@ -16,91 +10,21 @@ use hubuum_query::{
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 
 use crate::PostgresStorageError;
-
-#[derive(Clone, Debug)]
-pub(crate) enum SqlValue {
-    Integer(i32),
-    String(String),
-    Boolean(bool),
-    DateTime(chrono::NaiveDateTime),
-}
-
-pub(crate) struct JsonSqlComponent {
-    pub(crate) sql: String,
-    pub(crate) bind_variables: Vec<SqlValue>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct JsonSqlPredicate {
-    sql: String,
-    bind_variables: Vec<SqlValue>,
-}
-
-impl Expression for JsonSqlPredicate {
-    type SqlType = Bool;
-}
-
-impl QueryId for JsonSqlPredicate {
-    type QueryId = ();
-
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
-
-impl QueryFragment<Pg> for JsonSqlPredicate {
-    fn walk_ast<'bind>(&'bind self, mut output: AstPass<'_, 'bind, Pg>) -> QueryResult<()> {
-        output.unsafe_to_cache_prepared();
-        let mut start = 0;
-        for (bind_variable, offset) in self
-            .bind_variables
-            .iter()
-            .zip(bind_placeholder_offsets(&self.sql))
-        {
-            output.push_sql(&self.sql[start..offset]);
-            match bind_variable {
-                SqlValue::Integer(value) => output.push_bind_param::<Integer, _>(value)?,
-                SqlValue::String(value) => output.push_bind_param::<Text, _>(value)?,
-                SqlValue::Boolean(value) => output.push_bind_param::<Bool, _>(value)?,
-                SqlValue::DateTime(value) => output.push_bind_param::<Timestamp, _>(value)?,
-            }
-            start = offset + 1;
-        }
-        output.push_sql(&self.sql[start..]);
-        Ok(())
-    }
-}
-
-impl<QuerySource> SelectableExpression<QuerySource> for JsonSqlPredicate {}
-impl<QuerySource> AppearsOnTable<QuerySource> for JsonSqlPredicate {}
-
-impl<GroupBy> ValidGrouping<GroupBy> for JsonSqlPredicate {
-    type IsAggregate = diesel::expression::is_aggregate::Never;
-}
+use crate::operations::dynamic_sql::{
+    BoundSqlPredicate, SqlComponent, SqlValue, bound_sql_predicate,
+};
 
 pub(crate) fn json_predicate(
     parameter: &ParsedQueryParam,
     json_expression: &str,
-) -> Result<JsonSqlPredicate, PostgresStorageError> {
-    let JsonSqlComponent {
-        sql,
-        bind_variables,
-    } = json_filter_sql(parameter, json_expression)?;
-    let placeholder_count = bind_placeholder_offsets(&sql).count();
-    if placeholder_count != bind_variables.len() {
-        return Err(PostgresStorageError::internal(format!(
-            "Dynamic SQL predicate has {placeholder_count} placeholders but {} bind values",
-            bind_variables.len()
-        )));
-    }
-    Ok(JsonSqlPredicate {
-        sql,
-        bind_variables,
-    })
+) -> Result<BoundSqlPredicate, PostgresStorageError> {
+    bound_sql_predicate(json_filter_sql(parameter, json_expression)?)
 }
 
 pub(crate) fn json_filter_sql(
     parameter: &ParsedQueryParam,
     json_expression: &str,
-) -> Result<JsonSqlComponent, PostgresStorageError> {
+) -> Result<SqlComponent, PostgresStorageError> {
     if !parameter.is_json() {
         return Err(PostgresStorageError::internal(format!(
             "Attempt to filter '{}' as JSON",
@@ -111,7 +35,7 @@ pub(crate) fn json_filter_sql(
     if operator == Operator::IsNull {
         let path = json_path(&parameter.value)?;
         let expression = json_text_path_expression(json_expression, path);
-        return Ok(JsonSqlComponent {
+        return Ok(SqlComponent {
             sql: format!("{expression} IS {}NULL", if negated { "NOT " } else { "" }),
             bind_variables: Vec::new(),
         });
@@ -152,7 +76,7 @@ pub(crate) fn json_filter_sql(
             })?;
             let expression = json_value_path_expression(json_expression, path);
             let comparison = if negated { "!=" } else { "=" };
-            return Ok(JsonSqlComponent {
+            return Ok(SqlComponent {
                 sql: format!(
                     "jsonb_typeof({expression}) = 'array' AND jsonb_array_length({expression}) {comparison} ?"
                 ),
@@ -259,7 +183,7 @@ fn typed_json_filter(
     operator: Operator,
     negated: bool,
     parameter: &ParsedQueryParam,
-) -> Result<JsonSqlComponent, PostgresStorageError> {
+) -> Result<SqlComponent, PostgresStorageError> {
     let required_values = if operator == Operator::Between { 2 } else { 1 };
     if bind_variables.len() != required_values {
         return Err(PostgresStorageError::bad_request(format!(
@@ -285,7 +209,7 @@ fn typed_json_filter(
     } else {
         predicate
     };
-    Ok(JsonSqlComponent {
+    Ok(SqlComponent {
         sql: format!("{expression} IS NOT NULL AND {predicate}"),
         bind_variables,
     })
@@ -296,7 +220,7 @@ fn json_ip_filter(
     value: &str,
     operator: Operator,
     negated: bool,
-) -> Result<JsonSqlComponent, PostgresStorageError> {
+) -> Result<SqlComponent, PostgresStorageError> {
     let value = match operator {
         Operator::ContainsIp => value
             .parse::<IpAddr>()
@@ -329,7 +253,7 @@ fn json_ip_filter(
     } else {
         predicate
     };
-    Ok(JsonSqlComponent {
+    Ok(SqlComponent {
         sql: format!("{inet_expression} IS NOT NULL AND {predicate}"),
         bind_variables: vec![SqlValue::String(value)],
     })
@@ -387,51 +311,13 @@ fn negated_json_component(
     predicate: String,
     bind_variables: Vec<SqlValue>,
     negated: bool,
-) -> JsonSqlComponent {
-    JsonSqlComponent {
+) -> SqlComponent {
+    SqlComponent {
         sql: if negated {
             format!("NOT ({predicate})")
         } else {
             predicate
         },
         bind_variables,
-    }
-}
-
-fn bind_placeholder_offsets(sql: &str) -> impl Iterator<Item = usize> + '_ {
-    let mut characters = sql.char_indices().peekable();
-    let mut in_single_quoted_string = false;
-    from_fn(move || {
-        while let Some((offset, character)) = characters.next() {
-            if character == '\'' {
-                if in_single_quoted_string
-                    && characters
-                        .peek()
-                        .is_some_and(|(_, next_character)| *next_character == '\'')
-                {
-                    let _ = characters.next();
-                } else {
-                    in_single_quoted_string = !in_single_quoted_string;
-                }
-            } else if character == '?' && !in_single_quoted_string {
-                return Some(offset);
-            }
-        }
-        None
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::bind_placeholder_offsets;
-
-    #[test]
-    fn placeholders_ignore_question_marks_in_sql_strings() {
-        let sql = "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = ?";
-
-        assert_eq!(
-            bind_placeholder_offsets(sql).collect::<Vec<_>>(),
-            vec![sql.len() - 1]
-        );
     }
 }

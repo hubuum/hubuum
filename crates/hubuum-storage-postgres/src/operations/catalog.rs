@@ -8,12 +8,15 @@ use diesel_async::RunQueryDsl;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
     AuthorizationPermission, CatalogListQuery, CatalogPage, StorageClass, StorageCollection,
-    StorageRecordMetadata, UnifiedSearchResourceScope,
+    StorageObject, StorageRecordMetadata, UnifiedSearchResourceScope,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::operations::class::ClassRow;
+use crate::operations::dynamic_sql::BoundSqlPredicate;
 use crate::operations::json_filter::json_predicate;
+use crate::operations::object::ObjectRow;
+use crate::operations::related_filter::related_object_filter_predicate;
 use crate::operations::visibility::{authorized_collection_ids, required_permissions};
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -147,6 +150,218 @@ pub async fn list_classes(
             Ok::<_, PostgresStorageError>(CatalogPage::new(classes, total))
         })
         .await
+}
+
+/// List visible objects with ordinary scalar, JSON, and relation-graph
+/// filters, stable cursor paging, and an optional exact count.
+pub async fn list_objects(
+    runtime: &PostgresRuntime,
+    query: CatalogListQuery,
+) -> Result<CatalogPage<StorageObject>, PostgresStorageError> {
+    let include_total = query.options().include_total;
+    let (options, visibility) = query.into_parts();
+    let permissions = required_permissions(
+        &options,
+        [
+            AuthorizationPermission::ReadCollection,
+            AuthorizationPermission::ReadObject,
+        ],
+    )?;
+    if !visibility.allows_permissions(&permissions) {
+        return Ok(CatalogPage::new(Vec::new(), include_total.then_some(0)));
+    }
+    reject_computed_object_query(&options)?;
+
+    runtime
+        .with_read_only_snapshot(async move |connection| {
+            let collection_ids =
+                authorized_collection_ids(connection, &visibility, &permissions).await?;
+            let related_predicate =
+                related_object_filter_predicate(connection, &options.filters, &visibility).await?;
+            let build_query = || object_query(&collection_ids, visibility.resources());
+            let total = if include_total {
+                let query =
+                    apply_object_filters(build_query(), &options, related_predicate.clone())?;
+                Some(query.count().get_result::<i64>(connection).await?)
+            } else {
+                None
+            };
+
+            let mut query = apply_object_filters(build_query(), &options, related_predicate)?;
+            let fields = object_cursor_fields(&options)?;
+            crate::apply_query_options_with_fields!(query, options, fields);
+            tracing::debug!(
+                operation = "list_objects",
+                filter_count = options.filters.len(),
+                sort_count = options.sort.len(),
+                has_cursor = options.cursor.is_some(),
+                include_total,
+                "executing PostgreSQL catalog query"
+            );
+            let rows = query
+                .select(ObjectRow::as_select())
+                .load::<ObjectRow>(connection)
+                .await?
+                .into_iter()
+                .map(ObjectRow::into_storage)
+                .collect();
+
+            Ok::<_, PostgresStorageError>(CatalogPage::new(rows, total))
+        })
+        .await
+}
+
+fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresStorageError> {
+    if options
+        .filters
+        .iter()
+        .any(|filter| filter.field.computed_query().is_some())
+        || options
+            .sort
+            .iter()
+            .any(|sort| sort.field.computed_query().is_some())
+    {
+        return Err(PostgresStorageError::bad_request(
+            "Computed object queries require a resolved query plan",
+        ));
+    }
+    Ok(())
+}
+
+fn object_query<'query>(
+    collection_ids: &'query [i32],
+    resource_scope: Option<&'query UnifiedSearchResourceScope>,
+) -> crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg> {
+    use crate::schema::hubuumobject;
+
+    let mut query = hubuumobject::table
+        .filter(hubuumobject::collection_id.eq_any(collection_ids))
+        .into_boxed();
+    if let Some(scope) = resource_scope {
+        query = query.filter(
+            hubuumobject::collection_id
+                .eq_any(scope.collection_ids())
+                .or(hubuumobject::hubuum_class_id.eq_any(scope.class_ids()))
+                .or(hubuumobject::id.eq_any(scope.object_ids())),
+        );
+    }
+    query
+}
+
+fn apply_object_filters<'query>(
+    mut query: crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg>,
+    options: &QueryOptions,
+    related_predicate: Option<BoundSqlPredicate>,
+) -> Result<crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
+    use crate::schema::hubuumobject;
+
+    if let Some(predicate) = related_predicate {
+        query = query.filter(predicate);
+    }
+    for parameter in &options.filters {
+        if parameter.field.related_query().is_some() {
+            continue;
+        }
+        if parameter.field.computed_query().is_some() {
+            return Err(PostgresStorageError::bad_request(
+                "Computed object queries require a resolved query plan",
+            ));
+        }
+        match &parameter.field {
+            FilterField::Id => {
+                crate::postgres_integer_filter!(query, parameter, hubuumobject::id)
+            }
+            FilterField::Collections => {
+                crate::postgres_integer_filter!(query, parameter, hubuumobject::collection_id)
+            }
+            FilterField::CreatedAt => {
+                crate::postgres_datetime_filter!(query, parameter, hubuumobject::created_at)
+            }
+            FilterField::UpdatedAt => {
+                crate::postgres_datetime_filter!(query, parameter, hubuumobject::updated_at)
+            }
+            FilterField::Revision => {
+                crate::postgres_revision_filter!(query, parameter, hubuumobject::revision)
+            }
+            FilterField::Name => {
+                crate::postgres_string_filter!(query, parameter, hubuumobject::name)
+            }
+            FilterField::Description => {
+                crate::postgres_string_filter!(query, parameter, hubuumobject::description)
+            }
+            FilterField::Classes | FilterField::ClassId => {
+                crate::postgres_integer_filter!(query, parameter, hubuumobject::hubuum_class_id)
+            }
+            FilterField::JsonData => {
+                query = query.filter(json_predicate(parameter, "hubuumobject.data")?);
+            }
+            FilterField::Permissions => {}
+            other => {
+                return Err(PostgresStorageError::bad_request(format!(
+                    "Field '{other}' isn't searchable (or does not exist) for objects"
+                )));
+            }
+        }
+    }
+    Ok(query)
+}
+
+fn object_cursor_fields(
+    options: &QueryOptions,
+) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
+    options
+        .sort
+        .iter()
+        .map(|sort| {
+            Ok(match sort.field {
+                FilterField::Id => CursorSqlField {
+                    column: "hubuumobject.id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                },
+                FilterField::Name => CursorSqlField {
+                    column: "hubuumobject.name",
+                    sql_type: CursorSqlType::String,
+                    nullable: false,
+                },
+                FilterField::Description => CursorSqlField {
+                    column: "hubuumobject.description",
+                    sql_type: CursorSqlType::String,
+                    nullable: false,
+                },
+                FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                    column: "hubuumobject.collection_id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                },
+                FilterField::ClassId | FilterField::Classes => CursorSqlField {
+                    column: "hubuumobject.hubuum_class_id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                },
+                FilterField::CreatedAt => CursorSqlField {
+                    column: "hubuumobject.created_at",
+                    sql_type: CursorSqlType::DateTime,
+                    nullable: false,
+                },
+                FilterField::UpdatedAt => CursorSqlField {
+                    column: "hubuumobject.updated_at",
+                    sql_type: CursorSqlType::DateTime,
+                    nullable: false,
+                },
+                FilterField::Revision => CursorSqlField {
+                    column: "hubuumobject.revision",
+                    sql_type: CursorSqlType::BigInt,
+                    nullable: false,
+                },
+                ref other => {
+                    return Err(PostgresStorageError::bad_request(format!(
+                        "Field '{other}' is not orderable for objects"
+                    )));
+                }
+            })
+        })
+        .collect()
 }
 
 fn class_query<'query>(

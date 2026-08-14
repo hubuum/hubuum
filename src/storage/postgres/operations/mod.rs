@@ -1,7 +1,6 @@
 pub mod active_tokens;
 pub(crate) mod authorization;
 pub mod authz;
-pub(crate) mod catalog;
 pub mod class;
 pub mod collection;
 pub mod computed_field;
