@@ -261,9 +261,9 @@ impl IdentityStorage for PostgresStorage {
 #[async_trait]
 impl UserStorage for PostgresStorage {
     async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError> {
-        operations::identity_operations::load_user(&self.pool, id)
+        hubuum_storage_postgres::operations::user::load_user(self.runtime(), id)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn load_user_by_name(
@@ -271,57 +271,61 @@ impl UserStorage for PostgresStorage {
         identity_scope: String,
         name: String,
     ) -> Result<StorageUser, StorageError> {
-        operations::identity_operations::load_user_by_name(&self.pool, identity_scope, name)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::user::load_user_by_name(
+            self.runtime(),
+            identity_scope,
+            name,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError> {
-        operations::identity_operations::load_user_point(&self.pool, id)
+        hubuum_storage_postgres::operations::user::load_user_point(self.runtime(), id)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn list_users(
         &self,
         query: StorageUserListQuery,
     ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError> {
-        operations::identity_operations::list_users(&self.pool, query)
+        hubuum_storage_postgres::operations::user::list_users(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError> {
-        operations::identity_operations::create_user(&self.pool, request)
+        hubuum_storage_postgres::operations::user::create_user(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError> {
-        operations::identity_operations::update_user(&self.pool, request)
+        hubuum_storage_postgres::operations::user::update_user(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn set_user_password(
         &self,
         request: StorageUserPasswordUpdate,
     ) -> Result<usize, StorageError> {
-        operations::identity_operations::set_user_password(&self.pool, request)
+        hubuum_storage_postgres::operations::user::set_user_password(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError> {
-        operations::identity_operations::delete_user(&self.pool, request)
+        hubuum_storage_postgres::operations::user::delete_user(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
-        operations::identity_operations::anonymize_user(&self.pool, id)
+        hubuum_storage_postgres::operations::user::anonymize_user(self.runtime(), id)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
 

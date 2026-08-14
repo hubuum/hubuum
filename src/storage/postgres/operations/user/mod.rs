@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use diesel::{AsChangeset, ExpressionMethods, JoinOnDsl, QueryDsl, Queryable, Selectable, Table};
 use std::iter::IntoIterator;
@@ -5,23 +6,25 @@ use std::iter::IntoIterator;
 use tracing::debug;
 
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent};
+#[cfg(test)]
+use crate::models::UserWithName;
+#[cfg(test)]
+use crate::models::search::SortParam;
 use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator, SortParam,
+    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
 };
 use crate::models::traits::ExpandCollectionFromMap;
 use crate::models::traits::user::UserCollectionAccessors;
 use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedDirection, ExportIncludeRelatedQuery,
     ExportIncludeRelatedSort, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
-    HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, UpdateUser, User, UserWithName,
+    HubuumObject, HubuumObjectRelation, Permissions, PermissionsList, RelatedObjectGraphRow,
+    RelatedObjectIncludeRow, UpdateUser, User,
 };
-use crate::storage::postgres::operations::event_record::emit_event;
-use crate::storage::postgres::{with_connection, with_transaction};
-use crate::traits::{ClassAccessors, CursorPaginated, CursorValue, GroupAccessors, SelfAccessors};
-
-use crate::{date_search, numeric_search, revision_search, string_search, trace_query};
+use crate::storage::postgres::with_connection;
+use crate::traits::{ClassAccessors, GroupAccessors, SelfAccessors};
+#[cfg(test)]
+use crate::traits::{CursorPaginated, CursorValue};
 
 mod auth;
 mod membership;
@@ -79,9 +82,11 @@ impl<'a> From<&'a UpdateUser> for UpdateUserRow<'a> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct UserWithNameQueryRow(pub(crate) UserWithName);
 
+#[cfg(test)]
 impl CursorPaginated for UserWithNameQueryRow {
     fn supports_sort(field: &FilterField) -> bool {
         UserWithName::supports_sort(field)
@@ -100,6 +105,7 @@ impl CursorPaginated for UserWithNameQueryRow {
     }
 }
 
+#[cfg(test)]
 impl CursorSqlMapping for UserWithNameQueryRow {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {

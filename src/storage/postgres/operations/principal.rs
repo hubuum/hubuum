@@ -1,10 +1,9 @@
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{NewPrincipal, Principal, ServiceAccountPointResponse, UserPointResponse};
+use crate::models::{NewPrincipal, Principal, ServiceAccountPointResponse};
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::service_account::ServiceAccountRow;
-use crate::storage::postgres::operations::user::UserRow;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection};
 use crate::traits::{CursorPaginated, CursorValue};
@@ -167,39 +166,6 @@ pub(crate) async fn lock_principal_revision_conn(
     )
     .await?;
     Ok(owner_revision)
-}
-
-/// Load the user point body and its validator revision in one SQL statement.
-pub(crate) async fn load_user_point_response(
-    pool: &crate::storage::postgres::PostgresPool,
-    user_id_value: i32,
-) -> Result<UserPointResponse, ApiError> {
-    use crate::schema::{principals, users};
-
-    let (user, identity_scope_id, name, provider_managed, revision) =
-        with_connection(pool, async |conn| {
-            users::table
-                .inner_join(principals::table.on(principals::id.eq(users::id)))
-                .filter(users::id.eq(user_id_value))
-                .select((
-                    UserRow::as_select(),
-                    principals::identity_scope_id,
-                    principals::name,
-                    principals::provider_managed,
-                    principals::revision,
-                ))
-                .first::<(UserRow, i32, String, bool, PostgresRevision)>(conn)
-                .await
-        })
-        .await?;
-
-    Ok(UserPointResponse::from_parts(
-        user.into(),
-        identity_scope_id,
-        name,
-        provider_managed,
-        revision.into_domain(),
-    ))
 }
 
 /// Load the service-account point body and revision in one SQL statement.

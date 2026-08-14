@@ -1,0 +1,660 @@
+//! PostgreSQL implementation of the human-user storage contract.
+
+use chrono::NaiveDateTime;
+use diesel::prelude::{ExpressionMethods, QueryDsl};
+use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
+use diesel_async::RunQueryDsl;
+use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_query::FilterField;
+use hubuum_storage_core::{
+    StorageIdentityPage, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+};
+use serde_json::{Value, json};
+
+use crate::cursor::{CursorSqlField, CursorSqlType};
+use crate::operations::event_record::append_event;
+use crate::revision::RevisionOwner;
+use crate::runtime::assert_locked_revision_precondition;
+use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
+
+const ANONYMIZED_PASSWORD: &str = "!anonymized-no-login";
+const HUMAN_PRINCIPAL_KIND: &str = "human";
+const LOCAL_IDENTITY_SCOPE: &str = "local";
+
+macro_rules! apply_user_filters {
+    ($query:ident, $options:expr) => {
+        for parameter in &$options.filters {
+            match parameter.field {
+                FilterField::Id => {
+                    crate::postgres_integer_filter!($query, parameter, crate::schema::users::id)
+                }
+                FilterField::Name | FilterField::Username => crate::postgres_string_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::principals::name
+                ),
+                FilterField::IdentityScope => crate::postgres_string_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::identity_scopes::name
+                ),
+                FilterField::ProperName => crate::postgres_string_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::users::proper_name
+                ),
+                FilterField::Email => {
+                    crate::postgres_string_filter!($query, parameter, crate::schema::users::email)
+                }
+                FilterField::CreatedAt => crate::postgres_datetime_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::users::created_at
+                ),
+                FilterField::UpdatedAt => crate::postgres_datetime_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::users::updated_at
+                ),
+                FilterField::Revision => crate::postgres_revision_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::principals::revision
+                ),
+                _ => {
+                    return Err(PostgresStorageError::bad_request(format!(
+                        "Field '{}' isn't searchable (or does not exist) for users",
+                        parameter.field
+                    )));
+                }
+            }
+        }
+    };
+}
+
+#[derive(Clone, Queryable, Selectable)]
+#[diesel(table_name = crate::schema::users)]
+struct UserRow {
+    id: i32,
+    #[diesel(column_name = kind)]
+    _kind: String,
+    password: Option<String>,
+    proper_name: Option<String>,
+    email: Option<String>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+    anonymized_at: Option<NaiveDateTime>,
+}
+
+impl UserRow {
+    fn into_storage(self) -> StorageUser {
+        StorageUser::new(
+            self.id,
+            self.password,
+            self.proper_name,
+            self.email,
+            self.created_at,
+            self.updated_at,
+            self.anonymized_at,
+        )
+    }
+
+    fn snapshot(&self, name: &str, revision: PostgresRevision) -> Value {
+        json!({
+            "id": self.id,
+            "name": name,
+            "proper_name": self.proper_name,
+            "email": self.email,
+            "revision": revision,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        })
+    }
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = crate::schema::users)]
+struct UpdateUserRow<'value> {
+    password: Option<&'value String>,
+    proper_name: Option<&'value String>,
+    email: Option<&'value String>,
+}
+
+pub async fn load_user(
+    runtime: &PostgresRuntime,
+    user_id: i32,
+) -> Result<StorageUser, PostgresStorageError> {
+    validate_positive_id(user_id, "user id")?;
+    runtime
+        .with_connection(async |connection| {
+            load_user_row(connection, user_id)
+                .await
+                .map(UserRow::into_storage)
+        })
+        .await
+}
+
+pub async fn load_user_by_name(
+    runtime: &PostgresRuntime,
+    identity_scope: String,
+    name: String,
+) -> Result<StorageUser, PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            crate::schema::users::table
+                .inner_join(
+                    crate::schema::principals::table
+                        .on(crate::schema::users::id.eq(crate::schema::principals::id)),
+                )
+                .inner_join(
+                    crate::schema::identity_scopes::table
+                        .on(crate::schema::principals::identity_scope_id
+                            .eq(crate::schema::identity_scopes::id)),
+                )
+                .filter(crate::schema::principals::name.eq(name))
+                .filter(crate::schema::identity_scopes::name.eq(identity_scope))
+                .select(UserRow::as_select())
+                .first::<UserRow>(connection)
+                .await
+                .map(UserRow::into_storage)
+        })
+        .await
+}
+
+pub async fn load_user_point(
+    runtime: &PostgresRuntime,
+    user_id: i32,
+) -> Result<StorageUserPoint, PostgresStorageError> {
+    validate_positive_id(user_id, "user id")?;
+    runtime
+        .with_connection(async |connection| {
+            let (user, identity_scope_id, provider_managed, name, revision) =
+                crate::schema::users::table
+                    .inner_join(
+                        crate::schema::principals::table
+                            .on(crate::schema::principals::id.eq(crate::schema::users::id)),
+                    )
+                    .filter(crate::schema::users::id.eq(user_id))
+                    .select((
+                        UserRow::as_select(),
+                        crate::schema::principals::identity_scope_id,
+                        crate::schema::principals::provider_managed,
+                        crate::schema::principals::name,
+                        crate::schema::principals::revision,
+                    ))
+                    .first::<(UserRow, i32, bool, String, PostgresRevision)>(connection)
+                    .await?;
+            Ok::<_, PostgresStorageError>(
+                StorageUserPoint::builder(
+                    user.id,
+                    user.created_at,
+                    user.updated_at,
+                    identity_scope_id,
+                    name,
+                    revision.get(),
+                )
+                .proper_name(user.proper_name)
+                .email(user.email)
+                .provider_managed(provider_managed)
+                .build(),
+            )
+        })
+        .await
+}
+
+pub async fn list_users(
+    runtime: &PostgresRuntime,
+    query: StorageUserListQuery,
+) -> Result<StorageIdentityPage<StorageUserListItem>, PostgresStorageError> {
+    let options = query.into_options();
+    runtime
+        .with_read_only_snapshot(async move |connection| {
+            let build_query = || -> Result<_, PostgresStorageError> {
+                let mut records = crate::schema::users::table
+                    .inner_join(
+                        crate::schema::principals::table
+                            .on(crate::schema::users::id.eq(crate::schema::principals::id)),
+                    )
+                    .inner_join(
+                        crate::schema::identity_scopes::table
+                            .on(crate::schema::principals::identity_scope_id
+                                .eq(crate::schema::identity_scopes::id)),
+                    )
+                    .into_boxed();
+                apply_user_filters!(records, options);
+                Ok(records)
+            };
+            let total = if options.include_total {
+                Some(build_query()?.count().get_result::<i64>(connection).await?)
+            } else {
+                None
+            };
+            let mut records = build_query()?;
+            let fields = options
+                .sort
+                .iter()
+                .map(|sort| user_cursor_field(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::apply_query_options_with_fields!(records, options, fields);
+            let rows = records
+                .select((
+                    UserRow::as_select(),
+                    crate::schema::identity_scopes::name,
+                    crate::schema::identity_scopes::provider_kind,
+                    crate::schema::principals::name,
+                    crate::schema::principals::provider_managed,
+                    crate::schema::principals::last_sync_attempted_at,
+                    crate::schema::principals::last_sync_success_at,
+                    crate::schema::principals::revision,
+                ))
+                .distinct()
+                .load::<(
+                    UserRow,
+                    String,
+                    String,
+                    String,
+                    bool,
+                    Option<NaiveDateTime>,
+                    Option<NaiveDateTime>,
+                    PostgresRevision,
+                )>(connection)
+                .await?;
+            let items = rows
+                .into_iter()
+                .map(
+                    |(user, scope, provider, name, managed, attempted, succeeded, revision)| {
+                        StorageUserListItem::builder(
+                            user.into_storage(),
+                            scope,
+                            provider,
+                            name,
+                            revision.get(),
+                        )
+                        .provider_managed(managed)
+                        .last_sync_attempted_at(attempted)
+                        .last_sync_success_at(succeeded)
+                        .build()
+                    },
+                )
+                .collect();
+            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(items, total))
+        })
+        .await
+}
+
+pub async fn create_user(
+    runtime: &PostgresRuntime,
+    request: StorageUserCreate,
+) -> Result<StorageUser, PostgresStorageError> {
+    let (identity_scope, name, password, proper_name, email, context) = request.into_parts();
+    let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
+    if identity_scope != LOCAL_IDENTITY_SCOPE {
+        return Err(PostgresStorageError::bad_request(
+            "users in non-local identity scopes are managed by their identity provider",
+        ));
+    }
+    runtime
+        .with_transaction(async move |connection| {
+            let scope_id = local_identity_scope_id(connection).await?;
+            let principal_id = diesel::insert_into(crate::schema::principals::table)
+                .values((
+                    crate::schema::principals::identity_scope_id.eq(scope_id),
+                    crate::schema::principals::kind.eq(HUMAN_PRINCIPAL_KIND),
+                    crate::schema::principals::name.eq(&name),
+                ))
+                .returning(crate::schema::principals::id)
+                .get_result::<i32>(connection)
+                .await?;
+            let user = diesel::insert_into(crate::schema::users::table)
+                .values((
+                    crate::schema::users::id.eq(principal_id),
+                    crate::schema::users::password.eq(Some(password)),
+                    crate::schema::users::proper_name.eq(proper_name),
+                    crate::schema::users::email.eq(email),
+                ))
+                .get_result::<UserRow>(connection)
+                .await?;
+            if let Some(context) = context.as_ref() {
+                let revision = principal_revision(connection, principal_id).await?;
+                let event = user_event(
+                    &user,
+                    &name,
+                    Action::Created,
+                    context,
+                    format!("User '{name}' created"),
+                )?
+                .with_after(user.snapshot(&name, revision));
+                append_event(connection, &event).await?;
+            }
+            Ok::<_, PostgresStorageError>(user.into_storage())
+        })
+        .await
+}
+
+pub async fn update_user(
+    runtime: &PostgresRuntime,
+    request: StorageUserUpdate,
+) -> Result<StorageUser, PostgresStorageError> {
+    let (user_id, password, proper_name, email, context) = request.into_parts();
+    validate_positive_id(user_id, "user id")?;
+    runtime
+        .with_transaction(async move |connection| {
+            let before_revision = lock_principal_revision(connection, user_id).await?;
+            ensure_user_allows_local_write(connection, user_id).await?;
+            let before = load_user_row(connection, user_id).await?;
+            let name = principal_name(connection, user_id).await?;
+            if password
+                .as_ref()
+                .is_none_or(|value| Some(value) == before.password.as_ref())
+                && proper_name
+                    .as_ref()
+                    .is_none_or(|value| Some(value) == before.proper_name.as_ref())
+                && email
+                    .as_ref()
+                    .is_none_or(|value| Some(value) == before.email.as_ref())
+            {
+                return Ok(before.into_storage());
+            }
+            let password_changed = password.is_some();
+            let changes = UpdateUserRow {
+                password: password.as_ref(),
+                proper_name: proper_name.as_ref(),
+                email: email.as_ref(),
+            };
+            let after = diesel::update(
+                crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)),
+            )
+            .set(changes)
+            .get_result::<UserRow>(connection)
+            .await?;
+            if password_changed {
+                revoke_all_tokens(connection, user_id).await?;
+            }
+            if let Some(context) = context.as_ref() {
+                let after_revision = principal_revision(connection, user_id).await?;
+                let event = user_event(
+                    &after,
+                    &name,
+                    Action::Updated,
+                    context,
+                    format!("User '{name}' updated"),
+                )?
+                .with_before(before.snapshot(&name, before_revision))
+                .with_after(after.snapshot(&name, after_revision))
+                .with_metadata(json!({ "password_changed": password_changed }));
+                append_event(connection, &event).await?;
+            }
+            Ok::<_, PostgresStorageError>(after.into_storage())
+        })
+        .await
+}
+
+pub async fn set_user_password(
+    runtime: &PostgresRuntime,
+    request: StorageUserPasswordUpdate,
+) -> Result<usize, PostgresStorageError> {
+    let (user_id, password_hash) = request.into_parts();
+    validate_positive_id(user_id, "user id")?;
+    runtime
+        .with_transaction(async move |connection| {
+            ensure_user_allows_local_write(connection, user_id).await?;
+            diesel::update(
+                crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)),
+            )
+            .set(crate::schema::users::password.eq(Some(password_hash)))
+            .execute(connection)
+            .await?;
+            revoke_all_tokens(connection, user_id).await
+        })
+        .await
+}
+
+pub async fn delete_user(
+    runtime: &PostgresRuntime,
+    request: StorageUserDelete,
+) -> Result<usize, PostgresStorageError> {
+    let (user_id, context) = request.into_parts();
+    validate_positive_id(user_id, "user id")?;
+    runtime
+        .with_transaction(async move |connection| {
+            let before_revision = lock_principal_revision(connection, user_id).await?;
+            ensure_user_allows_local_write(connection, user_id).await?;
+            let (user, name) = load_user_with_name(connection, user_id).await?;
+            let deleted = diesel::delete(
+                crate::schema::principals::table.filter(crate::schema::principals::id.eq(user_id)),
+            )
+            .execute(connection)
+            .await?;
+            if let Some(context) = context.as_ref() {
+                let event = user_event(
+                    &user,
+                    &name,
+                    Action::Deleted,
+                    context,
+                    format!("User '{name}' deleted"),
+                )?
+                .with_before(user.snapshot(&name, before_revision));
+                append_event(connection, &event).await?;
+            }
+            Ok::<_, PostgresStorageError>(deleted)
+        })
+        .await
+}
+
+pub async fn anonymize_user(
+    runtime: &PostgresRuntime,
+    user_id: i32,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(user_id, "user id")?;
+    runtime
+        .with_transaction(async move |connection| {
+            lock_principal_revision(connection, user_id).await?;
+            ensure_user_allows_local_write(connection, user_id).await?;
+            diesel::delete(
+                crate::schema::computed_field_definitions::table
+                    .filter(
+                        crate::schema::computed_field_definitions::owner_user_id.eq(Some(user_id)),
+                    )
+                    .filter(crate::schema::computed_field_definitions::visibility.eq("personal")),
+            )
+            .execute(connection)
+            .await?;
+            let updated = diesel::update(
+                crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)),
+            )
+            .set((
+                crate::schema::users::proper_name.eq::<Option<String>>(None),
+                crate::schema::users::email.eq::<Option<String>>(None),
+                crate::schema::users::password.eq(Some(ANONYMIZED_PASSWORD)),
+                crate::schema::users::anonymized_at.eq(diesel::dsl::now),
+            ))
+            .execute(connection)
+            .await?;
+            if updated == 0 {
+                return Err(PostgresStorageError::not_found(format!(
+                    "User {user_id} not found"
+                )));
+            }
+            diesel::update(
+                crate::schema::principals::table.filter(crate::schema::principals::id.eq(user_id)),
+            )
+            .set(crate::schema::principals::name.eq(format!("anonymized-{user_id}")))
+            .execute(connection)
+            .await?;
+            revoke_all_tokens(connection, user_id).await?;
+            Ok::<_, PostgresStorageError>(())
+        })
+        .await
+}
+
+async fn load_user_row(
+    connection: &mut PostgresConnection,
+    user_id: i32,
+) -> Result<UserRow, diesel::result::Error> {
+    crate::schema::users::table
+        .filter(crate::schema::users::id.eq(user_id))
+        .select(UserRow::as_select())
+        .first(connection)
+        .await
+}
+
+async fn load_user_with_name(
+    connection: &mut PostgresConnection,
+    user_id: i32,
+) -> Result<(UserRow, String), diesel::result::Error> {
+    crate::schema::users::table
+        .inner_join(
+            crate::schema::principals::table
+                .on(crate::schema::users::id.eq(crate::schema::principals::id)),
+        )
+        .filter(crate::schema::users::id.eq(user_id))
+        .select((UserRow::as_select(), crate::schema::principals::name))
+        .first(connection)
+        .await
+}
+
+async fn local_identity_scope_id(
+    connection: &mut PostgresConnection,
+) -> Result<i32, diesel::result::Error> {
+    crate::schema::identity_scopes::table
+        .filter(crate::schema::identity_scopes::name.eq(LOCAL_IDENTITY_SCOPE))
+        .select(crate::schema::identity_scopes::id)
+        .first(connection)
+        .await
+}
+
+async fn principal_name(
+    connection: &mut PostgresConnection,
+    principal_id: i32,
+) -> Result<String, diesel::result::Error> {
+    crate::schema::principals::table
+        .filter(crate::schema::principals::id.eq(principal_id))
+        .select(crate::schema::principals::name)
+        .first(connection)
+        .await
+}
+
+async fn principal_revision(
+    connection: &mut PostgresConnection,
+    principal_id: i32,
+) -> Result<PostgresRevision, diesel::result::Error> {
+    crate::schema::principals::table
+        .filter(crate::schema::principals::id.eq(principal_id))
+        .select(crate::schema::principals::revision)
+        .first(connection)
+        .await
+}
+
+async fn lock_principal_revision(
+    connection: &mut PostgresConnection,
+    principal_id: i32,
+) -> Result<PostgresRevision, PostgresStorageError> {
+    let revision = crate::schema::principals::table
+        .filter(crate::schema::principals::id.eq(principal_id))
+        .select(crate::schema::principals::revision)
+        .for_update()
+        .first::<PostgresRevision>(connection)
+        .await?;
+    assert_locked_revision_precondition(
+        connection,
+        &RevisionOwner::Principal.key(principal_id),
+        revision,
+    )
+    .await?;
+    Ok(revision)
+}
+
+async fn ensure_user_allows_local_write(
+    connection: &mut PostgresConnection,
+    principal_id: i32,
+) -> Result<(), PostgresStorageError> {
+    let provider_managed = crate::schema::principals::table
+        .filter(crate::schema::principals::id.eq(principal_id))
+        .select(crate::schema::principals::provider_managed)
+        .first::<bool>(connection)
+        .await?;
+    if provider_managed {
+        Err(PostgresStorageError::forbidden(
+            "Provider-managed users are read-only in Hubuum",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+async fn revoke_all_tokens(
+    connection: &mut PostgresConnection,
+    principal_id: i32,
+) -> Result<usize, PostgresStorageError> {
+    diesel::update(
+        crate::schema::tokens::table
+            .filter(crate::schema::tokens::principal_id.eq(principal_id))
+            .filter(crate::schema::tokens::revoked_at.is_null()),
+    )
+    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+    .execute(connection)
+    .await
+    .map_err(PostgresStorageError::from)
+}
+
+fn user_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStorageError> {
+    Ok(match field {
+        FilterField::Id => cursor_field("users.id", CursorSqlType::Integer, false),
+        FilterField::Name | FilterField::Username => {
+            cursor_field("principals.name", CursorSqlType::String, false)
+        }
+        FilterField::IdentityScope => {
+            cursor_field("identity_scopes.name", CursorSqlType::String, false)
+        }
+        FilterField::ProperName => cursor_field("users.proper_name", CursorSqlType::String, true),
+        FilterField::Email => cursor_field("users.email", CursorSqlType::String, true),
+        FilterField::CreatedAt => cursor_field("users.created_at", CursorSqlType::DateTime, false),
+        FilterField::UpdatedAt => cursor_field("users.updated_at", CursorSqlType::DateTime, false),
+        FilterField::Revision => cursor_field("principals.revision", CursorSqlType::BigInt, false),
+        _ => {
+            return Err(PostgresStorageError::bad_request(format!(
+                "Field '{field}' is not orderable for users"
+            )));
+        }
+    })
+}
+
+const fn cursor_field(
+    column: &'static str,
+    sql_type: CursorSqlType,
+    nullable: bool,
+) -> CursorSqlField {
+    CursorSqlField {
+        column,
+        sql_type,
+        nullable,
+    }
+}
+
+fn user_event(
+    user: &UserRow,
+    name: &str,
+    action: Action,
+    context: &EventContext,
+    summary: String,
+) -> Result<NewEvent, PostgresStorageError> {
+    NewEvent::new(EntityType::User, action, context.actor_kind(), summary)
+        .map_err(|error| PostgresStorageError::database(error.to_string()))
+        .map(|event| {
+            event
+                .with_context(context)
+                .with_entity_id(user.id)
+                .with_entity_name(name.to_string())
+        })
+}
+
+fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError> {
+    if id > 0 {
+        Ok(())
+    } else {
+        Err(PostgresStorageError::bad_request(format!(
+            "{field} must be greater than zero"
+        )))
+    }
+}

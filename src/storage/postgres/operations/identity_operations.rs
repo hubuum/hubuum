@@ -6,16 +6,15 @@ use hubuum_storage_core::{
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
     StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenRenew,
-    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    StorageTokenRevoke,
 };
 
 use crate::errors::ApiError;
 use crate::models::{
-    CollectionID, GroupID, HubuumClassID, HubuumObjectID, NewServiceAccount, NewUser, Permissions,
+    CollectionID, GroupID, HubuumClassID, HubuumObjectID, NewServiceAccount, Permissions,
     PrincipalID, PrincipalTokenCreateParts, PrincipalTokenMetadata, ServiceAccount,
     ServiceAccountID, ServiceAccountWithName, TokenIssuancePolicy, TokenListState,
-    TokenResourceScope, TokenScope, UpdateServiceAccount, UpdateUser, User, UserWithName,
+    TokenResourceScope, TokenScope, UpdateServiceAccount,
 };
 use crate::pagination::count_query_options;
 use crate::storage::postgres::PostgresPool;
@@ -23,34 +22,6 @@ use crate::storage::postgres::operations::service_account::{
     DisableServiceAccount, SaveServiceAccount,
     delete_service_account as delete_service_account_record, update_service_account_record,
 };
-use crate::storage::postgres::operations::user::{CreateUserRecord, UpdateUserRecord};
-
-fn storage_user(user: User) -> StorageUser {
-    StorageUser::new(
-        user.id,
-        user.password,
-        user.proper_name,
-        user.email,
-        user.created_at,
-        user.updated_at,
-        user.anonymized_at,
-    )
-}
-
-fn storage_user_list_item(item: UserWithName) -> StorageUserListItem {
-    StorageUserListItem::builder(
-        storage_user(item.user),
-        item.identity_scope,
-        item.provider_kind,
-        item.name,
-        item.revision.get(),
-    )
-    .provider_managed(item.provider_managed)
-    .last_sync_attempted_at(item.last_sync_attempted_at)
-    .last_sync_success_at(item.last_sync_success_at)
-    .build()
-}
-
 fn storage_service_account(account: ServiceAccount) -> StorageServiceAccount {
     StorageServiceAccount::new(
         account.id,
@@ -352,110 +323,6 @@ pub(crate) async fn sync_external_user(
         user.updated_at,
         user.anonymized_at,
     ))
-}
-
-pub(crate) async fn load_user(pool: &PostgresPool, id: i32) -> Result<StorageUser, ApiError> {
-    super::user::load_user_record(pool, id)
-        .await
-        .map(storage_user)
-}
-
-pub(crate) async fn load_user_by_name(
-    pool: &PostgresPool,
-    identity_scope: String,
-    name: String,
-) -> Result<StorageUser, ApiError> {
-    super::user::load_user_by_name_record(pool, &identity_scope, &name)
-        .await
-        .map(storage_user)
-}
-
-pub(crate) async fn load_user_point(
-    pool: &PostgresPool,
-    id: i32,
-) -> Result<StorageUserPoint, ApiError> {
-    let point = super::principal::load_user_point_response(pool, id).await?;
-    Ok(StorageUserPoint::builder(
-        point.id,
-        point.created_at,
-        point.updated_at,
-        point.identity_scope_id,
-        point.name,
-        point.revision.get(),
-    )
-    .proper_name(point.proper_name)
-    .email(point.email)
-    .provider_managed(point.provider_managed)
-    .build())
-}
-
-pub(crate) async fn list_users(
-    pool: &PostgresPool,
-    query: StorageUserListQuery,
-) -> Result<StorageIdentityPage<StorageUserListItem>, ApiError> {
-    let options = query.into_options();
-    let total = if options.include_total {
-        Some(User::count_user_search_records(pool, count_query_options(&options)).await?)
-    } else {
-        None
-    };
-    let rows = User::search_user_records(pool, options).await?;
-    Ok(StorageIdentityPage::new(
-        rows.into_iter().map(storage_user_list_item).collect(),
-        total,
-    ))
-}
-
-pub(crate) async fn create_user(
-    pool: &PostgresPool,
-    request: StorageUserCreate,
-) -> Result<StorageUser, ApiError> {
-    let (identity_scope, name, password, proper_name, email, context) = request.into_parts();
-    NewUser {
-        identity_scope,
-        name,
-        password,
-        proper_name,
-        email,
-    }
-    .create_user_record(pool, context.as_ref())
-    .await
-    .map(storage_user)
-}
-
-pub(crate) async fn update_user(
-    pool: &PostgresPool,
-    request: StorageUserUpdate,
-) -> Result<StorageUser, ApiError> {
-    let (id, password, proper_name, email, context) = request.into_parts();
-    UpdateUser {
-        password,
-        proper_name,
-        email,
-    }
-    .update_user_record(id, pool, context.as_ref())
-    .await
-    .map(storage_user)
-}
-
-pub(crate) async fn set_user_password(
-    pool: &PostgresPool,
-    request: StorageUserPasswordUpdate,
-) -> Result<usize, ApiError> {
-    let (id, password_hash) = request.into_parts();
-    super::user::set_user_password_record(pool, PrincipalID::new(id)?, &password_hash).await
-}
-
-pub(crate) async fn delete_user(
-    pool: &PostgresPool,
-    request: StorageUserDelete,
-) -> Result<usize, ApiError> {
-    let (id, context) = request.into_parts();
-    super::user::delete_user_record(pool, id, context.as_ref()).await
-}
-
-pub(crate) async fn anonymize_user(pool: &PostgresPool, id: i32) -> Result<(), ApiError> {
-    super::user::anonymize_user_record(pool, id).await
 }
 
 fn token_policy(
