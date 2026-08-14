@@ -3,8 +3,6 @@ use async_trait::async_trait;
 use crate::storage::{BackupSnapshotStorage, StorageBackupSnapshot, StorageError};
 
 use super::PostgresStorage;
-use super::error::map_postgres_error;
-use super::operations::backup::snapshot_backup_db;
 
 #[async_trait]
 impl BackupSnapshotStorage for PostgresStorage {
@@ -12,11 +10,11 @@ impl BackupSnapshotStorage for PostgresStorage {
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
-        snapshot_backup_db(self.pool(), include_history)
-            .await
-            .map(|(state, history)| {
-                StorageBackupSnapshot::new(state.sections, history.map(|value| value.sections))
-            })
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::backup::snapshot_backup(
+            self.runtime(),
+            include_history,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }

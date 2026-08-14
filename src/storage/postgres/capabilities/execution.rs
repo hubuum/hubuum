@@ -16,7 +16,10 @@ impl ExportQueryStorage for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_export_query_budget_scope(budget, future))
+        Box::pin(runtime::with_export_query_budget_scope(
+            budget,
+            hubuum_storage_postgres::with_query_budget(budget, future),
+        ))
     }
 }
 
@@ -60,7 +63,10 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_mutation_provenance_scope(provenance, future))
+        Box::pin(runtime::with_mutation_provenance_scope(
+            provenance.clone(),
+            hubuum_storage_postgres::with_mutation_provenance(provenance, future),
+        ))
     }
 
     fn run_with_revision_precondition<'a, F, R>(
@@ -73,8 +79,8 @@ impl StorageExecution for PostgresStorage {
         R: 'a,
     {
         Box::pin(runtime::with_revision_precondition_scope(
-            precondition,
-            future,
+            precondition.clone(),
+            hubuum_storage_postgres::with_revision_precondition(precondition, future),
         ))
     }
 }

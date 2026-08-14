@@ -30,5 +30,6 @@ pub use query_capture::{QueryCaptureSnapshot, capture_queries, configure_connect
 pub use revision::PostgresRevision;
 pub use runtime::{
     PostgresRuntime, PostgresTelemetry, REQUIRED_DATABASE_MIGRATION_VERSION, SendAsyncFn,
-    schema_is_ready, with_connection, with_storage_call_site, with_transaction,
+    schema_is_ready, with_connection, with_mutation_provenance, with_query_budget,
+    with_revision_precondition, with_storage_call_site, with_transaction,
 };

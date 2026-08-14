@@ -3,11 +3,10 @@ use utoipa::ToSchema;
 
 use crate::models::ResourceRevision;
 
-pub const LOCAL_IDENTITY_SCOPE: &str = "local";
-pub const LOCAL_PROVIDER_KIND: &str = "local";
-pub const LDAP_PROVIDER_KIND: &str = "ldap";
-pub const MANUAL_MEMBERSHIP_SOURCE: &str = "manual";
-pub const EXTERNAL_MEMBERSHIP_SOURCE: &str = "external";
+pub use hubuum_domain::{
+    EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,
+    MANUAL_MEMBERSHIP_SOURCE,
+};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct IdentityScope {

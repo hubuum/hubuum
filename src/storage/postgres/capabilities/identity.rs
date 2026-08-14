@@ -42,27 +42,30 @@ impl AuthenticationStorage for PostgresStorage {
 #[async_trait]
 impl IdentityStorage for PostgresStorage {
     async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
-        operations::bootstrap::default_admin_bootstrap_required(&self.pool)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::bootstrap::default_admin_bootstrap_required(
+            self.runtime(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn bootstrap_default_admin(
         &self,
         request: StorageDefaultAdminBootstrap,
     ) -> Result<bool, StorageError> {
-        operations::bootstrap::bootstrap_default_admin(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::bootstrap::bootstrap_default_admin(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
     ) -> Result<usize, StorageError> {
-        operations::identity_operations::reset_local_password(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        operations::identity_operations::reset_local_password(self.runtime(), request).await
     }
 
     async fn ensure_identity_scope(

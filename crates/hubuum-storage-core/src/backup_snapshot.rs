@@ -6,6 +6,51 @@ use serde_json::Value;
 
 use crate::StorageError;
 
+/// Current-state sections in Hubuum's versioned full-system backup format.
+pub const BACKUP_STATE_SECTIONS: &[&str] = &[
+    "identity_scopes",
+    "groups",
+    "principals",
+    "users",
+    "service_accounts",
+    "group_memberships",
+    "group_membership_sources",
+    "collections",
+    "collection_authorization_state",
+    "collection_closure",
+    "permissions",
+    "hubuumclass",
+    "computed_field_definitions",
+    "hubuumclass_relation",
+    "hubuumobject",
+    "hubuumobject_relation",
+    "export_templates",
+    "remote_targets",
+    "event_sinks",
+    "event_subscriptions",
+];
+
+/// Temporal history sections in Hubuum's versioned full-system backup format.
+pub const BACKUP_TEMPORAL_HISTORY_SECTIONS: &[&str] = &[
+    "collections_history",
+    "hubuumclass_history",
+    "hubuumclass_relation_history",
+    "hubuumobject_history",
+    "hubuumobject_relation_history",
+    "export_templates_history",
+    "remote_targets_history",
+];
+
+/// Operational history sections in Hubuum's versioned full-system backup format.
+pub const BACKUP_AUXILIARY_HISTORY_SECTIONS: &[&str] = &[
+    "tasks",
+    "import_task_results",
+    "export_task_outputs",
+    "remote_call_results",
+    "events",
+    "event_deliveries",
+];
+
 /// Named logical sections in Hubuum's versioned full-system backup format.
 pub type StorageBackupSections = BTreeMap<String, Vec<Value>>;
 

@@ -50,7 +50,10 @@ pub use authorization::{
     AuthorizationStorage,
 };
 pub use backend::StorageBackend;
-pub use backup_snapshot::{BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot};
+pub use backup_snapshot::{
+    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
+    BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot,
+};
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
 pub use collection_authorization::{
     AuthorizationCollectionGroupsPageQuery, AuthorizationCollectionGroupsQuery,

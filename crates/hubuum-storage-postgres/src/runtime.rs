@@ -7,10 +7,13 @@ use std::time::{Duration, Instant};
 
 use diesel::QueryableByName;
 use diesel_async::{AsyncConnection, RunQueryDsl};
+use hubuum_events_core::MutationProvenance;
+use hubuum_storage_core::{
+    StorageCallSite, StorageErrorKind, StorageQueryBudget, StorageRevisionPrecondition,
+};
 use tracing::{debug, warn};
 
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
-use hubuum_storage_core::{StorageCallSite, StorageErrorKind};
 
 /// Latest migration required by this adapter.
 pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000025";
@@ -127,11 +130,23 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
+        let context = TransactionLocalContext::ambient();
         let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
-        let result = operation(&mut connection)
-            .await
-            .map_err(PostgresStorageError::from);
+        let result = if context.is_empty() {
+            operation(&mut connection)
+                .await
+                .map_err(PostgresStorageError::from)
+        } else {
+            connection
+                .transaction::<R, PostgresStorageError, _>(async move |connection| {
+                    context.apply(connection).await?;
+                    operation(connection)
+                        .await
+                        .map_err(PostgresStorageError::from)
+                })
+                .await
+        };
         self.record_completion("connection", started_at, &result);
         result
     }
@@ -148,10 +163,48 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
+        let context = TransactionLocalContext::ambient();
         let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
         let result = connection
             .transaction::<R, PostgresStorageError, _>(async move |connection| {
+                context.apply(connection).await?;
+                operation(connection)
+                    .await
+                    .map_err(PostgresStorageError::from)
+            })
+            .await;
+        self.record_completion("transaction", started_at, &result);
+        result
+    }
+
+    /// Execute a repeatable-read, read-only snapshot transaction.
+    ///
+    /// PostgreSQL requires the isolation declaration to be the transaction's
+    /// first statement, so ambient mutation and revision settings are
+    /// intentionally not applied to this read-only operation.
+    pub async fn with_read_only_snapshot<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let mut connection = self.acquire_connection().await?;
+        let started_at = Instant::now();
+        let result = connection
+            .transaction::<R, PostgresStorageError, _>(async move |connection| {
+                diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    .execute(connection)
+                    .await?;
                 operation(connection)
                     .await
                     .map_err(PostgresStorageError::from)
@@ -183,6 +236,18 @@ tokio::task_local! {
     static AMBIENT_STORAGE_CALL_SITE: StorageCallSite;
 }
 
+tokio::task_local! {
+    static AMBIENT_QUERY_BUDGET: Option<StorageQueryBudget>;
+}
+
+tokio::task_local! {
+    static AMBIENT_MUTATION_PROVENANCE: Option<MutationProvenance>;
+}
+
+tokio::task_local! {
+    static AMBIENT_REVISION_PRECONDITION: Option<StorageRevisionPrecondition>;
+}
+
 fn ambient_storage_call_site() -> StorageCallSite {
     AMBIENT_STORAGE_CALL_SITE
         .try_with(|call_site| *call_site)
@@ -195,6 +260,125 @@ where
     F: Future,
 {
     AMBIENT_STORAGE_CALL_SITE.scope(call_site, future).await
+}
+
+/// Apply a backend-neutral query budget to adapter work in `future`.
+pub async fn with_query_budget<F>(budget: Option<StorageQueryBudget>, future: F) -> F::Output
+where
+    F: Future,
+{
+    AMBIENT_QUERY_BUDGET.scope(budget, future).await
+}
+
+/// Attribute durable writes performed by adapter work in `future`.
+pub async fn with_mutation_provenance<F>(
+    provenance: Option<MutationProvenance>,
+    future: F,
+) -> F::Output
+where
+    F: Future,
+{
+    AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
+}
+
+/// Apply an optimistic-concurrency assertion to adapter work in `future`.
+pub async fn with_revision_precondition<F>(
+    precondition: Option<StorageRevisionPrecondition>,
+    future: F,
+) -> F::Output
+where
+    F: Future,
+{
+    AMBIENT_REVISION_PRECONDITION
+        .scope(precondition, future)
+        .await
+}
+
+struct TransactionLocalContext {
+    query_budget: Option<StorageQueryBudget>,
+    provenance: Option<MutationProvenance>,
+    revision_precondition: Option<StorageRevisionPrecondition>,
+}
+
+impl TransactionLocalContext {
+    fn ambient() -> Self {
+        Self {
+            query_budget: AMBIENT_QUERY_BUDGET
+                .try_with(|budget| *budget)
+                .unwrap_or(None),
+            provenance: AMBIENT_MUTATION_PROVENANCE
+                .try_with(Clone::clone)
+                .unwrap_or(None),
+            revision_precondition: AMBIENT_REVISION_PRECONDITION
+                .try_with(Clone::clone)
+                .unwrap_or(None),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.query_budget.is_none()
+            && self.provenance.is_none()
+            && self.revision_precondition.is_none()
+    }
+
+    async fn apply(&self, connection: &mut PostgresConnection) -> Result<(), PostgresStorageError> {
+        if let Some(query_budget) = self.query_budget {
+            diesel::sql_query("SELECT set_config('statement_timeout', $1, true)")
+                .bind::<diesel::sql_types::Text, _>(query_budget.as_millis().to_string())
+                .execute(connection)
+                .await?;
+        }
+        if let Some(provenance) = &self.provenance {
+            diesel::sql_query(
+                "SELECT \
+                 set_config('hubuum.actor_kind', $1, true), \
+                 set_config('hubuum.actor_id', $2, true), \
+                 set_config('hubuum.initiator_user_id', $3, true), \
+                 set_config('hubuum.task_id', $4, true)",
+            )
+            .bind::<diesel::sql_types::Text, _>(provenance.actor_kind().as_str())
+            .bind::<diesel::sql_types::Text, _>(
+                provenance
+                    .actor_user_id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+            )
+            .bind::<diesel::sql_types::Text, _>(
+                provenance
+                    .initiator_user_id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+            )
+            .bind::<diesel::sql_types::Text, _>(
+                provenance
+                    .task_id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+            )
+            .execute(connection)
+            .await?;
+        }
+        if let Some(precondition) = &self.revision_precondition {
+            diesel::sql_query(
+                "SELECT \
+                 set_config('hubuum.if_match_owner', $1, true), \
+                 set_config('hubuum.if_match_revisions', $2, true), \
+                 set_config('hubuum.if_match_checked', '', true)",
+            )
+            .bind::<diesel::sql_types::Text, _>(precondition.owner_key())
+            .bind::<diesel::sql_types::Text, _>(
+                precondition
+                    .revisions()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+            .execute(connection)
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(QueryableByName)]

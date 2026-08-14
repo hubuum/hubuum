@@ -6,6 +6,7 @@
 
 mod event_policy;
 mod identifier;
+mod identity;
 mod maintenance;
 mod revision;
 mod token;
@@ -19,6 +20,10 @@ pub use identifier::{
     EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, ObjectId, ObjectRelationId,
     PositiveIdError, PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId,
     UserId,
+};
+pub use identity::{
+    EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,
+    MANUAL_MEMBERSHIP_SOURCE,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};

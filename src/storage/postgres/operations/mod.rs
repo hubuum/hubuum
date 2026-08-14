@@ -1,8 +1,6 @@
 pub mod active_tokens;
 pub(crate) mod authorization;
 pub mod authz;
-pub mod backup;
-pub mod bootstrap;
 pub(crate) mod catalog;
 pub mod class;
 pub mod collection;

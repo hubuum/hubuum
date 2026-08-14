@@ -116,33 +116,6 @@ async fn set_local_password_conn(
     revoke_all_tokens_for_principal_conn(conn, principal_id).await
 }
 
-/// Resolve one local human by name, replace its pre-hashed credential, and
-/// revoke all active bearer tokens in one transaction.
-pub(crate) async fn reset_local_password_record(
-    pool: &crate::storage::postgres::PostgresPool,
-    principal_name: &str,
-    password_hash: &str,
-) -> Result<usize, ApiError> {
-    use crate::schema::{identity_scopes, principals, users};
-
-    let principal_name = principal_name.to_string();
-    let password_hash = password_hash.to_string();
-    with_transaction(pool, async move |conn| -> Result<usize, ApiError> {
-        let principal_id = users::table
-            .inner_join(principals::table.on(users::id.eq(principals::id)))
-            .inner_join(
-                identity_scopes::table.on(principals::identity_scope_id.eq(identity_scopes::id)),
-            )
-            .filter(principals::name.eq(principal_name))
-            .filter(identity_scopes::name.eq(LOCAL_IDENTITY_SCOPE))
-            .select(users::id)
-            .first::<i32>(conn)
-            .await?;
-        set_local_password_conn(conn, PrincipalID::new(principal_id)?, &password_hash).await
-    })
-    .await
-}
-
 pub(crate) async fn set_user_password_record(
     pool: &crate::storage::postgres::PostgresPool,
     principal_id: PrincipalID,

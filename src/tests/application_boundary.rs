@@ -1921,7 +1921,10 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [
         "authentication",
+        "backup",
+        "bootstrap",
         "event_observability",
+        "identity_credentials",
         "identity_scope",
         "inventory",
         "maintenance",

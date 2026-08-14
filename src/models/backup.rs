@@ -13,47 +13,9 @@ use super::principal::Principal;
 
 pub const CURRENT_BACKUP_VERSION: i32 = 4;
 
-pub(crate) const BACKUP_STATE_SECTIONS: &[&str] = &[
-    "identity_scopes",
-    "groups",
-    "principals",
-    "users",
-    "service_accounts",
-    "group_memberships",
-    "group_membership_sources",
-    "collections",
-    "collection_authorization_state",
-    "collection_closure",
-    "permissions",
-    "hubuumclass",
-    "computed_field_definitions",
-    "hubuumclass_relation",
-    "hubuumobject",
-    "hubuumobject_relation",
-    "export_templates",
-    "remote_targets",
-    "event_sinks",
-    "event_subscriptions",
-];
-
-pub(crate) const BACKUP_TEMPORAL_HISTORY_SECTIONS: &[&str] = &[
-    "collections_history",
-    "hubuumclass_history",
-    "hubuumclass_relation_history",
-    "hubuumobject_history",
-    "hubuumobject_relation_history",
-    "export_templates_history",
-    "remote_targets_history",
-];
-
-pub(crate) const BACKUP_AUXILIARY_HISTORY_SECTIONS: &[&str] = &[
-    "tasks",
-    "import_task_results",
-    "export_task_outputs",
-    "remote_call_results",
-    "events",
-    "event_deliveries",
-];
+pub(crate) use hubuum_storage_core::{
+    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
+};
 
 pub(crate) fn backup_history_sections() -> impl Iterator<Item = &'static str> {
     BACKUP_TEMPORAL_HISTORY_SECTIONS

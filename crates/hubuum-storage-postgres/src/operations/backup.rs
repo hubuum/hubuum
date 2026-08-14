@@ -1,16 +1,15 @@
 use std::collections::BTreeMap;
 
+use diesel::QueryableByName;
 use diesel::sql_types::Jsonb;
+use diesel_async::RunQueryDsl;
+use hubuum_storage_core::{
+    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
+    StorageBackupSections, StorageBackupSnapshot,
+};
 use serde_json::Value;
 
-use crate::errors::ApiError;
-use crate::models::backup::{
-    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
-};
-use crate::models::{BackupHistory, BackupState};
-use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::runtime::with_mutation_provenance_scope;
-use crate::storage::postgres::{PostgresConnection, with_transaction};
+use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 #[derive(QueryableByName)]
 struct JsonRows {
@@ -18,15 +17,15 @@ struct JsonRows {
     rows: Value,
 }
 
-fn validate_snapshot_table(table: &str) -> Result<(), ApiError> {
+fn validate_snapshot_table(table: &str) -> Result<(), PostgresStorageError> {
     let known_table = BACKUP_STATE_SECTIONS
         .iter()
         .chain(BACKUP_TEMPORAL_HISTORY_SECTIONS)
         .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
         .any(|known| *known == table);
     if !known_table {
-        return Err(ApiError::InternalServerError(
-            "Refused an unknown backup snapshot table".to_string(),
+        return Err(PostgresStorageError::database(
+            "Refused an unknown backup snapshot table",
         ));
     }
     Ok(())
@@ -42,7 +41,7 @@ enum SnapshotFilter {
 }
 
 impl SnapshotFilter {
-    fn sql(self, table: &str) -> Result<Option<&'static str>, ApiError> {
+    fn sql(self, table: &str) -> Result<Option<&'static str>, PostgresStorageError> {
         match self {
             Self::All => Ok(None),
             Self::TerminalTasks if table == "tasks" => Ok(Some(
@@ -70,8 +69,8 @@ impl SnapshotFilter {
                  (SELECT id FROM tasks WHERE status IN \
                  ('succeeded', 'partially_succeeded', 'failed', 'cancelled')))",
             )),
-            _ => Err(ApiError::InternalServerError(
-                "Refused an invalid backup snapshot filter/table combination".to_string(),
+            _ => Err(PostgresStorageError::database(
+                "Refused an invalid backup snapshot filter/table combination",
             )),
         }
     }
@@ -81,7 +80,7 @@ async fn load_json_rows(
     conn: &mut PostgresConnection,
     table: &str,
     filter: SnapshotFilter,
-) -> Result<Vec<Value>, ApiError> {
+) -> Result<Vec<Value>, PostgresStorageError> {
     validate_snapshot_table(table)?;
     // The only formatted components are a table identifier from the closed
     // list above and a predicate selected from fixed internal variants.
@@ -98,11 +97,13 @@ async fn load_json_rows(
         .await?
         .rows;
     value.as_array().cloned().ok_or_else(|| {
-        ApiError::InternalServerError(format!("Backup query for {table} did not return an array"))
+        PostgresStorageError::database(format!("Backup query for {table} did not return an array"))
     })
 }
 
-async fn snapshot_state(conn: &mut PostgresConnection) -> Result<BackupState, ApiError> {
+async fn snapshot_state(
+    conn: &mut PostgresConnection,
+) -> Result<StorageBackupSections, PostgresStorageError> {
     let mut sections = BTreeMap::new();
     for table in BACKUP_STATE_SECTIONS {
         let mut rows = load_json_rows(conn, table, SnapshotFilter::All).await?;
@@ -115,10 +116,12 @@ async fn snapshot_state(conn: &mut PostgresConnection) -> Result<BackupState, Ap
         }
         sections.insert((*table).to_string(), rows);
     }
-    Ok(BackupState { sections })
+    Ok(sections)
 }
 
-async fn snapshot_history(conn: &mut PostgresConnection) -> Result<BackupHistory, ApiError> {
+async fn snapshot_history(
+    conn: &mut PostgresConnection,
+) -> Result<StorageBackupSections, PostgresStorageError> {
     let mut sections = BTreeMap::new();
     for table in BACKUP_TEMPORAL_HISTORY_SECTIONS {
         sections.insert(
@@ -183,36 +186,24 @@ async fn snapshot_history(conn: &mut PostgresConnection) -> Result<BackupHistory
         "event_deliveries".to_string(),
         load_json_rows(conn, "event_deliveries", SnapshotFilter::TerminalDeliveries).await?,
     );
-    Ok(BackupHistory { sections })
+    Ok(sections)
 }
 
-pub(crate) async fn snapshot_backup_db(
-    pool: &crate::storage::postgres::PostgresPool,
+pub async fn snapshot_backup(
+    runtime: &PostgresRuntime,
     include_history: bool,
-) -> Result<(BackupState, Option<BackupHistory>), ApiError> {
-    // Ambient provenance would issue `set_config` before the snapshot's
-    // isolation declaration. This read-only transaction cannot create history
-    // rows, so temporarily clear provenance to preserve PostgreSQL's
-    // first-statement requirement.
-    with_mutation_provenance_scope(
-        None,
-        with_transaction(pool, async |conn| -> Result<_, ApiError> {
-            // This must be the first statement in the transaction. Every state
-            // and history query below consequently observes one PostgreSQL
-            // snapshot.
-            diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-                .execute(conn)
-                .await?;
+) -> Result<StorageBackupSnapshot, PostgresStorageError> {
+    runtime
+        .with_read_only_snapshot(async |conn| -> Result<_, PostgresStorageError> {
             let state = snapshot_state(conn).await?;
             let history = if include_history {
                 Some(snapshot_history(conn).await?)
             } else {
                 None
             };
-            Ok((state, history))
-        }),
-    )
-    .await
+            Ok(StorageBackupSnapshot::new(state, history))
+        })
+        .await
 }
 
 #[cfg(test)]

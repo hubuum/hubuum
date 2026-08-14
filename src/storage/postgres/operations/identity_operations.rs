@@ -195,15 +195,14 @@ pub(crate) fn token_scope_from_storage(
 }
 
 pub(crate) async fn reset_local_password(
-    pool: &PostgresPool,
+    runtime: &PostgresRuntime,
     request: StorageLocalPasswordReset,
-) -> Result<usize, ApiError> {
-    super::user::reset_local_password_record(
-        pool,
-        request.principal_name(),
-        request.password_hash(),
+) -> Result<usize, StorageError> {
+    hubuum_storage_postgres::operations::identity_credentials::reset_local_password(
+        runtime, request,
     )
     .await
+    .map_err(StorageError::from)
 }
 
 pub(crate) async fn ensure_identity_scope(

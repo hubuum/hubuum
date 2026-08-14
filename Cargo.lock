@@ -2312,6 +2312,7 @@ dependencies = [
  "diesel_migrations",
  "futures-util",
  "hubuum-domain",
+ "hubuum-events-core",
  "hubuum-storage-core",
  "pq-sys",
  "rstest",
