@@ -2325,6 +2325,7 @@ dependencies = [
  "tokio-postgres-rustls",
  "tracing",
  "urlparse",
+ "uuid",
 ]
 
 [[package]]

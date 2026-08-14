@@ -4,6 +4,7 @@
 //! Types in this crate own validation and invariants without depending on
 //! Actix, Diesel, application configuration, or transport-facing errors.
 
+mod event_delivery;
 mod event_policy;
 mod identifier;
 mod identity;
@@ -11,6 +12,7 @@ mod maintenance;
 mod revision;
 mod token;
 
+pub use event_delivery::{EventDeliveryStatus, EventDeliveryStatusParseError};
 pub use event_policy::{
     EventDeliverySettings, EventDeliverySettingsBuilder, EventFanoutSettings, EventPolicyError,
     EventRetentionSettings,

@@ -1923,6 +1923,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "authentication",
         "backup",
         "bootstrap",
+        "event_fanout",
         "event_observability",
         "identity_credentials",
         "identity_scope",
@@ -1946,12 +1947,12 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         }
 
         let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
-        if operation == "maintenance" {
+        if matches!(operation, "event_fanout" | "maintenance") {
             let shim = read_source(&old_path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
             assert!(
-                shim.contains("hubuum_storage_postgres::operations::maintenance"),
-                "the temporary maintenance shim must delegate into the adapter crate"
+                shim.contains(&format!("hubuum_storage_postgres::operations::{operation}")),
+                "the temporary {operation} shim must delegate into the adapter crate"
             );
         } else {
             assert!(

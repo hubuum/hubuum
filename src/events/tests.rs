@@ -737,12 +737,12 @@ async fn event_fanout_reclaims_expired_claims() {
     let claimed = claim_events_for_fanout(&scope.pool, settings)
         .await
         .unwrap();
-    assert!(claimed.iter().any(|claimed| claimed.id == event.id));
+    assert!(claimed.contains(&event.id));
 
     let blocked = claim_events_for_fanout(&scope.pool, settings)
         .await
         .unwrap();
-    assert!(!blocked.iter().any(|claimed| claimed.id == event.id));
+    assert!(!blocked.contains(&event.id));
 
     with_connection(&scope.pool, async |conn| {
         use crate::schema::events::dsl::{events, fanout_locked_until, id};
@@ -760,7 +760,7 @@ async fn event_fanout_reclaims_expired_claims() {
     let reclaimed = claim_events_for_fanout(&scope.pool, settings)
         .await
         .unwrap();
-    assert!(reclaimed.iter().any(|claimed| claimed.id == event.id));
+    assert!(reclaimed.contains(&event.id));
 }
 
 #[actix_web::test]

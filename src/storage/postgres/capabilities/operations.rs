@@ -305,9 +305,12 @@ impl EventFanoutStorage for PostgresStorage {
         &self,
         settings: EventFanoutSettings,
     ) -> Result<usize, StorageError> {
-        operations::event_fanout::process_event_fanout_batch(&self.pool, settings)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_fanout::process_event_fanout_batch(
+            self.runtime(),
+            settings,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

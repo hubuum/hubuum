@@ -34,6 +34,7 @@ tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.14"
 tracing = "0.1"
 urlparse = "0.7"
+uuid = { version = "1", features = ["v4"] }
 pq-sys = { version = "0.7.5", optional = true }
 
 [features]
