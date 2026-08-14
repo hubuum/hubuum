@@ -921,12 +921,12 @@ fn identity_subtype_domain_types_are_free_of_persistence_implementation_details(
             ][..],
         ),
         (
-            "src/storage/postgres/operations/service_account.rs",
+            "crates/hubuum-storage-postgres/src/operations/service_account.rs",
             &[
                 "struct ServiceAccountRow",
                 "struct UpdateServiceAccountRow",
-                "impl From<ServiceAccountRow> for ServiceAccount",
-                "CursorSqlMapping for ServiceAccountWithNameQueryRow",
+                "fn into_storage(self) -> StorageServiceAccount",
+                "fn service_account_cursor_field",
             ][..],
         ),
         (
@@ -2207,6 +2207,51 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
         let method_body = item_body(implementation, "fn", method);
         assert!(
             method_body.contains("hubuum_storage_postgres::operations::identity_principals"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+}
+
+#[test]
+fn service_account_resources_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/service_account.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    for method in [
+        "load_service_account",
+        "load_service_account_point",
+        "list_manageable_service_accounts",
+        "create_service_account",
+        "update_service_account",
+        "disable_service_account",
+        "delete_service_account",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::service_account"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(

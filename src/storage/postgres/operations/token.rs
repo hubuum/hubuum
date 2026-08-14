@@ -8,9 +8,8 @@ use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 
 use crate::errors::ApiError;
+use crate::models::PrincipalToken;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{PrincipalID, PrincipalToken};
-use crate::storage::postgres::PostgresConnection;
 use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Queryable, Selectable, Clone)]
@@ -108,19 +107,4 @@ impl CursorSqlMapping for PrincipalTokenRow {
             }
         })
     }
-}
-
-/// Transitional connection-level delegate used by service-account mutations
-/// until that lifecycle is wholly adapter-owned.
-pub(crate) async fn revoke_all_tokens_for_principal_conn(
-    connection: &mut PostgresConnection,
-    principal_id: PrincipalID,
-) -> Result<usize, ApiError> {
-    hubuum_storage_postgres::operations::token::revoke_all_principal_tokens_on_connection(
-        connection,
-        principal_id.id(),
-    )
-    .await
-    .map_err(hubuum_storage_core::StorageError::from)
-    .map_err(ApiError::from)
 }

@@ -311,7 +311,7 @@ impl IdentityStorage for StorageHandle {
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<StorageServiceAccount, StorageError> {
+    ) -> Result<StorageServiceAccountDisableOutcome, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",

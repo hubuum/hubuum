@@ -704,11 +704,18 @@ pub async fn disable_service_account(
     event_context: &EventContext,
 ) -> Result<ServiceAccount, ApiError> {
     let request = StorageServiceAccountMutation::new(id, event_context.clone());
-    Ok(service_account_from_storage(
-        storage_handle(context)
-            .disable_service_account(request)
-            .await?,
-    ))
+    let (account, cancelled_task_kinds) = storage_handle(context)
+        .disable_service_account(request)
+        .await?
+        .into_parts();
+    for task_kind in cancelled_task_kinds {
+        crate::observability::metrics::task_completed(
+            &task_kind,
+            crate::models::TaskStatus::Cancelled.as_str(),
+            None,
+        );
+    }
+    Ok(service_account_from_storage(account))
 }
 
 pub async fn delete_service_account(

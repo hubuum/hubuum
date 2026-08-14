@@ -232,7 +232,6 @@ pub(crate) struct QueuedTaskCancellation {
     summary: String,
     event_message: String,
     actor: Option<PrincipalID>,
-    emit_event: bool,
 }
 
 impl QueuedTaskCancellation {
@@ -242,7 +241,6 @@ impl QueuedTaskCancellation {
             event_message: summary.clone(),
             summary,
             actor: None,
-            emit_event: true,
         }
     }
 
@@ -253,11 +251,6 @@ impl QueuedTaskCancellation {
 
     pub(crate) fn with_actor(mut self, actor: Option<PrincipalID>) -> Self {
         self.actor = actor;
-        self
-    }
-
-    pub(crate) fn with_event_emission(mut self, emit_event: bool) -> Self {
-        self.emit_event = emit_event;
         self
     }
 }
@@ -301,26 +294,24 @@ pub(crate) async fn cancel_queued_tasks_conn(
     .get_results::<TaskRecord>(conn)
     .await?;
 
-    if cancellation.emit_event {
-        for task in &cancelled {
-            let provenance = if let Some(actor) = cancellation.actor {
-                task.user_provenance(actor)
-            } else {
-                task.system_provenance()
-            };
-            emit_task_lifecycle_event(
-                conn,
-                task,
-                &NewTaskEventRecord {
-                    task_id: task.id,
-                    event_type: TaskStatus::Cancelled.as_str().to_string(),
-                    message: cancellation.event_message.clone(),
-                    data: None,
-                },
-                &provenance,
-            )
-            .await?;
-        }
+    for task in &cancelled {
+        let provenance = if let Some(actor) = cancellation.actor {
+            task.user_provenance(actor)
+        } else {
+            task.system_provenance()
+        };
+        emit_task_lifecycle_event(
+            conn,
+            task,
+            &NewTaskEventRecord {
+                task_id: task.id,
+                event_type: TaskStatus::Cancelled.as_str().to_string(),
+                message: cancellation.event_message.clone(),
+                data: None,
+            },
+            &provenance,
+        )
+        .await?;
     }
 
     Ok(cancelled)

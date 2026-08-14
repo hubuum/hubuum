@@ -123,9 +123,10 @@ pub use identity_operations::{
     StorageGroupListQuery, StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityPage,
     StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset,
     StoragePrincipalGroup, StoragePrincipalGroupListQuery, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
     StorageTokenMetadataBuilder, StorageTokenObservation, StorageTokenObservationError,
 };
 pub use identity_resources::{

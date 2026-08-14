@@ -1000,13 +1000,43 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .await
                 .expect("certified backend should read principal lifecycle")
         );
-        backend
+        let queued_task = backend
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Import,
+                    created.id(),
+                    serde_json::json!({"items": []}),
+                    0,
+                )
+                .idempotency_key(Some(
+                    IdempotencyKey::new(prefix("identity_contract_sa_task"))
+                        .expect("identity contract task key should be valid"),
+                ))
+                .request_hash(Some(prefix("identity_contract_sa_task_hash")))
+                .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+                .build(10),
+            )
+            .await
+            .expect("certified backend should queue service-account work");
+        let (disabled, cancelled_task_kinds) = backend
             .disable_service_account(StorageServiceAccountMutation::new(
                 created.id(),
                 event_context.clone(),
             ))
             .await
-            .expect("certified backend should disable service accounts");
+            .expect("certified backend should disable service accounts")
+            .into_parts();
+        assert!(disabled.is_disabled());
+        assert_eq!(cancelled_task_kinds, vec![StorageTaskKind::Import.as_str()]);
+        let (cancelled_task, _) = backend
+            .get_task_access(queued_task.id())
+            .await
+            .expect("certified backend should expose the cancelled task")
+            .into_parts();
+        assert_eq!(cancelled_task.status(), StorageTaskStatus::Cancelled);
+        assert!(cancelled_task.finished_at().is_some());
+        assert!(cancelled_task.request_payload().is_none());
+        assert!(cancelled_task.request_redacted_at().is_some());
         assert!(
             backend
                 .principal_is_disabled(created.id())

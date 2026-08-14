@@ -1,11 +1,9 @@
-use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{NewPrincipal, Principal, ServiceAccountPointResponse};
+use crate::models::{NewPrincipal, Principal};
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
-use crate::storage::postgres::operations::service_account::ServiceAccountRow;
+use crate::storage::postgres::PostgresConnection;
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{PostgresConnection, with_connection};
 use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Debug, Queryable, Selectable, Clone)]
@@ -132,69 +130,4 @@ impl InsertPrincipalRecord for NewPrincipal<'_> {
             .map(Into::into)
             .map_err(ApiError::from)
     }
-}
-
-pub(crate) async fn principal_revision_conn(
-    conn: &mut PostgresConnection,
-    principal_id_value: i32,
-) -> Result<PostgresRevision, ApiError> {
-    use crate::schema::principals::dsl::{id, principals, revision};
-
-    Ok(principals
-        .filter(id.eq(principal_id_value))
-        .select(revision)
-        .first(conn)
-        .await?)
-}
-
-pub(crate) async fn lock_principal_revision_conn(
-    conn: &mut PostgresConnection,
-    principal_id_value: i32,
-) -> Result<PostgresRevision, ApiError> {
-    use crate::schema::principals::dsl::{id, principals, revision};
-
-    let owner_revision = principals
-        .filter(id.eq(principal_id_value))
-        .select(revision)
-        .for_update()
-        .first(conn)
-        .await?;
-    crate::storage::postgres::assert_locked_revision_precondition(
-        conn,
-        &RevisionOwner::Principal.key(principal_id_value),
-        owner_revision,
-    )
-    .await?;
-    Ok(owner_revision)
-}
-
-/// Load the service-account point body and revision in one SQL statement.
-pub(crate) async fn load_service_account_point_response(
-    pool: &crate::storage::postgres::PostgresPool,
-    service_account_id_value: i32,
-) -> Result<ServiceAccountPointResponse, ApiError> {
-    use crate::schema::{principals, service_accounts};
-
-    let (service_account, identity_scope_id, name, revision) =
-        with_connection(pool, async |conn| {
-            service_accounts::table
-                .inner_join(principals::table.on(principals::id.eq(service_accounts::id)))
-                .filter(service_accounts::id.eq(service_account_id_value))
-                .select((
-                    ServiceAccountRow::as_select(),
-                    principals::identity_scope_id,
-                    principals::name,
-                    principals::revision,
-                ))
-                .first::<(ServiceAccountRow, i32, String, PostgresRevision)>(conn)
-                .await
-        })
-        .await?;
-
-    Ok(ServiceAccountPointResponse::from_parts(
-        service_account.into(),
-        identity_scope_id,
-        name,
-        revision.into_domain(),
-    ))
 }

@@ -174,63 +174,84 @@ impl IdentityStorage for PostgresStorage {
         &self,
         service_account_id: i32,
     ) -> Result<StorageServiceAccount, StorageError> {
-        operations::identity_operations::load_service_account(&self.pool, service_account_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::service_account::load_service_account(
+            self.runtime(),
+            service_account_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_service_account_point(
         &self,
         service_account_id: i32,
     ) -> Result<StorageServiceAccountPoint, StorageError> {
-        operations::identity_operations::load_service_account_point(&self.pool, service_account_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::service_account::load_service_account_point(
+            self.runtime(),
+            service_account_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_manageable_service_accounts(
         &self,
         query: StorageServiceAccountListQuery,
     ) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, StorageError> {
-        operations::identity_operations::list_manageable_service_accounts(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::service_account::list_manageable_service_accounts(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
     ) -> Result<StorageServiceAccount, StorageError> {
-        operations::identity_operations::create_service_account(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::service_account::create_service_account(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
     ) -> Result<StorageServiceAccount, StorageError> {
-        operations::identity_operations::update_service_account(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::service_account::update_service_account(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<StorageServiceAccount, StorageError> {
-        operations::identity_operations::disable_service_account(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+    ) -> Result<StorageServiceAccountDisableOutcome, StorageError> {
+        hubuum_storage_postgres::operations::service_account::disable_service_account(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
     ) -> Result<(), StorageError> {
-        operations::identity_operations::delete_service_account(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::service_account::delete_service_account(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn external_principal_state(

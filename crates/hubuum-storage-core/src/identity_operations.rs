@@ -827,6 +827,33 @@ pub struct StorageServiceAccountPoint {
     revision: i64,
 }
 
+/// Result of atomically disabling one service account.
+///
+/// Backends own credential revocation and queued-work cancellation because
+/// those writes must commit with the account state change. The application
+/// receives only the non-sensitive task kinds needed for backend-neutral
+/// terminal-task metrics.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageServiceAccountDisableOutcome {
+    service_account: StorageServiceAccount,
+    cancelled_task_kinds: Vec<String>,
+}
+
+impl StorageServiceAccountDisableOutcome {
+    #[must_use]
+    pub fn new(service_account: StorageServiceAccount, cancelled_task_kinds: Vec<String>) -> Self {
+        Self {
+            service_account,
+            cancelled_task_kinds,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (StorageServiceAccount, Vec<String>) {
+        (self.service_account, self.cancelled_task_kinds)
+    }
+}
+
 impl StorageServiceAccountPoint {
     #[must_use]
     pub fn new(
@@ -987,6 +1014,17 @@ impl StorageServiceAccountCreate {
     pub const fn event_context(&self) -> &EventContext {
         &self.event_context
     }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, String, i32, Option<i32>, EventContext) {
+        (
+            self.name,
+            self.description,
+            self.owner_group_id,
+            self.created_by,
+            self.event_context,
+        )
+    }
 }
 
 impl fmt::Debug for StorageServiceAccountCreate {
@@ -1045,6 +1083,16 @@ impl StorageServiceAccountUpdate {
     pub const fn event_context(&self) -> &EventContext {
         &self.event_context
     }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, Option<String>, Option<i32>, EventContext) {
+        (
+            self.id,
+            self.description,
+            self.owner_group_id,
+            self.event_context,
+        )
+    }
 }
 
 impl fmt::Debug for StorageServiceAccountUpdate {
@@ -1079,6 +1127,11 @@ impl StorageServiceAccountMutation {
     #[must_use]
     pub const fn event_context(&self) -> &EventContext {
         &self.event_context
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, EventContext) {
+        (self.id, self.event_context)
     }
 }
 
@@ -1581,7 +1634,7 @@ pub trait IdentityStorage: Send + Sync {
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<StorageServiceAccount, StorageError>;
+    ) -> Result<StorageServiceAccountDisableOutcome, StorageError>;
 
     /// Atomically delete an eligible service account and emit the required
     /// lifecycle event, enforcing backend-owned deletion constraints.

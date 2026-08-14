@@ -1,46 +1,14 @@
 use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserProfile};
 use hubuum_storage_core::{
     AuthenticationTokenScope, StorageExternalGroup, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageIdentityPage, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSyncedHuman,
+    StorageExternalUserSync, StorageSyncedHuman,
 };
 
 use crate::errors::ApiError;
 use crate::models::{
-    CollectionID, GroupID, HubuumClassID, HubuumObjectID, NewServiceAccount, Permissions,
-    PrincipalID, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TokenResourceScope,
-    TokenScope, UpdateServiceAccount,
+    CollectionID, HubuumClassID, HubuumObjectID, Permissions, TokenResourceScope, TokenScope,
 };
-use crate::pagination::count_query_options;
 use crate::storage::postgres::PostgresPool;
-use crate::storage::postgres::operations::service_account::{
-    DisableServiceAccount, SaveServiceAccount,
-    delete_service_account as delete_service_account_record, update_service_account_record,
-};
-fn storage_service_account(account: ServiceAccount) -> StorageServiceAccount {
-    StorageServiceAccount::new(
-        account.id,
-        account.description,
-        account.owner_group_id,
-        account.created_by,
-        account.disabled_at,
-        account.created_at,
-        account.updated_at,
-    )
-}
-
-fn storage_service_account_list_item(
-    item: ServiceAccountWithName,
-) -> StorageServiceAccountListItem {
-    StorageServiceAccountListItem::new(
-        storage_service_account(item.service_account),
-        item.identity_scope,
-        item.name,
-        item.revision.get(),
-    )
-}
 
 pub(crate) fn token_scope_from_storage(
     scope: AuthenticationTokenScope,
@@ -74,118 +42,6 @@ pub(crate) fn token_scope_from_storage(
         })
         .transpose()?;
     TokenScope::from_stored_parts(permissions, resources)
-}
-
-pub(crate) async fn load_service_account(
-    pool: &PostgresPool,
-    service_account_id: i32,
-) -> Result<StorageServiceAccount, ApiError> {
-    super::service_account::load_service_account_by_id(pool, service_account_id)
-        .await
-        .map(storage_service_account)
-}
-
-pub(crate) async fn load_service_account_point(
-    pool: &PostgresPool,
-    service_account_id: i32,
-) -> Result<StorageServiceAccountPoint, ApiError> {
-    let point =
-        super::principal::load_service_account_point_response(pool, service_account_id).await?;
-    let account = StorageServiceAccount::new(
-        point.id,
-        point.description,
-        point.owner_group_id,
-        point.created_by,
-        point.disabled_at,
-        point.created_at,
-        point.updated_at,
-    );
-    Ok(StorageServiceAccountPoint::new(
-        account,
-        point.identity_scope_id,
-        point.name,
-        point.revision.get(),
-    ))
-}
-
-pub(crate) async fn list_manageable_service_accounts(
-    pool: &PostgresPool,
-    query: StorageServiceAccountListQuery,
-) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, ApiError> {
-    let (requestor_id, administrator, options) = query.into_parts();
-    let requestor = PrincipalID::new(requestor_id)?;
-    let total = if options.include_total {
-        Some(
-            super::service_account::count_manageable_service_accounts(
-                pool,
-                &requestor,
-                administrator,
-                count_query_options(&options),
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-    let rows = super::service_account::search_manageable_service_accounts(
-        pool,
-        &requestor,
-        administrator,
-        options,
-    )
-    .await?
-    .into_iter()
-    .map(storage_service_account_list_item)
-    .collect();
-    Ok(StorageIdentityPage::new(rows, total))
-}
-
-pub(crate) async fn create_service_account(
-    pool: &PostgresPool,
-    request: StorageServiceAccountCreate,
-) -> Result<StorageServiceAccount, ApiError> {
-    let account = NewServiceAccount {
-        identity_scope: None,
-        name: request.name().to_string(),
-        description: Some(request.description().to_string()),
-        owner_group_id: GroupID::new(request.owner_group_id())?,
-    };
-    let saved = account
-        .save(pool, request.created_by(), request.event_context())
-        .await?;
-    Ok(storage_service_account(saved))
-}
-
-pub(crate) async fn update_service_account(
-    pool: &PostgresPool,
-    request: StorageServiceAccountUpdate,
-) -> Result<StorageServiceAccount, ApiError> {
-    let update = UpdateServiceAccount {
-        description: request.description().map(str::to_string),
-        owner_group_id: request.owner_group_id(),
-    };
-    let id = ServiceAccountID::new(request.id())?;
-    let updated =
-        update_service_account_record(&update, pool, id.id(), Some(request.event_context()))
-            .await?;
-    Ok(storage_service_account(updated))
-}
-
-pub(crate) async fn disable_service_account(
-    pool: &PostgresPool,
-    request: StorageServiceAccountMutation,
-) -> Result<StorageServiceAccount, ApiError> {
-    let id = ServiceAccountID::new(request.id())?;
-    let disabled = id.disable(pool, request.event_context()).await?;
-    Ok(storage_service_account(disabled))
-}
-
-pub(crate) async fn delete_service_account(
-    pool: &PostgresPool,
-    request: StorageServiceAccountMutation,
-) -> Result<(), ApiError> {
-    let id = ServiceAccountID::new(request.id())?;
-    delete_service_account_record(&id, pool, Some(request.event_context())).await
 }
 
 pub(crate) async fn external_principal_state(
