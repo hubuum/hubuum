@@ -38,6 +38,8 @@ pub trait PostgresTelemetry: Send + Sync {
         _error: Option<StorageErrorKind>,
     ) {
     }
+
+    fn computed_evaluation(&self, _scope: &'static str, _error_codes: &[&'static str]) {}
 }
 
 #[derive(Debug, Default)]
@@ -230,6 +232,14 @@ impl PostgresRuntime {
             result.as_ref().err().map(|error| error.kind()),
         );
         log_completion(call_site, operation, duration, result);
+    }
+
+    pub(crate) fn record_computed_evaluation(
+        &self,
+        scope: &'static str,
+        error_codes: &[&'static str],
+    ) {
+        self.telemetry.computed_evaluation(scope, error_codes);
     }
 }
 

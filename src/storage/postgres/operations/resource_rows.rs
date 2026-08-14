@@ -1,15 +1,8 @@
 use crate::errors::ApiError;
-use crate::models::{
-    ClassSelector, Collection, HubuumClass, HubuumClassExpanded, HubuumClassID, HubuumObject,
-    HubuumObjectID, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
-    ResolvedObjectTarget, UpdateHubuumObject,
-};
+use crate::models::{Collection, HubuumClass, HubuumClassExpanded, HubuumObject};
 use crate::storage::{
-    StorageClass, StorageClassRecord, StorageClassSelector, StorageCollection, StorageObject,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectSelector, StorageObjectUpdate,
-    StorageRecordMetadata, StorageResolvedClass, StorageResolvedObject,
+    StorageClass, StorageClassRecord, StorageCollection, StorageObject, StorageRecordMetadata,
 };
-use crate::traits::SelfAccessors;
 use hubuum_storage_postgres::PostgresRevision;
 
 pub(in crate::storage::postgres) fn collection_to_storage(
@@ -91,25 +84,6 @@ pub(in crate::storage::postgres) fn class_record_from_storage(
     })
 }
 
-pub(in crate::storage::postgres) fn class_selector_from_storage(
-    selector: StorageClassSelector,
-) -> Result<ClassSelector, ApiError> {
-    Ok(match selector {
-        StorageClassSelector::Id(id) => ClassSelector::by_id(HubuumClassID::new(id)?),
-        StorageClassSelector::Name(name) => ClassSelector::by_name(name),
-    })
-}
-
-pub(in crate::storage::postgres) fn resolved_class_from_storage(
-    target: &StorageResolvedClass,
-) -> Result<ResolvedClassTarget, ApiError> {
-    let (selector, class) = target.clone().into_parts();
-    Ok(ResolvedClassTarget::new(
-        class_selector_from_storage(selector)?,
-        class_record_from_storage(class)?,
-    ))
-}
-
 pub(in crate::storage::postgres) fn object_to_storage(object: HubuumObject) -> StorageObject {
     StorageObject::new(
         StorageRecordMetadata::new(
@@ -151,94 +125,4 @@ pub(in crate::storage::postgres) fn object_from_storage(
         updated_at,
         revision: PostgresRevision::new(revision)?.into_domain(),
     })
-}
-
-pub(in crate::storage::postgres) fn object_selector_from_storage(
-    selector: StorageObjectSelector,
-) -> Result<ObjectSelector, ApiError> {
-    Ok(match selector {
-        StorageObjectSelector::Ids {
-            class_id,
-            object_id,
-        } => ObjectSelector::by_id(
-            HubuumClassID::new(class_id)?,
-            HubuumObjectID::new(object_id)?,
-        ),
-        StorageObjectSelector::Names {
-            class_name,
-            object_name,
-        } => ObjectSelector::by_name(class_name, object_name),
-    })
-}
-
-pub(in crate::storage::postgres) fn object_selector_to_storage(
-    selector: &ObjectSelector,
-) -> StorageObjectSelector {
-    match selector.kind() {
-        crate::models::ObjectSelectorKind::ById {
-            class_id,
-            object_id,
-        } => StorageObjectSelector::Ids {
-            class_id: class_id.id(),
-            object_id: object_id.id(),
-        },
-        crate::models::ObjectSelectorKind::ByName {
-            class_name,
-            object_name,
-        } => StorageObjectSelector::Names {
-            class_name: class_name.clone(),
-            object_name: object_name.clone(),
-        },
-    }
-}
-
-pub(in crate::storage::postgres) fn resolved_object_from_storage(
-    target: &StorageResolvedObject,
-) -> Result<ResolvedObjectTarget, ApiError> {
-    let (selector, class, object) = target.clone().into_parts();
-    Ok(ResolvedObjectTarget::new(
-        object_selector_from_storage(selector)?,
-        class_record_from_storage(class)?,
-        object_from_storage(object)?,
-    ))
-}
-
-pub(in crate::storage::postgres) fn resolved_object_to_storage(
-    target: ResolvedObjectTarget,
-) -> StorageResolvedObject {
-    StorageResolvedObject::new(
-        object_selector_to_storage(target.selector()),
-        class_record_to_storage(target.class().clone()),
-        object_to_storage(target.object().clone()),
-    )
-}
-
-pub(in crate::storage::postgres) fn object_create_from_storage(
-    command: &StorageObjectCreate,
-) -> NewHubuumObject {
-    NewHubuumObject {
-        name: command.name().to_string(),
-        collection_id: command.collection_id(),
-        hubuum_class_id: command.class_id(),
-        data: command.data().clone(),
-        description: command.description().to_string(),
-    }
-}
-
-pub(in crate::storage::postgres) fn object_update_from_storage(
-    update: &StorageObjectUpdate,
-) -> UpdateHubuumObject {
-    UpdateHubuumObject {
-        name: update.name().map(str::to_string),
-        collection_id: update.collection_id(),
-        hubuum_class_id: update.class_id(),
-        data: update.data().cloned(),
-        description: update.description().map(str::to_string),
-    }
-}
-
-pub(in crate::storage::postgres) fn object_patch_from_storage(
-    patch: &StorageObjectDataPatch,
-) -> Result<ObjectDataPatchDocument, ApiError> {
-    serde_json::from_value(patch.document().clone()).map_err(ApiError::from)
 }

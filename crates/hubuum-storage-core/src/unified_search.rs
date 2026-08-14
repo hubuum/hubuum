@@ -534,6 +534,31 @@ impl UnifiedSearchObject {
     pub const fn class_id(&self) -> i32 {
         self.class_id
     }
+
+    #[must_use]
+    pub const fn data(&self) -> &Value {
+        &self.data
+    }
+
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> i64 {
+        self.revision
+    }
 }
 
 /// Mandatory backend contract for the three ranked unified-search projections.

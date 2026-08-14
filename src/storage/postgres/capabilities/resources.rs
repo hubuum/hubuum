@@ -19,12 +19,6 @@ use crate::storage::postgres::operations::relation_rows::{
     resolved_class_relation_from_storage, resolved_class_relation_to_storage,
     resolved_object_relation_from_storage, resolved_object_relation_to_storage,
 };
-use crate::storage::postgres::operations::resource_rows::{
-    class_record_to_storage, object_create_from_storage, object_patch_from_storage,
-    object_to_storage, object_update_from_storage, resolved_class_from_storage,
-    resolved_object_from_storage, resolved_object_to_storage,
-};
-
 fn effective_grant_to_storage(row: EffectiveGroupPermission) -> AuthorizationEffectiveGroupGrant {
     AuthorizationEffectiveGroupGrant::new(
         authorization_collection_to_storage(row.target_collection),
@@ -804,42 +798,18 @@ impl ObjectRelationStore for PostgresStorage {
 #[async_trait]
 impl ObjectStore for PostgresStorage {
     async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
-        let object_id = HubuumObjectID::new(object_id).map_err(map_postgres_error)?;
-        let object = object_id
-            .load_object_record(&self.pool)
+        hubuum_storage_postgres::operations::object::get_object(self.runtime(), object_id)
             .await
-            .map_err(map_postgres_error)?;
-        let class = HubuumClassID::new(object.hubuum_class_id)
-            .map_err(map_postgres_error)?
-            .load_class_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)?;
-        Ok(StorageResolvedObject::new(
-            StorageObjectSelector::Ids {
-                class_id: class.id,
-                object_id: object.id,
-            },
-            class_record_to_storage(class),
-            object_to_storage(object),
-        ))
+            .map_err(StorageError::from)
     }
 
     async fn resolve_object(
         &self,
         selector: StorageObjectSelector,
     ) -> Result<StorageResolvedObject, StorageError> {
-        let selector =
-            crate::storage::postgres::operations::resource_rows::object_selector_from_storage(
-                selector,
-            )
-            .map_err(map_postgres_error)?;
-        let (class, object) = selector
-            .resolve_object_selector_record(&self.pool)
+        hubuum_storage_postgres::operations::object::resolve_object(self.runtime(), selector)
             .await
-            .map_err(map_postgres_error)?;
-        Ok(resolved_object_to_storage(ResolvedObjectTarget::new(
-            selector, class, object,
-        )))
+            .map_err(StorageError::from)
     }
 
     async fn create_object(
@@ -848,16 +818,14 @@ impl ObjectStore for PostgresStorage {
         command: StorageObjectCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageObject, StorageError> {
-        let class = resolved_class_from_storage(class).map_err(map_postgres_error)?;
-        let command = object_create_from_storage(&command);
-        let result = if let Some(context) = context {
-            command
-                .create_object_in_resolved_class_record(&self.pool, &class, context)
-                .await
-        } else {
-            command.save_object_record(&self.pool, None).await
-        };
-        result.map(object_to_storage).map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::object::create_object(
+            self.runtime(),
+            class,
+            command,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn update_object(
@@ -866,18 +834,14 @@ impl ObjectStore for PostgresStorage {
         changes: StorageObjectUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageObject, StorageError> {
-        let target = resolved_object_from_storage(target).map_err(map_postgres_error)?;
-        let update = object_update_from_storage(&changes);
-        let result = if let Some(context) = context {
-            update
-                .update_resolved_object_record(&self.pool, &target, context)
-                .await
-        } else {
-            update
-                .update_object_record(&self.pool, target.object().id, None)
-                .await
-        };
-        result.map(object_to_storage).map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::object::update_object(
+            self.runtime(),
+            target,
+            changes,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn patch_object_data(
@@ -886,13 +850,14 @@ impl ObjectStore for PostgresStorage {
         patch: StorageObjectDataPatch,
         context: &EventContext,
     ) -> Result<StorageObject, StorageError> {
-        let target = resolved_object_from_storage(target).map_err(map_postgres_error)?;
-        object_patch_from_storage(&patch)
-            .map_err(map_postgres_error)?
-            .patch_object_data_record(&self.pool, &target, context)
-            .await
-            .map(object_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::object::patch_object_data(
+            self.runtime(),
+            target,
+            patch,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_object(
@@ -900,37 +865,27 @@ impl ObjectStore for PostgresStorage {
         target: &StorageResolvedObject,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        let target = resolved_object_from_storage(target).map_err(map_postgres_error)?;
-        if let Some(context) = context {
-            target
-                .delete_resolved_object_record(&self.pool, context)
-                .await
-                .map_err(map_postgres_error)
-        } else {
-            target
-                .object()
-                .delete_object_record(&self.pool, None)
-                .await
-                .map_err(map_postgres_error)
-        }
+        hubuum_storage_postgres::operations::object::delete_object(self.runtime(), target, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
-        crate::services::storage_boundary::object_from_storage(object)
-            .map_err(map_postgres_error)?
-            .validate_object_record(&self.pool)
+        hubuum_storage_postgres::operations::object::validate_object(self.runtime(), object)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn validate_object_create(
         &self,
         command: StorageObjectCreate,
     ) -> Result<(), StorageError> {
-        object_create_from_storage(&command)
-            .validate_object_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::object::validate_object_create_command(
+            self.runtime(),
+            command,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn validate_object_update(
@@ -938,10 +893,12 @@ impl ObjectStore for PostgresStorage {
         object_id: i32,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
-        let update = object_update_from_storage(&changes);
-        (&update, object_id)
-            .validate_object_record(&self.pool)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::object::validate_object_update_command(
+            self.runtime(),
+            object_id,
+            changes,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }

@@ -525,7 +525,7 @@ pub(crate) fn object_update_to_storage(update: UpdateHubuumObject) -> StorageObj
 pub(crate) fn object_patch_to_storage(
     patch: ObjectDataPatchDocument,
 ) -> Result<StorageObjectDataPatch, ApiError> {
-    Ok(StorageObjectDataPatch::new(serde_json::to_value(patch)?))
+    Ok(StorageObjectDataPatch::new(patch.into_bounded_patch()))
 }
 
 pub(crate) fn class_relation_to_storage(relation: HubuumClassRelation) -> StorageClassRelation {

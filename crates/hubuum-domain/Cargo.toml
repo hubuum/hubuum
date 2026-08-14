@@ -13,7 +13,9 @@ rust-api = "experimental-public"
 policy-document = "docs/rust_api/hubuum-domain.md"
 
 [dependencies]
+bigdecimal = "0.4"
 chrono = "0.4"
+json-patch = { version = "4.2", default-features = false }
 jsonschema = { version = "0.49", default-features = false }
 lru = "0.18.0"
 serde = { version = "1", features = ["derive"] }

@@ -37,12 +37,10 @@ use crate::events::{
 use crate::models::output::EffectiveGroupPermission;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, MaintenanceState, PrincipalID, PrincipalSettings,
-    ResolvedClassRelationTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget,
+    CollectionID, GroupID, HubuumClassRelationID, HubuumObjectRelationID, MaintenanceState,
+    PrincipalID, PrincipalSettings, ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
     TokenRetentionSettings,
 };
-use crate::storage::postgres::operations::class::LoadClassRecord;
 use crate::storage::postgres::operations::collection::{
     effective_group_on_from_backend, effective_principal_on_from_backend,
     group_can_on_from_backend, group_on_from_backend, groups_can_on_from_backend,
@@ -53,11 +51,6 @@ use crate::storage::postgres::operations::collection::{
 };
 use crate::storage::postgres::operations::group::{
     DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord, UpdateGroupRecord,
-};
-use crate::storage::postgres::operations::object::{
-    CreateObjectInResolvedClassRecord, DeleteObjectRecord, DeleteResolvedObjectRecord,
-    LoadObjectRecord, PatchObjectDataRecord, ResolveObjectSelectorRecord, SaveObjectRecord,
-    UpdateObjectRecord, UpdateResolvedObjectRecord, ValidateObjectRecord,
 };
 use crate::storage::postgres::operations::relations::{
     CreatePreparedClassRelationRecord, CreatePreparedObjectRelationRecord,
@@ -158,6 +151,10 @@ impl PostgresTelemetry for ApplicationPostgresTelemetry {
             duration,
             &result,
         );
+    }
+
+    fn computed_evaluation(&self, scope: &'static str, error_codes: &[&'static str]) {
+        crate::observability::metrics::computed_evaluation_summary(scope, error_codes);
     }
 }
 

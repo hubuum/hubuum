@@ -25,44 +25,10 @@ pub(crate) fn evaluate_definitions(
     Ok(result)
 }
 
-fn canonical_json(value: &serde_json::Value, output: &mut String) -> Result<(), ApiError> {
-    match value {
-        serde_json::Value::Object(values) => {
-            output.push('{');
-            let mut keys = values.keys().collect::<Vec<_>>();
-            keys.sort_unstable();
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                output.push_str(&serde_json::to_string(key)?);
-                output.push(':');
-                canonical_json(&values[key], output)?;
-            }
-            output.push('}');
-        }
-        serde_json::Value::Array(values) => {
-            output.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                canonical_json(value, output)?;
-            }
-            output.push(']');
-        }
-        _ => output.push_str(&serde_json::to_string(value)?),
-    }
-    Ok(())
-}
-
 pub fn source_data_sha256(data: &serde_json::Value) -> Result<String, ApiError> {
-    let mut canonical = String::new();
-    canonical_json(data, &mut canonical)?;
-    Ok(Sha256::digest(canonical.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    hubuum_storage_postgres::operations::computed_materialization::source_data_sha256(data)
+        .map_err(hubuum_storage_core::StorageError::from)
+        .map_err(ApiError::from)
 }
 
 pub(super) async fn upsert_materialized(

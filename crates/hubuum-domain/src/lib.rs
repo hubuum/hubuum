@@ -8,7 +8,9 @@ mod event_delivery;
 mod event_policy;
 mod identifier;
 mod identity;
+mod json_patch;
 mod json_schema;
+mod json_value;
 mod maintenance;
 mod revision;
 mod token;
@@ -28,9 +30,17 @@ pub use identity::{
     EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,
     MANUAL_MEMBERSHIP_SOURCE,
 };
+pub use json_patch::{
+    BoundedJsonPatch, JsonPatchError, JsonPatchErrorKind, MAX_JSON_PATCH_BYTES,
+    MAX_JSON_PATCH_OPERATIONS, MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH,
+    MAX_JSON_PATCH_WORK_BYTES,
+};
 pub use json_schema::{
     JsonSchemaError, JsonSchemaErrorKind, validate_json_schema, validate_json_schema_for_instances,
     validate_json_value,
+};
+pub use json_value::{
+    MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};

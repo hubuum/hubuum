@@ -32,6 +32,7 @@ pub(crate) enum RevisionOwner {
     CollectionPermissions,
     EventSink,
     EventSubscription,
+    Object,
     RemoteTarget,
 }
 
@@ -43,6 +44,7 @@ impl RevisionOwner {
             Self::CollectionPermissions => "collection_permissions",
             Self::EventSink => "event_sinks",
             Self::EventSubscription => "event_subscriptions",
+            Self::Object => "hubuumobject",
             Self::RemoteTarget => "remote_targets",
         }
     }

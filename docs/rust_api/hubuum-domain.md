@@ -27,6 +27,12 @@ cancellation behavior. JSON Schema validation rejects external references and
 uses a bounded process-local compilation cache; cache contents do not change
 validation results. Private fields and validating builders protect invariants.
 
+`BoundedJsonPatch` validates JSON Patch size, operation count, pointer depth,
+and cumulative application work before an adapter sees the document. Patch
+application and the portable storage-JSON envelope use crate-owned error
+classifications. This keeps patch behavior identical across storage backends
+without exposing PostgreSQL JSONB rules or an adapter error to callers.
+
 ## Ownership and Verification
 
 Hubuum maintainers own releases. CI builds rustdoc with warnings denied, tests a

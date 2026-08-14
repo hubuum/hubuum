@@ -6,7 +6,6 @@ use hubuum_computed_fields::{
     EvaluationLimits, EvaluationResult, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, evaluate,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::api::etag::RevisionOwner;
@@ -67,7 +66,6 @@ pub(crate) use rebuild::{
 };
 pub use rebuild::{execute_computed_reindex_task, request_class_rebuild};
 
-const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
 const REINDEX_PAYLOAD_TYPE: &str = "computed_fields";
 pub const MAX_FILTERS_WITH_COMPUTED: usize = 2;
 pub const MAX_SORT_FIELDS_WITH_COMPUTED: usize = 2;
@@ -131,24 +129,24 @@ pub(crate) async fn acquire_computed_class_shared_lock(
     conn: &mut PostgresConnection,
     class_id: i32,
 ) -> Result<(), ApiError> {
-    diesel::sql_query("SELECT pg_advisory_xact_lock_shared($1, $2)")
-        .bind::<Integer, _>(COMPUTED_CLASS_LOCK_NAMESPACE)
-        .bind::<Integer, _>(class_id)
-        .execute(conn)
-        .await?;
-    Ok(())
+    hubuum_storage_postgres::operations::computed_materialization::acquire_computed_class_shared_lock(
+        conn, class_id,
+    )
+    .await
+    .map_err(hubuum_storage_core::StorageError::from)
+    .map_err(ApiError::from)
 }
 
 async fn acquire_computed_class_exclusive_lock(
     conn: &mut PostgresConnection,
     class_id: i32,
 ) -> Result<(), ApiError> {
-    diesel::sql_query("SELECT pg_advisory_xact_lock($1, $2)")
-        .bind::<Integer, _>(COMPUTED_CLASS_LOCK_NAMESPACE)
-        .bind::<Integer, _>(class_id)
-        .execute(conn)
-        .await?;
-    Ok(())
+    hubuum_storage_postgres::operations::computed_materialization::acquire_computed_class_exclusive_lock(
+        conn, class_id,
+    )
+    .await
+    .map_err(hubuum_storage_core::StorageError::from)
+    .map_err(ApiError::from)
 }
 
 async fn acquire_personal_definition_scope_lock(

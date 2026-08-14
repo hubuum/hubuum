@@ -9,7 +9,6 @@ mod error;
 mod failpoints;
 #[doc(hidden)]
 pub mod filters;
-pub mod jsonb;
 #[cfg(feature = "embedded-migrations")]
 mod migrations;
 #[doc(hidden)]

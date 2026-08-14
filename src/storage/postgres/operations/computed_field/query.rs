@@ -559,17 +559,17 @@ fn computed_json_filter(
 }
 
 fn validate_computed_filter_json(value: &serde_json::Value) -> Result<(), ApiError> {
-    match hubuum_storage_postgres::jsonb::validate_postgres_jsonb_value(value) {
+    match hubuum_domain::validate_storage_json_value(value) {
         Ok(()) => Ok(()),
-        Err(hubuum_storage_postgres::jsonb::PostgresJsonbValidationError::UnsupportedValue) => {
+        Err(hubuum_domain::StorageJsonValidationError::UnsupportedValue) => {
             Err(ApiError::BadRequest(
                 "Computed filter contains JSON that PostgreSQL JSONB cannot represent".to_string(),
             ))
         }
-        Err(hubuum_storage_postgres::jsonb::PostgresJsonbValidationError::NestingTooDeep) => {
+        Err(hubuum_domain::StorageJsonValidationError::NestingTooDeep) => {
             Err(ApiError::BadRequest(format!(
                 "Computed filter JSON exceeds the maximum nesting depth of {}",
-                hubuum_storage_postgres::jsonb::MAX_POSTGRES_JSONB_NESTING_DEPTH
+                hubuum_domain::MAX_STORAGE_JSON_NESTING_DEPTH
             )))
         }
     }

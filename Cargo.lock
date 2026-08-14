@@ -2172,7 +2172,9 @@ dependencies = [
 name = "hubuum-domain"
 version = "0.1.0"
 dependencies = [
+ "bigdecimal",
  "chrono",
+ "json-patch",
  "jsonschema",
  "lru",
  "rstest",
@@ -2316,6 +2318,7 @@ dependencies = [
  "diesel-async",
  "diesel_migrations",
  "futures-util",
+ "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
@@ -2326,6 +2329,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",

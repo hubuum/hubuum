@@ -7,16 +7,15 @@ use async_trait::async_trait;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
-use crate::errors::ApiError;
 use crate::events::{Action, EventContext};
 use crate::models::{
     ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass, HubuumClassRelation,
     HubuumClassRelationID, HubuumObject, HubuumObjectRelation, HubuumObjectRelationID,
-    NewHubuumClass, NewHubuumObject, NewHubuumObjectRelation, ObjectDataPatchDocument,
-    ObjectRelationCreateSelectorKind, ObjectRelationSelectorKind, ObjectSelector,
-    ObjectSelectorKind, PreparedClassRelation, PreparedObjectRelation, ResolvedClassRelationTarget,
-    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision,
-    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    NewHubuumClass, NewHubuumObject, NewHubuumObjectRelation, ObjectRelationCreateSelectorKind,
+    ObjectRelationSelectorKind, ObjectSelector, ObjectSelectorKind, PreparedClassRelation,
+    PreparedObjectRelation, ResolvedClassRelationTarget, ResolvedClassTarget,
+    ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision, UpdateCollection,
+    UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::services::storage_boundary::{
     class_record_to_storage, class_relation_create_from_storage, collection_to_storage,
@@ -1508,14 +1507,11 @@ impl ObjectStore for MemoryStorageModel {
         context: &EventContext,
     ) -> Result<StorageObject, StorageError> {
         let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
-        let patch = serde_json::from_value::<ObjectDataPatchDocument>(patch.document().clone())
-            .map_err(ApiError::from)
-            .map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let (class, current) = state.object_target(&target)?;
         let class = class.clone();
         let current = current.clone();
-        let patched_data = patch.apply(&current.data).map_err(map_memory_error)?;
+        let patched_data = patch.apply(&current.data)?;
         if class.validate_schema
             && let Some(schema) = class.json_schema.as_ref()
         {

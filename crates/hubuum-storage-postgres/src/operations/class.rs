@@ -19,20 +19,20 @@ use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStora
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::hubuumclass)]
-struct ClassRow {
-    id: i32,
-    name: String,
-    collection_id: i32,
-    json_schema: Option<serde_json::Value>,
-    validate_schema: bool,
-    description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    revision: PostgresRevision,
+pub(crate) struct ClassRow {
+    pub(crate) id: i32,
+    pub(crate) name: String,
+    pub(crate) collection_id: i32,
+    pub(crate) json_schema: Option<serde_json::Value>,
+    pub(crate) validate_schema: bool,
+    pub(crate) description: String,
+    pub(crate) created_at: NaiveDateTime,
+    pub(crate) updated_at: NaiveDateTime,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl ClassRow {
-    fn into_storage(self) -> StorageClassRecord {
+    pub(crate) fn into_storage(self) -> StorageClassRecord {
         StorageClassRecord::builder(
             StorageRecordMetadata::new(
                 self.id,
@@ -343,7 +343,7 @@ async fn lock_class(
         .map_err(PostgresStorageError::from)
 }
 
-async fn lock_resolved_class(
+pub(crate) async fn lock_resolved_class(
     connection: &mut PostgresConnection,
     target: &StorageResolvedClass,
 ) -> Result<ClassRow, PostgresStorageError> {

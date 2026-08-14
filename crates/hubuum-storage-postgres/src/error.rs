@@ -55,6 +55,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::Internal, message, None)
+    }
+
+    #[must_use]
     pub fn validation(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Validation, message, None)
     }

@@ -1061,7 +1061,7 @@ fn collection_domain_types_are_free_of_persistence_implementation_details() {
         );
     }
 
-    let history_path = root.join("src/storage/postgres/operations/history.rs");
+    let history_path = root.join("crates/hubuum-storage-postgres/src/operations/history.rs");
     let history_source = read_source(&history_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
     assert!(
@@ -1117,11 +1117,11 @@ fn class_domain_types_are_free_of_persistence_implementation_details() {
         );
     }
 
-    let history_path = root.join("src/storage/postgres/operations/history.rs");
+    let history_path = root.join("crates/hubuum-storage-postgres/src/operations/history.rs");
     let history_source = read_source(&history_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
     assert!(
-        history_source.contains("struct HubuumClassHistoryRow"),
+        history_source.contains("struct ClassHistoryRow"),
         "PostgreSQL history adapter must own the class-history row"
     );
 
@@ -1164,9 +1164,9 @@ fn object_domain_types_are_free_of_persistence_implementation_details() {
         }
     }
 
-    let adapter_path = root.join("src/storage/postgres/operations/object.rs");
-    let adapter_source = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    let legacy_query_path = root.join("src/storage/postgres/operations/object.rs");
+    let legacy_query_source = read_source(&legacy_query_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_query_path.display()));
     for required in [
         "struct HubuumObjectRow",
         "struct NewHubuumObjectRow",
@@ -1175,8 +1175,8 @@ fn object_domain_types_are_free_of_persistence_implementation_details() {
         "impl CursorSqlMapping for HubuumObjectRow",
     ] {
         assert!(
-            adapter_source.contains(required),
-            "PostgreSQL object adapter is missing {required}"
+            legacy_query_source.contains(required),
+            "legacy PostgreSQL object queries are missing {required}"
         );
     }
 
@@ -1998,6 +1998,67 @@ fn class_lifecycle_is_owned_by_the_postgres_adapter() {
         assert!(
             !implementation.contains(forbidden),
             "the class trait implementation retains application detail {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn object_lifecycle_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/object.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "ObjectStore for PostgresStorage");
+    assert!(
+        implementation.contains("hubuum_storage_postgres::operations::object"),
+        "the object trait implementation must delegate into the adapter crate"
+    );
+    for forbidden in [
+        "ObjectSelector::",
+        "object_selector_from_storage",
+        "NewHubuumObject",
+        "UpdateHubuumObject",
+        "ObjectDataPatchDocument",
+        "save_object_record",
+        "update_object_record",
+        "delete_object_record",
+    ] {
+        assert!(
+            !implementation.contains(forbidden),
+            "the object trait implementation retains application detail {forbidden}"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/object.rs");
+    let legacy = read_source(&legacy_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
+    for removed_lifecycle in [
+        "trait CreateObjectRecord",
+        "trait CreateObjectInResolvedClassRecord",
+        "trait SaveObjectRecord",
+        "trait UpdateObjectRecord",
+        "trait PatchObjectDataRecord",
+        "trait DeleteObjectRecord",
+    ] {
+        assert!(
+            !legacy.contains(removed_lifecycle),
+            "legacy application module still owns {removed_lifecycle}"
         );
     }
 }

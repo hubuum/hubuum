@@ -8,6 +8,8 @@ use crate::models::ResourceRevision;
 use crate::models::json_patch::{
     BoundedJsonPatch, MAX_JSON_PATCH_BYTES, MAX_JSON_PATCH_OPERATIONS,
     MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
+    apply_bounded_json_patch, bounded_json_patch_openapi_schema,
+    register_bounded_json_patch_openapi_schemas,
 };
 use crate::models::search::{FilterField, SortParam};
 use crate::services::storage_boundary::{
@@ -107,7 +109,7 @@ pub struct PrincipalSettingsPatchDocument(BoundedJsonPatch);
 
 impl PartialSchema for PrincipalSettingsPatchDocument {
     fn schema() -> RefOr<Schema> {
-        BoundedJsonPatch::openapi_schema(
+        bounded_json_patch_openapi_schema(
             "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
             serde_json::json!([
                 {"op": "test", "path": "/theme", "value": "light"},
@@ -119,7 +121,7 @@ impl PartialSchema for PrincipalSettingsPatchDocument {
 
 impl ToSchema for PrincipalSettingsPatchDocument {
     fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
-        BoundedJsonPatch::register_openapi_schemas(schemas);
+        register_bounded_json_patch_openapi_schemas(schemas);
     }
 }
 
@@ -196,7 +198,7 @@ impl PrincipalSettings {
 
 impl PrincipalSettingsPatchDocument {
     fn apply(&self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
-        PrincipalSettings::new(self.0.apply(settings.as_value())?)
+        PrincipalSettings::new(apply_bounded_json_patch(&self.0, settings.as_value())?)
     }
 }
 

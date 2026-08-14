@@ -48,6 +48,7 @@ pub struct NewHubuumObject {
     pub description: String,
 }
 
+#[cfg(test)]
 impl NewHubuumObject {
     pub(crate) fn validate_for_class(&self, class: &HubuumClass) -> Result<(), ApiError> {
         if self.hubuum_class_id != class.id {
@@ -63,13 +64,14 @@ impl NewHubuumObject {
             )));
         }
         if class.validate_schema
-            && let Some(ref schema) = class.json_schema
+            && let Some(schema) = class.json_schema.as_ref()
         {
             crate::utilities::json_schema::validate_json_value(schema, &self.data)?;
         }
         Ok(())
     }
 }
+
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
 #[schema(example = update_hubuum_object_example)]
 pub struct UpdateHubuumObject {
@@ -78,6 +80,55 @@ pub struct UpdateHubuumObject {
     pub hubuum_class_id: Option<i32>,
     pub data: Option<serde_json::Value>,
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+impl UpdateHubuumObject {
+    pub(crate) fn validate_for_class(
+        &self,
+        current: &HubuumObject,
+        class: &HubuumClass,
+    ) -> Result<(), ApiError> {
+        let merged = current.merge_update(self);
+        if merged.hubuum_class_id != class.id {
+            return Err(ApiError::BadRequest(format!(
+                "Object hubuum_class_id {} does not match class {}",
+                merged.hubuum_class_id, class.id
+            )));
+        }
+        if merged.collection_id != class.collection_id {
+            return Err(ApiError::BadRequest(format!(
+                "Object collection_id {} does not match class collection_id {}",
+                merged.collection_id, class.collection_id
+            )));
+        }
+        if class.validate_schema
+            && let Some(schema) = class.json_schema.as_ref()
+        {
+            crate::utilities::json_schema::validate_json_value(schema, &merged.data)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_changes(&self, current: &HubuumObject) -> bool {
+        self.name
+            .as_ref()
+            .is_some_and(|value| value != &current.name)
+            || self
+                .collection_id
+                .is_some_and(|value| value != current.collection_id)
+            || self
+                .hubuum_class_id
+                .is_some_and(|value| value != current.hubuum_class_id)
+            || self
+                .data
+                .as_ref()
+                .is_some_and(|value| value != &current.data)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -170,54 +221,6 @@ impl UpdateHubuumObjectRequest {
             data: self.data,
             description: self.description,
         })
-    }
-}
-
-impl UpdateHubuumObject {
-    pub(crate) fn validate_for_class(
-        &self,
-        current: &HubuumObject,
-        class: &HubuumClass,
-    ) -> Result<(), ApiError> {
-        let merged = current.merge_update(self);
-        if merged.hubuum_class_id != class.id {
-            return Err(ApiError::BadRequest(format!(
-                "Object hubuum_class_id {} does not match class {}",
-                merged.hubuum_class_id, class.id
-            )));
-        }
-        if merged.collection_id != class.collection_id {
-            return Err(ApiError::BadRequest(format!(
-                "Object collection_id {} does not match class collection_id {}",
-                merged.collection_id, class.collection_id
-            )));
-        }
-        if class.validate_schema
-            && let Some(schema) = class.json_schema.as_ref()
-        {
-            crate::utilities::json_schema::validate_json_value(schema, &merged.data)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn has_changes(&self, current: &HubuumObject) -> bool {
-        self.name
-            .as_ref()
-            .is_some_and(|value| value != &current.name)
-            || self
-                .collection_id
-                .is_some_and(|value| value != current.collection_id)
-            || self
-                .hubuum_class_id
-                .is_some_and(|value| value != current.hubuum_class_id)
-            || self
-                .data
-                .as_ref()
-                .is_some_and(|value| value != &current.data)
-            || self
-                .description
-                .as_ref()
-                .is_some_and(|value| value != &current.description)
     }
 }
 

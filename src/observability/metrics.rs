@@ -27,6 +27,7 @@ use crate::errors::ApiError;
 use self::cache::ScrapeCache;
 use self::process::ProcessMetrics;
 
+pub(crate) use self::computed_field::computed_evaluation_summary;
 pub use self::computed_field::{
     computed_evaluation, computed_live_fallback, computed_read_repair, computed_rebuild_batch,
     computed_rebuild_finished,

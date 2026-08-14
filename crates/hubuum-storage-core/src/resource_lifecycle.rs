@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use hubuum_domain::{BoundedJsonPatch, JsonPatchErrorKind};
 use hubuum_events_core::EventContext;
 use serde_json::Value;
 
@@ -577,18 +578,26 @@ impl StorageObjectUpdateBuilder {
 /// A validated JSON Patch document for an object's data field.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageObjectDataPatch {
-    document: Value,
+    patch: BoundedJsonPatch,
 }
 
 impl StorageObjectDataPatch {
     #[must_use]
-    pub const fn new(document: Value) -> Self {
-        Self { document }
+    pub const fn new(patch: BoundedJsonPatch) -> Self {
+        Self { patch }
     }
 
-    #[must_use]
-    pub const fn document(&self) -> &Value {
-        &self.document
+    /// Apply the complete bounded patch with backend-independent semantics.
+    pub fn apply(&self, document: &Value) -> Result<Value, StorageError> {
+        self.patch.apply(document).map_err(|error| {
+            let (kind, message) = error.into_parts();
+            let kind = match kind {
+                JsonPatchErrorKind::BadRequest => crate::StorageErrorKind::BadRequest,
+                JsonPatchErrorKind::Conflict => crate::StorageErrorKind::Conflict,
+                JsonPatchErrorKind::PayloadTooLarge => crate::StorageErrorKind::PayloadTooLarge,
+            };
+            StorageError::new(kind, message, None)
+        })
     }
 }
 

@@ -4,12 +4,12 @@
 //! `hubuum-query`. This module owns the PostgreSQL-specific mapping from those
 //! values to typed SQL expressions.
 
+use hubuum_domain::{
+    MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
+};
 use hubuum_query::{CursorCodecError, CursorValue, SortParam};
 
 use crate::PostgresStorageError;
-use crate::jsonb::{
-    MAX_POSTGRES_JSONB_NESTING_DEPTH, PostgresJsonbValidationError, validate_postgres_jsonb_value,
-};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorSqlType {
@@ -235,16 +235,16 @@ where
 fn validate_postgres_jsonb_cursor_value(
     value: &serde_json::Value,
 ) -> Result<(), PostgresStorageError> {
-    match validate_postgres_jsonb_value(value) {
+    match validate_storage_json_value(value) {
         Ok(()) => Ok(()),
-        Err(PostgresJsonbValidationError::UnsupportedValue) => {
+        Err(StorageJsonValidationError::UnsupportedValue) => {
             Err(PostgresStorageError::bad_request(
                 "cursor contains JSON that PostgreSQL JSONB cannot represent",
             ))
         }
-        Err(PostgresJsonbValidationError::NestingTooDeep) => {
+        Err(StorageJsonValidationError::NestingTooDeep) => {
             Err(PostgresStorageError::bad_request(format!(
-                "cursor JSON exceeds the maximum nesting depth of {MAX_POSTGRES_JSONB_NESTING_DEPTH}"
+                "cursor JSON exceeds the maximum nesting depth of {MAX_STORAGE_JSON_NESTING_DEPTH}"
             )))
         }
     }

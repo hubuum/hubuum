@@ -5,7 +5,8 @@ use serde_json::Value;
 
 use crate::errors::ApiError;
 use crate::models::{NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
-use crate::storage::postgres::operations::object::{ValidateObjectRecord, ValidateObjectSchema};
+use crate::services::storage_boundary::{object_create_to_storage, object_update_to_storage};
+use crate::storage::{ObjectStore, PostgresStorage};
 use crate::tests::constants::{SchemaType, get_schema};
 use crate::tests::{CollectionFixture, TestScope};
 use crate::traits::CanSave;
@@ -83,11 +84,17 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     };
 
     // First, test the direct schema validation.
-    let schema_validate = object.validate_object_schema(class.json_schema.as_ref().unwrap());
+    let schema_validate = crate::utilities::json_schema::validate_json_value(
+        class.json_schema.as_ref().unwrap(),
+        &object.data,
+    );
     assert_validation_result(schema_validate, expected, "Schema validation");
 
     // Then, test the full object validation that fetches the class from the DB.
-    let object_validate = object.validate_object_record(&pool).await;
+    let object_validate = PostgresStorage::new(pool.get_ref().clone())
+        .validate_object_create(object_create_to_storage(object))
+        .await
+        .map_err(ApiError::from);
     assert_validation_result(object_validate, expected, "Object validation");
 
     collection_fixture
@@ -140,10 +147,14 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
         data: Some(updated_data.clone()),
     };
 
-    let validate = (&update_object, object.id)
-        .validate_object_record(&pool)
+    let validate = PostgresStorage::new(pool.get_ref().clone())
+        .validate_object_update(object.id, object_update_to_storage(update_object))
         .await;
-    assert_validation_result(validate, expected, "Update object validation");
+    assert_validation_result(
+        validate.map_err(ApiError::from),
+        expected,
+        "Update object validation",
+    );
 
     collection_fixture
         .cleanup()

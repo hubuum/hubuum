@@ -1,25 +1,37 @@
+//! Portable JSON constraints shared by storage contracts and adapters.
+
 use serde_json::{Number, Value};
 
-const POSTGRES_NUMERIC_MAX_INTEGRAL_DIGITS: i64 = 131_072;
-const POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS: i64 = 16_383;
-const POSTGRES_NUMERIC_MAX_EXPONENT_ABS: i64 = i32::MAX as i64 / 2;
-pub const MAX_POSTGRES_JSONB_NESTING_DEPTH: usize = 64;
+const MAX_NUMERIC_INTEGRAL_DIGITS: i64 = 131_072;
+const MAX_NUMERIC_FRACTIONAL_DIGITS: i64 = 16_383;
+const MAX_NUMERIC_EXPONENT_ABS: i64 = i32::MAX as i64 / 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PostgresJsonbValidationError {
+/// Maximum number of nested JSON containers accepted by Hubuum storage APIs.
+pub const MAX_STORAGE_JSON_NESTING_DEPTH: usize = 64;
+
+/// Stable reason that JSON cannot be represented by a Hubuum storage backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageJsonValidationError {
+    /// A string, key, or number is outside the portable storage envelope.
     UnsupportedValue,
+    /// The document exceeds [`MAX_STORAGE_JSON_NESTING_DEPTH`].
     NestingTooDeep,
 }
 
-pub fn validate_postgres_jsonb_value(value: &Value) -> Result<(), PostgresJsonbValidationError> {
+/// Validate JSON against Hubuum's portable storage envelope.
+///
+/// The limits deliberately fit PostgreSQL JSONB, the reference backend. Other
+/// backends must enforce the same envelope so API behavior does not depend on
+/// the statically selected adapter.
+pub fn validate_storage_json_value(value: &Value) -> Result<(), StorageJsonValidationError> {
     let mut pending = vec![(value, 0_usize)];
     while let Some((value, depth)) = pending.pop() {
         match value {
             Value::String(value) if value.contains('\0') => {
-                return Err(PostgresJsonbValidationError::UnsupportedValue);
+                return Err(StorageJsonValidationError::UnsupportedValue);
             }
-            Value::Number(value) if !postgres_numeric_can_represent(value) => {
-                return Err(PostgresJsonbValidationError::UnsupportedValue);
+            Value::Number(value) if !storage_numeric_can_represent(value) => {
+                return Err(StorageJsonValidationError::UnsupportedValue);
             }
             Value::Array(values) => {
                 validate_container_depth(depth)?;
@@ -29,7 +41,7 @@ pub fn validate_postgres_jsonb_value(value: &Value) -> Result<(), PostgresJsonbV
                 validate_container_depth(depth)?;
                 for (key, value) in values {
                     if key.contains('\0') {
-                        return Err(PostgresJsonbValidationError::UnsupportedValue);
+                        return Err(StorageJsonValidationError::UnsupportedValue);
                     }
                     pending.push((value, depth + 1));
                 }
@@ -40,14 +52,14 @@ pub fn validate_postgres_jsonb_value(value: &Value) -> Result<(), PostgresJsonbV
     Ok(())
 }
 
-fn validate_container_depth(depth: usize) -> Result<(), PostgresJsonbValidationError> {
-    if depth >= MAX_POSTGRES_JSONB_NESTING_DEPTH {
-        return Err(PostgresJsonbValidationError::NestingTooDeep);
+fn validate_container_depth(depth: usize) -> Result<(), StorageJsonValidationError> {
+    if depth >= MAX_STORAGE_JSON_NESTING_DEPTH {
+        return Err(StorageJsonValidationError::NestingTooDeep);
     }
     Ok(())
 }
 
-fn postgres_numeric_can_represent(value: &Number) -> bool {
+fn storage_numeric_can_represent(value: &Number) -> bool {
     let source = value.to_string();
     let unsigned = source.strip_prefix('-').unwrap_or(&source);
     let exponent_start = unsigned.find(['e', 'E']);
@@ -60,8 +72,7 @@ fn postgres_numeric_can_represent(value: &Number) -> bool {
         }
         None => (unsigned, 0),
     };
-    if !(-POSTGRES_NUMERIC_MAX_EXPONENT_ABS..=POSTGRES_NUMERIC_MAX_EXPONENT_ABS).contains(&exponent)
-    {
+    if !(-MAX_NUMERIC_EXPONENT_ABS..=MAX_NUMERIC_EXPONENT_ABS).contains(&exponent) {
         return false;
     }
     let integral_digits = mantissa.find('.').unwrap_or(mantissa.len());
@@ -91,8 +102,8 @@ fn postgres_numeric_can_represent(value: &Number) -> bool {
     let fractional_digits = total_digits - integral_digits;
     let digits_after_decimal = fractional_digits.saturating_sub(exponent).max(0);
 
-    digits_before_decimal <= POSTGRES_NUMERIC_MAX_INTEGRAL_DIGITS
-        && digits_after_decimal <= POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS
+    digits_before_decimal <= MAX_NUMERIC_INTEGRAL_DIGITS
+        && digits_after_decimal <= MAX_NUMERIC_FRACTIONAL_DIGITS
 }
 
 #[cfg(test)]
@@ -100,17 +111,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_postgres_jsonb_nul_strings() {
+    fn rejects_nul_strings_from_the_portable_storage_envelope() {
         assert_eq!(
-            validate_postgres_jsonb_value(&Value::String("invalid\0value".to_string())),
-            Err(PostgresJsonbValidationError::UnsupportedValue)
+            validate_storage_json_value(&Value::String("invalid\0value".to_string())),
+            Err(StorageJsonValidationError::UnsupportedValue)
         );
     }
 
     #[test]
     fn accepts_regular_nested_json() {
         assert_eq!(
-            validate_postgres_jsonb_value(&serde_json::json!({"items": [1, 2, 3]})),
+            validate_storage_json_value(&serde_json::json!({"items": [1, 2, 3]})),
             Ok(())
         );
     }
