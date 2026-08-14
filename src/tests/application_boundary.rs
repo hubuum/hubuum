@@ -1938,6 +1938,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "meta",
         "metrics",
         "probe",
+        "remote_target",
         "unified_search",
     ] {
         let adapter_path = root.join(format!(
@@ -1999,6 +2000,41 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                     !shim.contains(forbidden),
                     "{} retains query implementation detail {forbidden}",
                     old_path.display()
+                );
+            }
+        } else if operation == "remote_target" {
+            let transitional_task_result = read_source(&old_path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
+            for moved_lifecycle_detail in [
+                "struct RemoteTargetRow",
+                "struct NewRemoteTargetRow",
+                "struct UpdateRemoteTargetRow",
+                "load_remote_target_record",
+                "save_remote_target_record",
+                "update_remote_target_record",
+                "delete_remote_target_record",
+                "emit_remote_target_invoked_event",
+                "schema::remote_targets",
+            ] {
+                assert!(
+                    !transitional_task_result.contains(moved_lifecycle_detail),
+                    "{} retains remote-target lifecycle detail {moved_lifecycle_detail}",
+                    old_path.display()
+                );
+            }
+            let facade_path = root.join("src/storage/postgres/remote_targets.rs");
+            let facade = read_source(&facade_path).unwrap_or_else(|error| {
+                panic!("could not read {}: {error}", facade_path.display())
+            });
+            assert!(
+                facade.contains("hubuum_storage_postgres::operations::remote_target"),
+                "the remote-target trait implementation must delegate into the adapter crate"
+            );
+            for forbidden in ["diesel::", "crate::schema", "ApiError"] {
+                assert!(
+                    !facade.contains(forbidden),
+                    "{} retains adapter detail {forbidden}",
+                    facade_path.display()
                 );
             }
         } else if matches!(

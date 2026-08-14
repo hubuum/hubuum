@@ -29,6 +29,7 @@ pub struct PostgresRevision(ResourceRevision);
 pub(crate) enum RevisionOwner {
     EventSink,
     EventSubscription,
+    RemoteTarget,
 }
 
 impl RevisionOwner {
@@ -36,6 +37,7 @@ impl RevisionOwner {
         match self {
             Self::EventSink => "event_sinks",
             Self::EventSubscription => "event_subscriptions",
+            Self::RemoteTarget => "remote_targets",
         }
     }
 

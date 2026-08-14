@@ -19,4 +19,5 @@ pub mod maintenance;
 pub mod meta;
 pub mod metrics;
 pub mod probe;
+pub mod remote_target;
 pub mod unified_search;

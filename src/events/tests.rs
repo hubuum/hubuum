@@ -29,10 +29,11 @@ use crate::models::{
     ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
     NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
     ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
-    PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
-    UpdateUser, UserID,
+    PrincipalTokenCreateRequest, Token, TokenID, TokenScope, UpdateExportTemplate, UpdateUser,
+    UserID,
 };
 use crate::schema::events::dsl::events;
+use crate::storage::postgres::PostgresStorage;
 use crate::storage::postgres::operations::event_delivery::EventDeliveryRow;
 use crate::storage::postgres::operations::event_fanout::{
     claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
@@ -45,18 +46,16 @@ use crate::storage::postgres::operations::event_retention::{
 use crate::storage::postgres::operations::events::{
     EventListFilters, list_events_with_total_count,
 };
-use crate::storage::postgres::operations::remote_target::{
-    DeleteRemoteTargetRecord, NewRemoteTargetRow, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-    UpdateRemoteTargetRow, emit_remote_target_invoked_event,
-};
 use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::storage::storage_handle;
 use crate::storage::{
     EventArchive, EventDeliveryAdministrationStorage, EventDeliveryClaim, EventDeliverySink,
     EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem, EventRetentionStorage,
-    RetainedEvent, StorageError, StorageErrorKind, StorageEventSinkCreate,
-    StorageEventSubscriptionCreate,
+    RemoteTargetStorage, RetainedEvent, StorageError, StorageErrorKind, StorageEventSinkCreate,
+    StorageEventSubscriptionCreate, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetPatch,
+    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
 };
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
@@ -2342,87 +2341,93 @@ async fn export_template_writes_emit_lifecycle_events() {
 async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_auth() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
+    let backend = PostgresStorage::new(scope.pool.get_ref().clone());
     let context = EventContext::user(
         27,
         Some(Uuid::new_v4()),
         Some("remote-target-correlation".into()),
     );
 
-    let row = NewRemoteTargetRow {
-        collection_id: fixture.collection.id,
-        class_id: None,
-        name: scope.scoped_name("event_remote_target"),
-        description: "before".to_string(),
-        method: "get".to_string(),
-        url_template: "https://example.invalid/{{ subject.id }}".to_string(),
-        headers_template: serde_json::json!({}),
-        body_template: None,
-        auth_config: serde_json::json!({
-            "type": "api_key_secret",
-            "header": "X-Api-Key",
-            "secret": "super-secret"
-        }),
-        allowed_subject_types: serde_json::json!(["collection"]),
-        timeout_ms: 1000,
-        enabled: true,
-    }
-    .save_remote_target_record(&scope.pool, Some(&context))
-    .await
-    .unwrap();
+    let created = backend
+        .create_remote_target(StorageRemoteTargetCreate::new(
+            fixture.collection.id,
+            scope.scoped_name("event_remote_target"),
+            StorageRemoteTargetDefinition::new(
+                "before",
+                StorageRemoteTargetTransport::new(
+                    "get",
+                    "https://example.invalid/{{ subject.id }}",
+                    serde_json::json!({}),
+                    None,
+                    serde_json::json!({
+                        "type": "api_key_secret",
+                        "header": "X-Api-Key",
+                        "secret": "super-secret"
+                    }),
+                    1000,
+                ),
+                StorageRemoteTargetPolicy::new(None, vec!["collection".to_string()], true),
+            ),
+            context.clone(),
+        ))
+        .await
+        .unwrap();
+    let target_id = created.metadata().id();
 
-    let updated = UpdateRemoteTargetRow {
-        collection_id: None,
-        class_id: None,
-        name: None,
-        description: Some("after".to_string()),
-        method: None,
-        url_template: None,
-        headers_template: None,
-        body_template: None,
-        auth_config: None,
-        allowed_subject_types: None,
-        timeout_ms: None,
-        enabled: None,
-    }
-    .update_remote_target_record(&scope.pool, row.id, Some(&context))
-    .await
-    .unwrap();
-    let unchanged = UpdateRemoteTargetRow {
-        collection_id: Some(updated.collection_id),
-        class_id: Some(updated.class_id),
-        name: Some(updated.name.clone()),
-        description: Some(updated.description.clone()),
-        method: Some(updated.method.clone()),
-        url_template: Some(updated.url_template.clone()),
-        headers_template: Some(updated.headers_template.clone()),
-        body_template: Some(updated.body_template.clone()),
-        auth_config: Some(updated.auth_config.clone()),
-        allowed_subject_types: Some(updated.allowed_subject_types.clone()),
-        timeout_ms: Some(updated.timeout_ms),
-        enabled: Some(updated.enabled),
-    }
-    .update_remote_target_record(&scope.pool, row.id, Some(&context))
-    .await
-    .unwrap();
-    assert_eq!(unchanged.updated_at, updated.updated_at);
-    emit_remote_target_invoked_event(
-        &scope.pool,
-        updated.id,
-        &context,
-        12345,
-        "collection",
-        fixture.collection.id,
-    )
-    .await
-    .unwrap();
-
-    RemoteTargetID::new(row.id)
-        .unwrap()
-        .delete_remote_target_record(&scope.pool, Some(&context))
+    let updated = backend
+        .update_remote_target(StorageRemoteTargetUpdate::new(
+            target_id,
+            StorageRemoteTargetPatch::new().with_description(Some("after".to_string())),
+            context.clone(),
+        ))
+        .await
+        .unwrap();
+    let (updated_metadata, collection_id, name, definition) = updated.clone().into_parts();
+    let (description, transport, policy) = definition.into_parts();
+    let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
+        transport.into_parts();
+    let (class_id, allowed_subject_types, enabled) = policy.into_parts();
+    let unchanged = backend
+        .update_remote_target(StorageRemoteTargetUpdate::new(
+            target_id,
+            StorageRemoteTargetPatch::new()
+                .with_collection_id(Some(collection_id))
+                .with_class_id(Some(class_id))
+                .with_name(Some(name))
+                .with_description(Some(description))
+                .with_method(Some(method))
+                .with_url_template(Some(url_template))
+                .with_headers_template(Some(headers_template))
+                .with_body_template(Some(body_template))
+                .with_auth_config(Some(auth_config))
+                .with_allowed_subject_types(Some(allowed_subject_types))
+                .with_timeout_ms(Some(timeout_ms))
+                .with_enabled(Some(enabled)),
+            context.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        unchanged.metadata().updated_at(),
+        updated_metadata.updated_at()
+    );
+    backend
+        .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
+            target_id,
+            12345,
+            "collection",
+            fixture.collection.id,
+            context.clone(),
+        ))
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "remote_target", row.id).await;
+    backend
+        .delete_remote_target(StorageRemoteTargetDelete::new(target_id, context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "remote_target", target_id).await;
     assert_eq!(rows.len(), 4);
 
     assert_eq!(rows[0].action, "created");
