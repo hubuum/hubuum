@@ -21,7 +21,6 @@ pub(crate) mod maintenance;
 pub mod object;
 pub mod permissions;
 pub mod principal;
-pub(crate) mod relation_query;
 pub(in crate::storage::postgres) mod relation_rows;
 pub mod relations;
 pub mod remote_target;

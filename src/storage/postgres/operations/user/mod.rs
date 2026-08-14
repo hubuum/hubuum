@@ -16,15 +16,13 @@ use crate::models::search::{
 use crate::models::traits::ExpandCollectionFromMap;
 use crate::models::traits::user::UserCollectionAccessors;
 use crate::models::{
-    ClassGraphRow, Collection, ExportIncludeRelatedDirection, ExportIncludeRelatedQuery,
-    ExportIncludeRelatedSort, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
-    HubuumObject, HubuumObjectRelation, Permissions, PermissionsList, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, UpdateUser, User,
+    Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, Permissions, PermissionsList, UpdateUser, User,
 };
 use crate::storage::postgres::with_connection;
-use crate::traits::{ClassAccessors, GroupAccessors, SelfAccessors};
 #[cfg(test)]
 use crate::traits::{CursorPaginated, CursorValue};
+use crate::traits::{GroupAccessors, SelfAccessors};
 
 mod auth;
 mod membership;

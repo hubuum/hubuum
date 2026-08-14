@@ -2323,6 +2323,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-storage-core",
+ "ipnet",
  "pq-sys",
  "rstest",
  "rustls",

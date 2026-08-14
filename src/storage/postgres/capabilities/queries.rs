@@ -286,18 +286,18 @@ impl RelationQueryStorage for PostgresStorage {
         &self,
         query: RelationGraphQuery,
     ) -> Result<RelationPage<StorageClassGraphRow>, StorageError> {
-        operations::relation_query::related_classes(&self.pool, query)
+        hubuum_storage_postgres::operations::relation_query::related_classes(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn related_objects(
         &self,
         query: RelationGraphQuery,
     ) -> Result<RelationPage<StorageObjectGraphRow>, StorageError> {
-        operations::relation_query::related_objects(&self.pool, query)
+        hubuum_storage_postgres::operations::relation_query::related_objects(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn related_objects_for_roots(

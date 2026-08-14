@@ -2231,6 +2231,78 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn relation_queries_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/relation_query.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "RelationQueryStorage for PostgresStorage",
+    );
+    for method in [
+        "list_class_relations",
+        "list_object_relations",
+        "list_class_relations_touching",
+        "list_object_relations_touching",
+        "class_relations_touching_ids",
+        "class_relations_between_ids",
+        "object_relations_touching_ids",
+        "object_relations_between_ids",
+        "related_classes",
+        "related_objects",
+        "related_objects_for_roots",
+        "bidirectionally_related_objects_for_roots",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::relation_query"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+
+    let legacy_facade = root.join("src/storage/postgres/operations/relation_query.rs");
+    assert!(
+        !legacy_facade.exists(),
+        "relation query SQL must not regain an application-owned facade"
+    );
+    let legacy_search_path = root.join("src/storage/postgres/operations/user/search.rs");
+    let legacy_search = read_source(&legacy_search_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_search_path.display()));
+    for forbidden in [
+        "get_bidirectionally_related_classes",
+        "get_bidirectionally_related_objects",
+        "RootGraphWalkSpec",
+    ] {
+        assert!(
+            !legacy_search.contains(forbidden),
+            "legacy application search still owns relation query detail {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn principal_state_queries_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path =
