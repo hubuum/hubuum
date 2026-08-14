@@ -70,10 +70,11 @@ Once the tag is pushed, the CI workflow will:
 
 ## Rust package compatibility
 
-The root server package and all current workspace crates are internal and set
-`publish = false`. They are shipped as source inputs to the Hubuum binaries, not
-as supported crates. The authoritative classification and promotion process is
-documented in [Rust API Boundary](rust_api_boundary.md).
+The root server package and implementation-specific workspace crates are
+internal and set `publish = false`. Backend-neutral crates explicitly marked
+experimental public are eligible for crates.io publication. The authoritative
+classification, package list, and promotion process are documented in
+[Rust API Boundary](rust_api_boundary.md).
 
 CI rejects missing classifications and any internal package that enables Cargo
 publishing. A future `experimental-public` or `stable-public` package is

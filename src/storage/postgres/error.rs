@@ -1,7 +1,6 @@
-use std::fmt;
-
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
+use hubuum_storage_postgres::PostgresStorageError;
 use tracing::{debug, error};
 
 use crate::errors::ApiError;
@@ -76,81 +75,45 @@ impl From<DieselError> for ApiError {
     }
 }
 
-/// PostgreSQL adapter failure before it crosses the neutral storage boundary.
-///
-/// Legacy PostgreSQL query helpers still return `ApiError` internally. They are
-/// classified immediately into this adapter-owned representation so neither
-/// the application error nor a Diesel error can cross the storage contract.
-#[derive(Debug)]
-pub(super) struct PostgresStorageError {
-    kind: StorageErrorKind,
-    message: String,
-    current_etag: Option<String>,
-}
-
-impl From<ApiError> for PostgresStorageError {
-    fn from(error: ApiError) -> Self {
-        let (kind, message, current_etag) = match error {
-            ApiError::PermissionBackendUnavailable(message) => {
-                (StorageErrorKind::AuthorizationUnavailable, message, None)
-            }
-            ApiError::BadRequest(message)
-            | ApiError::InvalidIntegerRange(message)
-            | ApiError::OperatorMismatch(message) => (StorageErrorKind::BadRequest, message, None),
-            ApiError::NotAcceptable(message) => (StorageErrorKind::NotAcceptable, message, None),
-            ApiError::ValidationError(message) => (StorageErrorKind::Validation, message, None),
-            ApiError::PayloadTooLarge(message) => {
-                (StorageErrorKind::PayloadTooLarge, message, None)
-            }
-            ApiError::Conflict(message) => (StorageErrorKind::Conflict, message, None),
-            ApiError::Forbidden(message) => (StorageErrorKind::Forbidden, message, None),
-            ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
-                (StorageErrorKind::Database, message, None)
-            }
-            ApiError::NotFound(message) | ApiError::Gone(message) => {
-                (StorageErrorKind::NotFound, message, None)
-            }
-            ApiError::PreconditionFailed(message, current_etag) => {
-                (StorageErrorKind::PreconditionFailed, message, current_etag)
-            }
-            ApiError::TooManyRequests(message) => {
-                (StorageErrorKind::TooManyRequests, message, None)
-            }
-            ApiError::ServiceUnavailable(message) => (StorageErrorKind::Unavailable, message, None),
-            ApiError::Unauthorized(message) => (StorageErrorKind::Unauthorized, message, None),
-            error => (
-                StorageErrorKind::Internal,
-                format!(
-                    "unexpected PostgreSQL storage adapter error ({}): {error}",
-                    error.class()
-                ),
-                None,
-            ),
-        };
-        Self {
-            kind,
-            message,
-            current_etag,
+fn postgres_error_from_api(error: ApiError) -> PostgresStorageError {
+    let (kind, message, current_etag) = match error {
+        ApiError::PermissionBackendUnavailable(message) => {
+            (StorageErrorKind::AuthorizationUnavailable, message, None)
         }
-    }
-}
-
-impl fmt::Display for PostgresStorageError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for PostgresStorageError {}
-
-impl From<PostgresStorageError> for StorageError {
-    fn from(error: PostgresStorageError) -> Self {
-        Self::new(error.kind, error.message, error.current_etag)
-    }
+        ApiError::BadRequest(message)
+        | ApiError::InvalidIntegerRange(message)
+        | ApiError::OperatorMismatch(message) => (StorageErrorKind::BadRequest, message, None),
+        ApiError::NotAcceptable(message) => (StorageErrorKind::NotAcceptable, message, None),
+        ApiError::ValidationError(message) => (StorageErrorKind::Validation, message, None),
+        ApiError::PayloadTooLarge(message) => (StorageErrorKind::PayloadTooLarge, message, None),
+        ApiError::Conflict(message) => (StorageErrorKind::Conflict, message, None),
+        ApiError::Forbidden(message) => (StorageErrorKind::Forbidden, message, None),
+        ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
+            (StorageErrorKind::Database, message, None)
+        }
+        ApiError::NotFound(message) | ApiError::Gone(message) => {
+            (StorageErrorKind::NotFound, message, None)
+        }
+        ApiError::PreconditionFailed(message, current_etag) => {
+            (StorageErrorKind::PreconditionFailed, message, current_etag)
+        }
+        ApiError::TooManyRequests(message) => (StorageErrorKind::TooManyRequests, message, None),
+        ApiError::ServiceUnavailable(message) => (StorageErrorKind::Unavailable, message, None),
+        ApiError::Unauthorized(message) => (StorageErrorKind::Unauthorized, message, None),
+        error => (
+            StorageErrorKind::Internal,
+            format!(
+                "unexpected PostgreSQL storage adapter error ({}): {error}",
+                error.class()
+            ),
+            None,
+        ),
+    };
+    PostgresStorageError::new(kind, message, current_etag)
 }
 
 pub(super) fn map_postgres_error(error: ApiError) -> StorageError {
-    PostgresStorageError::from(error).into()
+    postgres_error_from_api(error).into()
 }
 
 #[cfg(test)]

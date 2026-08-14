@@ -14,9 +14,11 @@ and its committed OpenAPI document. Rust API consumers should use
 `hubuum-client-rust`, which wraps that HTTP contract. The Python client follows
 the same boundary.
 
-The root package and every current workspace crate set `publish = false`.
-Public Rust visibility in those packages is an implementation and workspace
-construction detail, not a semantic-version compatibility promise.
+The root package and workspace-internal adapter and integration crates set
+`publish = false`. A small dependency chain of backend-neutral boundary crates
+is classified as experimental public and may be consumed through crates.io,
+Git, or a path dependency. Public Rust visibility outside that explicit set is
+an implementation detail, not a semantic-version compatibility promise.
 
 ## Current consumers
 
@@ -76,18 +78,18 @@ manifest.
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
 | `hubuum-computed-fields` | Workspace-internal |
-| `hubuum-domain` | Workspace-internal |
+| `hubuum-domain` | Experimental public |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |
 | `hubuum-event-sink-valkey` | Workspace-internal |
 | `hubuum-event-sink-webhook` | Workspace-internal |
 | `hubuum-event-sinks-common` | Workspace-internal |
-| `hubuum-events-core` | Workspace-internal |
+| `hubuum-events-core` | Experimental public |
 | `hubuum-outbound-http` | Workspace-internal |
-| `hubuum-query` | Workspace-internal |
-| `hubuum-storage-core` | Workspace-internal |
+| `hubuum-query` | Experimental public |
+| `hubuum-storage-core` | Experimental public |
 | `hubuum-storage-postgres` | Workspace-internal |
-| `hubuum-task-core` | Workspace-internal |
+| `hubuum-task-core` | Experimental public |
 | `hubuum-templates` | Workspace-internal |
 
 The machine values are:

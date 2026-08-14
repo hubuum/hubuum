@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- `hubuum-domain`, `hubuum-events-core`, `hubuum-query`,
+  `hubuum-task-core`, and `hubuum-storage-core` are now experimental public
+  crates with versioned dependencies and explicit compatibility, MSRV, error,
+  runtime, cancellation, and security policies. External storage backends can
+  consume the complete trait and DTO contract through crates.io, Git, or path
+  dependencies; backend selection remains statically composed by the
+  application, with no dynamic plugin ABI or runtime contract version.
 - The redacted administrator configuration now reports the selected complete
   storage backend and effective non-secret pool settings. Startup logs and
   Prometheus metrics expose the same backend identity, and storage calls have
@@ -59,14 +66,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.
-- **Breaking (Rust API support policy):** the root `hubuum` library and every
-  current workspace crate are explicitly internal and non-publishable. Their
-  Rust `pub` items are workspace construction details rather than supported
-  third-party embedding or extension APIs. Rust application clients must use
-  `hubuum-client-rust` over the versioned HTTP/OpenAPI contract; known Git
-  consumers must pin and maintain internal interfaces themselves or migrate to
-  the client. The server, admin, and OpenAPI binaries now call narrow internal
-  library entrypoints, and the library owns API/worker/all runtime composition.
+- **Breaking (Rust API support policy):** the root `hubuum` library and crates
+  not explicitly classified as experimental public remain internal and
+  non-publishable. Their Rust `pub` items are workspace construction details
+  rather than supported third-party embedding APIs. Rust application clients
+  must use `hubuum-client-rust` over the versioned HTTP/OpenAPI contract. The
+  server, admin, and OpenAPI binaries call narrow internal library entrypoints,
+  and the library owns API/worker/all runtime composition.
 
 ### Fixed
 

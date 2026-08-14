@@ -2308,6 +2308,7 @@ dependencies = [
  "diesel",
  "diesel-async",
  "futures-util",
+ "hubuum-storage-core",
  "rstest",
  "rustls",
  "rustls-platform-verifier",
