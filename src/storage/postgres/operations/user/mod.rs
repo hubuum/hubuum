@@ -27,13 +27,11 @@ mod auth;
 mod membership;
 mod object_aggregate;
 pub(crate) mod search;
-mod unified_search;
 
 pub use auth::*;
 pub use membership::*;
 pub(crate) use object_aggregate::aggregate_objects;
 pub use search::*;
-pub use unified_search::*;
 
 #[derive(Debug, Queryable, Selectable, Clone)]
 #[diesel(table_name = crate::schema::users)]

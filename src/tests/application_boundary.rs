@@ -1930,6 +1930,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "event_record",
         "event_retention",
         "event_subscription",
+        "history",
         "identity_credentials",
         "identity_scope",
         "inventory",
@@ -1937,6 +1938,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "meta",
         "metrics",
         "probe",
+        "unified_search",
     ] {
         let adapter_path = root.join(format!(
             "crates/hubuum-storage-postgres/src/operations/{operation}.rs"
@@ -1982,6 +1984,20 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                 assert!(
                     !shim.contains(removed_append_detail),
                     "{} retains append detail {removed_append_detail}",
+                    old_path.display()
+                );
+            }
+        } else if operation == "history" {
+            let shim = read_source(&old_path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
+            assert!(
+                shim.contains("hubuum_storage_postgres::operations::history"),
+                "the temporary history shim must delegate into the adapter crate"
+            );
+            for forbidden in ["diesel::", "crate::schema"] {
+                assert!(
+                    !shim.contains(forbidden),
+                    "{} retains query implementation detail {forbidden}",
                     old_path.display()
                 );
             }

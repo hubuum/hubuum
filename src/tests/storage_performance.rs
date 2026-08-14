@@ -17,7 +17,7 @@ use crate::models::{
     ObjectSelector, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID,
 };
 use crate::services::Services;
-use crate::storage::postgres::operations::history::{
+use crate::services::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
 use crate::storage::postgres::prelude::{QueryableByName, RunQueryDsl};
@@ -1326,7 +1326,7 @@ async fn collection_history_query_count_is_constant_with_page_size() {
             .await?;
             let principal_ids = rows
                 .iter()
-                .flat_map(|row| row.principal_ids())
+                .flat_map(|row| [row.actor_id, row.initiator_user_id])
                 .flatten()
                 .collect();
             let principal_names = resolve_principal_names(&pool, principal_ids).await?;
@@ -1349,10 +1349,10 @@ async fn collection_history_query_count_is_constant_with_page_size() {
     assert!(large_principal_names.contains(actor.id));
 
     assert_same_query_shape(&small_queries, &large_queries);
-    assert_eq!(large_queries.total_queries(), 3);
+    assert_eq!(large_queries.total_queries(), 6);
     assert_eq!(large_queries.domain_queries(), 3);
-    assert_eq!(large_queries.control_queries(), 0);
-    assert_eq!(large_queries.connection_checkouts(), 3);
+    assert_eq!(large_queries.control_queries(), 3);
+    assert_eq!(large_queries.connection_checkouts(), 2);
 
     fixture.cleanup().await.expect("fixture cleanup");
 }

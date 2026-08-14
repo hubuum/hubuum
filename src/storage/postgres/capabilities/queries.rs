@@ -1,201 +1,122 @@
 use super::super::*;
 
-fn history_collection_filter(
-    scope: &HistoryCollectionScope,
-) -> operations::history::HistoryCollectionFilter<'_> {
-    match scope {
-        HistoryCollectionScope::All => operations::history::HistoryCollectionFilter::All,
-        HistoryCollectionScope::Visible(collection_ids) => {
-            operations::history::HistoryCollectionFilter::Visible(collection_ids)
-        }
-    }
-}
-
 #[async_trait]
 impl HistoryStorage for PostgresStorage {
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<i32>,
     ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
-        operations::history::resolve_principal_name_rows(&self.pool, principal_ids)
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    .map(operations::history::principal_name_to_storage)
-                    .collect()
-            })
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::resolve_principal_names(
+            self.runtime(),
+            principal_ids,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_collection_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<CollectionHistoryRecord>, StorageError> {
-        let (entity_id, query_options, scope) = query.into_parts();
-        operations::history::collection_history_paginated_with_total_count(
-            entity_id,
-            &self.pool,
-            &query_options,
-            history_collection_filter(&scope),
-        )
-        .await
-        .map(|(rows, total)| {
-            HistoryPage::new(
-                rows.into_iter()
-                    .map(operations::history::collection_history_to_storage)
-                    .collect(),
-                total,
-            )
-        })
-        .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::list_collection_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn collection_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        operations::history::collection_as_of(entity_id, at, &self.pool)
-            .await
-            .map(|row| row.map(operations::history::collection_history_to_storage))
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::collection_history_as_of(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_class_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<ClassHistoryRecord>, StorageError> {
-        let (entity_id, query_options, scope) = query.into_parts();
-        operations::history::class_history_paginated_with_total_count(
-            entity_id,
-            &self.pool,
-            &query_options,
-            history_collection_filter(&scope),
-        )
-        .await
-        .map(|(rows, total)| {
-            HistoryPage::new(
-                rows.into_iter()
-                    .map(operations::history::class_history_to_storage)
-                    .collect(),
-                total,
-            )
-        })
-        .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::list_class_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn class_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ClassHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        operations::history::class_as_of(entity_id, at, &self.pool)
+        hubuum_storage_postgres::operations::history::class_history_as_of(self.runtime(), query)
             .await
-            .map(|row| row.map(operations::history::class_history_to_storage))
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn list_object_history(
         &self,
         query: ObjectHistoryListQuery,
     ) -> Result<HistoryPage<ObjectHistoryRecord>, StorageError> {
-        let (object_id, class_id, query_options, scope) = query.into_parts();
-        operations::history::object_history_paginated_with_total_count(
-            object_id,
-            class_id,
-            &self.pool,
-            &query_options,
-            history_collection_filter(&scope),
-        )
-        .await
-        .map(|(rows, total)| {
-            HistoryPage::new(
-                rows.into_iter()
-                    .map(operations::history::object_history_to_storage)
-                    .collect(),
-                total,
-            )
-        })
-        .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::list_object_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn object_history_as_of(
         &self,
         query: ObjectHistoryAsOfQuery,
     ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
-        let (object_id, class_id, at) = query.into_parts();
-        operations::history::object_as_of(object_id, class_id, at, &self.pool)
+        hubuum_storage_postgres::operations::history::object_history_as_of(self.runtime(), query)
             .await
-            .map(|row| row.map(operations::history::object_history_to_storage))
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn list_export_template_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<ExportTemplateHistoryRecord>, StorageError> {
-        let (entity_id, query_options, scope) = query.into_parts();
-        operations::history::export_template_history_paginated_with_total_count(
-            entity_id,
-            &self.pool,
-            &query_options,
-            history_collection_filter(&scope),
+        hubuum_storage_postgres::operations::history::list_export_template_history(
+            self.runtime(),
+            query,
         )
         .await
-        .map(|(rows, total)| {
-            HistoryPage::new(
-                rows.into_iter()
-                    .map(operations::history::export_template_history_to_storage)
-                    .collect(),
-                total,
-            )
-        })
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn export_template_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        operations::history::export_template_as_of(entity_id, at, &self.pool)
-            .await
-            .map(|row| row.map(operations::history::export_template_history_to_storage))
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::export_template_history_as_of(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_remote_target_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<RemoteTargetHistoryRecord>, StorageError> {
-        let (entity_id, query_options, scope) = query.into_parts();
-        operations::history::remote_target_history_paginated_with_total_count(
-            entity_id,
-            &self.pool,
-            &query_options,
-            history_collection_filter(&scope),
+        hubuum_storage_postgres::operations::history::list_remote_target_history(
+            self.runtime(),
+            query,
         )
         .await
-        .map(|(rows, total)| {
-            HistoryPage::new(
-                rows.into_iter()
-                    .map(operations::history::remote_target_history_to_storage)
-                    .collect(),
-                total,
-            )
-        })
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn remote_target_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        operations::history::remote_target_as_of(entity_id, at, &self.pool)
-            .await
-            .map(|row| row.map(operations::history::remote_target_history_to_storage))
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::history::remote_target_history_as_of(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 
@@ -380,26 +301,29 @@ impl UnifiedSearchStorage for PostgresStorage {
         &self,
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchCollection>, StorageError> {
-        operations::ranked_search::search_collections(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::unified_search::search_collections(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn search_unified_classes(
         &self,
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchClass>, StorageError> {
-        operations::ranked_search::search_classes(&self.pool, query)
+        hubuum_storage_postgres::operations::unified_search::search_classes(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn search_unified_objects(
         &self,
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchObject>, StorageError> {
-        operations::ranked_search::search_objects(&self.pool, query)
+        hubuum_storage_postgres::operations::unified_search::search_objects(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
