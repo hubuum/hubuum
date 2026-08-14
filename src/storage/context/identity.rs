@@ -495,10 +495,13 @@ impl TokenStorage for StorageHandle {
         &self,
         principal_id: i32,
         token_id: i32,
+        observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError> {
         observe_storage_call(self.backend_name(), "token", "load_metadata", async {
             dispatch_backend!(self, |backend| {
-                backend.load_token_metadata(principal_id, token_id).await
+                backend
+                    .load_token_metadata(principal_id, token_id, observation)
+                    .await
             })
         })
         .await
@@ -507,10 +510,13 @@ impl TokenStorage for StorageHandle {
     async fn load_token_metadata_batch(
         &self,
         token_ids: Vec<i32>,
+        observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "load_metadata_batch", async {
             dispatch_backend!(self, |backend| {
-                backend.load_token_metadata_batch(token_ids).await
+                backend
+                    .load_token_metadata_batch(token_ids, observation)
+                    .await
             })
         })
         .await

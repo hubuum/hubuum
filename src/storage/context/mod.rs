@@ -86,12 +86,12 @@ use crate::storage::{
     StorageTaskEventPage, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
     StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery,
     StorageTaskStateUpdate, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
-    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationStorage,
+    StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
+    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, TaskExecutionStorage,
+    TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchClass,
+    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    UserStorage, WorkerNotificationStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;

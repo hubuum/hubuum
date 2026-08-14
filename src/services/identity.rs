@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::SubsecRound;
 use hubuum_auth_core::AuthenticatedExternalUser;
 
 use crate::errors::ApiError;
@@ -11,7 +12,7 @@ use crate::models::{
     Permissions, PrincipalGroup, PrincipalToken, PrincipalTokenCreateRequest,
     PrincipalTokenMetadata, ResourceRevision, ServiceAccount, ServiceAccountWithName,
     TokenListState, TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount,
-    UpdateUser, User, UserPointResponse, UserWithName,
+    UpdateUser, User, UserPointResponse, UserWithName, configured_token_lifetime,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
@@ -23,9 +24,9 @@ use crate::storage::{
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
     StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete,
-    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
-    StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -253,6 +254,13 @@ fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssua
     )
 }
 
+fn token_observation() -> Result<StorageTokenObservation, ApiError> {
+    let observed_at = chrono::Utc::now().naive_utc().trunc_subsecs(6);
+    let legacy_valid_after = configured_token_lifetime()?.cutoff_from(observed_at)?;
+    StorageTokenObservation::new(observed_at, legacy_valid_after)
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))
+}
+
 pub async fn load_user(context: &impl StorageContext, id: i32) -> Result<User, ApiError> {
     Ok(user_from_storage(
         storage_handle(context).load_user(id).await?,
@@ -429,7 +437,7 @@ pub async fn load_token_metadata(
 ) -> Result<PrincipalTokenMetadata, ApiError> {
     token_metadata_from_storage(
         storage_handle(context)
-            .load_token_metadata(principal_id, token_id)
+            .load_token_metadata(principal_id, token_id, token_observation()?)
             .await?,
     )
 }
@@ -439,7 +447,10 @@ pub async fn load_token_metadata_batch(
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     storage_handle(context)
-        .load_token_metadata_batch(tokens.iter().map(|token| token.id).collect())
+        .load_token_metadata_batch(
+            tokens.iter().map(|token| token.id).collect(),
+            token_observation()?,
+        )
         .await?
         .into_iter()
         .map(token_metadata_from_storage)
@@ -548,7 +559,12 @@ pub async fn list_retained_tokens(
     options: QueryOptions,
     state: TokenListState,
 ) -> Result<(Vec<PrincipalTokenMetadata>, i64), ApiError> {
-    let query = StorageTokenListQuery::new(principal_id, options, token_state(state));
+    let query = StorageTokenListQuery::new(
+        principal_id,
+        options,
+        token_state(state),
+        token_observation()?,
+    );
     let (rows, total) = storage_handle(context)
         .list_retained_tokens(query)
         .await?

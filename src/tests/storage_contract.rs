@@ -87,11 +87,11 @@ use crate::storage::{
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
     StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
     StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenRenew,
-    StorageTokenRevoke, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserCreate,
+    StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
+    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -812,6 +812,12 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should replace local passwords");
 
         let token_policy = StorageTokenIssuancePolicy::new(24, 24);
+        let token_observed_at = chrono::Utc::now().naive_utc() + chrono::Duration::seconds(1);
+        let token_observation = StorageTokenObservation::new(
+            token_observed_at,
+            token_observed_at - chrono::Duration::hours(24),
+        )
+        .expect("identity compatibility token observation should be valid");
         let first_hash = prefix("complete_token_hash");
         let first_token = backend
             .create_token(
@@ -823,14 +829,14 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         let first_token_id = first_token.id();
         assert_eq!(
             backend
-                .load_token_metadata(contract_user_id, first_token_id)
+                .load_token_metadata(contract_user_id, first_token_id, token_observation)
                 .await
                 .expect("certified backend should load token metadata")
                 .id(),
             first_token_id
         );
         let batch = backend
-            .load_token_metadata_batch(vec![first_token_id, first_token_id])
+            .load_token_metadata_batch(vec![first_token_id, first_token_id], token_observation)
             .await
             .expect("certified backend should preserve token batch order");
         assert_eq!(batch.len(), 2);
@@ -914,6 +920,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 user.id,
                 token_options,
                 StorageTokenListState::Active,
+                token_observation,
             ))
             .await
             .expect("certified backend should list retained tokens")

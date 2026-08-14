@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use hubuum_events_core::EventContext;
 
-use crate::{AuthenticationTokenScope, StorageError, StorageTokenMetadata};
+use crate::{
+    AuthenticationTokenScope, StorageError, StorageTokenMetadata, StorageTokenObservation,
+};
 
 /// Owned fields returned when token creation input enters an adapter.
 pub type StorageTokenCreateParts = (
@@ -289,12 +291,14 @@ pub trait TokenStorage: Send + Sync {
         &self,
         principal_id: i32,
         token_id: i32,
+        observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError>;
 
     /// Load metadata for token IDs in the same order, including duplicates.
     async fn load_token_metadata_batch(
         &self,
         token_ids: Vec<i32>,
+        observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError>;
 
     async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError>;

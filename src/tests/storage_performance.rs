@@ -217,6 +217,59 @@ fn assert_same_query_shape(
 }
 
 #[actix_web::test]
+async fn token_metadata_batch_query_count_is_constant_with_batch_size() {
+    use crate::models::{
+        Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
+        PrincipalTokenMetadata, TokenScope,
+    };
+    use crate::storage::postgres::operations::token::PrincipalTokenRow;
+    use crate::storage::postgres::prelude::*;
+
+    let scope = TestScope::new();
+    let user = crate::tests::create_test_user(&scope.pool).await;
+    let token_scope =
+        TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
+    let raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
+        .scope(token_scope)
+        .create(&scope.pool, None)
+        .await
+        .expect("scoped token should be created");
+    let token_hash = raw.storage_hash();
+    let token = with_connection(&scope.pool, async |connection| {
+        crate::schema::tokens::table
+            .filter(crate::schema::tokens::token.eq(token_hash))
+            .first::<PrincipalTokenRow>(connection)
+            .await
+            .map(PrincipalToken::from)
+    })
+    .await
+    .expect("created token should be persisted");
+
+    let (small, small_queries) = capture_queries(PrincipalTokenMetadata::load_for_tokens(
+        &scope.pool,
+        std::slice::from_ref(&token),
+    ))
+    .await;
+    let repeated = vec![token; 20];
+    let (large, large_queries) = capture_queries(PrincipalTokenMetadata::load_for_tokens(
+        &scope.pool,
+        &repeated,
+    ))
+    .await;
+
+    assert_eq!(small.expect("single-token batch should load").len(), 1);
+    assert_eq!(large.expect("repeated-token batch should load").len(), 20);
+    assert_same_query_shape(&small_queries, &large_queries);
+    assert_eq!(large_queries.total_queries(), 5, "{large_queries:#?}");
+    assert_eq!(large_queries.domain_queries(), 2);
+    assert_eq!(large_queries.control_queries(), 3);
+    assert_eq!(large_queries.connection_checkouts(), 1);
+    assert_eq!(large_queries.queries_matching("FROM \"token_scopes\""), 1);
+
+    user.delete_without_events(&scope.pool).await.unwrap();
+}
+
+#[actix_web::test]
 async fn collection_point_read_uses_one_query() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_point_read").await;

@@ -2431,6 +2431,75 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn token_resources_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/token.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let token_implementation = item_body(&capability, "impl", "TokenStorage for PostgresStorage");
+    for method in [
+        "create_token",
+        "renew_token",
+        "load_token_metadata",
+        "load_token_metadata_batch",
+        "revoke_token",
+        "revoke_token_by_hash",
+        "revoke_all_principal_tokens",
+    ] {
+        let method_body = item_body(token_implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::token"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+
+    let identity_implementation =
+        item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    let list_body = item_body(identity_implementation, "fn", "list_retained_tokens");
+    assert!(list_body.contains("hubuum_storage_postgres::operations::token"));
+    assert!(!list_body.contains("&self.pool"));
+
+    let facade_path = root.join("src/storage/postgres/operations/identity_operations.rs");
+    let facade = read_source(&facade_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
+    for removed in [
+        "fn list_retained_tokens(",
+        "fn create_token(",
+        "fn renew_token(",
+        "fn load_token_metadata(",
+        "fn load_token_metadata_batch(",
+        "fn revoke_token(",
+        "fn revoke_token_by_hash(",
+        "fn revoke_all_principal_tokens(",
+    ] {
+        assert!(
+            !facade.contains(removed),
+            "the application-owned PostgreSQL facade still owns {removed}"
+        );
+    }
+}
+
+#[test]
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [

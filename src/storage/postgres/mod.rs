@@ -85,11 +85,12 @@ use super::{
     StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
     StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenListQuery, StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke,
-    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, TaskGaugeSnapshot,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
+    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    TaskGaugeSnapshot, TokenRetentionStorage, TokenStorage, UnifiedSearchClass,
+    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    UserStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use crate::events::{

@@ -257,29 +257,6 @@ impl PrincipalTokenMetadata {
         crate::services::identity::load_token_metadata(backend, principal_id.id(), token_id.id())
             .await
     }
-
-    pub(crate) fn from_token_and_scope(
-        value: &PrincipalToken,
-        scope: Option<TokenScope>,
-        now: NaiveDateTime,
-        active_after: NaiveDateTime,
-    ) -> Result<Self, ApiError> {
-        let expired = value.is_expired_at(now, active_after);
-        Ok(Self {
-            id: value.metadata_id()?,
-            principal_id: value.metadata_principal_id()?,
-            name: value.name.clone(),
-            description: value.description.clone(),
-            issued: value.issued,
-            expires_at: value.expires_at,
-            last_used_at: value.last_used_at,
-            revoked_at: value.revoked_at,
-            active: value.revoked_at.is_none() && !expired,
-            expired,
-            scope: value.scope_details(scope)?,
-            revision: value.revision,
-        })
-    }
 }
 
 impl CurrentTokenMetadata {
@@ -308,42 +285,6 @@ impl CurrentTokenMetadata {
                 ))
             })?,
         })
-    }
-}
-
-impl PrincipalToken {
-    pub fn is_scoped(&self) -> bool {
-        self.permission_scoped || self.resource_scoped
-    }
-
-    pub(crate) fn is_expired_at(&self, now: NaiveDateTime, active_after: NaiveDateTime) -> bool {
-        self.expires_at
-            .map_or(self.issued <= active_after, |expires_at| expires_at <= now)
-    }
-
-    fn metadata_id(&self) -> Result<TokenID, ApiError> {
-        TokenID::new(self.id).map_err(|_| {
-            ApiError::InternalServerError(format!(
-                "Stored token has invalid identifier {}",
-                self.id
-            ))
-        })
-    }
-
-    fn metadata_principal_id(&self) -> Result<PrincipalID, ApiError> {
-        PrincipalID::new(self.principal_id).map_err(|_| {
-            ApiError::InternalServerError(format!(
-                "Stored token has invalid principal identifier {}",
-                self.principal_id
-            ))
-        })
-    }
-
-    fn scope_details(
-        &self,
-        scope: Option<TokenScope>,
-    ) -> Result<Option<TokenScopeDetails>, ApiError> {
-        token_scope_details(self.id, self.is_scoped(), scope)
     }
 }
 

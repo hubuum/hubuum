@@ -142,9 +142,9 @@ impl IdentityStorage for PostgresStorage {
         &self,
         query: StorageTokenListQuery,
     ) -> Result<StorageIdentityPage<StorageTokenMetadata>, StorageError> {
-        operations::identity_operations::list_retained_tokens(&self.pool, query)
+        hubuum_storage_postgres::operations::token::list_retained_tokens(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn is_human_owner_group_member(
@@ -335,58 +335,72 @@ impl TokenStorage for PostgresStorage {
         &self,
         request: StorageTokenCreate,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        operations::identity_operations::create_token(&self.pool, request)
+        hubuum_storage_postgres::operations::token::create_token(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn renew_token(
         &self,
         request: StorageTokenRenew,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        operations::identity_operations::renew_token(&self.pool, request)
+        hubuum_storage_postgres::operations::token::renew_token(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn load_token_metadata(
         &self,
         principal_id: i32,
         token_id: i32,
+        observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        operations::identity_operations::load_token_metadata(&self.pool, principal_id, token_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::token::load_token_metadata(
+            self.runtime(),
+            principal_id,
+            token_id,
+            observation,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_token_metadata_batch(
         &self,
         token_ids: Vec<i32>,
+        observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
-        operations::identity_operations::load_token_metadata_batch(&self.pool, token_ids)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::token::load_token_metadata_batch(
+            self.runtime(),
+            token_ids,
+            observation,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError> {
-        operations::identity_operations::revoke_token(&self.pool, request)
+        hubuum_storage_postgres::operations::token::revoke_token(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
     ) -> Result<usize, StorageError> {
-        operations::identity_operations::revoke_token_by_hash(&self.pool, request)
+        hubuum_storage_postgres::operations::token::revoke_token_by_hash(self.runtime(), request)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
-        operations::identity_operations::revoke_all_principal_tokens(&self.pool, principal_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::token::revoke_all_principal_tokens(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

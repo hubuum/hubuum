@@ -116,11 +116,12 @@ pub(crate) use hubuum_storage_core::{
     StorageTaskPageQuery, StorageTaskProgress, StorageTaskResultCounts, StorageTaskScopeSnapshot,
     StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete,
-    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
-    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenStorage,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
+    TokenStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    WorkerNotificationStorage,
 };
 pub use hubuum_storage_core::{
     AuthenticatedToken, StorageCallSite, StorageExecution, StorageRevisionPrecondition,

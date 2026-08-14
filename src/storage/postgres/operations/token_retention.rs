@@ -1,18 +1,6 @@
 #[cfg(test)]
 use chrono::NaiveDateTime;
 #[cfg(test)]
-use diesel::QueryableByName;
-#[cfg(test)]
-use diesel::sql_types::Integer;
-
-#[cfg(test)]
-#[derive(Debug, QueryableByName)]
-struct TokenRetentionCandidate {
-    #[diesel(sql_type = Integer)]
-    id: i32,
-}
-
-#[cfg(test)]
 async fn purge_expired_token_batch_at(
     pool: &crate::storage::postgres::PostgresPool,
     settings: crate::models::TokenRetentionSettings,
@@ -31,6 +19,7 @@ async fn purge_expired_token_batch_at(
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, Utc};
+    use diesel::QueryableByName;
     use diesel::sql_types::{Bool, Text};
     use rstest::rstest;
 
@@ -43,7 +32,6 @@ mod tests {
         TokenRetentionSettings, TokenScope,
     };
     use crate::schema::{events, token_scopes, tokens};
-    use crate::storage::postgres::operations::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
     use crate::storage::postgres::operations::event_record::EventRow;
     use crate::storage::postgres::operations::token::PrincipalTokenRow;
     use crate::storage::postgres::prelude::*;
@@ -135,25 +123,30 @@ mod tests {
             == 1
     }
 
-    async fn wait_until_token_row_is_locked(
-        pool: &crate::storage::postgres::PostgresPool,
-        token_id: i32,
-    ) {
+    async fn wait_until_token_scope_read_is_blocked(pool: &crate::storage::postgres::PostgresPool) {
         for _ in 0..100 {
-            let result = with_connection(pool, async |conn| {
-                diesel::sql_query("SELECT id FROM tokens WHERE id = $1 FOR UPDATE NOWAIT")
-                    .bind::<Integer, _>(token_id)
-                    .load::<TokenRetentionCandidate>(conn)
-                    .await
-                    .map(|rows| rows.into_iter().map(|row| row.id).collect::<Vec<_>>())
+            let blocked = with_connection(pool, async |conn| {
+                diesel::sql_query(
+                    "SELECT EXISTS (\
+                         SELECT 1 FROM pg_stat_activity \
+                         WHERE datname = current_database() \
+                           AND pid <> pg_backend_pid() \
+                           AND wait_event_type = 'Lock' \
+                           AND query ILIKE '%token_scopes%'\
+                     ) AS exists",
+                )
+                .get_result::<IndexExistsRow>(conn)
+                .await
             })
-            .await;
-            if result.is_err() {
+            .await
+            .unwrap()
+            .exists;
+            if blocked {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        panic!("retained metadata read did not lock token {token_id}");
+        panic!("retained metadata scope read did not block on the test table lock");
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -416,7 +409,7 @@ mod tests {
     #[case::list(RetainedMetadataRead::List)]
     #[case::batch(RetainedMetadataRead::Batch)]
     #[tokio::test]
-    async fn retained_metadata_scope_projection_blocks_concurrent_purge(
+    async fn retained_metadata_scope_projection_is_consistent_during_concurrent_purge(
         #[case] read: RetainedMetadataRead,
     ) {
         let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
@@ -475,10 +468,10 @@ mod tests {
                     .unwrap(),
                 ],
                 RetainedMetadataRead::List => {
-                    retained_token_metadata_by_principal_id_paginated_with_total_count(
-                        principal_id,
+                    crate::services::identity::list_retained_tokens(
                         &reader_pool,
-                        &QueryOptions {
+                        principal_id.id(),
+                        QueryOptions {
                             filters: Vec::new(),
                             sort: Vec::new(),
                             limit: None,
@@ -498,27 +491,25 @@ mod tests {
                 }
             }
         });
-        wait_until_token_row_is_locked(&pool, token_id).await;
-
-        let deleted_while_reading = purge_expired_token_batch_at(&pool, settings(100), now)
-            .await
-            .unwrap();
-        assert_eq!(deleted_while_reading, 0);
-        assert!(token_exists(&pool, &raw).await);
+        wait_until_token_scope_read_is_blocked(&pool).await;
+        let purge_pool = pool.clone();
+        let purge = tokio::spawn(async move {
+            purge_expired_token_batch_at(&purge_pool, settings(100), now)
+                .await
+                .unwrap()
+        });
 
         release_table_tx.send(()).unwrap();
         blocker.await.unwrap();
         let metadata = reader.await.unwrap();
+        let deleted_while_reading = purge.await.unwrap();
+        assert_eq!(deleted_while_reading, 1);
+        assert!(!token_exists(&pool, &raw).await);
         assert_eq!(metadata.len(), 1);
         assert_eq!(
             metadata[0].scope.as_ref().unwrap().permissions(),
             Some([Permissions::ReadCollection].as_slice())
         );
-
-        let deleted_after_read = purge_expired_token_batch_at(&pool, settings(100), now)
-            .await
-            .unwrap();
-        assert_eq!(deleted_after_read, 1);
         user.delete_without_events(&pool).await.unwrap();
     }
 

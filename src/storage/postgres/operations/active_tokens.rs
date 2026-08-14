@@ -1,16 +1,15 @@
+//! Transitional raw-token test fixture queries.
+//!
+//! Application token management uses the backend-neutral token contract. This
+//! helper remains only for integration tests that assert stored HMAC state.
+
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, QueryOptions};
-use crate::models::{
-    PrincipalToken, PrincipalTokenMetadata, TokenListState, configured_token_lifetime,
-};
-use crate::storage::postgres::operations::token::{
-    PrincipalTokenRow, principal_token_metadata_conn,
-};
-use crate::storage::postgres::operations::{ActiveTokens, RetainedTokens};
+use crate::models::{PrincipalToken, configured_token_lifetime};
+use crate::storage::postgres::operations::ActiveTokens;
+use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{with_connection, with_transaction};
+use crate::storage::postgres::with_connection;
 use crate::traits::PrincipalIdAccessor;
-use diesel::pg::Pg;
 use hubuum_storage_postgres::operations::authentication::active_token_predicate;
 
 impl<S> ActiveTokens for S
@@ -21,196 +20,18 @@ where
         &self,
         pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<PrincipalToken>, ApiError> {
-        active_tokens_by_principal_id(self.principal_id(), pool).await
-    }
-
-    async fn tokens_paginated_with_total_count(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: &QueryOptions,
-    ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
-        tokens_by_principal_id_paginated_with_total_count(
-            self.principal_id(),
-            pool,
-            query_options,
-            TokenListState::Active,
-        )
-        .await
-    }
-}
-
-impl<S> RetainedTokens for S
-where
-    S: PrincipalIdAccessor,
-{
-    async fn tokens_paginated_with_total_count_for_state(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: &QueryOptions,
-        state: TokenListState,
-    ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
-        tokens_by_principal_id_paginated_with_total_count(
-            self.principal_id(),
-            pool,
-            query_options,
-            state,
-        )
-        .await
-    }
-}
-
-pub(crate) fn active_tokens_cutoff() -> Result<chrono::NaiveDateTime, ApiError> {
-    Ok(configured_token_lifetime()?.cutoff_from(chrono::Utc::now().naive_utc())?)
-}
-
-/// A token is active when it is not revoked and not expired: an explicit
-/// `expires_at` in the future, or, for a legacy null expiry, within the global
-/// lifetime window from `issued`.
-async fn active_tokens_by_principal_id(
-    principal: i32,
-    pool: &crate::storage::postgres::PostgresPool,
-) -> Result<Vec<PrincipalToken>, ApiError> {
-    use crate::schema::tokens::dsl::*;
-    let active_after = active_tokens_cutoff()?;
-    let now = chrono::Utc::now().naive_utc();
-
-    with_connection(pool, async |conn| {
-        tokens
-            .filter(principal_id.eq(principal))
-            .filter(active_token_predicate(now, active_after))
-            .load::<PrincipalTokenRow>(conn)
-            .await
-    })
-    .await
-    .map(|rows| rows.into_iter().map(Into::into).collect())
-}
-
-fn build_tokens_by_principal_query<'a>(
-    principal: i32,
-    query_options: &'a QueryOptions,
-    state: TokenListState,
-    now: chrono::NaiveDateTime,
-    active_after: chrono::NaiveDateTime,
-) -> Result<crate::schema::tokens::BoxedQuery<'a, Pg>, ApiError> {
-    use crate::schema::tokens::dsl::{
-        expires_at, issued, last_used_at, name as token_name, principal_id as token_principal_id,
-        revision, revoked_at, tokens,
-    };
-    use crate::{date_search, string_search};
-
-    let mut base_query = tokens.into_boxed().filter(token_principal_id.eq(principal));
-
-    base_query = match state {
-        TokenListState::Active => base_query.filter(active_token_predicate(now, active_after)),
-        TokenListState::Expired => base_query.filter(
-            expires_at
-                .le(now)
-                .or(expires_at.is_null().and(issued.le(active_after))),
-        ),
-        TokenListState::Revoked => base_query.filter(revoked_at.is_not_null()),
-        TokenListState::All => base_query,
-    };
-
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::IssuedAt => date_search!(base_query, param, operator, issued),
-            FilterField::ExpiresAt => date_search!(base_query, param, operator, expires_at),
-            FilterField::LastUsedAt => date_search!(base_query, param, operator, last_used_at),
-            FilterField::Name => string_search!(base_query, param, operator, token_name),
-            FilterField::Revision => {
-                crate::revision_search!(base_query, param, operator, revision)
-            }
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for tokens",
-                    param.field
-                )));
-            }
-        }
-    }
-
-    Ok(base_query)
-}
-
-async fn tokens_by_principal_id_paginated_with_total_count(
-    principal: i32,
-    pool: &crate::storage::postgres::PostgresPool,
-    query_options: &QueryOptions,
-    state: TokenListState,
-) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
-    let active_after = active_tokens_cutoff()?;
-    let now = chrono::Utc::now().naive_utc();
-
-    let base_query =
-        build_tokens_by_principal_query(principal, query_options, state, now, active_after)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
-        with_connection(pool, async |conn| {
-            base_query.count().get_result::<i64>(conn).await
-        })
-        .await
-    })
-    .await?;
-
-    let mut base_query =
-        build_tokens_by_principal_query(principal, query_options, state, now, active_after)?;
-    crate::apply_query_options!(base_query, query_options, PrincipalTokenRow);
-    let items = with_connection(pool, async |conn| {
-        base_query.load::<PrincipalTokenRow>(conn).await
-    })
-    .await?
-    .into_iter()
-    .map(Into::into)
-    .collect();
-
-    Ok((items, total_count))
-}
-
-pub(crate) async fn retained_token_metadata_by_principal_id_paginated_with_total_count(
-    principal: crate::models::PrincipalID,
-    pool: &crate::storage::postgres::PostgresPool,
-    query_options: &QueryOptions,
-    state: TokenListState,
-) -> Result<(Vec<PrincipalTokenMetadata>, i64), ApiError> {
-    let active_after = active_tokens_cutoff()?;
-    let now = chrono::Utc::now().naive_utc();
-
-    let base_query =
-        build_tokens_by_principal_query(principal.id(), query_options, state, now, active_after)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
-        with_connection(pool, async |conn| {
-            base_query.count().get_result::<i64>(conn).await
-        })
-        .await
-    })
-    .await?;
-
-    let mut base_query =
-        build_tokens_by_principal_query(principal.id(), query_options, state, now, active_after)?;
-    crate::apply_query_options!(base_query, query_options, PrincipalTokenRow);
-    let metadata = with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        let selected = base_query.load::<PrincipalTokenRow>(conn).await?;
-        let selected_ids = selected.iter().map(|token| token.id).collect::<Vec<_>>();
-        let locked = if selected_ids.is_empty() {
-            Vec::new()
-        } else {
+        let legacy_valid_after =
+            configured_token_lifetime()?.cutoff_from(chrono::Utc::now().naive_utc())?;
+        let observed_at = chrono::Utc::now().naive_utc();
+        let principal_id = self.principal_id();
+        with_connection(pool, async move |connection| {
             crate::schema::tokens::table
-                .filter(crate::schema::tokens::id.eq_any(&selected_ids))
-                .for_update()
-                .load::<PrincipalTokenRow>(conn)
-                .await?
-        };
-        let mut locked_by_id = locked
-            .into_iter()
-            .map(|token| (token.id, PrincipalToken::from(token)))
-            .collect::<std::collections::HashMap<_, _>>();
-        let items = selected_ids
-            .into_iter()
-            .filter_map(|id| locked_by_id.remove(&id))
-            .collect::<Vec<_>>();
-        principal_token_metadata_conn(conn, &items).await
-    })
-    .await?;
-
-    Ok((metadata, total_count))
+                .filter(crate::schema::tokens::principal_id.eq(principal_id))
+                .filter(active_token_predicate(observed_at, legacy_valid_after))
+                .load::<PrincipalTokenRow>(connection)
+                .await
+        })
+        .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+    }
 }

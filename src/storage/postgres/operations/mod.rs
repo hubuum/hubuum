@@ -45,8 +45,7 @@ use crate::errors::ApiError;
 use crate::models::search::{ParsedQueryParam, QueryOptions};
 use crate::models::{
     Collection, HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
-    HubuumObjectID, HubuumObjectRelation, HubuumObjectTransitiveLink, PrincipalToken,
-    TokenListState, User,
+    HubuumObjectID, HubuumObjectRelation, HubuumObjectTransitiveLink, PrincipalToken, User,
 };
 use crate::storage::postgres::operations::relation_rows::HubuumClassRelationTransitiveRow;
 use crate::storage::postgres::operations::relations::{
@@ -65,24 +64,6 @@ pub trait ActiveTokens {
         &self,
         pool: &crate::storage::postgres::PostgresPool,
     ) -> Result<Vec<PrincipalToken>, ApiError>;
-    async fn tokens_paginated_with_total_count(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: &QueryOptions,
-    ) -> Result<(Vec<PrincipalToken>, i64), ApiError>;
-}
-
-/// Trait for listing retained token rows across lifecycle states.
-pub trait RetainedTokens {
-    /// List retained token rows for one lifecycle subset. `Active` preserves
-    /// the historical list behavior; other states are available only through
-    /// explicit credential-management queries.
-    async fn tokens_paginated_with_total_count_for_state(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: &QueryOptions,
-        state: TokenListState,
-    ) -> Result<(Vec<PrincipalToken>, i64), ApiError>;
 }
 
 /// Trait for getting the collection(s) of a structure from the backend database.

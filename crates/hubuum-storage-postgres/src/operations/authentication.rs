@@ -5,8 +5,8 @@ use diesel::sql_types::{Bool, Nullable};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
     AuthenticatedToken, AuthenticationAttempt, AuthenticationHuman, AuthenticationIdentity,
-    AuthenticationPrincipal, AuthenticationPrincipalKind, AuthenticationResourceScope,
-    AuthenticationTokenScope, AuthenticationTokenScopeQuery, StorageErrorKind,
+    AuthenticationPrincipal, AuthenticationPrincipalKind, AuthenticationTokenScope,
+    AuthenticationTokenScopeQuery, StorageErrorKind,
 };
 
 use crate::schema;
@@ -241,60 +241,11 @@ pub async fn load_authentication_token_scope(
     runtime: &PostgresRuntime,
     query: AuthenticationTokenScopeQuery,
 ) -> Result<Option<AuthenticationTokenScope>, PostgresStorageError> {
-    use crate::schema::{
-        token_class_scopes, token_collection_scopes, token_object_scopes, token_scopes,
-    };
-
-    if !query.is_scoped() {
-        return Ok(None);
-    }
-
     runtime
-        .with_connection(async |conn| {
-            let permissions = if query.is_permission_scoped() {
-                Some(
-                    token_scopes::table
-                        .filter(token_scopes::token_id.eq(query.token_id()))
-                        .order_by(token_scopes::permission.asc())
-                        .select(token_scopes::permission)
-                        .load::<String>(conn)
-                        .await?,
-                )
-            } else {
-                None
-            };
-            let resources = if query.is_resource_scoped() {
-                let collection_ids = token_collection_scopes::table
-                    .filter(token_collection_scopes::token_id.eq(query.token_id()))
-                    .order_by(token_collection_scopes::collection_id.asc())
-                    .select(token_collection_scopes::collection_id)
-                    .load::<i32>(conn)
-                    .await?;
-                let class_ids = token_class_scopes::table
-                    .filter(token_class_scopes::token_id.eq(query.token_id()))
-                    .order_by(token_class_scopes::class_id.asc())
-                    .select(token_class_scopes::class_id)
-                    .load::<i32>(conn)
-                    .await?;
-                let object_ids = token_object_scopes::table
-                    .filter(token_object_scopes::token_id.eq(query.token_id()))
-                    .order_by(token_object_scopes::object_id.asc())
-                    .select(token_object_scopes::object_id)
-                    .load::<i32>(conn)
-                    .await?;
-                Some(AuthenticationResourceScope::new(
-                    collection_ids,
-                    class_ids,
-                    object_ids,
-                ))
-            } else {
-                None
-            };
-
-            Ok::<_, diesel::result::Error>(AuthenticationTokenScope::new(permissions, resources))
+        .with_connection(async move |connection| {
+            super::token::load_token_scope(connection, query).await
         })
         .await
-        .map(Some)
 }
 
 #[cfg(test)]

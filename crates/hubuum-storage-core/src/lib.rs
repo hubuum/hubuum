@@ -126,7 +126,7 @@ pub use identity_operations::{
     StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
     StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
     StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenMetadataBuilder,
+    StorageTokenMetadataBuilder, StorageTokenObservation, StorageTokenObservationError,
 };
 pub use identity_resources::{
     GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupUpdate, StoragePrincipal,

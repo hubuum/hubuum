@@ -384,12 +384,66 @@ pub enum StorageTokenListState {
     All,
 }
 
+/// Deterministic time inputs used to classify retained token metadata.
+///
+/// The application owns the clock and the configured lifetime of legacy
+/// tokens without a persisted expiry. Carrying both values across the storage
+/// boundary keeps adapters independent of global configuration and ensures
+/// that point, batch, and list operations use identical lifecycle semantics.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct StorageTokenObservation {
+    observed_at: NaiveDateTime,
+    legacy_valid_after: NaiveDateTime,
+}
+
+impl StorageTokenObservation {
+    pub fn new(
+        observed_at: NaiveDateTime,
+        legacy_valid_after: NaiveDateTime,
+    ) -> Result<Self, StorageTokenObservationError> {
+        if legacy_valid_after > observed_at {
+            return Err(StorageTokenObservationError);
+        }
+        Ok(Self {
+            observed_at,
+            legacy_valid_after,
+        })
+    }
+
+    #[must_use]
+    pub const fn into_parts(self) -> (NaiveDateTime, NaiveDateTime) {
+        (self.observed_at, self.legacy_valid_after)
+    }
+}
+
+impl fmt::Debug for StorageTokenObservation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageTokenObservation")
+            .field("observed_at", &"<redacted>")
+            .field("legacy_valid_after", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageTokenObservationError;
+
+impl fmt::Display for StorageTokenObservationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("legacy token validity cutoff cannot be after the observation time")
+    }
+}
+
+impl std::error::Error for StorageTokenObservationError {}
+
 /// Backend-neutral token-list request.
 #[derive(Clone, PartialEq)]
 pub struct StorageTokenListQuery {
     principal_id: i32,
     options: QueryOptions,
     state: StorageTokenListState,
+    observation: StorageTokenObservation,
 }
 
 impl StorageTokenListQuery {
@@ -398,11 +452,13 @@ impl StorageTokenListQuery {
         principal_id: i32,
         options: QueryOptions,
         state: StorageTokenListState,
+        observation: StorageTokenObservation,
     ) -> Self {
         Self {
             principal_id,
             options,
             state,
+            observation,
         }
     }
 
@@ -422,8 +478,20 @@ impl StorageTokenListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, QueryOptions, StorageTokenListState) {
-        (self.principal_id, self.options, self.state)
+    pub fn into_parts(
+        self,
+    ) -> (
+        i32,
+        QueryOptions,
+        StorageTokenListState,
+        StorageTokenObservation,
+    ) {
+        (
+            self.principal_id,
+            self.options,
+            self.state,
+            self.observation,
+        )
     }
 }
 
@@ -438,6 +506,7 @@ impl fmt::Debug for StorageTokenListQuery {
             .field("has_cursor", &self.options.cursor.is_some())
             .field("include_total", &self.options.include_total)
             .field("state", &self.state)
+            .field("observation", &self.observation)
             .finish()
     }
 }
@@ -1634,5 +1703,30 @@ mod tests {
         assert!(!debug.contains("sensitive-principal-name"));
         assert!(!debug.contains("sensitive-password-hash"));
         assert!(debug.contains("has_password_hash: true"));
+    }
+
+    #[test]
+    fn token_observation_rejects_a_future_legacy_cutoff() {
+        let observed_at = NaiveDateTime::default();
+
+        let result = StorageTokenObservation::new(
+            observed_at,
+            observed_at + chrono::Duration::microseconds(1),
+        );
+
+        assert_eq!(result, Err(StorageTokenObservationError));
+    }
+
+    #[test]
+    fn token_observation_debug_redacts_timestamps() {
+        let observed_at = NaiveDateTime::default();
+        let observation =
+            StorageTokenObservation::new(observed_at, observed_at - chrono::Duration::hours(24))
+                .unwrap();
+
+        let debug = format!("{observation:?}");
+
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("1970"));
     }
 }

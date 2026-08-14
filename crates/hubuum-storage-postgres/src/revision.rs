@@ -36,6 +36,7 @@ pub(crate) enum RevisionOwner {
     Object,
     Principal,
     RemoteTarget,
+    Token,
 }
 
 impl RevisionOwner {
@@ -50,6 +51,7 @@ impl RevisionOwner {
             Self::Object => "hubuumobject",
             Self::Principal => "principals",
             Self::RemoteTarget => "remote_targets",
+            Self::Token => "tokens",
         }
     }
 
