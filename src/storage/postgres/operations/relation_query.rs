@@ -1,19 +1,13 @@
 use crate::errors::ApiError;
-use crate::models::{
-    ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
-    HubuumClassID, HubuumObjectID,
-};
+use crate::models::{HubuumClassID, HubuumObjectID};
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::relation_rows::{
-    class_graph_to_storage, object_graph_to_storage, related_for_root_to_storage,
-    related_include_to_storage,
+    class_graph_to_storage, object_graph_to_storage,
 };
 use crate::storage::postgres::operations::user::UserSearchBackend;
 use crate::storage::postgres::operations::visibility::{principal, token_scope};
 use crate::storage::{
-    BidirectionalRelatedObjectsQuery, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationPage, StorageClassGraphRow, StorageObjectGraphRow, StorageRelatedDirection,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRelatedSort,
+    RelationGraphQuery, RelationPage, StorageClassGraphRow, StorageObjectGraphRow,
 };
 
 pub(crate) async fn related_classes(
@@ -62,95 +56,4 @@ pub(crate) async fn related_objects(
         rows.into_iter().map(object_graph_to_storage).collect(),
         include_total.then_some(total),
     ))
-}
-
-pub(crate) async fn related_objects_for_roots(
-    pool: &PostgresPool,
-    query: RelatedObjectsForRootsQuery,
-) -> Result<Vec<StorageRelatedObjectIncludeRow>, ApiError> {
-    let (
-        root_ids,
-        class_id,
-        class_relation_id,
-        direction,
-        sort,
-        max_depth,
-        limit,
-        preserve_alternative_paths,
-        visibility,
-    ) = query.into_parts();
-    let principal = principal(&visibility)?;
-    let scope = token_scope(&visibility)?;
-    let include = ExportIncludeRelatedQuery {
-        class_id,
-        class_relation_id,
-        direction: match direction {
-            StorageRelatedDirection::Any => ExportIncludeRelatedDirection::Any,
-            StorageRelatedDirection::Outgoing => ExportIncludeRelatedDirection::Outgoing,
-            StorageRelatedDirection::Incoming => ExportIncludeRelatedDirection::Incoming,
-        },
-        sort: match sort {
-            StorageRelatedSort::Path => ExportIncludeRelatedSort::Path,
-            StorageRelatedSort::Name => ExportIncludeRelatedSort::Name,
-            StorageRelatedSort::CreatedAt => ExportIncludeRelatedSort::CreatedAt,
-        },
-        max_depth,
-        limit,
-    };
-    let rows = if preserve_alternative_paths {
-        principal
-            .related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
-                pool,
-                &root_ids,
-                include,
-                visibility.is_admin(),
-                scope.as_ref(),
-            )
-            .await?
-    } else {
-        principal
-            .related_objects_for_roots_from_backend_with_admin_status(
-                pool,
-                &root_ids,
-                include,
-                visibility.is_admin(),
-                scope.as_ref(),
-            )
-            .await?
-    };
-    Ok(rows.into_iter().map(related_include_to_storage).collect())
-}
-
-pub(crate) async fn bidirectionally_related_objects_for_roots(
-    pool: &PostgresPool,
-    query: BidirectionalRelatedObjectsQuery,
-) -> Result<Vec<StorageRelatedObjectForRootRow>, ApiError> {
-    let (root_ids, max_depth, per_root_cap, preserve_alternative_paths, visibility) =
-        query.into_parts();
-    let principal = principal(&visibility)?;
-    let scope = token_scope(&visibility)?;
-    let rows = if preserve_alternative_paths {
-        principal
-            .bidirectionally_related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
-                pool,
-                &root_ids,
-                max_depth,
-                per_root_cap,
-                visibility.is_admin(),
-                scope.as_ref(),
-            )
-            .await?
-    } else {
-        principal
-            .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
-                pool,
-                &root_ids,
-                max_depth,
-                per_root_cap,
-                visibility.is_admin(),
-                scope.as_ref(),
-            )
-            .await?
-    };
-    Ok(rows.into_iter().map(related_for_root_to_storage).collect())
 }

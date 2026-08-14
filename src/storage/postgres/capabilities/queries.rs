@@ -304,18 +304,24 @@ impl RelationQueryStorage for PostgresStorage {
         &self,
         query: RelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
-        operations::relation_query::related_objects_for_roots(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::related_objects_for_roots(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn bidirectionally_related_objects_for_roots(
         &self,
         query: BidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
-        operations::relation_query::bidirectionally_related_objects_for_roots(&self.pool, query)
+        hubuum_storage_postgres::operations::relation_query::bidirectionally_related_objects_for_roots(
+            self.runtime(),
+            query,
+        )
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
 

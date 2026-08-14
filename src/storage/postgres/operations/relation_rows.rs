@@ -10,7 +10,6 @@ use crate::storage::postgres::prelude::*;
 use crate::storage::{
     StorageClassGraphRow, StorageGraphClass, StorageGraphObject, StorageGraphResource,
     StorageObjectGraphRow, StorageRecordMetadata,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
 };
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -894,54 +893,4 @@ pub(super) fn object_graph_to_storage(row: RelatedObjectGraphRow) -> StorageObje
         row.descendant_data,
     );
     StorageObjectGraphRow::new(ancestor, descendant, row.depth, row.path)
-}
-
-pub(super) fn related_include_to_storage(
-    row: RelatedObjectIncludeRow,
-) -> StorageRelatedObjectIncludeRow {
-    let root_object_id = row.root_object_id;
-    StorageRelatedObjectIncludeRow::new(
-        root_object_id,
-        object_graph_to_storage(RelatedObjectGraphRow {
-            ancestor_object_id: row.ancestor_object_id,
-            descendant_object_id: row.descendant_object_id,
-            depth: row.depth,
-            path: row.path,
-            ancestor_name: row.ancestor_name,
-            descendant_name: row.descendant_name,
-            ancestor_collection_id: row.ancestor_collection_id,
-            descendant_collection_id: row.descendant_collection_id,
-            ancestor_class_id: row.ancestor_class_id,
-            descendant_class_id: row.descendant_class_id,
-            ancestor_description: row.ancestor_description,
-            descendant_description: row.descendant_description,
-            ancestor_data: row.ancestor_data,
-            descendant_data: row.descendant_data,
-            ancestor_created_at: row.ancestor_created_at,
-            descendant_created_at: row.descendant_created_at,
-            ancestor_updated_at: row.ancestor_updated_at,
-            descendant_updated_at: row.descendant_updated_at,
-            ancestor_revision: row.ancestor_revision,
-            descendant_revision: row.descendant_revision,
-        }),
-    )
-}
-
-pub(super) fn related_for_root_to_storage(
-    row: RelatedObjectForRootRow,
-) -> StorageRelatedObjectForRootRow {
-    let descendant = graph_object(
-        graph_resource(
-            row.descendant_object_id,
-            row.descendant_name,
-            row.descendant_collection_id,
-            row.descendant_description,
-            row.descendant_created_at,
-            row.descendant_updated_at,
-            row.descendant_revision.get(),
-        ),
-        row.descendant_class_id,
-        row.descendant_data,
-    );
-    StorageRelatedObjectForRootRow::new(row.root_object_id, descendant, row.depth, row.path)
 }

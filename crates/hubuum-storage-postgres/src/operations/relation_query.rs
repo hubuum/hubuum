@@ -2,12 +2,15 @@
 
 use diesel::dsl::not;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
-use diesel::{JoinOnDsl, SelectableHelper};
+use diesel::{JoinOnDsl, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    AuthorizationPermission, ObjectRelationsTouchingIdsQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationTouchingQuery, StorageClassRelation, StorageObjectRelation,
+    AuthorizationPermission, BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery,
+    RelatedObjectsForRootsQuery, RelationIdsQuery, RelationListQuery, RelationPage,
+    RelationTouchingQuery, StorageClassRelation, StorageGraphObject, StorageGraphResource,
+    StorageObjectGraphRow, StorageObjectRelation, StorageRecordMetadata, StorageRelatedDirection,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRelatedSort,
     StorageVisibility,
 };
 
@@ -20,6 +23,17 @@ const CLASS_RELATION_PERMISSION: AuthorizationPermission =
     AuthorizationPermission::ReadClassRelation;
 const OBJECT_RELATION_PERMISSION: AuthorizationPermission =
     AuthorizationPermission::ReadObjectRelation;
+
+macro_rules! bind_integer_query {
+    ($spec:expr) => {{
+        let spec = $spec.into_indexed_sql();
+        let mut query = diesel::sql_query(spec.sql).into_boxed();
+        for value in spec.bind_variables {
+            query = query.bind::<diesel::sql_types::Integer, _>(value);
+        }
+        query
+    }};
+}
 
 /// List visible class relations with stable cursor paging and an optional count.
 pub async fn list_class_relations(
@@ -286,6 +300,643 @@ pub async fn object_relations_touching_ids(
             )
         })
         .await
+}
+
+/// Walk directional object relations for several roots in one bounded query.
+pub async fn related_objects_for_roots(
+    runtime: &PostgresRuntime,
+    query: RelatedObjectsForRootsQuery,
+) -> Result<Vec<StorageRelatedObjectIncludeRow>, PostgresStorageError> {
+    let (
+        root_ids,
+        class_id,
+        class_relation_id,
+        direction,
+        sort,
+        max_depth,
+        limit,
+        preserve_alternative_paths,
+        visibility,
+    ) = query.into_parts();
+    if root_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    validate_graph_bounds(max_depth, limit)?;
+    let permissions = [
+        AuthorizationPermission::ReadObject,
+        AuthorizationPermission::ReadObjectRelation,
+    ];
+    if !visibility.allows_permissions(&permissions) {
+        return Ok(Vec::new());
+    }
+
+    runtime
+        .with_connection(async move |connection| {
+            let collection_ids =
+                authorized_collection_ids(connection, &visibility, &permissions).await?;
+            if collection_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+                root_ids: &root_ids,
+                collection_ids: &collection_ids,
+                visibility: &visibility,
+                max_depth,
+                per_root_limit: limit,
+                edges: GraphWalkEdges::Directional {
+                    direction,
+                    class_relation_id,
+                },
+                ranking: GraphWalkRanking::ByTargetClass { class_id, sort },
+                projection: GraphWalkProjection::AncestorAndDescendant,
+                preserve_alternative_paths,
+            });
+            tracing::debug!(
+                operation = "related_objects_for_roots",
+                root_count = root_ids.len(),
+                max_depth,
+                per_root_limit = limit,
+                "executing PostgreSQL relation graph query"
+            );
+            let rows = bind_integer_query!(spec)
+                .get_results::<RelatedObjectIncludeQueryRow>(connection)
+                .await?;
+            Ok::<_, PostgresStorageError>(
+                rows.into_iter()
+                    .map(RelatedObjectIncludeQueryRow::into_storage)
+                    .collect(),
+            )
+        })
+        .await
+}
+
+/// Walk bidirectional object relations for several roots in one bounded query.
+pub async fn bidirectionally_related_objects_for_roots(
+    runtime: &PostgresRuntime,
+    query: BidirectionalRelatedObjectsQuery,
+) -> Result<Vec<StorageRelatedObjectForRootRow>, PostgresStorageError> {
+    let (root_ids, max_depth, per_root_cap, preserve_alternative_paths, visibility) =
+        query.into_parts();
+    if root_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    validate_graph_bounds(max_depth, per_root_cap)?;
+    let permissions = [
+        AuthorizationPermission::ReadObject,
+        AuthorizationPermission::ReadObjectRelation,
+    ];
+    if !visibility.allows_permissions(&permissions) {
+        return Ok(Vec::new());
+    }
+
+    runtime
+        .with_connection(async move |connection| {
+            let collection_ids =
+                authorized_collection_ids(connection, &visibility, &permissions).await?;
+            if collection_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+                root_ids: &root_ids,
+                collection_ids: &collection_ids,
+                visibility: &visibility,
+                max_depth,
+                per_root_limit: per_root_cap,
+                edges: GraphWalkEdges::Bidirectional,
+                ranking: GraphWalkRanking::ByDescendant,
+                projection: GraphWalkProjection::DescendantOnly,
+                preserve_alternative_paths,
+            });
+            tracing::debug!(
+                operation = "bidirectionally_related_objects_for_roots",
+                root_count = root_ids.len(),
+                max_depth,
+                per_root_limit = per_root_cap,
+                "executing PostgreSQL relation graph query"
+            );
+            let rows = bind_integer_query!(spec)
+                .get_results::<RelatedObjectForRootQueryRow>(connection)
+                .await?;
+            Ok::<_, PostgresStorageError>(
+                rows.into_iter()
+                    .map(RelatedObjectForRootQueryRow::into_storage)
+                    .collect(),
+            )
+        })
+        .await
+}
+
+#[derive(Debug)]
+struct IntegerQuerySpec {
+    sql: String,
+    bind_variables: Vec<i32>,
+}
+
+impl IntegerQuerySpec {
+    fn into_indexed_sql(self) -> Self {
+        let mut parameter = 0;
+        let mut sql = String::with_capacity(self.sql.len());
+        for character in self.sql.chars() {
+            if character == '?' {
+                parameter += 1;
+                sql.push('$');
+                sql.push_str(&parameter.to_string());
+            } else {
+                sql.push(character);
+            }
+        }
+        Self {
+            sql,
+            bind_variables: self.bind_variables,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum GraphWalkEdges {
+    Bidirectional,
+    Directional {
+        direction: StorageRelatedDirection,
+        class_relation_id: Option<i32>,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum GraphWalkRanking {
+    ByDescendant,
+    ByTargetClass {
+        class_id: i32,
+        sort: StorageRelatedSort,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum GraphWalkProjection {
+    DescendantOnly,
+    AncestorAndDescendant,
+}
+
+struct RootGraphWalkSpec<'a> {
+    root_ids: &'a [i32],
+    collection_ids: &'a [i32],
+    visibility: &'a StorageVisibility,
+    max_depth: i32,
+    per_root_limit: i32,
+    edges: GraphWalkEdges,
+    ranking: GraphWalkRanking,
+    projection: GraphWalkProjection,
+    preserve_alternative_paths: bool,
+}
+
+fn build_root_graph_walk_query(spec: RootGraphWalkSpec<'_>) -> IntegerQuerySpec {
+    let mut bind_variables = Vec::new();
+    let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
+    let valid_scope_objects_sql = scoped_objects_sql(spec.visibility, &mut bind_variables);
+    let root_array_sql = sql_integer_array(spec.root_ids, &mut bind_variables);
+    let object_edges_sql = object_edges_sql(spec.edges, &mut bind_variables);
+    bind_variables.extend([spec.max_depth, spec.max_depth]);
+
+    let deduplicated_walk_sql = if spec.preserve_alternative_paths {
+        r#"    SELECT
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk"#
+    } else {
+        r#"    SELECT DISTINCT ON (root_object_id, descendant_object_id)
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk
+    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC"#
+    };
+
+    let ranked_walk_sql = match spec.ranking {
+        GraphWalkRanking::ByDescendant => r#"    SELECT
+        deduped_walk.*,
+        row_number() OVER (
+            PARTITION BY root_object_id
+            ORDER BY descendant_object_id ASC, depth ASC, path ASC
+        ) AS related_rank
+    FROM deduped_walk"#
+            .to_string(),
+        GraphWalkRanking::ByTargetClass { class_id, sort } => {
+            bind_variables.push(class_id);
+            format!(
+                r#"    SELECT
+        deduped_walk.*,
+        row_number() OVER (
+            PARTITION BY deduped_walk.root_object_id
+            ORDER BY {}
+        ) AS related_rank
+    FROM deduped_walk
+    JOIN hubuumobject target_object
+      ON target_object.id = deduped_walk.descendant_object_id
+    WHERE target_object.hubuum_class_id = ?"#,
+                related_include_order_sql(sort)
+            )
+        }
+    };
+    bind_variables.push(spec.per_root_limit);
+
+    let final_select_sql = match spec.projection {
+        GraphWalkProjection::DescendantOnly => {
+            r#"SELECT
+    ranked_walk.root_object_id,
+    target_object.id AS descendant_object_id,
+    ranked_walk.depth,
+    ranked_walk.path,
+    target_object.name AS descendant_name,
+    target_object.collection_id AS descendant_collection_id,
+    target_object.hubuum_class_id AS descendant_class_id,
+    target_object.description AS descendant_description,
+    target_object.data AS descendant_data,
+    target_object.created_at AS descendant_created_at,
+    target_object.updated_at AS descendant_updated_at,
+    target_object.revision AS descendant_revision
+FROM ranked_walk
+JOIN hubuumobject target_object
+  ON target_object.id = ranked_walk.descendant_object_id
+WHERE ranked_walk.related_rank <= ?
+  AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+  AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
+        }
+        GraphWalkProjection::AncestorAndDescendant => {
+            r#"SELECT
+    ranked_walk.root_object_id,
+    source_object.id AS ancestor_object_id,
+    target_object.id AS descendant_object_id,
+    ranked_walk.depth,
+    ranked_walk.path,
+    source_object.name AS ancestor_name,
+    target_object.name AS descendant_name,
+    source_object.collection_id AS ancestor_collection_id,
+    target_object.collection_id AS descendant_collection_id,
+    source_object.hubuum_class_id AS ancestor_class_id,
+    target_object.hubuum_class_id AS descendant_class_id,
+    source_object.description AS ancestor_description,
+    target_object.description AS descendant_description,
+    source_object.data AS ancestor_data,
+    target_object.data AS descendant_data,
+    source_object.created_at AS ancestor_created_at,
+    target_object.created_at AS descendant_created_at,
+    source_object.updated_at AS ancestor_updated_at,
+    target_object.updated_at AS descendant_updated_at,
+    source_object.revision AS ancestor_revision,
+    target_object.revision AS descendant_revision
+FROM ranked_walk
+JOIN hubuumobject source_object
+  ON source_object.id = ranked_walk.ancestor_object_id
+JOIN hubuumobject target_object
+  ON target_object.id = ranked_walk.descendant_object_id
+WHERE ranked_walk.related_rank <= ?
+  AND source_object.collection_id IN (SELECT collection_id FROM valid_collections)
+  AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+  AND source_object.id IN (SELECT object_id FROM valid_scope_objects)
+  AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
+        }
+    };
+
+    IntegerQuerySpec {
+        sql: format!(
+            r#"
+WITH RECURSIVE
+valid_collections AS (
+    SELECT unnest({collection_array_sql}) AS collection_id
+),
+valid_scope_objects AS (
+    {valid_scope_objects_sql}
+),
+root_objects AS (
+    SELECT scoped_root.root_object_id
+    FROM unnest({root_array_sql}) AS scoped_root(root_object_id)
+    WHERE scoped_root.root_object_id IN (SELECT object_id FROM valid_scope_objects)
+),
+object_edges AS (
+{object_edges_sql}
+),
+graph_walk AS (
+    SELECT
+        root_objects.root_object_id,
+        root_objects.root_object_id AS ancestor_object_id,
+        object_edges.target_object_id AS descendant_object_id,
+        1 AS depth,
+        ARRAY[root_objects.root_object_id, object_edges.target_object_id] AS path
+    FROM root_objects
+    JOIN object_edges
+      ON object_edges.source_object_id = root_objects.root_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = object_edges.target_object_id
+    WHERE ? >= 1
+      AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+
+    UNION ALL
+
+    SELECT
+        graph_walk.root_object_id,
+        graph_walk.ancestor_object_id,
+        object_edges.target_object_id AS descendant_object_id,
+        graph_walk.depth + 1,
+        graph_walk.path || object_edges.target_object_id
+    FROM graph_walk
+    JOIN object_edges
+      ON object_edges.source_object_id = graph_walk.descendant_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = object_edges.target_object_id
+    WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
+      AND graph_walk.depth < ?
+      AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+),
+deduped_walk AS (
+{deduplicated_walk_sql}
+),
+ranked_walk AS (
+{ranked_walk_sql}
+)
+{final_select_sql}
+"#
+        ),
+        bind_variables,
+    }
+}
+
+fn scoped_objects_sql(visibility: &StorageVisibility, bind_variables: &mut Vec<i32>) -> String {
+    let Some(scope) = visibility.resources() else {
+        return "SELECT id AS object_id FROM hubuumobject".to_string();
+    };
+    let collection_ids = sql_integer_array(scope.collection_ids(), bind_variables);
+    let class_ids = sql_integer_array(scope.class_ids(), bind_variables);
+    let object_ids = sql_integer_array(scope.object_ids(), bind_variables);
+    format!(
+        "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_ids}) OR hubuum_class_id = ANY({class_ids}) OR id = ANY({object_ids})"
+    )
+}
+
+fn object_edges_sql(edges: GraphWalkEdges, bind_variables: &mut Vec<i32>) -> String {
+    match edges {
+        GraphWalkEdges::Bidirectional => r#"    SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation
+
+    UNION ALL
+
+    SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation"#
+            .to_string(),
+        GraphWalkEdges::Directional {
+            direction,
+            class_relation_id,
+        } => {
+            let mut selects = Vec::new();
+            if matches!(
+                direction,
+                StorageRelatedDirection::Any | StorageRelatedDirection::Outgoing
+            ) {
+                selects.push(directional_edge_sql(
+                    "from_hubuum_object_id",
+                    "to_hubuum_object_id",
+                    class_relation_id,
+                    bind_variables,
+                ));
+            }
+            if matches!(
+                direction,
+                StorageRelatedDirection::Any | StorageRelatedDirection::Incoming
+            ) {
+                selects.push(directional_edge_sql(
+                    "to_hubuum_object_id",
+                    "from_hubuum_object_id",
+                    class_relation_id,
+                    bind_variables,
+                ));
+            }
+            selects.join("\n\n    UNION ALL\n\n")
+        }
+    }
+}
+
+fn directional_edge_sql(
+    source_column: &str,
+    target_column: &str,
+    class_relation_id: Option<i32>,
+    bind_variables: &mut Vec<i32>,
+) -> String {
+    let relation_filter = if let Some(class_relation_id) = class_relation_id {
+        bind_variables.push(class_relation_id);
+        "  AND hubuumobject_relation.class_relation_id = ?\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"    SELECT
+        hubuumobject_relation.{source_column} AS source_object_id,
+        hubuumobject_relation.{target_column} AS target_object_id
+    FROM hubuumobject_relation
+    JOIN hubuumobject source_edge_object
+      ON source_edge_object.id = hubuumobject_relation.{source_column}
+    JOIN hubuumobject target_edge_object
+      ON target_edge_object.id = hubuumobject_relation.{target_column}
+    WHERE source_edge_object.collection_id IN (SELECT collection_id FROM valid_collections)
+      AND target_edge_object.collection_id IN (SELECT collection_id FROM valid_collections)
+{relation_filter}"#
+    )
+}
+
+fn related_include_order_sql(sort: StorageRelatedSort) -> &'static str {
+    match sort {
+        StorageRelatedSort::Path => "deduped_walk.path ASC, deduped_walk.descendant_object_id ASC",
+        StorageRelatedSort::Name => {
+            "target_object.name ASC, target_object.id ASC, deduped_walk.path ASC"
+        }
+        StorageRelatedSort::CreatedAt => {
+            "target_object.created_at ASC, target_object.id ASC, deduped_walk.path ASC"
+        }
+    }
+}
+
+fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<i32>) -> String {
+    bind_variables.extend_from_slice(values);
+    let placeholders = std::iter::repeat_n("?", values.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{placeholders}]::integer[]")
+}
+
+fn validate_graph_bounds(max_depth: i32, per_root_limit: i32) -> Result<(), PostgresStorageError> {
+    if max_depth < 0 {
+        return Err(PostgresStorageError::bad_request(
+            "relation graph depth cannot be negative",
+        ));
+    }
+    if per_root_limit < 0 {
+        return Err(PostgresStorageError::bad_request(
+            "relation graph result limit cannot be negative",
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Clone, QueryableByName)]
+struct ObjectGraphQueryRow {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    ancestor_object_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    descendant_object_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    depth: i32,
+    #[diesel(sql_type = diesel::sql_types::Array<diesel::sql_types::Integer>)]
+    path: Vec<i32>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    ancestor_name: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    descendant_name: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    ancestor_collection_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    descendant_collection_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    ancestor_class_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    descendant_class_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    ancestor_description: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    descendant_description: String,
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    ancestor_data: serde_json::Value,
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    descendant_data: serde_json::Value,
+    #[diesel(sql_type = diesel::sql_types::Timestamp)]
+    ancestor_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = diesel::sql_types::Timestamp)]
+    descendant_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = diesel::sql_types::Timestamp)]
+    ancestor_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = diesel::sql_types::Timestamp)]
+    descendant_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    ancestor_revision: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    descendant_revision: i64,
+}
+
+impl ObjectGraphQueryRow {
+    fn into_storage(self) -> StorageObjectGraphRow {
+        let ancestor = GraphObjectParts {
+            id: self.ancestor_object_id,
+            name: self.ancestor_name,
+            collection_id: self.ancestor_collection_id,
+            class_id: self.ancestor_class_id,
+            description: self.ancestor_description,
+            data: self.ancestor_data,
+            created_at: self.ancestor_created_at,
+            updated_at: self.ancestor_updated_at,
+            revision: self.ancestor_revision,
+        }
+        .into_storage();
+        let descendant = GraphObjectParts {
+            id: self.descendant_object_id,
+            name: self.descendant_name,
+            collection_id: self.descendant_collection_id,
+            class_id: self.descendant_class_id,
+            description: self.descendant_description,
+            data: self.descendant_data,
+            created_at: self.descendant_created_at,
+            updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
+        }
+        .into_storage();
+        StorageObjectGraphRow::new(ancestor, descendant, self.depth, self.path)
+    }
+}
+
+#[derive(QueryableByName)]
+struct RelatedObjectIncludeQueryRow {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    root_object_id: i32,
+    #[diesel(embed)]
+    graph: ObjectGraphQueryRow,
+}
+
+impl RelatedObjectIncludeQueryRow {
+    fn into_storage(self) -> StorageRelatedObjectIncludeRow {
+        StorageRelatedObjectIncludeRow::new(self.root_object_id, self.graph.into_storage())
+    }
+}
+
+#[derive(QueryableByName)]
+struct RelatedObjectForRootQueryRow {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    root_object_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    descendant_object_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    depth: i32,
+    #[diesel(sql_type = diesel::sql_types::Array<diesel::sql_types::Integer>)]
+    path: Vec<i32>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    descendant_name: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    descendant_collection_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    descendant_class_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    descendant_description: String,
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    descendant_data: serde_json::Value,
+    #[diesel(sql_type = diesel::sql_types::Timestamp)]
+    descendant_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = diesel::sql_types::Timestamp)]
+    descendant_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    descendant_revision: i64,
+}
+
+impl RelatedObjectForRootQueryRow {
+    fn into_storage(self) -> StorageRelatedObjectForRootRow {
+        let descendant = GraphObjectParts {
+            id: self.descendant_object_id,
+            name: self.descendant_name,
+            collection_id: self.descendant_collection_id,
+            class_id: self.descendant_class_id,
+            description: self.descendant_description,
+            data: self.descendant_data,
+            created_at: self.descendant_created_at,
+            updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
+        }
+        .into_storage();
+        StorageRelatedObjectForRootRow::new(self.root_object_id, descendant, self.depth, self.path)
+    }
+}
+
+struct GraphObjectParts {
+    id: i32,
+    name: String,
+    collection_id: i32,
+    class_id: i32,
+    description: String,
+    data: serde_json::Value,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    revision: i64,
+}
+
+impl GraphObjectParts {
+    fn into_storage(self) -> StorageGraphObject {
+        let metadata =
+            StorageRecordMetadata::new(self.id, self.created_at, self.updated_at, self.revision);
+        let resource =
+            StorageGraphResource::new(metadata, self.name, self.collection_id, self.description);
+        StorageGraphObject::new(resource, self.class_id, self.data)
+    }
 }
 
 #[derive(Clone, Copy)]
