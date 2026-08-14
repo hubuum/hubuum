@@ -124,18 +124,18 @@ impl IdentityStorage for PostgresStorage {
         &self,
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
-        operations::identity_operations::list_principal_groups(&self.pool, query)
+        hubuum_storage_postgres::operations::group::list_principal_groups(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn list_groups(
         &self,
         query: StorageGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
-        operations::identity_operations::list_groups(&self.pool, query)
+        hubuum_storage_postgres::operations::group::list_groups(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn list_retained_tokens(

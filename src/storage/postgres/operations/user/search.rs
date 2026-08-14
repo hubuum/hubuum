@@ -15,7 +15,6 @@ use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
-use crate::storage::postgres::operations::group::GroupRow;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::permissions::PermissionFilter;
 use crate::storage::postgres::operations::relation_rows::{
@@ -4719,112 +4718,6 @@ impl User {
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
         Self::count_user_search_records(pool, query_options).await
-    }
-
-    pub(crate) async fn search_group_records(
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: QueryOptions,
-    ) -> Result<Vec<Group>, ApiError> {
-        use crate::schema::groups::dsl::{
-            created_at, description, groupname, groups, id, revision, updated_at,
-        };
-        use crate::schema::identity_scopes;
-
-        let query_params = query_options.filters.clone();
-
-        debug!(
-            message = "Searching groups",
-            stage = "Starting",
-            query_params = ?query_params
-        );
-
-        let mut base_query = groups.inner_join(identity_scopes::table).into_boxed();
-
-        for param in query_params {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name => string_search!(base_query, param, operator, groupname),
-                FilterField::Groupname => string_search!(base_query, param, operator, groupname),
-                FilterField::IdentityScope => {
-                    string_search!(base_query, param, operator, identity_scopes::name)
-                }
-                FilterField::Description => {
-                    string_search!(base_query, param, operator, description)
-                }
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
-                FilterField::Revision => revision_search!(base_query, param, operator, revision),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for groups",
-                        param.field
-                    )));
-                }
-            }
-        }
-
-        crate::apply_query_options!(base_query, query_options, GroupRow);
-
-        trace_query!(base_query, "Searching groups");
-
-        let result = with_connection(pool, async |conn| {
-            base_query
-                .select(groups::all_columns())
-                .distinct()
-                .load::<GroupRow>(conn)
-                .await
-        })
-        .await?;
-
-        Ok(result.into_iter().map(Into::into).collect())
-    }
-
-    pub(crate) async fn count_group_search_records(
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: QueryOptions,
-    ) -> Result<i64, ApiError> {
-        use crate::schema::groups::dsl::{
-            created_at, description, groupname, groups, id, revision, updated_at,
-        };
-        use crate::schema::identity_scopes;
-
-        let query_params = query_options.filters.clone();
-        let mut base_query = groups.inner_join(identity_scopes::table).into_boxed();
-
-        for param in query_params {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name => string_search!(base_query, param, operator, groupname),
-                FilterField::Groupname => string_search!(base_query, param, operator, groupname),
-                FilterField::IdentityScope => {
-                    string_search!(base_query, param, operator, identity_scopes::name)
-                }
-                FilterField::Description => {
-                    string_search!(base_query, param, operator, description)
-                }
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
-                FilterField::Revision => revision_search!(base_query, param, operator, revision),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for groups",
-                        param.field
-                    )));
-                }
-            }
-        }
-
-        with_connection(pool, async |conn| {
-            base_query
-                .select(id)
-                .distinct()
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
-        .await
     }
 }
 

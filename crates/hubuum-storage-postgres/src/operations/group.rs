@@ -7,8 +7,9 @@ use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageGroupCreate, StorageGroupUpdate, StorageIdentityGroup, StoragePrincipal,
-    StoragePrincipalGroup, StorageRecordMetadata,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup,
+    StorageIdentityPage, StoragePrincipal, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
+    StorageRecordMetadata,
 };
 use serde_json::{Value, json};
 
@@ -25,6 +26,56 @@ const LOCAL_IDENTITY_SCOPE: &str = "local";
 const LOCAL_PROVIDER_KIND: &str = "local";
 const MANUAL_MEMBERSHIP_SOURCE: &str = "manual";
 const OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT: i64 = 10;
+
+macro_rules! apply_group_filters {
+    ($query:ident, $options:expr, $allow_revision:expr) => {
+        for parameter in &$options.filters {
+            match parameter.field {
+                FilterField::Id => {
+                    crate::postgres_integer_filter!($query, parameter, crate::schema::groups::id)
+                }
+                FilterField::Name | FilterField::Groupname => {
+                    crate::postgres_string_filter!(
+                        $query,
+                        parameter,
+                        crate::schema::groups::groupname
+                    )
+                }
+                FilterField::IdentityScope => crate::postgres_string_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::identity_scopes::name
+                ),
+                FilterField::Description => crate::postgres_string_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::groups::description
+                ),
+                FilterField::CreatedAt => crate::postgres_datetime_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::groups::created_at
+                ),
+                FilterField::UpdatedAt => crate::postgres_datetime_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::groups::updated_at
+                ),
+                FilterField::Revision if $allow_revision => crate::postgres_revision_filter!(
+                    $query,
+                    parameter,
+                    crate::schema::groups::revision
+                ),
+                _ => {
+                    return Err(PostgresStorageError::bad_request(format!(
+                        "Field '{}' isn't searchable (or does not exist) for groups",
+                        parameter.field
+                    )));
+                }
+            }
+        }
+    };
+}
 
 type GroupMemberQuery<'query> = diesel::dsl::IntoBoxed<
     'query,
@@ -159,6 +210,95 @@ pub async fn group_identity_scope_name(
                 .select(crate::schema::identity_scopes::name)
                 .first::<String>(connection)
                 .await
+        })
+        .await
+}
+
+pub async fn list_principal_groups(
+    runtime: &PostgresRuntime,
+    query: StoragePrincipalGroupListQuery,
+) -> Result<StorageIdentityPage<StorageIdentityGroup>, PostgresStorageError> {
+    let (principal_id, options) = query.into_parts();
+    validate_positive_id(principal_id, "principal id")?;
+    runtime
+        .with_read_only_snapshot(async move |connection| {
+            let build_query = || -> Result<_, PostgresStorageError> {
+                let mut records = crate::schema::group_memberships::table
+                    .inner_join(crate::schema::groups::table.on(
+                        crate::schema::groups::id.eq(crate::schema::group_memberships::group_id),
+                    ))
+                    .inner_join(
+                        crate::schema::identity_scopes::table
+                            .on(crate::schema::groups::identity_scope_id
+                                .eq(crate::schema::identity_scopes::id)),
+                    )
+                    .filter(crate::schema::group_memberships::principal_id.eq(principal_id))
+                    .into_boxed();
+                apply_group_filters!(records, options, false);
+                Ok(records)
+            };
+
+            let total = if options.include_total {
+                Some(build_query()?.count().get_result::<i64>(connection).await?)
+            } else {
+                None
+            };
+            let mut records = build_query()?.select(GroupRow::as_select());
+            let fields = options
+                .sort
+                .iter()
+                .map(|sort| group_cursor_field(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::apply_query_options_with_fields!(records, options, fields);
+            let groups = records
+                .load::<GroupRow>(connection)
+                .await?
+                .into_iter()
+                .map(GroupRow::into_storage)
+                .collect();
+            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(groups, total))
+        })
+        .await
+}
+
+pub async fn list_groups(
+    runtime: &PostgresRuntime,
+    query: StorageGroupListQuery,
+) -> Result<StorageIdentityPage<StorageIdentityGroup>, PostgresStorageError> {
+    let (options, count_options) = query.into_parts();
+    runtime
+        .with_read_only_snapshot(async move |connection| {
+            let build_query = |query_options: &QueryOptions| -> Result<_, PostgresStorageError> {
+                let mut records = crate::schema::groups::table
+                    .inner_join(crate::schema::identity_scopes::table)
+                    .into_boxed();
+                apply_group_filters!(records, query_options, true);
+                Ok(records)
+            };
+            let total = match count_options.as_ref() {
+                Some(count_options) => Some(
+                    build_query(count_options)?
+                        .count()
+                        .get_result::<i64>(connection)
+                        .await?,
+                ),
+                None => None,
+            };
+            let mut records = build_query(&options)?.select(GroupRow::as_select());
+            let fields = options
+                .sort
+                .iter()
+                .map(|sort| group_cursor_field(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::apply_query_options_with_fields!(records, options, fields);
+            let groups = records
+                .distinct()
+                .load::<GroupRow>(connection)
+                .await?
+                .into_iter()
+                .map(GroupRow::into_storage)
+                .collect();
+            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(groups, total))
         })
         .await
 }
@@ -750,6 +890,24 @@ fn member_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSt
         _ => {
             return Err(PostgresStorageError::bad_request(format!(
                 "Field '{field}' is not orderable for principals"
+            )));
+        }
+    })
+}
+
+fn group_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStorageError> {
+    Ok(match field {
+        FilterField::Id => cursor_field("groups.id", CursorSqlType::Integer),
+        FilterField::Name | FilterField::Groupname => {
+            cursor_field("groups.groupname", CursorSqlType::String)
+        }
+        FilterField::Description => cursor_field("groups.description", CursorSqlType::String),
+        FilterField::CreatedAt => cursor_field("groups.created_at", CursorSqlType::DateTime),
+        FilterField::UpdatedAt => cursor_field("groups.updated_at", CursorSqlType::DateTime),
+        FilterField::Revision => cursor_field("groups.revision", CursorSqlType::BigInt),
+        _ => {
+            return Err(PostgresStorageError::bad_request(format!(
+                "Field '{field}' is not orderable for groups"
             )));
         }
     })

@@ -1,21 +1,19 @@
 use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserProfile};
 use hubuum_storage_core::{
     AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupListQuery,
-    StorageIdentityGroup, StorageIdentityPage, StoragePrincipalGroupListQuery,
-    StorageRecordMetadata, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityPage,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenRenew,
+    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
 };
 
 use crate::errors::ApiError;
 use crate::models::{
-    CollectionID, Group, GroupID, HubuumClassID, HubuumObjectID, NewServiceAccount, NewUser,
-    Permissions, PrincipalID, PrincipalTokenCreateParts, PrincipalTokenMetadata, ServiceAccount,
+    CollectionID, GroupID, HubuumClassID, HubuumObjectID, NewServiceAccount, NewUser, Permissions,
+    PrincipalID, PrincipalTokenCreateParts, PrincipalTokenMetadata, ServiceAccount,
     ServiceAccountID, ServiceAccountWithName, TokenIssuancePolicy, TokenListState,
     TokenResourceScope, TokenScope, UpdateServiceAccount, UpdateUser, User, UserWithName,
 };
@@ -25,9 +23,7 @@ use crate::storage::postgres::operations::service_account::{
     DisableServiceAccount, SaveServiceAccount,
     delete_service_account as delete_service_account_record, update_service_account_record,
 };
-use crate::storage::postgres::operations::user::{
-    CreateUserRecord, LoadUserGroupsPaginated, UpdateUserRecord,
-};
+use crate::storage::postgres::operations::user::{CreateUserRecord, UpdateUserRecord};
 
 fn storage_user(user: User) -> StorageUser {
     StorageUser::new(
@@ -52,25 +48,6 @@ fn storage_user_list_item(item: UserWithName) -> StorageUserListItem {
     .provider_managed(item.provider_managed)
     .last_sync_attempted_at(item.last_sync_attempted_at)
     .last_sync_success_at(item.last_sync_success_at)
-    .build()
-}
-
-fn storage_identity_group(group: Group) -> StorageIdentityGroup {
-    StorageIdentityGroup::builder(
-        StorageRecordMetadata::new(
-            group.id,
-            group.created_at,
-            group.updated_at,
-            group.revision.get(),
-        ),
-        group.groupname,
-        group.description,
-        group.identity_scope_id,
-        group.managed_by,
-    )
-    .external_key(group.external_key)
-    .last_sync_attempted_at(group.last_sync_attempted_at)
-    .last_sync_success_at(group.last_sync_success_at)
     .build()
 }
 
@@ -179,38 +156,6 @@ pub(crate) fn token_scope_from_storage(
         })
         .transpose()?;
     TokenScope::from_stored_parts(permissions, resources)
-}
-
-pub(crate) async fn list_principal_groups(
-    pool: &PostgresPool,
-    query: StoragePrincipalGroupListQuery,
-) -> Result<StorageIdentityPage<StorageIdentityGroup>, ApiError> {
-    let (principal_id, options) = query.into_parts();
-    let include_total = options.include_total;
-    let (groups, total) = PrincipalID::new(principal_id)?
-        .load_user_groups_paginated_with_total_count(pool, &options)
-        .await?;
-    Ok(StorageIdentityPage::new(
-        groups.into_iter().map(storage_identity_group).collect(),
-        include_total.then_some(total),
-    ))
-}
-
-pub(crate) async fn list_groups(
-    pool: &PostgresPool,
-    query: StorageGroupListQuery,
-) -> Result<StorageIdentityPage<StorageIdentityGroup>, ApiError> {
-    let (records, count) = query.into_parts();
-    let total = match count {
-        Some(options) => Some(User::count_group_search_records(pool, options).await?),
-        None => None,
-    };
-    let groups = User::search_group_records(pool, records).await?;
-
-    Ok(StorageIdentityPage::new(
-        groups.into_iter().map(storage_identity_group).collect(),
-        total,
-    ))
 }
 
 pub(crate) async fn list_retained_tokens(

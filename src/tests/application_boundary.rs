@@ -2318,6 +2318,30 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
+    let identity_capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let identity_capability = read_source(&identity_capability_path).unwrap_or_else(|error| {
+        panic!(
+            "could not read {}: {error}",
+            identity_capability_path.display()
+        )
+    });
+    let identity_implementation = item_body(
+        &identity_capability,
+        "impl",
+        "IdentityStorage for PostgresStorage",
+    );
+    for method in ["list_principal_groups", "list_groups"] {
+        let method_body = item_body(identity_implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::group"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+
     let legacy_path = root.join("src/storage/postgres/operations/group.rs");
     let legacy = read_source(&legacy_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
@@ -2330,6 +2354,8 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         "struct PrincipalGroupRow",
         "fn save_manual_membership",
         "fn group_member_principal",
+        "fn list_principal_groups",
+        "fn list_groups",
     ] {
         assert!(
             !legacy.contains(removed),
