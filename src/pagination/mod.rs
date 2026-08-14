@@ -1,40 +1,32 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use base64::Engine;
+#[cfg(test)]
+use base64::Engine as _;
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
 use crate::config::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, get_config};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 pub use crate::traits::pagination::{CursorPaginated, CursorValue};
+pub use hubuum_query::MAX_ENCODED_CURSOR_BYTES;
+pub use hubuum_storage_postgres::cursor::{CursorSqlField, CursorSqlType};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorSqlType {
-    Integer,
-    BigInt,
-    Numeric,
-    Boolean,
-    String,
-    DateTime,
-    IntegerArray,
-    Json,
+// These mirrors exist only so application compatibility tests can construct
+// deliberately malformed tokens without exposing the codec representation.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CursorToken {
+    sorts: Vec<CursorSort>,
+    values: Vec<CursorValue>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CursorSqlField<T = &'static str> {
-    pub column: T,
-    pub sql_type: CursorSqlType,
-    pub nullable: bool,
-}
-
-impl<T> CursorSqlField<T>
-where
-    T: AsRef<str>,
-{
-    pub fn expression(&self) -> &str {
-        self.column.as_ref()
-    }
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CursorSort {
+    field: String,
+    descending: bool,
 }
 
 pub trait CursorSqlMapping: CursorPaginated {
@@ -45,7 +37,6 @@ pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
 pub const PAGE_LIMIT_HEADER: &str = "X-Page-Limit";
 pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
 pub const SKIPPED_TOTAL_COUNT: i64 = -1;
-pub const MAX_ENCODED_CURSOR_BYTES: usize = 64 * 1024;
 
 pub async fn exact_count_or_skipped(
     query_options: &QueryOptions,
@@ -76,18 +67,6 @@ pub struct CursorPageRequest {
 pub struct Page<T> {
     pub items: Vec<T>,
     pub next_cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct CursorToken {
-    sorts: Vec<CursorSort>,
-    values: Vec<CursorValue>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct CursorSort {
-    field: String,
-    descending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,36 +328,11 @@ where
     T::sql_field(field)
 }
 
-impl From<CursorSqlField> for CursorSqlField<String> {
-    fn from(field: CursorSqlField) -> Self {
-        Self {
-            column: field.column.to_string(),
-            sql_type: field.sql_type,
-            nullable: field.nullable,
-        }
-    }
-}
-
 pub fn order_sql_clause_for_field<T>(sort: &SortParam, field: &CursorSqlField<T>) -> String
 where
     T: AsRef<str>,
 {
-    order_sql_clause_for_expression(sort, field.expression(), field.nullable)
-}
-
-fn order_sql_clause_for_expression(sort: &SortParam, expression: &str, nullable: bool) -> String {
-    let direction = if sort.descending { "DESC" } else { "ASC" };
-    let nulls = if nullable {
-        if sort.descending {
-            " NULLS LAST"
-        } else {
-            " NULLS FIRST"
-        }
-    } else {
-        ""
-    };
-
-    format!("{expression} {direction}{nulls}")
+    hubuum_storage_postgres::cursor::order_sql_clause_for_field(sort, field)
 }
 
 pub fn order_sql_clause<T>(sort: &SortParam) -> Result<String, ApiError>
@@ -386,10 +340,8 @@ where
     T: CursorSqlMapping,
 {
     let field = cursor_sql_field::<T>(&sort.field)?;
-    Ok(order_sql_clause_for_expression(
-        sort,
-        field.expression(),
-        field.nullable,
+    Ok(hubuum_storage_postgres::cursor::order_sql_clause_for_field(
+        sort, &field,
     ))
 }
 
@@ -409,7 +361,7 @@ where
         .map(|sort| cursor_sql_field::<T>(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
 
-    cursor_filter_sql_from_fields(sorts, &fields, Some(cursor))
+    cursor_filter_sql_for_fields(sorts, &fields, Some(cursor))
 }
 
 pub fn cursor_filter_sql_for_fields<T>(
@@ -420,76 +372,8 @@ pub fn cursor_filter_sql_for_fields<T>(
 where
     T: AsRef<str>,
 {
-    cursor_filter_sql_from_fields(sorts, fields, cursor)
-}
-
-fn cursor_filter_sql_from_fields<T>(
-    sorts: &[SortParam],
-    fields: &[CursorSqlField<T>],
-    cursor: Option<&str>,
-) -> Result<Option<String>, ApiError>
-where
-    T: AsRef<str>,
-{
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
-    if fields.len() != sorts.len() {
-        return Err(ApiError::InternalServerError(
-            "cursor SQL field count does not match sort count".to_string(),
-        ));
-    }
-    let cursor_values = decode_and_validate_cursor_values(cursor, sorts, fields)?;
-
-    let mut clauses = Vec::with_capacity(sorts.len());
-    for current_index in 0..sorts.len() {
-        let mut clause_parts = Vec::with_capacity(current_index + 1);
-        for prefix_index in 0..current_index {
-            clause_parts.push(cursor_equality_sql(
-                &fields[prefix_index],
-                &cursor_values[prefix_index],
-            )?);
-        }
-
-        clause_parts.push(cursor_after_sql(
-            &fields[current_index],
-            &sorts[current_index],
-            &cursor_values[current_index],
-        )?);
-
-        clauses.push(format!("({})", clause_parts.join(" AND ")));
-    }
-
-    Ok(Some(format!("({})", clauses.join(" OR "))))
-}
-
-fn decode_and_validate_cursor_values<T>(
-    cursor: &str,
-    sorts: &[SortParam],
-    fields: &[CursorSqlField<T>],
-) -> Result<Vec<CursorValue>, ApiError>
-where
-    T: AsRef<str>,
-{
-    let cursor_values = decode_cursor_values(cursor, sorts)?;
-    for (field, value) in fields.iter().zip(&cursor_values) {
-        validate_cursor_value(field, value)?;
-    }
-    Ok(cursor_values)
-}
-
-fn validate_cursor_value<T>(field: &CursorSqlField<T>, value: &CursorValue) -> Result<(), ApiError>
-where
-    T: AsRef<str>,
-{
-    match value {
-        CursorValue::Null if field.nullable => Ok(()),
-        CursorValue::Null => Err(ApiError::BadRequest(format!(
-            "cursor contains null for non-nullable field '{}'",
-            field.expression()
-        ))),
-        _ => cursor_literal_sql(field, value).map(|_| ()),
-    }
+    hubuum_storage_postgres::cursor::cursor_filter_sql_for_fields(sorts, fields, cursor)
+        .map_err(|error| ApiError::from(crate::storage::StorageError::from(error)))
 }
 
 pub fn normalized_sorts<T>(requested: &[SortParam]) -> Result<Vec<SortParam>, ApiError>
@@ -524,236 +408,29 @@ pub(crate) fn encode_cursor<T>(item: &T, sorts: &[SortParam]) -> Result<String, 
 where
     T: CursorPaginated,
 {
-    let sorts_for_cursor: Vec<CursorSort> = sorts
-        .iter()
-        .map(|sort| CursorSort {
-            field: sort.field.to_string(),
-            descending: sort.descending,
-        })
-        .collect();
-
-    let values: Vec<CursorValue> = sorts
+    let values = sorts
         .iter()
         .map(|sort| item.cursor_value(&sort.field))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     for value in &values {
-        match value {
-            CursorValue::String(value) => validate_cursor_string(value)?,
-            CursorValue::Json(value) => validate_postgres_jsonb_cursor_value(value)?,
-            _ => {}
+        if let CursorValue::Json(value) = value {
+            validate_postgres_jsonb_cursor_value(value)?;
         }
     }
-
-    let token = CursorToken {
-        sorts: sorts_for_cursor,
-        values,
-    };
-
-    let bytes = serde_json::to_vec(&token).map_err(|error| {
-        ApiError::InternalServerError(format!("failed to serialize cursor: {error}"))
-    })?;
-    let encoded_length = bytes.len().saturating_mul(4).saturating_add(2) / 3;
-    if encoded_length > MAX_ENCODED_CURSOR_BYTES {
-        return Err(cursor_too_large());
-    }
-
-    let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    ensure_cursor_within_limit(&cursor)?;
-    Ok(cursor)
-}
-
-fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiError> {
-    ensure_cursor_within_limit(cursor)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(cursor)
-        .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
-
-    let mut token: CursorToken = serde_json::from_slice(&bytes)
-        .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
-
-    let expected_sorts: Vec<CursorSort> = sorts
-        .iter()
-        .map(|sort| CursorSort {
-            field: sort.field.to_string(),
-            descending: sort.descending,
-        })
-        .collect();
-
-    if token.sorts != expected_sorts {
-        return Err(ApiError::BadRequest(
-            "cursor does not match current sort order".to_string(),
-        ));
-    }
-
-    if token.values.len() != sorts.len() {
-        return Err(ApiError::BadRequest(
-            "cursor value count does not match current sort order".to_string(),
-        ));
-    }
-
-    for value in &mut token.values {
-        if let CursorValue::Decimal(source) = value {
-            *source =
-                hubuum_computed_fields::canonical_decimal_string(source).ok_or_else(|| {
-                    ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
-                })?;
-        }
-        if let CursorValue::String(value) = value {
-            validate_cursor_string(value)?;
-        }
-    }
-
-    Ok(token)
-}
-
-fn ensure_cursor_within_limit(cursor: &str) -> Result<(), ApiError> {
-    if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
-        return Err(cursor_too_large());
-    }
-    Ok(())
-}
-
-fn validate_cursor_string(value: &str) -> Result<(), ApiError> {
-    if value.contains('\0') {
-        return Err(ApiError::BadRequest(
-            "cursor string values cannot contain an embedded NUL byte".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn cursor_too_large() -> ApiError {
-    ApiError::BadRequest(format!(
-        "pagination cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes; use smaller sort values"
-    ))
+    hubuum_query::encode_cursor_values(sorts, values).map_err(cursor_codec_error)
 }
 
 pub fn decode_cursor_values(
     cursor: &str,
     sorts: &[SortParam],
 ) -> Result<Vec<CursorValue>, ApiError> {
-    Ok(decode_cursor(cursor, sorts)?.values)
+    hubuum_query::decode_cursor_values(cursor, sorts).map_err(cursor_codec_error)
 }
 
-fn cursor_equality_sql<T>(
-    field: &CursorSqlField<T>,
-    value: &CursorValue,
-) -> Result<String, ApiError>
-where
-    T: AsRef<str>,
-{
-    match value {
-        CursorValue::Null => {
-            if !field.nullable {
-                return Err(ApiError::BadRequest(format!(
-                    "cursor contains null for non-nullable field '{}'",
-                    field.expression()
-                )));
-            }
-            Ok(format!("{} IS NULL", field.expression()))
-        }
-        _ => Ok(format!(
-            "{} = {}",
-            field.expression(),
-            cursor_literal_sql(field, value)?
-        )),
-    }
-}
-
-fn cursor_after_sql<T>(
-    field: &CursorSqlField<T>,
-    sort: &SortParam,
-    value: &CursorValue,
-) -> Result<String, ApiError>
-where
-    T: AsRef<str>,
-{
-    match value {
-        CursorValue::Null => {
-            if !field.nullable {
-                return Err(ApiError::BadRequest(format!(
-                    "cursor contains null for non-nullable field '{}'",
-                    field.expression()
-                )));
-            }
-
-            if sort.descending {
-                Ok("FALSE".to_string())
-            } else {
-                Ok(format!("{} IS NOT NULL", field.expression()))
-            }
-        }
-        _ => {
-            let literal = cursor_literal_sql(field, value)?;
-            if field.nullable && sort.descending {
-                Ok(format!(
-                    "({} < {} OR {} IS NULL)",
-                    field.expression(),
-                    literal,
-                    field.expression()
-                ))
-            } else {
-                let operator = if sort.descending { "<" } else { ">" };
-                Ok(format!("{} {} {}", field.expression(), operator, literal))
-            }
-        }
-    }
-}
-
-fn cursor_literal_sql<T>(field: &CursorSqlField<T>, value: &CursorValue) -> Result<String, ApiError>
-where
-    T: AsRef<str>,
-{
-    match (field.sql_type, value) {
-        (_, CursorValue::Null) => Err(ApiError::BadRequest(format!(
-            "cursor contains null for field '{}'",
-            field.expression()
-        ))),
-        (CursorSqlType::Integer, CursorValue::Integer(value)) => Ok(value.to_string()),
-        (CursorSqlType::BigInt, CursorValue::Integer(value)) => Ok(value.to_string()),
-        (CursorSqlType::Numeric, CursorValue::Decimal(value)) => {
-            let value =
-                hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
-                    ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
-                })?;
-            Ok(format!("{value}::numeric"))
-        }
-        (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(value.to_string()),
-        (CursorSqlType::String, CursorValue::String(value)) => {
-            validate_cursor_string(value)?;
-            Ok(format!("'{}'", value.replace('\'', "''")))
-        }
-        (CursorSqlType::DateTime, CursorValue::DateTime(value)) => Ok(format!(
-            "'{}'::timestamp",
-            value.format("%Y-%m-%d %H:%M:%S%.f")
-        )),
-        (CursorSqlType::IntegerArray, CursorValue::IntegerArray(values)) => {
-            if values.is_empty() {
-                Ok("ARRAY[]::integer[]".to_string())
-            } else {
-                Ok(format!(
-                    "ARRAY[{}]::integer[]",
-                    values
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ))
-            }
-        }
-        (CursorSqlType::Json, CursorValue::Json(value)) => {
-            validate_postgres_jsonb_cursor_value(value)?;
-            Ok(format!(
-                "'{}'::jsonb",
-                serde_json::to_string(value)
-                    .map_err(ApiError::from)?
-                    .replace('\'', "''")
-            ))
-        }
-        _ => Err(ApiError::BadRequest(format!(
-            "cursor value does not match expected type for '{}'",
-            field.expression()
-        ))),
+fn cursor_codec_error(error: hubuum_query::CursorCodecError) -> ApiError {
+    match error {
+        hubuum_query::CursorCodecError::Invalid(message) => ApiError::BadRequest(message),
+        hubuum_query::CursorCodecError::Encoding(message) => ApiError::InternalServerError(message),
     }
 }
 

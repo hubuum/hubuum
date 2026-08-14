@@ -4,6 +4,7 @@
 //! integration surface for Hubuum's PostgreSQL adapter. They must not cross
 //! the backend-neutral traits in `hubuum-storage-core`.
 
+pub mod cursor;
 mod error;
 pub mod jsonb;
 #[cfg(feature = "embedded-migrations")]

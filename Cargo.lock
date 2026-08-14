@@ -2282,9 +2282,12 @@ dependencies = [
 name = "hubuum-query"
 version = "0.0.1"
 dependencies = [
+ "base64 0.23.1",
+ "bigdecimal",
  "chrono",
  "gungraun",
  "percent-encoding",
+ "serde",
  "serde_json",
 ]
 
@@ -2313,6 +2316,7 @@ dependencies = [
  "futures-util",
  "hubuum-domain",
  "hubuum-events-core",
+ "hubuum-query",
  "hubuum-storage-core",
  "pq-sys",
  "rstest",

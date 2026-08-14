@@ -24,6 +24,7 @@ diesel_migrations = { version = "2.3.2", optional = true }
 futures-util = "0.3"
 hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
 hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
 hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 rustls-platform-verifier = "0.7"
