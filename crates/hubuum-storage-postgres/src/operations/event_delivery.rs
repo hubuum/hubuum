@@ -4,12 +4,9 @@ use std::time::Duration;
 use chrono::{NaiveDateTime, Utc};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::sql_types::{Nullable, Timestamp};
-use diesel::{Queryable, QueryableByName};
+use diesel::{Queryable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{EventDeliverySettings, EventDeliveryStatus};
-use hubuum_events_core::{
-    Action, EntityType, EventEnvelope, Provenance, ProvenanceActor, ProvenancePrincipal,
-};
 use hubuum_query::{FilterField, Operator, QueryOptions};
 use hubuum_storage_core::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
@@ -21,6 +18,8 @@ use uuid::Uuid;
 use crate::operations::maintenance::maintenance_state_on_connection;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
+use super::event_rows::{StoredEventProjection, enrich_stored_events};
+
 #[derive(Queryable)]
 struct DeliveryRow {
     id: i64,
@@ -28,79 +27,6 @@ struct DeliveryRow {
     subscription_id: i32,
     attempts: i32,
     claim_token: Option<Uuid>,
-}
-
-#[derive(Clone, Queryable)]
-struct DeliveryEventRow {
-    id: i64,
-    event_id: Uuid,
-    occurred_at: NaiveDateTime,
-    entity_type: String,
-    entity_id: Option<i32>,
-    entity_name: Option<String>,
-    collection_id: Option<i32>,
-    action: String,
-    actor_user_id: Option<i32>,
-    actor_kind: String,
-    request_id: Option<Uuid>,
-    correlation_id: Option<String>,
-    summary: String,
-    before: Option<Value>,
-    after: Option<Value>,
-    metadata: Value,
-    schema_version: i32,
-    initiator_user_id: Option<i32>,
-    task_id: Option<i32>,
-}
-
-impl DeliveryEventRow {
-    fn apply_legacy_task_provenance(&mut self, queued_initiators: &HashMap<i32, Option<i32>>) {
-        if self.entity_type != EntityType::Task.as_str() {
-            return;
-        }
-        let Some(task_id) = self.entity_id else {
-            return;
-        };
-        self.task_id.get_or_insert(task_id);
-        if self.initiator_user_id.is_none() {
-            self.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
-        }
-    }
-
-    fn into_envelope(self, principal_names: &HashMap<i32, String>) -> EventEnvelope {
-        let principal = |principal_id| ProvenancePrincipal {
-            principal_id,
-            name: principal_names.get(&principal_id).cloned(),
-        };
-        let provenance = Provenance {
-            actor: ProvenanceActor {
-                kind: Some(self.actor_kind.clone()),
-                principal: self.actor_user_id.map(principal),
-            },
-            initiator: self.initiator_user_id.map(principal),
-            task_id: self.task_id,
-        };
-        EventEnvelope {
-            id: self.id,
-            event_id: self.event_id,
-            occurred_at: self.occurred_at,
-            entity_type: self.entity_type,
-            entity_id: self.entity_id,
-            entity_name: self.entity_name,
-            collection_id: self.collection_id,
-            action: self.action,
-            actor_user_id: self.actor_user_id,
-            actor_kind: self.actor_kind,
-            provenance,
-            request_id: self.request_id,
-            correlation_id: self.correlation_id,
-            summary: self.summary,
-            before: self.before,
-            after: self.after,
-            metadata: self.metadata,
-            schema_version: self.schema_version,
-        }
-    }
 }
 
 #[derive(Queryable)]
@@ -269,54 +195,16 @@ async fn load_work_items(
         .iter()
         .map(|delivery| delivery.subscription_id)
         .collect::<Vec<_>>();
-    let mut loaded_events = events::table
+    let mut event_rows = events::table
         .filter(events::id.eq_any(&event_ids))
-        .select((
-            events::id,
-            events::event_id,
-            events::occurred_at,
-            events::entity_type,
-            events::entity_id,
-            events::entity_name,
-            events::collection_id,
-            events::action,
-            events::actor_user_id,
-            events::actor_kind,
-            events::request_id,
-            events::correlation_id,
-            events::summary,
-            events::before,
-            events::after,
-            events::metadata,
-            events::schema_version,
-            events::initiator_user_id,
-            events::task_id,
-        ))
-        .load::<DeliveryEventRow>(connection)
-        .await?
+        .select(StoredEventProjection::as_select())
+        .load::<StoredEventProjection>(connection)
+        .await?;
+    let principal_names = enrich_stored_events(connection, &mut event_rows).await?;
+    let loaded_events = event_rows
         .into_iter()
         .map(|event| (event.id, event))
         .collect::<HashMap<_, _>>();
-
-    let task_ids = loaded_events
-        .values()
-        .filter(|event| {
-            event.entity_type == EntityType::Task.as_str()
-                && (event.initiator_user_id.is_none() || event.task_id.is_none())
-        })
-        .filter_map(|event| event.entity_id)
-        .collect::<Vec<_>>();
-    let queued_initiators = load_queued_task_initiators(connection, &task_ids).await?;
-    for event in loaded_events.values_mut() {
-        event.apply_legacy_task_provenance(&queued_initiators);
-    }
-
-    let principal_ids = loaded_events
-        .values()
-        .flat_map(|event| [event.actor_user_id, event.initiator_user_id])
-        .flatten()
-        .collect::<Vec<_>>();
-    let principal_names = load_principal_names(connection, principal_ids).await?;
 
     let loaded_subscriptions = event_subscriptions::table
         .filter(event_subscriptions::id.eq_any(&subscription_ids))
@@ -389,54 +277,6 @@ async fn load_work_items(
             ))
         })
         .collect()
-}
-
-async fn load_queued_task_initiators(
-    connection: &mut PostgresConnection,
-    task_ids: &[i32],
-) -> Result<HashMap<i32, Option<i32>>, PostgresStorageError> {
-    use crate::schema::events::dsl as stored;
-
-    if task_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    Ok(stored::events
-        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
-        .filter(stored::action.eq(Action::Queued.as_str()))
-        .filter(stored::entity_id.eq_any(task_ids.iter().copied().map(Some)))
-        .order(stored::id.asc())
-        .select((
-            stored::entity_id,
-            stored::initiator_user_id,
-            stored::actor_user_id,
-        ))
-        .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
-        .await?
-        .into_iter()
-        .filter_map(|(task_id, initiator_user_id, actor_user_id)| {
-            task_id.map(|task_id| (task_id, initiator_user_id.or(actor_user_id)))
-        })
-        .collect())
-}
-
-async fn load_principal_names(
-    connection: &mut PostgresConnection,
-    mut principal_ids: Vec<i32>,
-) -> Result<HashMap<i32, String>, PostgresStorageError> {
-    use crate::schema::principals::dsl::{id, name, principals};
-
-    principal_ids.sort_unstable();
-    principal_ids.dedup();
-    if principal_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    Ok(principals
-        .filter(id.eq_any(principal_ids))
-        .select((id, name))
-        .load::<(i32, String)>(connection)
-        .await?
-        .into_iter()
-        .collect())
 }
 
 async fn next_wakeup_on_connection(

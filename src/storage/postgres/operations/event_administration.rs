@@ -1,14 +1,11 @@
 use crate::errors::ApiError;
-use crate::events::EventResponse;
 use crate::models::{EventSink, EventSinkID, EventSubscription, EventSubscriptionID};
 use crate::storage::postgres::PostgresPool;
-use hubuum_events_core::EventEnvelope;
 use hubuum_storage_core::{
-    StorageAuditEvent, StorageAuditEventListQuery, StorageEventPage, StorageEventSink,
-    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate,
+    StorageEventPage, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
+    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
 };
 
 use super::event_subscription::{
@@ -17,67 +14,6 @@ use super::event_subscription::{
     UpdateEventSinkRecord, UpdateEventSinkRow, UpdateEventSubscriptionRecord,
     UpdateEventSubscriptionRow, load_event_sink_instance, load_event_subscription_instance,
 };
-
-fn storage_audit_event(event: EventResponse) -> StorageAuditEvent {
-    let before_revision = event
-        .before_revision
-        .map(hubuum_domain::ResourceRevision::get);
-    let after_revision = event
-        .after_revision
-        .map(hubuum_domain::ResourceRevision::get);
-    let envelope = EventEnvelope {
-        id: event.id,
-        event_id: event.event_id,
-        occurred_at: event.occurred_at,
-        entity_type: event.entity_type,
-        entity_id: event.entity_id,
-        entity_name: event.entity_name,
-        collection_id: event.collection_id,
-        action: event.action,
-        actor_user_id: event.actor_user_id,
-        actor_kind: event.actor_kind,
-        provenance: event.provenance,
-        request_id: event.request_id,
-        correlation_id: event.correlation_id,
-        summary: event.summary,
-        before: event.before,
-        after: event.after,
-        metadata: event.metadata,
-        schema_version: event.schema_version,
-    };
-    StorageAuditEvent::new(envelope, before_revision, after_revision)
-}
-
-pub(crate) async fn list_audit_events(
-    pool: &PostgresPool,
-    query: StorageAuditEventListQuery,
-) -> Result<StorageEventPage<StorageAuditEvent>, ApiError> {
-    let filters = query.filters();
-    let filters = super::events::EventListFilters {
-        entity_type: filters.entity_type_value(),
-        entity_id: filters.entity_id_value(),
-        action: filters.action_value(),
-        actor_kind: filters.actor_kind_value(),
-        actor_user_id: filters.actor_user_id_value(),
-        initiator_user_id: filters.initiator_user_id_value(),
-        collection_id: filters.collection_id_value(),
-        occurred_after: filters.occurred_after_value(),
-        occurred_before: filters.occurred_before_value(),
-    };
-    let include_total = query.options().include_total;
-    let (events, total) = super::events::list_events_with_total_count(
-        pool,
-        query.accessible_collection_ids(),
-        query.include_collection_less(),
-        &filters,
-        query.options(),
-    )
-    .await?;
-    Ok(StorageEventPage::new(
-        events.into_iter().map(storage_audit_event).collect(),
-        include_total.then_some(total),
-    ))
-}
 
 fn storage_event_sink(sink: EventSink) -> StorageEventSink {
     StorageEventSink::builder(

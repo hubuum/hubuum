@@ -122,9 +122,9 @@ impl AuditEventStorage for PostgresStorage {
         &self,
         query: StorageAuditEventListQuery,
     ) -> Result<StorageEventPage<StorageAuditEvent>, StorageError> {
-        operations::event_administration::list_audit_events(&self.pool, query)
+        hubuum_storage_postgres::operations::event_audit::list_audit_events(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
 

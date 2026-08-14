@@ -184,3 +184,73 @@ macro_rules! postgres_datetime_filter {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! postgres_revision_filter {
+    ($query:ident, $param:expr, $field:expr) => {{
+        use diesel::dsl::not;
+        use hubuum_query::{DataType, Operator};
+
+        let operator = $param.operator.clone();
+        let (operation, negated) = operator.op_and_neg();
+        if operation == Operator::IsNull {
+            $crate::postgres_is_null_filter!($query, $param, operator, $field);
+        } else {
+            if !operator.is_applicable_to(DataType::NumericOrDate) {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator '{operator:?}' is not applicable to field '{}'",
+                    $param.field
+                )));
+            }
+            let values = hubuum_query::parse_positive_bigint_list_with_limit(
+                &$param.value,
+                hubuum_query::MAX_INTEGER_FILTER_VALUES,
+            )
+            .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+            if operation == Operator::Between && values.len() != 2 {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{}'",
+                    $param.field
+                )));
+            }
+            if matches!(
+                operation,
+                Operator::Equals | Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte
+            ) && values.len() != 1
+            {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator '{operation}' requires exactly 1 value for field '{}'",
+                    $param.field
+                )));
+            }
+            match (operation.clone(), negated) {
+                (Operator::Equals | Operator::In, false) => {
+                    $query = $query.filter($field.eq_any(values))
+                }
+                (Operator::Equals | Operator::In, true) => {
+                    $query = $query.filter(not($field.eq_any(values)))
+                }
+                (Operator::Gt, false) => $query = $query.filter($field.gt(values[0])),
+                (Operator::Gt, true) => $query = $query.filter($field.le(values[0])),
+                (Operator::Gte, false) => $query = $query.filter($field.ge(values[0])),
+                (Operator::Gte, true) => $query = $query.filter($field.lt(values[0])),
+                (Operator::Lt, false) => $query = $query.filter($field.lt(values[0])),
+                (Operator::Lt, true) => $query = $query.filter($field.ge(values[0])),
+                (Operator::Lte, false) => $query = $query.filter($field.le(values[0])),
+                (Operator::Lte, true) => $query = $query.filter($field.gt(values[0])),
+                (Operator::Between, false) => {
+                    $query = $query.filter($field.between(values[0], values[1]))
+                }
+                (Operator::Between, true) => {
+                    $query = $query.filter(not($field.between(values[0], values[1])))
+                }
+                _ => {
+                    return Err($crate::PostgresStorageError::bad_request(format!(
+                        "Operator '{operation}' is not implemented for revision field '{}'",
+                        $param.field
+                    )));
+                }
+            }
+        }
+    }};
+}

@@ -1923,6 +1923,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "authentication",
         "backup",
         "bootstrap",
+        "event_audit",
         "event_delivery",
         "event_fanout",
         "event_observability",
@@ -2001,6 +2002,16 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
             identity_scope_shim.display()
         );
     }
+
+    let event_administration = root.join("src/storage/postgres/operations/event_administration.rs");
+    let source = read_source(&event_administration).unwrap_or_else(|error| {
+        panic!("could not read {}: {error}", event_administration.display())
+    });
+    assert!(
+        !source.contains("pub(crate) async fn list_audit_events("),
+        "{} retains the PostgreSQL audit read implementation",
+        event_administration.display()
+    );
 }
 
 #[test]
