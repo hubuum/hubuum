@@ -1959,6 +1959,54 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn collection_catalog_queries_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/catalog.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "CatalogStorage for PostgresStorage");
+    let collection_method = item_body(implementation, "fn", "list_collections");
+    assert!(
+        collection_method.contains("hubuum_storage_postgres::operations::catalog"),
+        "the collection catalog implementation must delegate into the adapter crate"
+    );
+    for forbidden in [
+        "operations::catalog::list_collections(&self.pool",
+        "UserSearchBackend",
+        "collection_to_storage",
+    ] {
+        assert!(
+            !collection_method.contains(forbidden),
+            "the collection catalog implementation retains application detail {forbidden}"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/catalog.rs");
+    let legacy = read_source(&legacy_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
+    assert!(
+        !legacy.contains("fn list_collections"),
+        "the application-owned PostgreSQL facade still owns collection catalog queries"
+    );
+}
+
+#[test]
 fn class_lifecycle_is_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/class.rs");

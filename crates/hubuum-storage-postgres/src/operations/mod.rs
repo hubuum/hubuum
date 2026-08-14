@@ -4,6 +4,7 @@ pub mod authentication;
 pub mod authorization;
 pub mod backup;
 pub mod bootstrap;
+pub mod catalog;
 pub mod class;
 pub mod collection;
 pub mod computed_materialization;

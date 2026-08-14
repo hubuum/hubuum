@@ -126,9 +126,9 @@ impl CatalogStorage for PostgresStorage {
         &self,
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageCollection>, StorageError> {
-        operations::catalog::list_collections(&self.pool, query)
+        hubuum_storage_postgres::operations::catalog::list_collections(self.runtime(), query)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn list_classes(
