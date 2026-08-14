@@ -1,6 +1,7 @@
 //! PostgreSQL implementations of backend-neutral storage operations.
 
 pub mod authentication;
+pub mod authorization;
 pub mod backup;
 pub mod bootstrap;
 pub mod event_audit;

@@ -46,6 +46,86 @@ pub enum AuthorizationPermission {
     ManageEventSubscription,
 }
 
+impl AuthorizationPermission {
+    pub const ALL: [Self; 31] = [
+        Self::ReadCollection,
+        Self::UpdateCollection,
+        Self::DeleteCollection,
+        Self::DelegateCollection,
+        Self::CreateClass,
+        Self::ReadClass,
+        Self::UpdateClass,
+        Self::DeleteClass,
+        Self::CreateObject,
+        Self::ReadObject,
+        Self::UpdateObject,
+        Self::DeleteObject,
+        Self::CreateClassRelation,
+        Self::ReadClassRelation,
+        Self::UpdateClassRelation,
+        Self::DeleteClassRelation,
+        Self::CreateObjectRelation,
+        Self::ReadObjectRelation,
+        Self::UpdateObjectRelation,
+        Self::DeleteObjectRelation,
+        Self::ReadTemplate,
+        Self::CreateTemplate,
+        Self::UpdateTemplate,
+        Self::DeleteTemplate,
+        Self::ReadRemoteTarget,
+        Self::CreateRemoteTarget,
+        Self::UpdateRemoteTarget,
+        Self::DeleteRemoteTarget,
+        Self::ExecuteRemoteTarget,
+        Self::ReadAudit,
+        Self::ManageEventSubscription,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadCollection => "ReadCollection",
+            Self::UpdateCollection => "UpdateCollection",
+            Self::DeleteCollection => "DeleteCollection",
+            Self::DelegateCollection => "DelegateCollection",
+            Self::CreateClass => "CreateClass",
+            Self::ReadClass => "ReadClass",
+            Self::UpdateClass => "UpdateClass",
+            Self::DeleteClass => "DeleteClass",
+            Self::CreateObject => "CreateObject",
+            Self::ReadObject => "ReadObject",
+            Self::UpdateObject => "UpdateObject",
+            Self::DeleteObject => "DeleteObject",
+            Self::CreateClassRelation => "CreateClassRelation",
+            Self::ReadClassRelation => "ReadClassRelation",
+            Self::UpdateClassRelation => "UpdateClassRelation",
+            Self::DeleteClassRelation => "DeleteClassRelation",
+            Self::CreateObjectRelation => "CreateObjectRelation",
+            Self::ReadObjectRelation => "ReadObjectRelation",
+            Self::UpdateObjectRelation => "UpdateObjectRelation",
+            Self::DeleteObjectRelation => "DeleteObjectRelation",
+            Self::ReadTemplate => "ReadTemplate",
+            Self::CreateTemplate => "CreateTemplate",
+            Self::UpdateTemplate => "UpdateTemplate",
+            Self::DeleteTemplate => "DeleteTemplate",
+            Self::ReadRemoteTarget => "ReadRemoteTarget",
+            Self::CreateRemoteTarget => "CreateRemoteTarget",
+            Self::UpdateRemoteTarget => "UpdateRemoteTarget",
+            Self::DeleteRemoteTarget => "DeleteRemoteTarget",
+            Self::ExecuteRemoteTarget => "ExecuteRemoteTarget",
+            Self::ReadAudit => "ReadAudit",
+            Self::ManageEventSubscription => "ManageEventSubscription",
+        }
+    }
+
+    pub fn from_name(value: &str) -> Result<Self, StorageError> {
+        Self::ALL
+            .into_iter()
+            .find(|permission| permission.as_str() == value)
+            .ok_or_else(|| StorageError::bad_request(format!("Invalid permission: '{value}'")))
+    }
+}
+
 /// Principal facts required by policy engines.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationPrincipal {
@@ -1174,6 +1254,23 @@ mod tests {
     fn principal_groups_are_normalized() {
         let principal = AuthorizationPrincipal::new(7, [3, 1, 3, 2]);
         assert_eq!(principal.group_ids(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn permission_names_round_trip_for_the_complete_contract_vocabulary() {
+        for permission in AuthorizationPermission::ALL {
+            assert_eq!(
+                AuthorizationPermission::from_name(permission.as_str()),
+                Ok(permission)
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_permission_names_are_rejected_at_the_contract_boundary() {
+        let error = AuthorizationPermission::from_name("read_collection")
+            .expect_err("permission names are case-sensitive persisted vocabulary");
+        assert_eq!(error.kind(), crate::StorageErrorKind::BadRequest);
     }
 
     #[test]

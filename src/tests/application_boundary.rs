@@ -1921,6 +1921,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [
         "authentication",
+        "authorization",
         "backup",
         "bootstrap",
         "event_audit",
@@ -1941,11 +1942,21 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "remote_target",
         "unified_search",
     ] {
-        let adapter_path = root.join(format!(
+        let adapter_file = root.join(format!(
             "crates/hubuum-storage-postgres/src/operations/{operation}.rs"
         ));
-        let source = read_source(&adapter_path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+        let adapter_directory = root.join(format!(
+            "crates/hubuum-storage-postgres/src/operations/{operation}"
+        ));
+        let (adapter_path, source) = if adapter_file.exists() {
+            let source = read_source(&adapter_file).unwrap_or_else(|error| {
+                panic!("could not read {}: {error}", adapter_file.display())
+            });
+            (adapter_file, source)
+        } else {
+            let source = read_rust_module_tree(&adapter_directory);
+            (adapter_directory, source)
+        };
         for forbidden in ["crate::errors", "crate::models", "crate::storage::postgres"] {
             assert!(
                 !source.contains(forbidden),
@@ -1955,7 +1966,29 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         }
 
         let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
-        if operation == "event_delivery" {
+        if operation == "authorization" {
+            let conversions = read_source(&old_path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
+            assert!(
+                conversions.contains("hubuum_storage_postgres::operations::authorization"),
+                "the temporary authorization conversion shim must delegate into the adapter crate"
+            );
+            for forbidden in ["diesel::", "crate::schema", "pub(crate) async fn apply_"] {
+                assert!(
+                    !conversions.contains(forbidden),
+                    "{} retains authorization implementation detail {forbidden}",
+                    old_path.display()
+                );
+            }
+            let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+            let capability = read_source(&capability_path).unwrap_or_else(|error| {
+                panic!("could not read {}: {error}", capability_path.display())
+            });
+            assert!(
+                capability.contains("hubuum_storage_postgres::operations::authorization"),
+                "the authorization trait implementation must delegate into the adapter crate"
+            );
+        } else if operation == "event_delivery" {
             let administration = read_source(&old_path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
             for moved_worker_operation in [

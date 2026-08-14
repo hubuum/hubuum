@@ -57,15 +57,15 @@ pub(crate) async fn principal_is_admin(
     principal_id: i32,
 ) -> Result<bool, ApiError> {
     use crate::models::identity::LOCAL_IDENTITY_SCOPE;
-    use crate::storage::AuthorizationGroupMembershipQuery;
+    use crate::storage::{AuthorizationGroupMembershipQuery, StorageError};
 
     let config = crate::config::get_config()?;
     let identity_scope = config
         .admin_identity_scope
         .clone()
         .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
-    super::authorization::authorization_principal_is_group_member(
-        pool,
+    hubuum_storage_postgres::operations::authorization::authorization_principal_is_group_member(
+        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
         AuthorizationGroupMembershipQuery::new(
             principal_id,
             config.admin_groupname.clone(),
@@ -73,6 +73,8 @@ pub(crate) async fn principal_is_admin(
         ),
     )
     .await
+    .map_err(StorageError::from)
+    .map_err(ApiError::from)
 }
 
 /// Load a token's permission dimension from `token_scopes`, validating each

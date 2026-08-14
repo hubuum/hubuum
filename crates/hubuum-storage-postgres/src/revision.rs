@@ -27,6 +27,7 @@ pub struct PostgresRevision(ResourceRevision);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RevisionOwner {
+    CollectionPermissions,
     EventSink,
     EventSubscription,
     RemoteTarget,
@@ -35,6 +36,7 @@ pub(crate) enum RevisionOwner {
 impl RevisionOwner {
     const fn table_name(self) -> &'static str {
         match self {
+            Self::CollectionPermissions => "collection_permissions",
             Self::EventSink => "event_sinks",
             Self::EventSubscription => "event_subscriptions",
             Self::RemoteTarget => "remote_targets",
