@@ -13,7 +13,6 @@ pub(crate) mod event_record;
 pub mod event_retention;
 pub mod events;
 pub mod export_template;
-pub mod external_identity;
 pub mod group;
 pub mod history;
 pub mod identity;

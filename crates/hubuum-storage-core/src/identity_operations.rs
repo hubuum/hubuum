@@ -1247,6 +1247,11 @@ impl StorageExternalGroup {
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, String, Option<String>) {
+        (self.key, self.name, self.description)
+    }
 }
 
 /// Complete external-directory synchronization input.
@@ -1313,6 +1318,29 @@ impl StorageExternalUserSync {
     #[must_use]
     pub fn groups(&self) -> &[StorageExternalGroup] {
         &self.groups
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Vec<StorageExternalGroup>,
+    ) {
+        (
+            self.identity_scope,
+            self.provider_kind,
+            self.subject,
+            self.name,
+            self.proper_name,
+            self.email,
+            self.groups,
+        )
     }
 }
 

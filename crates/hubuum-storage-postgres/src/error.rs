@@ -75,6 +75,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::Unavailable, message, None)
+    }
+
+    #[must_use]
     pub fn precondition_failed(message: impl Into<String>, current_etag: Option<String>) -> Self {
         Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
     }

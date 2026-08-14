@@ -1090,6 +1090,130 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
 }
 
 #[actix_web::test]
+async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sources() {
+    use hubuum_storage_core::{StorageExternalGroup, StorageExternalUserSync};
+
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let backend = StorageHandle::postgres(pool.get_ref().clone());
+    let identity_scope = prefix("external_contract_scope");
+    let initial_subject = prefix("external_contract_subject");
+    let replacement_subject = prefix("external_contract_subject_reformatted");
+    let initial_name = prefix("external_contract_user");
+    let renamed = prefix("external_contract_user_renamed");
+    let first_group_key = prefix("external_contract_group_first_key");
+    let first_group_name = prefix("external_contract_group_first");
+    let second_group_key = prefix("external_contract_group_second_key");
+    let second_group_name = prefix("external_contract_group_second");
+    let request = |subject: &str, name: &str, key: &str, group_name: &str| {
+        StorageExternalUserSync::builder(&identity_scope, "compatibility_provider", subject, name)
+            .proper_name(Some(format!("{name} Example")))
+            .email(Some(format!("{name}@example.org")))
+            .groups(vec![StorageExternalGroup::new(
+                key,
+                group_name,
+                Some("directory-owned group".to_string()),
+            )])
+            .build()
+    };
+
+    let first_id = backend
+        .sync_external_user(request(
+            &initial_subject,
+            &initial_name,
+            &first_group_key,
+            &first_group_name,
+        ))
+        .await
+        .expect("initial external identity sync should succeed")
+        .into_parts()
+        .0;
+    let manual_group = backend
+        .create_group(
+            StorageGroupCreate::new(
+                None,
+                prefix("external_contract_manual_group"),
+                Some("manual membership must survive provider sync".to_string()),
+            ),
+            None,
+        )
+        .await
+        .expect("manual group should be created");
+    backend
+        .add_group_member(first_id, manual_group.id(), None)
+        .await
+        .expect("manual membership should be created");
+
+    let renamed_id = backend
+        .sync_external_user(request(
+            &initial_subject,
+            &renamed,
+            &second_group_key,
+            &second_group_name,
+        ))
+        .await
+        .expect("renamed external identity sync should succeed")
+        .into_parts()
+        .0;
+    let replacement_id = backend
+        .sync_external_user(request(
+            &replacement_subject,
+            &renamed,
+            &second_group_key,
+            &second_group_name,
+        ))
+        .await
+        .expect("external subject replacement should succeed")
+        .into_parts()
+        .0;
+    assert_eq!(renamed_id, first_id);
+    assert_eq!(replacement_id, first_id);
+
+    let state = backend
+        .external_principal_state(first_id)
+        .await
+        .expect("external principal state should load")
+        .expect("external principal should remain provider-managed");
+    assert_eq!(state.identity_scope(), identity_scope);
+    assert_eq!(state.username(), renamed);
+    assert_eq!(state.external_subject(), replacement_subject);
+
+    let (principal_count, memberships) =
+        crate::storage::postgres::with_connection(pool.get_ref(), async |connection| {
+            let principal_count = crate::schema::principals::table
+                .inner_join(crate::schema::identity_scopes::table)
+                .filter(crate::schema::identity_scopes::name.eq(&identity_scope))
+                .count()
+                .get_result::<i64>(connection)
+                .await?;
+            let memberships = crate::schema::group_memberships::table
+                .inner_join(crate::schema::groups::table)
+                .filter(crate::schema::group_memberships::principal_id.eq(first_id))
+                .select((
+                    crate::schema::groups::id,
+                    crate::schema::groups::external_key,
+                ))
+                .load::<(i32, Option<String>)>(connection)
+                .await?;
+            Ok::<_, crate::errors::ApiError>((principal_count, memberships))
+        })
+        .await
+        .expect("external sync state should be queryable");
+    assert_eq!(principal_count, 1);
+    assert!(memberships.iter().any(|(id, _)| *id == manual_group.id()));
+    assert!(
+        memberships
+            .iter()
+            .any(|(_, key)| { key.as_deref() == Some(second_group_key.as_str()) })
+    );
+    assert!(
+        !memberships
+            .iter()
+            .any(|(_, key)| { key.as_deref() == Some(first_group_key.as_str()) })
+    );
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_execution_context() {
     for backend in available_backends() {
         let evaluations = Arc::new(AtomicUsize::new(0));

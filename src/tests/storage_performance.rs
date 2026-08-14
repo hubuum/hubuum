@@ -1409,3 +1409,82 @@ async fn collection_history_query_count_is_constant_with_page_size() {
 
     fixture.cleanup().await.expect("fixture cleanup");
 }
+
+#[actix_web::test]
+async fn external_identity_sync_query_count_is_constant_with_group_count() {
+    use hubuum_storage_core::{StorageExternalGroup, StorageExternalUserSync};
+    use hubuum_storage_postgres::PostgresRuntime;
+
+    let scope = TestScope::new();
+    let runtime = PostgresRuntime::new(scope.pool.get_ref().clone());
+    let request = |label: &str, group_count: usize| {
+        StorageExternalUserSync::builder(
+            scope.scoped_name(&format!("external_budget_scope_{label}")),
+            "query_budget_provider",
+            scope.scoped_name(&format!("external_budget_subject_{label}")),
+            scope.scoped_name(&format!("external_budget_user_{label}")),
+        )
+        .groups(
+            (0..group_count)
+                .map(|index| {
+                    StorageExternalGroup::new(
+                        scope.scoped_name(&format!("external_budget_key_{label}_{index}")),
+                        scope.scoped_name(&format!("external_budget_group_{label}_{index}")),
+                        Some("query-budget external group".to_string()),
+                    )
+                })
+                .collect(),
+        )
+        .build()
+    };
+
+    let (small_result, small_queries) = capture_queries(
+        hubuum_storage_postgres::operations::external_identity::sync_external_user(
+            &runtime,
+            request("small", 1),
+        ),
+    )
+    .await;
+    small_result.expect("one-group external sync should succeed");
+    let (large_result, large_queries) = capture_queries(
+        hubuum_storage_postgres::operations::external_identity::sync_external_user(
+            &runtime,
+            request("large", 20),
+        ),
+    )
+    .await;
+    large_result.expect("twenty-group external sync should succeed");
+
+    assert_eq!(large_queries.total_queries(), small_queries.total_queries());
+    assert_eq!(
+        large_queries.domain_queries(),
+        small_queries.domain_queries()
+    );
+    assert_eq!(
+        large_queries.control_queries(),
+        small_queries.control_queries()
+    );
+    assert_eq!(
+        large_queries.connection_checkouts(),
+        small_queries.connection_checkouts()
+    );
+    assert_eq!(
+        small_queries.total_queries(),
+        16,
+        "{:#?}",
+        small_queries.query_counts()
+    );
+    assert_eq!(small_queries.domain_queries(), 14);
+    assert_eq!(small_queries.control_queries(), 2);
+    assert_eq!(small_queries.connection_checkouts(), 1);
+    for statement in [
+        "INSERT INTO \"groups\"",
+        "INSERT INTO \"group_memberships\"",
+        "INSERT INTO \"group_membership_sources\"",
+        "DELETE FROM \"group_membership_sources\"",
+        "DELETE FROM \"group_memberships\"",
+    ] {
+        assert_eq!(small_queries.queries_matching(statement), 1);
+        assert_eq!(large_queries.queries_matching(statement), 1);
+    }
+}

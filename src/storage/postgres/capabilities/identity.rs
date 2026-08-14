@@ -258,24 +258,33 @@ impl IdentityStorage for PostgresStorage {
         &self,
         principal_id: i32,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
-        operations::identity_operations::external_principal_state(&self.pool, principal_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::external_identity::external_principal_state(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn mark_external_sync_attempted(&self, principal_id: i32) -> Result<(), StorageError> {
-        operations::identity_operations::mark_external_sync_attempted(&self.pool, principal_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::external_identity::mark_external_sync_attempted(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn sync_external_user(
         &self,
         request: StorageExternalUserSync,
     ) -> Result<StorageSyncedHuman, StorageError> {
-        operations::identity_operations::sync_external_user(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::external_identity::sync_external_user(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

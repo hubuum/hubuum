@@ -2262,6 +2262,55 @@ fn service_account_resources_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn external_identity_sync_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/external_identity.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+        "hubuum_auth_core",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    for method in [
+        "external_principal_state",
+        "mark_external_sync_attempted",
+        "sync_external_user",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::external_identity"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+
+    assert!(
+        !root
+            .join("src/storage/postgres/operations/external_identity.rs")
+            .exists(),
+        "application composition must not retain a duplicate external identity SQL module"
+    );
+}
+
+#[test]
 fn principal_resources_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/principal.rs");
