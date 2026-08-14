@@ -23,7 +23,6 @@ use crate::storage::postgres::operations::collection::{
 };
 use crate::storage::postgres::operations::computed_field_rows::ComputedFieldDefinitionRow;
 use crate::storage::postgres::operations::group::GroupRow;
-use crate::storage::postgres::operations::identity::IdentityScopeRow;
 use crate::storage::postgres::operations::object::{
     HubuumObjectRow, NewHubuumObjectRow, UpdateHubuumObjectRow,
 };
@@ -847,37 +846,60 @@ pub async fn upsert_identity_scope_db(
     };
     let existing = identity_scopes
         .filter(name.eq(&input.name))
+        .select((
+            id,
+            created_at,
+            updated_at,
+            crate::schema::identity_scopes::revision,
+        ))
         .for_update()
-        .first::<IdentityScopeRow>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
         .await
         .optional()?;
     let row = match existing {
-        Some(existing) if !overwrite => {
-            assert_import_revision(input.condition, existing.revision)?;
+        Some((_, _, _, existing_revision)) if !overwrite => {
+            assert_import_revision(input.condition, existing_revision)?;
             return Err(ApiError::Conflict(format!(
                 "Identity scope '{}' already exists",
                 input.name
             )));
         }
-        Some(existing) => {
-            assert_import_revision(input.condition, existing.revision)?;
+        Some((existing_id, existing_created_at, existing_updated_at, existing_revision)) => {
+            assert_import_revision(input.condition, existing_revision)?;
             let (created, updated) = input
                 .timestamps
                 .as_ref()
                 .map(RestoreTimestamps::as_pair)
-                .unwrap_or((existing.created_at, existing.updated_at));
+                .unwrap_or((existing_created_at, existing_updated_at));
             with_imported_timestamp_override(conn, async |conn| {
                 crate::storage::postgres::updated_or_current(
-                    diesel::update(identity_scopes.filter(id.eq(existing.id)))
+                    diesel::update(identity_scopes.filter(id.eq(existing_id)))
                         .set((
                             provider_kind.eq(&input.provider_kind),
                             created_at.eq(created),
                             updated_at.eq(updated),
                         ))
-                        .get_result::<IdentityScopeRow>(conn)
+                        .returning((
+                            id,
+                            created_at,
+                            updated_at,
+                            crate::schema::identity_scopes::revision,
+                        ))
+                        .get_result::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
                         .await
                         .optional(),
-                    async || identity_scopes.filter(id.eq(existing.id)).first(conn).await,
+                    async || {
+                        identity_scopes
+                            .filter(id.eq(existing_id))
+                            .select((
+                                id,
+                                created_at,
+                                updated_at,
+                                crate::schema::identity_scopes::revision,
+                            ))
+                            .first(conn)
+                            .await
+                    },
                 )
                 .await
                 .map_err(ApiError::from)
@@ -894,11 +916,17 @@ pub async fn upsert_identity_scope_db(
                     created_at.eq(created),
                     updated_at.eq(updated),
                 ))
-                .get_result::<IdentityScopeRow>(conn)
+                .returning((
+                    id,
+                    created_at,
+                    updated_at,
+                    crate::schema::identity_scopes::revision,
+                ))
+                .get_result::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
                 .await?
         }
     };
-    Ok(row.id)
+    Ok(row.0)
 }
 
 pub async fn upsert_group_db(

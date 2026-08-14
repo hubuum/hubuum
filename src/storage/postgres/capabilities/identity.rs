@@ -69,24 +69,18 @@ impl IdentityStorage for PostgresStorage {
         &self,
         request: StorageIdentityScopeEnsure,
     ) -> Result<StorageIdentityScope, StorageError> {
-        operations::identity_operations::ensure_identity_scope(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        operations::identity_operations::ensure_identity_scope(self.runtime(), request).await
     }
 
     async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
-        operations::identity_operations::identity_scope_name(&self.pool, scope_id)
-            .await
-            .map_err(map_postgres_error)
+        operations::identity_operations::identity_scope_name(self.runtime(), scope_id).await
     }
 
     async fn identity_scope_names(
         &self,
         scope_ids: Vec<i32>,
     ) -> Result<Vec<(i32, String)>, StorageError> {
-        operations::identity_operations::identity_scope_names(&self.pool, scope_ids)
-            .await
-            .map_err(map_postgres_error)
+        operations::identity_operations::identity_scope_names(self.runtime(), scope_ids).await
     }
 
     async fn load_principal_group(

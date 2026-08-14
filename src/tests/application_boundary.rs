@@ -908,7 +908,7 @@ fn identity_subtype_domain_types_are_free_of_persistence_implementation_details(
 
     for (relative_path, required) in [
         (
-            "src/storage/postgres/operations/identity.rs",
+            "crates/hubuum-storage-postgres/src/operations/identity_scope.rs",
             &["struct IdentityScopeRow"][..],
         ),
         (
@@ -1922,6 +1922,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     for operation in [
         "authentication",
         "event_observability",
+        "identity_scope",
         "inventory",
         "maintenance",
         "meta",
@@ -1956,6 +1957,22 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                 old_path.display()
             );
         }
+    }
+
+    let identity_scope_shim = root.join("src/storage/postgres/operations/identity.rs");
+    let shim = read_source(&identity_scope_shim).unwrap_or_else(|error| {
+        panic!("could not read {}: {error}", identity_scope_shim.display())
+    });
+    assert!(
+        shim.contains("hubuum_storage_postgres::operations::identity_scope"),
+        "the temporary identity-scope shim must delegate into the adapter crate"
+    );
+    for forbidden in ["diesel::", "crate::schema"] {
+        assert!(
+            !shim.contains(forbidden),
+            "{} retains query implementation detail {forbidden}",
+            identity_scope_shim.display()
+        );
     }
 }
 

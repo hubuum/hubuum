@@ -1,6 +1,6 @@
 use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserProfile};
 use hubuum_storage_core::{
-    AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
+    AuthenticationResourceScope, AuthenticationTokenScope, StorageError, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupListQuery,
     StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
@@ -30,17 +30,7 @@ use crate::storage::postgres::operations::user::{
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
-
-fn storage_identity_scope(scope: crate::models::IdentityScope) -> StorageIdentityScope {
-    StorageIdentityScope::new(
-        scope.id,
-        scope.name,
-        scope.provider_kind,
-        scope.created_at,
-        scope.updated_at,
-        scope.revision.get(),
-    )
-}
+use hubuum_storage_postgres::PostgresRuntime;
 
 fn storage_user(user: User) -> StorageUser {
     StorageUser::new(
@@ -217,33 +207,52 @@ pub(crate) async fn reset_local_password(
 }
 
 pub(crate) async fn ensure_identity_scope(
-    pool: &PostgresPool,
+    runtime: &PostgresRuntime,
     request: StorageIdentityScopeEnsure,
-) -> Result<StorageIdentityScope, ApiError> {
-    crate::storage::postgres::operations::identity::ensure_identity_scope(
-        pool,
-        request.name(),
-        request.provider_kind(),
-    )
+) -> Result<StorageIdentityScope, StorageError> {
+    runtime
+        .with_connection(async |connection| {
+            hubuum_storage_postgres::operations::identity_scope::ensure_identity_scope_on_connection(
+                connection,
+                request.name(),
+                request.provider_kind(),
+            )
+            .await
+        })
     .await
-    .map(storage_identity_scope)
+    .map_err(StorageError::from)
 }
 
 pub(crate) async fn identity_scope_name(
-    pool: &PostgresPool,
+    runtime: &PostgresRuntime,
     scope_id: i32,
-) -> Result<String, ApiError> {
-    crate::storage::postgres::operations::identity::identity_scope_name_by_id(pool, scope_id).await
+) -> Result<String, StorageError> {
+    runtime
+        .with_connection(async |connection| {
+            hubuum_storage_postgres::operations::identity_scope::identity_scope_name_by_id_on_connection(
+                connection,
+                scope_id,
+            )
+            .await
+        })
+        .await
+        .map_err(StorageError::from)
 }
 
 pub(crate) async fn identity_scope_names(
-    pool: &PostgresPool,
+    runtime: &PostgresRuntime,
     scope_ids: Vec<i32>,
-) -> Result<Vec<(i32, String)>, ApiError> {
-    let names = crate::storage::postgres::operations::identity::identity_scope_names_by_ids(
-        pool, &scope_ids,
-    )
-    .await?;
+) -> Result<Vec<(i32, String)>, StorageError> {
+    let names = runtime
+        .with_connection(async |connection| {
+            hubuum_storage_postgres::operations::identity_scope::identity_scope_names_by_ids_on_connection(
+                connection,
+                &scope_ids,
+            )
+            .await
+        })
+        .await
+        .map_err(StorageError::from)?;
     let mut names = names.into_iter().collect::<Vec<_>>();
     names.sort_unstable_by_key(|(id, _)| *id);
     Ok(names)

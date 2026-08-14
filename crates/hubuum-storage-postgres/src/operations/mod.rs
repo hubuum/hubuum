@@ -2,6 +2,7 @@
 
 pub mod authentication;
 pub mod event_observability;
+pub mod identity_scope;
 pub mod inventory;
 pub mod maintenance;
 pub mod meta;
