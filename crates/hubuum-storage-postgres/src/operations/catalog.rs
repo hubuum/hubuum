@@ -1,15 +1,20 @@
 //! PostgreSQL implementation of ordinary catalog listing and filtering.
 
-use diesel::prelude::{ExpressionMethods, QueryDsl};
+use std::collections::HashMap;
+
+use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
-    AuthorizationPermission, CatalogListQuery, CatalogPage, StorageCollection,
+    AuthorizationPermission, CatalogListQuery, CatalogPage, StorageClass, StorageCollection,
     StorageRecordMetadata, UnifiedSearchResourceScope,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
+use crate::operations::class::ClassRow;
+use crate::operations::json_filter::json_predicate;
+use crate::operations::visibility::{authorized_collection_ids, required_permissions};
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 #[derive(Queryable, Selectable)]
@@ -85,6 +90,233 @@ pub async fn list_collections(
             Ok::<_, PostgresStorageError>(CatalogPage::new(rows, total))
         })
         .await
+}
+
+/// List visible classes, including their collection projection, with all
+/// authorization, filters, paging, and counting executed by PostgreSQL.
+pub async fn list_classes(
+    runtime: &PostgresRuntime,
+    query: CatalogListQuery,
+) -> Result<CatalogPage<StorageClass>, PostgresStorageError> {
+    let include_total = query.options().include_total;
+    let (options, visibility) = query.into_parts();
+    let permissions = required_permissions(
+        &options,
+        [
+            AuthorizationPermission::ReadCollection,
+            AuthorizationPermission::ReadClass,
+        ],
+    )?;
+    if !visibility.allows_permissions(&permissions) {
+        return Ok(CatalogPage::new(Vec::new(), include_total.then_some(0)));
+    }
+
+    runtime
+        .with_read_only_snapshot(async move |connection| {
+            let collection_ids =
+                authorized_collection_ids(connection, &visibility, &permissions).await?;
+            let build_query = || class_query(&collection_ids, visibility.resources());
+            let total = if include_total {
+                let query = apply_class_filters(build_query(), &options)?;
+                Some(query.count().get_result::<i64>(connection).await?)
+            } else {
+                None
+            };
+
+            let mut query = apply_class_filters(build_query(), &options)?;
+            let fields = class_cursor_fields(&options)?;
+            crate::apply_query_options_with_fields!(query, options, fields);
+            tracing::debug!(
+                operation = "list_classes",
+                filter_count = options.filters.len(),
+                sort_count = options.sort.len(),
+                has_cursor = options.cursor.is_some(),
+                include_total,
+                "executing PostgreSQL catalog query"
+            );
+            let rows = query
+                .select(ClassRow::as_select())
+                .load::<ClassRow>(connection)
+                .await?;
+            let collections = load_collection_map_for_classes(connection, &rows).await?;
+            let classes = rows
+                .into_iter()
+                .map(|row| class_to_storage(row, &collections))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok::<_, PostgresStorageError>(CatalogPage::new(classes, total))
+        })
+        .await
+}
+
+fn class_query<'query>(
+    collection_ids: &'query [i32],
+    resource_scope: Option<&'query UnifiedSearchResourceScope>,
+) -> crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg> {
+    use crate::schema::hubuumclass;
+
+    let mut query = hubuumclass::table
+        .filter(hubuumclass::collection_id.eq_any(collection_ids))
+        .into_boxed();
+    if let Some(scope) = resource_scope {
+        query = query.filter(
+            hubuumclass::collection_id
+                .eq_any(scope.collection_ids())
+                .or(hubuumclass::id.eq_any(scope.class_ids())),
+        );
+    }
+    query
+}
+
+fn apply_class_filters<'query>(
+    mut query: crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg>,
+    options: &QueryOptions,
+) -> Result<crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
+    use crate::schema::hubuumclass;
+
+    for parameter in &options.filters {
+        match &parameter.field {
+            FilterField::Id => {
+                crate::postgres_integer_filter!(query, parameter, hubuumclass::id)
+            }
+            FilterField::Collections => {
+                crate::postgres_integer_filter!(query, parameter, hubuumclass::collection_id)
+            }
+            FilterField::CreatedAt => {
+                crate::postgres_datetime_filter!(query, parameter, hubuumclass::created_at)
+            }
+            FilterField::UpdatedAt => {
+                crate::postgres_datetime_filter!(query, parameter, hubuumclass::updated_at)
+            }
+            FilterField::Revision => {
+                crate::postgres_revision_filter!(query, parameter, hubuumclass::revision)
+            }
+            FilterField::Name => {
+                crate::postgres_string_filter!(query, parameter, hubuumclass::name)
+            }
+            FilterField::Description => {
+                crate::postgres_string_filter!(query, parameter, hubuumclass::description)
+            }
+            FilterField::ValidateSchema => {
+                crate::postgres_boolean_filter!(query, parameter, hubuumclass::validate_schema)
+            }
+            FilterField::JsonSchema => {
+                query = query.filter(json_predicate(parameter, "hubuumclass.json_schema")?);
+            }
+            FilterField::Permissions => {}
+            other => {
+                return Err(PostgresStorageError::bad_request(format!(
+                    "Field '{other}' isn't searchable (or does not exist) for classes"
+                )));
+            }
+        }
+    }
+    Ok(query)
+}
+
+fn class_cursor_fields(
+    options: &QueryOptions,
+) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
+    options
+        .sort
+        .iter()
+        .map(|sort| {
+            Ok(match sort.field {
+                FilterField::Id => CursorSqlField {
+                    column: "hubuumclass.id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                },
+                FilterField::Name => CursorSqlField {
+                    column: "hubuumclass.name",
+                    sql_type: CursorSqlType::String,
+                    nullable: false,
+                },
+                FilterField::Description => CursorSqlField {
+                    column: "hubuumclass.description",
+                    sql_type: CursorSqlType::String,
+                    nullable: false,
+                },
+                FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                    column: "hubuumclass.collection_id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                },
+                FilterField::CreatedAt => CursorSqlField {
+                    column: "hubuumclass.created_at",
+                    sql_type: CursorSqlType::DateTime,
+                    nullable: false,
+                },
+                FilterField::UpdatedAt => CursorSqlField {
+                    column: "hubuumclass.updated_at",
+                    sql_type: CursorSqlType::DateTime,
+                    nullable: false,
+                },
+                FilterField::Revision => CursorSqlField {
+                    column: "hubuumclass.revision",
+                    sql_type: CursorSqlType::BigInt,
+                    nullable: false,
+                },
+                ref other => {
+                    return Err(PostgresStorageError::bad_request(format!(
+                        "Field '{other}' is not orderable for classes"
+                    )));
+                }
+            })
+        })
+        .collect()
+}
+
+async fn load_collection_map_for_classes(
+    connection: &mut crate::PostgresConnection,
+    classes: &[ClassRow],
+) -> Result<HashMap<i32, StorageCollection>, PostgresStorageError> {
+    use crate::schema::collections;
+
+    let mut collection_ids = classes
+        .iter()
+        .map(|class| class.collection_id)
+        .collect::<Vec<_>>();
+    collection_ids.sort_unstable();
+    collection_ids.dedup();
+    if collection_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    Ok(collections::table
+        .filter(collections::id.eq_any(collection_ids))
+        .select(CollectionCatalogRow::as_select())
+        .load::<CollectionCatalogRow>(connection)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let collection = row.into_storage();
+            (collection.id(), collection)
+        })
+        .collect())
+}
+
+fn class_to_storage(
+    row: ClassRow,
+    collections: &HashMap<i32, StorageCollection>,
+) -> Result<StorageClass, PostgresStorageError> {
+    let collection = collections
+        .get(&row.collection_id)
+        .cloned()
+        .ok_or_else(|| {
+            PostgresStorageError::database(format!(
+                "class {} references missing collection {}",
+                row.id, row.collection_id
+            ))
+        })?;
+    Ok(StorageClass::builder(
+        StorageRecordMetadata::new(row.id, row.created_at, row.updated_at, row.revision.get()),
+        row.name,
+        collection,
+        row.description,
+    )
+    .json_schema(row.json_schema)
+    .validate_schema(row.validate_schema)
+    .build())
 }
 
 fn collection_query<'query>(

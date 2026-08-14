@@ -324,3 +324,36 @@ macro_rules! postgres_revision_filter {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! postgres_boolean_filter {
+    ($query:ident, $param:expr, $field:expr) => {{
+        use diesel::dsl::not;
+        use hubuum_query::{DataType, Operator};
+
+        let operator = $param.operator.clone();
+        let (operation, negated) = operator.op_and_neg();
+        if operation == Operator::IsNull {
+            $crate::postgres_is_null_filter!($query, $param, operator, $field);
+        } else {
+            if !operator.is_applicable_to(DataType::Boolean) {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator '{operator:?}' is not applicable to field '{}'",
+                    $param.field
+                )));
+            }
+            let value = hubuum_query::parse_boolean_value(&$param.value)
+                .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+            match (operation, negated) {
+                (Operator::Equals, false) => $query = $query.filter($field.eq(value)),
+                (Operator::Equals, true) => $query = $query.filter(not($field.eq(value))),
+                _ => {
+                    return Err($crate::PostgresStorageError::bad_request(format!(
+                        "Operator '{operator:?}' not implemented for field '{}' (type: boolean)",
+                        $param.field
+                    )));
+                }
+            }
+        }
+    }};
+}

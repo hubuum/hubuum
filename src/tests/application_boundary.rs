@@ -1959,7 +1959,7 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
 }
 
 #[test]
-fn collection_catalog_queries_are_owned_by_the_postgres_adapter() {
+fn extracted_catalog_queries_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/catalog.rs");
     let adapter = read_source(&adapter_path)
@@ -1981,20 +1981,18 @@ fn collection_catalog_queries_are_owned_by_the_postgres_adapter() {
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "CatalogStorage for PostgresStorage");
-    let collection_method = item_body(implementation, "fn", "list_collections");
-    assert!(
-        collection_method.contains("hubuum_storage_postgres::operations::catalog"),
-        "the collection catalog implementation must delegate into the adapter crate"
-    );
-    for forbidden in [
-        "operations::catalog::list_collections(&self.pool",
-        "UserSearchBackend",
-        "collection_to_storage",
-    ] {
+    for method in ["list_collections", "list_classes"] {
+        let method_body = item_body(implementation, "fn", method);
         assert!(
-            !collection_method.contains(forbidden),
-            "the collection catalog implementation retains application detail {forbidden}"
+            method_body.contains("hubuum_storage_postgres::operations::catalog"),
+            "the {method} catalog implementation must delegate into the adapter crate"
         );
+        for forbidden in ["&self.pool", "UserSearchBackend", "_to_storage"] {
+            assert!(
+                !method_body.contains(forbidden),
+                "the {method} catalog implementation retains application detail {forbidden}"
+            );
+        }
     }
 
     let legacy_path = root.join("src/storage/postgres/operations/catalog.rs");
@@ -2003,6 +2001,10 @@ fn collection_catalog_queries_are_owned_by_the_postgres_adapter() {
     assert!(
         !legacy.contains("fn list_collections"),
         "the application-owned PostgreSQL facade still owns collection catalog queries"
+    );
+    assert!(
+        !legacy.contains("fn list_classes"),
+        "the application-owned PostgreSQL facade still owns class catalog queries"
     );
 }
 
