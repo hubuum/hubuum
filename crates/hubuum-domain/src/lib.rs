@@ -5,6 +5,7 @@
 //! Actix, Diesel, application configuration, or transport-facing errors.
 
 mod event_policy;
+mod identifier;
 mod maintenance;
 mod revision;
 mod token;
@@ -12,6 +13,10 @@ mod token;
 pub use event_policy::{
     EventDeliverySettings, EventDeliverySettingsBuilder, EventFanoutSettings, EventPolicyError,
     EventRetentionSettings,
+};
+pub use identifier::{
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, ExportTemplateId, ObjectId,
+    ObjectRelationId, PositiveIdError, RemoteTargetId, ServiceAccountId, TokenId,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};

@@ -221,11 +221,7 @@ impl UpdateHubuumObject {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumObject`].
-    pub struct HubuumObjectID;
-    noun = "object id";
-}
+pub use hubuum_domain::ObjectId as HubuumObjectID;
 
 /// Explicit route-selected address for an object.
 ///
@@ -510,7 +506,7 @@ pub mod tests {
     }
 
     pub async fn verify_no_such_object(pool: &impl crate::storage::StorageContext, object_id: i32) {
-        let result = HubuumObjectID(object_id).instance(pool).await;
+        let result = HubuumObjectID::new(object_id).unwrap().instance(pool).await;
 
         match result {
             Ok(_) => panic!("Object {object_id} should not exist"),
@@ -540,7 +536,7 @@ pub mod tests {
         pool: &impl crate::storage::StorageContext,
         object_id: i32,
     ) -> HubuumObject {
-        let object = HubuumObjectID(object_id);
+        let object = HubuumObjectID::new(object_id).unwrap();
         object.instance(pool).await.unwrap()
     }
 

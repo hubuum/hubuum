@@ -134,11 +134,7 @@ pub struct HubuumClassWithPath {
     pub path: Vec<i32>,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumClass`].
-    pub struct HubuumClassID;
-    noun = "class id";
-}
+pub use hubuum_domain::ClassId as HubuumClassID;
 
 /// Explicit route-selected address for a class.
 ///
@@ -333,7 +329,7 @@ pub mod tests {
     use crate::traits::{CanDelete, CanSave, CanUpdate, ClassAccessors, CollectionAccessors};
 
     pub async fn verify_no_such_class(pool: &impl crate::storage::StorageContext, id: i32) {
-        match HubuumClassID(id).class(pool).await {
+        match HubuumClassID::new(id).unwrap().class(pool).await {
             Ok(_) => panic!("Class should not exist"),
             Err(e) => match e {
                 ApiError::NotFound(_) => {}
@@ -343,7 +339,7 @@ pub mod tests {
     }
 
     pub async fn get_class(id: i32, pool: &impl crate::storage::StorageContext) -> HubuumClass {
-        HubuumClassID(id).class(pool).await.unwrap()
+        HubuumClassID::new(id).unwrap().class(pool).await.unwrap()
     }
 
     pub async fn create_class(

@@ -19747,7 +19747,8 @@
       "CollectionID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`Collection`]."
+        "description": "Validated positive collection id.",
+        "minimum": 1
       },
       "CollectionKey": {
         "type": "object",
@@ -21990,7 +21991,8 @@
       "ExportTemplateID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`ExportTemplate`]."
+        "description": "Validated positive export template id.",
+        "minimum": 1
       },
       "ExportTemplateKind": {
         "type": "string",
@@ -23120,7 +23122,8 @@
       "HubuumClassID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumClass`]."
+        "description": "Validated positive class id.",
+        "minimum": 1
       },
       "HubuumClassRelation": {
         "type": "object",
@@ -23195,7 +23198,8 @@
       "HubuumClassRelationID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumClassRelation`]."
+        "description": "Validated positive class relation id.",
+        "minimum": 1
       },
       "HubuumClassWithPath": {
         "type": "object",
@@ -23410,7 +23414,8 @@
       "HubuumObjectID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumObject`]."
+        "description": "Validated positive object id.",
+        "minimum": 1
       },
       "HubuumObjectReadResponse": {
         "oneOf": [
@@ -23467,7 +23472,8 @@
       "HubuumObjectRelationID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumObjectRelation`]."
+        "description": "Validated positive object relation id.",
+        "minimum": 1
       },
       "HubuumObjectWithPath": {
         "type": "object",
@@ -27960,7 +27966,8 @@
       "RemoteTargetID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a remote target."
+        "description": "Validated positive remote target id.",
+        "minimum": 1
       },
       "RemoteTargetInvokeRequest": {
         "type": "object",
@@ -28938,7 +28945,8 @@
       "TokenID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`PrincipalToken`]."
+        "description": "Validated positive token id.",
+        "minimum": 1
       },
       "TokenListState": {
         "type": "string",

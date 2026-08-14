@@ -499,7 +499,7 @@ impl CollectionAdapter for HubuumObject {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<CollectionID, ApiError> {
-        CollectionID::new(self.collection_id)
+        Ok(CollectionID::new(self.collection_id)?)
     }
 }
 
@@ -521,7 +521,7 @@ impl ClassAdapter for HubuumObject {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClassID, ApiError> {
-        HubuumClassID::new(self.hubuum_class_id)
+        Ok(HubuumClassID::new(self.hubuum_class_id)?)
     }
 }
 
@@ -571,7 +571,7 @@ impl CollectionAdapter for HubuumObjectID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<CollectionID, ApiError> {
-        CollectionID::new(self.collection(pool).await?.id)
+        Ok(CollectionID::new(self.collection(pool).await?.id)?)
     }
 }
 
@@ -593,7 +593,7 @@ impl ClassAdapter for HubuumObjectID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClassID, ApiError> {
-        HubuumClassID::new(self.class(pool).await?.id)
+        Ok(HubuumClassID::new(self.class(pool).await?.id)?)
     }
 }
 

@@ -13,11 +13,7 @@ use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
 use crate::utilities::aliases::normalize_template_alias;
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumClassRelation`].
-    pub struct HubuumClassRelationID;
-    noun = "class relation id";
-}
+pub use hubuum_domain::ClassRelationId as HubuumClassRelationID;
 
 /// Maximum number of object relations allowed for one object on one side of a
 /// class relation.
@@ -287,11 +283,7 @@ impl ResolvedClassRelationTarget {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumObjectRelation`].
-    pub struct HubuumObjectRelationID;
-    noun = "object relation id";
-}
+pub use hubuum_domain::ObjectRelationId as HubuumObjectRelationID;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, ToSchema)]
 pub struct HubuumObjectRelation {
@@ -978,7 +970,7 @@ pub mod tests {
         pool: &impl crate::storage::StorageContext,
         id: i32,
     ) {
-        match HubuumClassRelationID(id).instance(pool).await {
+        match HubuumClassRelationID::new(id).unwrap().instance(pool).await {
             Ok(_) => panic!("Found a class relation that should not exist"),
             Err(ApiError::NotFound(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
@@ -989,7 +981,11 @@ pub mod tests {
         pool: &impl crate::storage::StorageContext,
         id: i32,
     ) {
-        match HubuumObjectRelationID(id).instance(pool).await {
+        match HubuumObjectRelationID::new(id)
+            .unwrap()
+            .instance(pool)
+            .await
+        {
             Ok(_) => panic!("Found an object relation that should not exist"),
             Err(ApiError::NotFound(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
@@ -1034,7 +1030,8 @@ pub mod tests {
             }
         };
 
-        let fetched_relation = HubuumClassRelationID(relation.id)
+        let fetched_relation = HubuumClassRelationID::new(relation.id)
+            .unwrap()
             .instance(pool)
             .await
             .unwrap();
@@ -1182,7 +1179,8 @@ pub mod tests {
         assert_eq!(object_rel.from_hubuum_object_id, object1.id);
         assert_eq!(object_rel.to_hubuum_object_id, object2.id);
 
-        let fetched_relation = HubuumObjectRelationID(object_rel.id)
+        let fetched_relation = HubuumObjectRelationID::new(object_rel.id)
+            .unwrap()
             .instance(&pool)
             .await
             .unwrap();
@@ -1234,7 +1232,8 @@ pub mod tests {
             Ok(_) => panic!("Should not be able to create an inverse duplicate object relation"),
         }
 
-        let fetched_relation = HubuumObjectRelationID(object_rel.id)
+        let fetched_relation = HubuumObjectRelationID::new(object_rel.id)
+            .unwrap()
             .instance(&pool)
             .await
             .unwrap();
@@ -1768,7 +1767,10 @@ pub mod tests {
         verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
 
         // oA-oB should survive — its class relation (A↔B) still exists
-        let surviving = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;
+        let surviving = HubuumObjectRelationID::new(obj_rel_ab.id)
+            .unwrap()
+            .instance(&pool)
+            .await;
         assert!(
             surviving.is_ok(),
             "Object relation A-B should survive when only B-C class relation is deleted"
@@ -1819,7 +1821,10 @@ pub mod tests {
         rel_bc.delete_without_events(&pool).await.unwrap();
 
         // oA-oB should survive — its class relation A↔B still exists
-        let surviving_ab = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;
+        let surviving_ab = HubuumObjectRelationID::new(obj_rel_ab.id)
+            .unwrap()
+            .instance(&pool)
+            .await;
         assert!(surviving_ab.is_ok(), "Object relation A-B should survive");
 
         // oB-oC was created under rel_bc which is now deleted — FK CASCADE removes it

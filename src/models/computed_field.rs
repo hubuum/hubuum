@@ -15,11 +15,7 @@ use crate::pagination::{CursorPaginated, CursorValue};
 pub const COMPUTED_FIELD_VISIBILITY_SHARED: &str = "shared";
 pub const COMPUTED_FIELD_VISIBILITY_PERSONAL: &str = "personal";
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a computed-field definition.
-    pub struct ComputedFieldDefinitionID;
-    noun = "computed field definition id";
-}
+pub use hubuum_domain::ComputedFieldDefinitionId as ComputedFieldDefinitionID;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

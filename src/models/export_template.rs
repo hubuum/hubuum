@@ -79,11 +79,7 @@ pub struct ExportTemplate {
     pub revision: ResourceRevision,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`ExportTemplate`].
-    pub struct ExportTemplateID;
-    noun = "export template id";
-}
+pub use hubuum_domain::ExportTemplateId as ExportTemplateID;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = new_export_template_example)]
@@ -1051,7 +1047,7 @@ impl InstanceAdapter<ExportTemplate> for ExportTemplate {
 
 impl IdAccessor for ExportTemplateID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
@@ -1079,7 +1075,7 @@ impl CollectionAdapter for ExportTemplate {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<CollectionID, ApiError> {
-        CollectionID::new(self.collection_id)
+        Ok(CollectionID::new(self.collection_id)?)
     }
 }
 
@@ -1098,13 +1094,13 @@ impl CollectionAdapter for ExportTemplateID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<CollectionID, ApiError> {
-        CollectionID::new(
+        Ok(CollectionID::new(
             storage_handle(pool)
                 .get_export_template(self.id())
                 .await?
                 .into_parts()
                 .1,
-        )
+        )?)
     }
 }
 

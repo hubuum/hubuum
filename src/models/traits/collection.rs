@@ -204,7 +204,7 @@ impl CollectionAdapter for Collection {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<CollectionID, ApiError> {
-        CollectionID::new(self.id)
+        Ok(CollectionID::new(self.id)?)
     }
 }
 

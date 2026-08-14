@@ -21,11 +21,7 @@ use crate::pagination::{CursorPaginated, CursorValue};
 use crate::traits::UserPermissions;
 use crate::traits::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a remote target.
-    pub struct RemoteTargetID;
-    noun = "remote target id";
-}
+pub use hubuum_domain::RemoteTargetId as RemoteTargetID;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]

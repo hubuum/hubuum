@@ -112,8 +112,8 @@ fn postgres_error_from_api(error: ApiError) -> PostgresStorageError {
     PostgresStorageError::new(kind, message, current_etag)
 }
 
-pub(super) fn map_postgres_error(error: ApiError) -> StorageError {
-    postgres_error_from_api(error).into()
+pub(super) fn map_postgres_error(error: impl Into<ApiError>) -> StorageError {
+    postgres_error_from_api(error.into()).into()
 }
 
 #[cfg(test)]

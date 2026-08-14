@@ -55,8 +55,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Storage-only contexts no longer carry authorization-provider selection;
   policy-aware workflows explicitly require the stronger application context.
   PostgreSQL is the only selectable production backend, and compatibility tests
-  exercise every required family for every selectable backend. Public HTTP
-  request and response shapes are unchanged; the deprecated administrator
+  exercise every required family for every selectable backend. Validated domain
+  identifiers now live in the publishable domain crate, and their OpenAPI
+  schemas explicitly declare the existing positive-integer invariant. Public
+  HTTP request and response shapes are unchanged; the deprecated administrator
   configuration field `exports.database_statement_timeout_ms` remains as an
   alias for `exports.storage_query_budget_ms`.
 - Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;

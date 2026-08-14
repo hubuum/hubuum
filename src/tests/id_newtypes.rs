@@ -6,8 +6,9 @@
 
 use crate::errors::ApiError;
 use crate::models::{
-    CollectionID, ExportTemplateID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, NewCollectionWithAssignee, NewServiceAccount, TaskID, TokenID, UserID,
+    CollectionID, ComputedFieldDefinitionID, ExportTemplateID, GroupID, HubuumClassID,
+    HubuumClassRelationID, HubuumObjectID, HubuumObjectRelationID, NewCollectionWithAssignee,
+    NewServiceAccount, RemoteTargetID, ServiceAccountID, TaskID, TokenID, UserID,
 };
 
 macro_rules! assert_id_newtype_validates {
@@ -19,7 +20,7 @@ macro_rules! assert_id_newtype_validates {
 
             // Non-positive ids are rejected with a 400-class error.
             for invalid in [0, -1, i32::MIN] {
-                let err = <$t>::new(invalid).unwrap_err();
+                let err: ApiError = <$t>::new(invalid).unwrap_err().into();
                 assert!(
                     matches!(err, ApiError::BadRequest(_)),
                     "{}::new({invalid}) should be BadRequest, got {err:?}",
@@ -46,6 +47,9 @@ fn all_id_newtypes_reject_invalid_ids() {
         CollectionID,
         GroupID,
         ExportTemplateID,
+        RemoteTargetID,
+        ServiceAccountID,
+        ComputedFieldDefinitionID,
         TaskID,
         TokenID,
     );

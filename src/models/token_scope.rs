@@ -99,17 +99,21 @@ impl TokenResourceScopeSet {
     fn entries(&self) -> Result<Vec<TokenResourceScope>, ApiError> {
         self.collections
             .iter()
-            .map(|id| CollectionID::new(*id).map(TokenResourceScope::Collection))
-            .chain(
-                self.classes
-                    .iter()
-                    .map(|id| HubuumClassID::new(*id).map(TokenResourceScope::Class)),
-            )
-            .chain(
-                self.objects
-                    .iter()
-                    .map(|id| HubuumObjectID::new(*id).map(TokenResourceScope::Object)),
-            )
+            .map(|id| {
+                CollectionID::new(*id)
+                    .map(TokenResourceScope::Collection)
+                    .map_err(ApiError::from)
+            })
+            .chain(self.classes.iter().map(|id| {
+                HubuumClassID::new(*id)
+                    .map(TokenResourceScope::Class)
+                    .map_err(ApiError::from)
+            }))
+            .chain(self.objects.iter().map(|id| {
+                HubuumObjectID::new(*id)
+                    .map(TokenResourceScope::Object)
+                    .map_err(ApiError::from)
+            }))
             .collect()
     }
 

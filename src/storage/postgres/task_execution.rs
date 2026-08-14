@@ -228,7 +228,7 @@ impl TaskExecutionStorage for PostgresStorage {
             })?;
             let lease =
                 StorageTaskLease::new(task.id, StorageTaskClaimToken::new(token.to_string()));
-            Ok(StorageTaskClaim::new(task_to_storage(task)?, lease))
+            Ok::<_, ApiError>(StorageTaskClaim::new(task_to_storage(task)?, lease))
         })
         .transpose()
         .map_err(map_postgres_error)

@@ -8,7 +8,7 @@ use std::num::ParseIntError;
 
 use tracing::error;
 
-use hubuum_domain::{EventPolicyError, ResourceRevisionError};
+use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevisionError};
 
 use crate::models::TokenPolicyError;
 use crate::observability::metrics;
@@ -207,6 +207,12 @@ impl From<ResourceRevisionError> for ApiError {
                 "Resource revision cannot advance beyond the maximum 64-bit value".to_string(),
             ),
         }
+    }
+}
+
+impl From<PositiveIdError> for ApiError {
+    fn from(error: PositiveIdError) -> Self {
+        Self::BadRequest(error.to_string())
     }
 }
 

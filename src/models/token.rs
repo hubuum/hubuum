@@ -55,11 +55,7 @@ impl fmt::Debug for PrincipalToken {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`PrincipalToken`].
-    pub struct TokenID;
-    noun = "token id";
-}
+pub use hubuum_domain::TokenId as TokenID;
 
 #[derive(Debug, Clone)]
 pub struct PrincipalTokenCreateRequest {

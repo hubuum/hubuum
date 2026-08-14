@@ -238,15 +238,11 @@ impl UpdateServiceAccount {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`ServiceAccount`].
-    pub struct ServiceAccountID;
-    noun = "service account id";
-}
+pub use hubuum_domain::ServiceAccountId as ServiceAccountID;
 
 impl IdAccessor for ServiceAccountID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 

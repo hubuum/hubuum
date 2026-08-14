@@ -38,11 +38,7 @@ pub struct Collection {
     pub revision: ResourceRevision,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Collection`].
-    pub struct CollectionID;
-    noun = "collection id";
-}
+pub use hubuum_domain::CollectionId as CollectionID;
 
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
 #[schema(example = update_collection_example)]

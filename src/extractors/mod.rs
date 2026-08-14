@@ -405,17 +405,21 @@ fn authentication_resources_from_storage(
     let (collection_ids, class_ids, object_ids) = resources.into_parts();
     collection_ids
         .into_iter()
-        .map(|id| CollectionID::new(id).map(TokenResourceScope::Collection))
-        .chain(
-            class_ids
-                .into_iter()
-                .map(|id| HubuumClassID::new(id).map(TokenResourceScope::Class)),
-        )
-        .chain(
-            object_ids
-                .into_iter()
-                .map(|id| HubuumObjectID::new(id).map(TokenResourceScope::Object)),
-        )
+        .map(|id| {
+            CollectionID::new(id)
+                .map(TokenResourceScope::Collection)
+                .map_err(ApiError::from)
+        })
+        .chain(class_ids.into_iter().map(|id| {
+            HubuumClassID::new(id)
+                .map(TokenResourceScope::Class)
+                .map_err(ApiError::from)
+        }))
+        .chain(object_ids.into_iter().map(|id| {
+            HubuumObjectID::new(id)
+                .map(TokenResourceScope::Object)
+                .map_err(ApiError::from)
+        }))
         .collect()
 }
 
