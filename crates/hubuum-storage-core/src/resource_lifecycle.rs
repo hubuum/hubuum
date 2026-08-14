@@ -48,6 +48,11 @@ impl StorageClassRecord {
     }
 
     #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
     pub const fn collection_id(&self) -> i32 {
         self.collection_id
     }

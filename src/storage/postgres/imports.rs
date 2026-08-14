@@ -11,14 +11,22 @@ use crate::models::{
     ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
     NewHubuumClassRelation, ObjectKey, PrincipalKey,
 };
+use crate::services::import_boundary::{
+    collection_key_from_storage, import_mode_from_storage, import_operation_from_storage,
+};
 use crate::storage::postgres::operations::task_rows::NewImportTaskResultRow as NewImportTaskResultRecord;
 use crate::storage::{
-    ImportStorage, StorageError, StorageImportApply, StorageImportApplyItem,
-    StorageImportOperation, StorageImportPlanItem, StorageImportPreflight,
-    StorageImportPreflightItem, StorageImportResult,
+    ApplicationImportOperation as StorageImportOperation, ImportStorage, StorageClassRecord,
+    StorageCollection, StorageError, StorageImportApply, StorageImportApplyItem,
+    StorageImportCollectionKey, StorageImportMode,
+    StorageImportOperation as StorageImportBoundaryOperation, StorageImportPlanItem,
+    StorageImportPreflight, StorageImportPreflightItem, StorageImportResult, StorageObject,
 };
 
 use super::error::map_postgres_error;
+use super::operations::resource_rows::{
+    class_record_to_storage, collection_to_storage, object_to_storage,
+};
 use super::operations::task::insert_import_results;
 use super::operations::task_import::{
     apply_permissions_db, check_class_relation_import_condition_db,
@@ -53,18 +61,19 @@ pub(crate) struct RuntimeState {
 }
 
 impl RuntimeState {
-    fn for_plan(items: &[StorageImportPlanItem]) -> Self {
-        let import_export_templates = items
-            .iter()
-            .filter_map(|item| match item.operation() {
-                StorageImportOperation::UpsertExportTemplate { input, .. } => Some(input.clone()),
-                _ => None,
-            })
-            .collect();
-        Self {
+    fn for_plan(items: &[StorageImportPlanItem]) -> Result<Self, ApiError> {
+        let mut import_export_templates = Vec::new();
+        for item in items {
+            if let StorageImportOperation::UpsertExportTemplate { input, .. } =
+                import_operation_from_storage(item.operation().clone())?
+            {
+                import_export_templates.push(input);
+            }
+        }
+        Ok(Self {
             import_export_templates,
             ..Self::default()
-        }
+        })
     }
 }
 
@@ -363,12 +372,13 @@ async fn resolve_object_relation_runtime(
 async fn observed_revision_for_planned_item(
     conn: &mut PostgresConnection,
     runtime: &RuntimeState,
-    execution: &StorageImportOperation,
+    execution: &StorageImportBoundaryOperation,
 ) -> Result<Option<crate::models::ResourceRevision>, ApiError> {
     use crate::models::ImportComputedFieldVisibility;
     use crate::storage::postgres::prelude::*;
 
-    let revision = match execution {
+    let execution = import_operation_from_storage(execution.clone())?;
+    let revision = match &execution {
         StorageImportOperation::UpsertIdentityScope { input, .. } => {
             use crate::schema::identity_scopes::dsl as s;
             s::identity_scopes
@@ -620,6 +630,24 @@ async fn observed_revision_for_planned_item(
 }
 
 pub(crate) async fn execute_planned_item(
+    conn: &mut PostgresConnection,
+    runtime: &mut RuntimeState,
+    execution: &StorageImportBoundaryOperation,
+) -> Result<(), ApiError> {
+    let execution = import_operation_from_storage(execution.clone())?;
+    execute_application_planned_item_inner(conn, runtime, &execution).await
+}
+
+#[cfg(test)]
+pub(crate) async fn execute_application_planned_item(
+    conn: &mut PostgresConnection,
+    runtime: &mut RuntimeState,
+    execution: &StorageImportOperation,
+) -> Result<(), ApiError> {
+    execute_application_planned_item_inner(conn, runtime, execution).await
+}
+
+async fn execute_application_planned_item_inner(
     conn: &mut PostgresConnection,
     runtime: &mut RuntimeState,
     execution: &StorageImportOperation,
@@ -1037,36 +1065,41 @@ fn should_abort_best_effort(error: &ApiError, mode: &ImportMode) -> bool {
 
 #[async_trait]
 impl ImportStorage for PostgresStorage {
-    async fn import_root_collection(&self) -> Result<Collection, StorageError> {
+    async fn import_root_collection(&self) -> Result<StorageCollection, StorageError> {
         lookup_root_collection(self.pool())
             .await
+            .map(collection_to_storage)
             .map_err(map_postgres_error)
     }
 
     async fn import_collection_by_id(
         &self,
         collection_id: i32,
-    ) -> Result<Option<Collection>, StorageError> {
+    ) -> Result<Option<StorageCollection>, StorageError> {
         lookup_collection_by_id(self.pool(), collection_id)
             .await
+            .map(|collection| collection.map(collection_to_storage))
             .map_err(map_postgres_error)
     }
 
     async fn import_collection_by_key(
         &self,
-        key: &CollectionKey,
-    ) -> Result<Option<Collection>, StorageError> {
-        lookup_collection_by_key(self.pool(), key)
+        key: &StorageImportCollectionKey,
+    ) -> Result<Option<StorageCollection>, StorageError> {
+        let key = collection_key_from_storage(key.clone());
+        lookup_collection_by_key(self.pool(), &key)
             .await
+            .map(|collection| collection.map(collection_to_storage))
             .map_err(map_postgres_error)
     }
 
     async fn import_collections_by_name(
         &self,
         name: &str,
-    ) -> Result<Vec<Collection>, StorageError> {
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         lookup_collections_by_name(self.pool(), name)
             .await
+            .map(|collections| collections.into_iter().map(collection_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
@@ -1074,11 +1107,12 @@ impl ImportStorage for PostgresStorage {
         &self,
         parent_collection_id: i32,
         name: &str,
-    ) -> Result<Option<Collection>, StorageError> {
+    ) -> Result<Option<StorageCollection>, StorageError> {
         with_connection(self.pool(), async |conn| {
             lookup_collection_child_by_name_db(conn, parent_collection_id, name).await
         })
         .await
+        .map(|collection| collection.map(collection_to_storage))
         .map_err(map_postgres_error)
     }
 
@@ -1086,9 +1120,10 @@ impl ImportStorage for PostgresStorage {
         &self,
         collection_id: i32,
         name: &str,
-    ) -> Result<Option<HubuumClass>, StorageError> {
+    ) -> Result<Option<StorageClassRecord>, StorageError> {
         lookup_class_by_collection_and_name(self.pool(), collection_id, name)
             .await
+            .map(|class| class.map(class_record_to_storage))
             .map_err(map_postgres_error)
     }
 
@@ -1096,9 +1131,10 @@ impl ImportStorage for PostgresStorage {
         &self,
         collection_id: i32,
         names: &[String],
-    ) -> Result<Vec<HubuumClass>, StorageError> {
+    ) -> Result<Vec<StorageClassRecord>, StorageError> {
         lookup_classes_by_collection_and_names(self.pool(), collection_id, names)
             .await
+            .map(|classes| classes.into_iter().map(class_record_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
@@ -1106,9 +1142,10 @@ impl ImportStorage for PostgresStorage {
         &self,
         class_id: i32,
         name: &str,
-    ) -> Result<Option<HubuumObject>, StorageError> {
+    ) -> Result<Option<StorageObject>, StorageError> {
         lookup_object_by_class_and_name(self.pool(), class_id, name)
             .await
+            .map(|object| object.map(object_to_storage))
             .map_err(map_postgres_error)
     }
 
@@ -1116,9 +1153,10 @@ impl ImportStorage for PostgresStorage {
         &self,
         class_id: i32,
         names: &[String],
-    ) -> Result<Vec<HubuumObject>, StorageError> {
+    ) -> Result<Vec<StorageObject>, StorageError> {
         lookup_objects_by_class_and_names(self.pool(), class_id, names)
             .await
+            .map(|objects| objects.into_iter().map(object_to_storage).collect())
             .map_err(map_postgres_error)
     }
 
@@ -1158,12 +1196,13 @@ impl ImportStorage for PostgresStorage {
     async fn preflight_import(
         &self,
         items: Vec<StorageImportPlanItem>,
-        mode: ImportMode,
+        mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
         with_connection(self.pool(), async move |conn| {
+            let mode = import_mode_from_storage(mode);
             let mut outcomes = Vec::with_capacity(items.len());
             let mut aborted = false;
-            let mut runtime = RuntimeState::for_plan(&items);
+            let mut runtime = RuntimeState::for_plan(&items)?;
             let transaction = conn
                 .transaction::<(), ApiError, _>(async |conn| {
                     for item in items {
@@ -1184,14 +1223,15 @@ impl ImportStorage for PostgresStorage {
                             Err(error) => (None, Err(error)),
                         };
                         match result {
-                            Ok(()) => {
-                                outcomes.push(StorageImportPreflightItem::success(index, revision))
-                            }
+                            Ok(()) => outcomes.push(StorageImportPreflightItem::success(
+                                index,
+                                revision.map(crate::models::ResourceRevision::get),
+                            )),
                             Err(error) => {
                                 aborted = should_abort_preflight(&error, &mode);
                                 outcomes.push(StorageImportPreflightItem::failure(
                                     index,
-                                    revision,
+                                    revision.map(crate::models::ResourceRevision::get),
                                     map_postgres_error(error),
                                 ));
                                 if aborted {
@@ -1224,7 +1264,7 @@ impl ImportStorage for PostgresStorage {
         items: Vec<StorageImportPlanItem>,
     ) -> Result<(), StorageError> {
         with_transaction(self.pool(), async move |conn| {
-            let mut runtime = RuntimeState::for_plan(&items);
+            let mut runtime = RuntimeState::for_plan(&items)?;
             for item in &items {
                 execute_planned_item(conn, &mut runtime, item.operation()).await?;
             }
@@ -1237,9 +1277,10 @@ impl ImportStorage for PostgresStorage {
     async fn apply_import_best_effort(
         &self,
         items: Vec<StorageImportPlanItem>,
-        mode: ImportMode,
+        mode: StorageImportMode,
     ) -> Result<StorageImportApply, StorageError> {
-        let mut runtime = RuntimeState::for_plan(&items);
+        let mode = import_mode_from_storage(mode);
+        let mut runtime = RuntimeState::for_plan(&items).map_err(map_postgres_error)?;
         let mut outcomes = Vec::with_capacity(items.len());
         let mut aborted = false;
 

@@ -54,7 +54,9 @@ use crate::storage::postgres::operations::task_import::{
 use crate::storage::postgres::operations::task_rows::{
     NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
 };
-use crate::storage::postgres::{RuntimeState, execute_planned_item, resolve_object_runtime};
+use crate::storage::postgres::{
+    RuntimeState, execute_application_planned_item, execute_planned_item, resolve_object_runtime,
+};
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
@@ -1126,6 +1128,8 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
             overwrite: false,
         },
     };
+    let execution =
+        crate::services::import_boundary::import_operation_to_storage(execution).unwrap();
 
     let result = with_connection(&context.pool, async |conn| {
         execute_planned_item(conn, &mut RuntimeState::default(), &execution).await
@@ -1197,15 +1201,13 @@ async fn imported_templates_use_effective_collection_loader(
             import_export_templates,
             ..RuntimeState::default()
         };
-        execute_planned_item(
-            conn,
-            &mut runtime,
-            &PlannedExecution::UpsertExportTemplate {
+        let execution = crate::services::import_boundary::import_operation_to_storage(
+            PlannedExecution::UpsertExportTemplate {
                 input: export,
                 overwrite: false,
             },
-        )
-        .await
+        )?;
+        execute_planned_item(conn, &mut runtime, &execution).await
     })
     .await;
 
@@ -2460,8 +2462,8 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
 
     let result = with_connection(&context.pool, async |conn| {
         let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution).await?;
-        execute_planned_item(
+        execute_application_planned_item(conn, &mut runtime, &execution).await?;
+        execute_application_planned_item(
             conn,
             &mut runtime,
             &PlannedExecution::CreateClass(class_input.clone()),
@@ -2542,8 +2544,8 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
 
     let result = with_connection(&context.pool, async |conn| {
         let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution).await?;
-        execute_planned_item(
+        execute_application_planned_item(conn, &mut runtime, &execution).await?;
+        execute_application_planned_item(
             conn,
             &mut runtime,
             &PlannedExecution::CreateObject(object_input.clone()),
@@ -2736,7 +2738,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
 
     let resolved = with_connection(&context.pool, async |conn| {
         let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution).await?;
+        execute_application_planned_item(conn, &mut runtime, &execution).await?;
         resolve_object_runtime(conn, &runtime, Some("object:existing"), None::<&ObjectKey>).await
     })
     .await

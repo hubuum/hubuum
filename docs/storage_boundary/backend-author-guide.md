@@ -195,7 +195,7 @@ fallback:
 
 1. Add its stable variant to `StorageBackendKind` and `StorageBackendKind::ALL`.
 2. Implement every trait aggregated by `StorageBackend`.
-3. Explicitly implement `StorageBackend` in `src/storage/contract.rs`.
+3. Explicitly implement `StorageBackend` in the application composition root.
 4. Add one exhaustive `StorageHandle` composition and dispatch variant.
 5. Add factory construction and redacted settings projection.
 6. Add it to the `available_backends()` test factory.

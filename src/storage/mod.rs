@@ -138,11 +138,13 @@ pub(crate) use hubuum_storage_core::{
     StoragePoolConnectionState, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
     TaskGaugeLastTerminal, TaskGaugeSnapshot,
 };
-pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
-pub(crate) use imports::{
-    ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportOperation,
-    StorageImportPlanItem, StorageImportPreflight, StorageImportPreflightItem, StorageImportResult,
+pub(crate) use hubuum_storage_core::{
+    ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportCollectionKey,
+    StorageImportMode, StorageImportOperation, StorageImportPlanItem, StorageImportPreflight,
+    StorageImportPreflightItem, StorageImportResult,
 };
+pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
+pub(crate) use imports::ApplicationImportOperation;
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
 #[cfg(test)]

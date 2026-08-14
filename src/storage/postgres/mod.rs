@@ -9,7 +9,9 @@ mod imports;
 mod migrations;
 mod notifications;
 #[cfg(test)]
-pub(crate) use imports::{RuntimeState, execute_planned_item, resolve_object_runtime};
+pub(crate) use imports::{
+    RuntimeState, execute_application_planned_item, execute_planned_item, resolve_object_runtime,
+};
 #[doc(hidden)]
 pub mod operations;
 mod remote_targets;

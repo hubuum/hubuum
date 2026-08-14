@@ -66,7 +66,8 @@ The boundary has four responsibilities:
 
 ## Complete Means Complete
 
-`StorageBackend` is an aggregate trait in `src/storage/contract.rs`. Its
+`StorageBackend` is an aggregate trait in
+`crates/hubuum-storage-core/src/backend.rs`. Its
 supertraits are the complete compile-time contract. An adapter opts in with an
 explicit implementation only after it implements every required family; Rust
 rejects that implementation if any requirement is missing.

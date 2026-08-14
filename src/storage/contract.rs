@@ -1,71 +1,8 @@
-use super::{
-    AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRelationStore, ClassStore, CollectionAuthorizationStorage,
-    CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectStorage,
-    EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
-    ExportTemplateStorage, GroupStorage, HistoryStorage, IdentityStorage, ImportStorage,
-    InventoryStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, PostgresStorage, PrincipalStorage, RelationQueryStorage,
-    RemoteTargetStorage, RestoreStorage, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationStorage,
-};
+use super::PostgresStorage;
 
-pub(crate) use hubuum_storage_core::StorageIdentity;
+pub(crate) use hubuum_storage_core::{StorageBackend, StorageIdentity};
 
 pub(crate) use super::registry::{StorageBackendDescriptor, StorageBackendKind};
-
-/// All-or-nothing storage backend accepted by the application composition root.
-///
-/// Focused adapters implement only the operation-family traits they support.
-/// A selectable backend opts into this aggregate only after implementing every
-/// required family; the supertrait bounds make omissions a compile error.
-pub(crate) trait StorageBackend:
-    StorageIdentity
-    + CollectionStore
-    + ClassStore
-    + ObjectStore
-    + ClassRelationStore
-    + ObjectRelationStore
-    + AuthenticationStorage
-    + IdentityStorage
-    + UserStorage
-    + TokenStorage
-    + AuthorizationStorage
-    + CatalogStorage
-    + ComputedFieldLifecycleStorage
-    + ComputedObjectStorage
-    + ObjectAggregateStorage
-    + RelationQueryStorage
-    + AuditEventStorage
-    + EventSubscriptionStorage
-    + EventDeliveryAdministrationStorage
-    + EventDeliveryStorage
-    + EventFanoutStorage
-    + EventHealthStorage
-    + EventRetentionStorage
-    + HistoryStorage
-    + InventoryStorage
-    + MetricsStorage
-    + OperationalStateStorage
-    + TokenRetentionStorage
-    + UnifiedSearchStorage
-    + GroupStorage
-    + PrincipalStorage
-    + CollectionAuthorizationStorage
-    + RemoteTargetStorage
-    + TaskQueueStorage
-    + TaskExecutionStorage
-    + BackupSnapshotStorage
-    + RestoreStorage
-    + ImportStorage
-    + ExportQueryStorage
-    + ExportTemplateStorage
-    + WorkerNotificationStorage
-    + StorageExecution
-{
-}
 
 impl StorageBackend for PostgresStorage {}
 

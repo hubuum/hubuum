@@ -5,6 +5,7 @@
 //! these values without reversing the dependency from storage into the server.
 
 mod authorization;
+mod backend;
 mod backup_snapshot;
 mod catalog;
 mod collection_authorization;
@@ -21,6 +22,7 @@ mod identity_operations;
 mod identity_resources;
 mod identity_tokens;
 mod identity_users;
+mod import_workflow;
 mod inventory;
 mod metrics;
 mod object_aggregate;
@@ -47,6 +49,7 @@ pub use authorization::{
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
     AuthorizationStorage,
 };
+pub use backend::StorageBackend;
 pub use backup_snapshot::{BackupSnapshotStorage, StorageBackupSections, StorageBackupSnapshot};
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
 pub use collection_authorization::{
@@ -133,6 +136,30 @@ pub use identity_tokens::{
 pub use identity_users::{
     StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
     StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, UserStorage,
+};
+pub use import_workflow::{
+    ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportAtomicity,
+    StorageImportClass, StorageImportClassKey, StorageImportClassKeyParts, StorageImportClassParts,
+    StorageImportClassRelation, StorageImportClassRelationParts, StorageImportCollection,
+    StorageImportCollectionKey, StorageImportCollectionKeyParts, StorageImportCollectionParts,
+    StorageImportCollectionPermission, StorageImportCollectionPermissionParts,
+    StorageImportCollisionPolicy, StorageImportComputedField, StorageImportComputedFieldParts,
+    StorageImportComputedFieldVisibility, StorageImportEventSink, StorageImportEventSinkKey,
+    StorageImportEventSinkKeyParts, StorageImportEventSinkParts, StorageImportEventSubscription,
+    StorageImportEventSubscriptionParts, StorageImportExportTemplate,
+    StorageImportExportTemplateParts, StorageImportGroup, StorageImportGroupKey,
+    StorageImportGroupKeyParts, StorageImportGroupMembership, StorageImportGroupMembershipParts,
+    StorageImportGroupParts, StorageImportIdentityScope, StorageImportIdentityScopeKey,
+    StorageImportIdentityScopeKeyParts, StorageImportIdentityScopeParts,
+    StorageImportMembershipSource, StorageImportMembershipSourceParts, StorageImportMode,
+    StorageImportObject, StorageImportObjectKey, StorageImportObjectKeyParts,
+    StorageImportObjectParts, StorageImportObjectRelation, StorageImportObjectRelationParts,
+    StorageImportOperation, StorageImportPermissionPolicy, StorageImportPlanItem,
+    StorageImportPreflight, StorageImportPreflightItem, StorageImportPrincipal,
+    StorageImportPrincipalKey, StorageImportPrincipalKeyParts, StorageImportPrincipalParts,
+    StorageImportPrincipalSubtype, StorageImportRemoteTarget, StorageImportRemoteTargetParts,
+    StorageImportResult, StorageImportResultBuilder, StorageImportRevision,
+    StorageImportTimestamps, StorageImportWriteCondition,
 };
 pub use inventory::{InventoryStorage, StorageInventoryCounts, StorageObjectsByClassCount};
 pub use metrics::{

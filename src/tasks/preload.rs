@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use super::helpers::{class_to_resolution, collection_to_resolution, object_to_resolution};
+use super::helpers::{
+    storage_class_to_resolution, storage_collection_to_resolution, storage_object_to_resolution,
+};
 use super::resolution::{
     remember_class, remember_collection, remember_object, resolve_class_planning,
     resolve_collection_planning,
@@ -98,7 +100,7 @@ async fn preload_collections_for_class_keys(
             continue;
         }
         for collection in collections {
-            remember_collection(state, None, collection_to_resolution(collection));
+            remember_collection(state, None, storage_collection_to_resolution(collection));
         }
     }
 
@@ -159,10 +161,10 @@ pub(super) async fn preload_existing_classes(
             .map_err(|err| err.to_string())?;
         let found_names = classes
             .iter()
-            .map(|class| class.name.clone())
+            .map(|class| class.name().to_string())
             .collect::<HashSet<_>>();
         for class in classes {
-            remember_class(state, None, class_to_resolution(class));
+            remember_class(state, None, storage_class_to_resolution(class));
         }
         for name in names {
             if !found_names.contains(&name) {
@@ -242,10 +244,10 @@ pub(super) async fn preload_existing_objects(
             .map_err(|err| err.to_string())?;
         let found_names = objects
             .iter()
-            .map(|object| object.name.clone())
+            .map(|object| object.name().to_string())
             .collect::<HashSet<_>>();
         for object in objects {
-            remember_object(state, None, object_to_resolution(object));
+            remember_object(state, None, storage_object_to_resolution(object));
         }
         for name in names {
             if !found_names.contains(&name) {

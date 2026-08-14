@@ -42,7 +42,8 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | --- | --- |
 | Extracted traits, DTOs, errors, descriptors | `crates/hubuum-storage-core/src/*` |
 | Extracted PostgreSQL pool, TLS, JSONB, query capture | `crates/hubuum-storage-postgres/src/*` |
-| Complete aggregate and backend opt-in | `src/storage/contract.rs` |
+| Complete aggregate | `crates/hubuum-storage-core/src/backend.rs` |
+| Application-owned backend opt-in | `src/storage/contract.rs` |
 | Opaque context, dispatch, common observation | `src/storage/context/*` |
 | Resource-family and root-domain contracts | `src/storage/*.rs` |
 | PostgreSQL adapter trait implementations | `src/storage/postgres/capabilities/*` |

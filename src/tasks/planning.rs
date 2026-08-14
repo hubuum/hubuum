@@ -2,12 +2,12 @@ use crate::models::token_scope::TokenScope;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use chrono::Utc;
 use tracing::{Instrument, info, info_span};
 
 use super::helpers::{
-    class_to_resolution, identifier_collection, normalize_pair, object_to_resolution,
-    planned_result, sanitize_error_for_storage, should_abort_import,
+    identifier_collection, normalize_pair, planned_result, sanitize_error_for_storage,
+    should_abort_import, storage_class_to_resolution, storage_collection_to_resolution,
+    storage_object_to_resolution,
 };
 use super::preload::{preload_existing_classes, preload_existing_objects};
 use super::resolution::{
@@ -22,7 +22,7 @@ use super::types::{
 };
 use crate::errors::ApiError;
 use crate::models::{
-    CONDITIONAL_IMPORT_TARGET_MISSING, Collection, CollectionID, ImportAtomicity, ImportClassInput,
+    CONDITIONAL_IMPORT_TARGET_MISSING, CollectionID, ImportAtomicity, ImportClassInput,
     ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
     ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportObjectRelationInput,
     ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
@@ -171,14 +171,17 @@ async fn preflight_dry_run(
     let plan = planned_items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| {
-            item.execution
-                .clone()
+        .filter_map(|(index, item)| item.execution.clone().map(|execution| (index, execution)))
+        .map(|(index, execution)| {
+            crate::services::import_boundary::import_operation_to_storage(execution)
                 .map(|execution| StorageImportPlanItem::new(index, execution))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     let (preflight_items, aborted) = storage_handle(pool)
-        .preflight_import(plan, mode.clone())
+        .preflight_import(
+            plan,
+            crate::services::import_boundary::import_mode_to_storage(mode.clone()),
+        )
         .await?
         .into_parts();
     let cutoff = aborted
@@ -204,7 +207,11 @@ async fn preflight_dry_run(
             }
             continue;
         };
-        item.result.set_observed_revision(revision);
+        item.result.set_observed_revision(
+            revision
+                .map(crate::models::ResourceRevision::new)
+                .transpose()?,
+        );
         if let Some(error) = error {
             let error = ApiError::from(error);
             failures.push(PlanningFailure {
@@ -955,14 +962,12 @@ where
             .cloned()
             .filter(|collection| collection.exists_in_db)
         {
-            Some(Collection {
+            Some(CollectionResolution {
                 id: collection.id,
                 name: collection.name,
                 description: collection.description,
-                created_at: Utc::now().naive_utc(),
-                updated_at: Utc::now().naive_utc(),
                 parent_collection_id: collection.parent_collection_id,
-                revision: crate::models::ResourceRevision::INITIAL,
+                exists_in_db: true,
             })
         } else {
             storage_handle(pool)
@@ -978,6 +983,7 @@ where
                     ),
                     message: sanitize_error_for_storage(&message.into()),
                 })?
+                .map(storage_collection_to_resolution)
         }
     } else {
         None
@@ -1206,7 +1212,7 @@ where
                 ),
                 message: sanitize_error_for_storage(&err.into()),
             })?
-            .map(class_to_resolution)
+            .map(storage_class_to_resolution)
     };
 
     let identifier = format!("{}::{}", collection.name, input.name);
@@ -1434,7 +1440,7 @@ where
                 ),
                 message: sanitize_error_for_storage(&err.into()),
             })?
-            .map(object_to_resolution)
+            .map(storage_object_to_resolution)
     };
 
     let identifier = format!("{}::{}", class.name, input.name);

@@ -194,7 +194,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 native_scenarios = ["tests/restore_roundtrip.rs::interrupted_restore_is_reconciled_after_the_drain_transition"]
 
 [traits.ImportStorage]
-source = "src/storage/imports.rs"
+source = "crates/hubuum-storage-core/src/import_workflow.rs"
 methods = ["import_root_collection", "import_collection_by_id", "import_collection_by_key", "import_collections_by_name", "import_collection_child_by_name", "import_class_by_name", "import_classes_by_names", "import_object_by_name", "import_objects_by_names", "import_class_relation_exists", "import_object_relation_exists", "import_group_exists", "preflight_import", "apply_import_strict", "apply_import_best_effort", "record_import_results"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract"]
 
@@ -222,7 +222,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 # exact: adding a variant requires consciously extending its semantic evidence.
 
 [enums.StorageImportOperation]
-source = "src/storage/imports.rs"
+source = "crates/hubuum-storage-core/src/import_workflow.rs"
 variants = ["UpsertIdentityScope", "UpsertGroup", "UpsertPrincipal", "UpsertGroupMembership", "CreateCollection", "UpdateCollection", "CreateClass", "UpdateClass", "CreateObject", "UpdateObject", "UpsertComputedField", "CreateClassRelation", "UpdateClassRelationTimestamps", "CheckClassRelationCondition", "CreateObjectRelation", "UpdateObjectRelationTimestamps", "CheckObjectRelationCondition", "ApplyCollectionPermissions", "UpsertExportTemplate", "UpsertRemoteTarget", "UpsertEventSink", "UpsertEventSubscription"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract", "tests/api_jobs_suite/imports.rs::administrator_imports_deterministic_identity_and_permission_graph"]
 

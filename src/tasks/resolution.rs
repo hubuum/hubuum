@@ -1,4 +1,6 @@
-use super::helpers::{class_to_resolution, collection_to_resolution, object_to_resolution};
+use super::helpers::{
+    storage_class_to_resolution, storage_collection_to_resolution, storage_object_to_resolution,
+};
 use super::types::{ClassResolution, CollectionResolution, ObjectResolution, PlanningState};
 use crate::models::{ClassKey, CollectionKey, ImportCollectionInput, ObjectKey};
 use crate::storage::{ImportStorage, storage_handle};
@@ -36,11 +38,12 @@ async fn find_collection_by_key_planning(
     validate_collection_key_path(key)?;
 
     if key.path.is_some() {
+        let storage_key = crate::services::import_boundary::collection_key_to_storage(key.clone());
         let collection = storage_handle(pool)
-            .import_collection_by_key(key)
+            .import_collection_by_key(&storage_key)
             .await
             .map_err(|err| err.to_string())?
-            .map(collection_to_resolution);
+            .map(storage_collection_to_resolution);
         if let Some(collection) = &collection {
             remember_collection(state, None, collection.clone());
         }
@@ -61,7 +64,7 @@ async fn find_collection_by_key_planning(
         .await
         .map_err(|err| err.to_string())?
         .into_iter()
-        .map(collection_to_resolution)
+        .map(storage_collection_to_resolution)
     {
         if !matches.iter().any(|known| known.id == collection.id) {
             matches.push(collection);
@@ -101,7 +104,7 @@ async fn resolve_root_collection_planning(
         .import_root_collection()
         .await
         .map_err(|err| err.to_string())
-        .map(collection_to_resolution)?;
+        .map(storage_collection_to_resolution)?;
     remember_collection(state, None, collection.clone());
     Ok(collection)
 }
@@ -161,7 +164,7 @@ pub(super) async fn resolve_collection_by_id_planning(
         .import_collection_by_id(collection_id)
         .await
         .map_err(|err| err.to_string())?
-        .map(collection_to_resolution)
+        .map(storage_collection_to_resolution)
         .ok_or_else(|| format!("Collection id '{}' not found", collection_id))?;
     remember_collection(state, None, collection.clone());
     Ok(collection)
@@ -204,7 +207,7 @@ pub(super) async fn resolve_class_planning(
                 .import_class_by_name(collection.id, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
-                .map(class_to_resolution)
+                .map(storage_class_to_resolution)
                 .ok_or_else(|| {
                     format!(
                         "Class '{}' not found in collection '{}'",
@@ -255,7 +258,7 @@ pub(super) async fn resolve_object_planning(
                 .import_object_by_name(class.id, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
-                .map(object_to_resolution)
+                .map(storage_object_to_resolution)
                 .ok_or_else(|| {
                     format!("Object '{}' not found in class '{}'", key.name, class.name)
                 })?;

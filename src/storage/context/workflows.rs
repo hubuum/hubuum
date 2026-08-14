@@ -177,7 +177,7 @@ impl RemoteTargetStorage for StorageHandle {
 
 #[async_trait]
 impl ImportStorage for StorageHandle {
-    async fn import_root_collection(&self) -> Result<Collection, StorageError> {
+    async fn import_root_collection(&self) -> Result<StorageCollection, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "root_collection", async {
             dispatch_backend!(self, |backend| { backend.import_root_collection().await })
         })
@@ -187,7 +187,7 @@ impl ImportStorage for StorageHandle {
     async fn import_collection_by_id(
         &self,
         collection_id: i32,
-    ) -> Result<Option<Collection>, StorageError> {
+    ) -> Result<Option<StorageCollection>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "collection_by_id", async {
             dispatch_backend!(self, |backend| {
                 backend.import_collection_by_id(collection_id).await
@@ -198,8 +198,8 @@ impl ImportStorage for StorageHandle {
 
     async fn import_collection_by_key(
         &self,
-        key: &CollectionKey,
-    ) -> Result<Option<Collection>, StorageError> {
+        key: &StorageImportCollectionKey,
+    ) -> Result<Option<StorageCollection>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "collection_by_key", async {
             dispatch_backend!(self, |backend| {
                 backend.import_collection_by_key(key).await
@@ -211,7 +211,7 @@ impl ImportStorage for StorageHandle {
     async fn import_collections_by_name(
         &self,
         name: &str,
-    ) -> Result<Vec<Collection>, StorageError> {
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "imports",
@@ -229,7 +229,7 @@ impl ImportStorage for StorageHandle {
         &self,
         parent_collection_id: i32,
         name: &str,
-    ) -> Result<Option<Collection>, StorageError> {
+    ) -> Result<Option<StorageCollection>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "imports",
@@ -249,7 +249,7 @@ impl ImportStorage for StorageHandle {
         &self,
         collection_id: i32,
         name: &str,
-    ) -> Result<Option<HubuumClass>, StorageError> {
+    ) -> Result<Option<StorageClassRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "class_by_name", async {
             dispatch_backend!(self, |backend| {
                 backend.import_class_by_name(collection_id, name).await
@@ -262,7 +262,7 @@ impl ImportStorage for StorageHandle {
         &self,
         collection_id: i32,
         names: &[String],
-    ) -> Result<Vec<HubuumClass>, StorageError> {
+    ) -> Result<Vec<StorageClassRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "classes_by_names", async {
             dispatch_backend!(self, |backend| {
                 backend.import_classes_by_names(collection_id, names).await
@@ -275,7 +275,7 @@ impl ImportStorage for StorageHandle {
         &self,
         class_id: i32,
         name: &str,
-    ) -> Result<Option<HubuumObject>, StorageError> {
+    ) -> Result<Option<StorageObject>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "object_by_name", async {
             dispatch_backend!(self, |backend| {
                 backend.import_object_by_name(class_id, name).await
@@ -288,7 +288,7 @@ impl ImportStorage for StorageHandle {
         &self,
         class_id: i32,
         names: &[String],
-    ) -> Result<Vec<HubuumObject>, StorageError> {
+    ) -> Result<Vec<StorageObject>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "objects_by_names", async {
             dispatch_backend!(self, |backend| {
                 backend.import_objects_by_names(class_id, names).await
@@ -355,7 +355,7 @@ impl ImportStorage for StorageHandle {
     async fn preflight_import(
         &self,
         items: Vec<StorageImportPlanItem>,
-        mode: ImportMode,
+        mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "preflight", async {
             dispatch_backend!(self, |backend| {
@@ -378,7 +378,7 @@ impl ImportStorage for StorageHandle {
     async fn apply_import_best_effort(
         &self,
         items: Vec<StorageImportPlanItem>,
-        mode: ImportMode,
+        mode: StorageImportMode,
     ) -> Result<StorageImportApply, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "apply_best_effort", async {
             dispatch_backend!(self, |backend| {

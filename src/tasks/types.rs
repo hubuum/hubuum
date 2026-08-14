@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::models::{Permissions, TaskResultCounts, TaskStatus};
 use crate::storage::StorageImportResult;
 
-pub(super) use crate::storage::StorageImportOperation as PlannedExecution;
+pub(super) use crate::storage::ApplicationImportOperation as PlannedExecution;
 
 #[derive(Clone, Debug)]
 pub(super) struct CollectionResolution {

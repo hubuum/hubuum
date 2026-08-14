@@ -32,7 +32,7 @@ use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::computed_field_rows::NewComputedFieldDefinitionRow as NewComputedFieldDefinition;
 use crate::storage::{
-    AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
+    ApplicationImportOperation, AuditEventStorage, AuthenticationCredential, AuthenticationStorage,
     AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
@@ -64,33 +64,33 @@ use crate::storage::{
     StorageEventSubscriptionUpdate, StorageExecution, StorageExportTaskArtifact,
     StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
     StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
-    StorageGroupListQuery, StorageGroupUpdate, StorageImportOperation, StorageImportPlanItem,
-    StorageImportResult, StorageLocalPasswordReset, StorageObject,
-    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
-    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StorageQueryBudget,
-    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageServiceAccountCreate,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenRenew, StorageTokenRevoke, StorageUserCreate,
-    StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
-    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageGroupListQuery, StorageGroupUpdate, StorageImportPlanItem, StorageImportResult,
+    StorageLocalPasswordReset, StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePrincipalGroupListQuery,
+    StoragePrincipalSettingsMutation, StorageQueryBudget, StorageRecordMetadata,
+    StorageRelatedDirection, StorageRelatedSort, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
+    StorageRevisionPrecondition, StorageServiceAccountCreate, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenRenew,
+    StorageTokenRevoke, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchQuery,
+    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -1126,49 +1126,52 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
             .import_root_collection()
             .await
             .expect("certified backend should resolve the import root");
+        let root_id = root.id();
+        let root_name = root.name().to_string();
         assert_eq!(
             backend
-                .import_collection_by_id(root.id)
+                .import_collection_by_id(root_id)
                 .await
                 .expect("certified backend should look up import collections by id")
-                .map(|collection| collection.id),
-            Some(root.id)
+                .map(|collection| collection.id()),
+            Some(root_id)
         );
+        let root_key = crate::services::import_boundary::collection_key_to_storage(CollectionKey {
+            name: root_name.clone(),
+            path: Some(Vec::new()),
+        });
         assert!(
             backend
-                .import_collection_by_key(&CollectionKey {
-                    name: root.name.clone(),
-                    path: Some(Vec::new()),
-                })
+                .import_collection_by_key(&root_key)
                 .await
                 .expect("certified backend should look up import collections by path")
                 .is_some()
         );
         assert!(
             backend
-                .import_collections_by_name(&root.name)
+                .import_collections_by_name(&root_name)
                 .await
                 .expect("certified backend should look up import collections by name")
                 .iter()
-                .any(|collection| collection.id == root.id)
+                .any(|collection| collection.id() == root_id)
         );
         assert!(
             backend
-                .import_collection_child_by_name(root.id, &preflight_name)
+                .import_collection_child_by_name(root_id, &preflight_name)
                 .await
                 .expect("certified backend should look up import children")
                 .is_none()
         );
         assert!(
             backend
-                .import_class_by_name(root.id, &prefix("missing_import_class"))
+                .import_class_by_name(root_id, &prefix("missing_import_class"))
                 .await
                 .expect("certified backend should look up import classes")
                 .is_none()
         );
         assert!(
             backend
-                .import_classes_by_names(root.id, &[])
+                .import_classes_by_names(root_id, &[])
                 .await
                 .expect("certified backend should batch import class lookups")
                 .is_empty()
@@ -1208,13 +1211,19 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
 
         let preflight_plan = vec![StorageImportPlanItem::new(
             0,
-            StorageImportOperation::CreateCollection(collection_input(
-                &preflight_name,
-                "collection:preflight",
-            )),
+            crate::services::import_boundary::import_operation_to_storage(
+                ApplicationImportOperation::CreateCollection(collection_input(
+                    &preflight_name,
+                    "collection:preflight",
+                )),
+            )
+            .expect("valid collection input should cross the storage boundary"),
         )];
         let (preflight, aborted) = backend
-            .preflight_import(preflight_plan.clone(), ImportMode::default())
+            .preflight_import(
+                preflight_plan.clone(),
+                crate::services::import_boundary::import_mode_to_storage(ImportMode::default()),
+            )
             .await
             .expect("certified backend should preflight an import")
             .into_parts();
@@ -1231,7 +1240,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
         );
         assert!(
             backend
-                .import_collection_child_by_name(root.id, &preflight_name)
+                .import_collection_child_by_name(root_id, &preflight_name)
                 .await
                 .expect("preflight rollback should remain queryable")
                 .is_none(),
@@ -1246,30 +1255,36 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
         let rollback_plan = vec![
             StorageImportPlanItem::new(
                 0,
-                StorageImportOperation::CreateCollection(collection_input(
-                    &rollback_name,
-                    "collection:rollback",
-                )),
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateCollection(collection_input(
+                        &rollback_name,
+                        "collection:rollback",
+                    )),
+                )
+                .expect("valid collection input should cross the storage boundary"),
             ),
             StorageImportPlanItem::new(
                 1,
-                StorageImportOperation::CreateClass(ImportClassInput {
-                    ref_: Some("class:rollback_failure".to_string()),
-                    name: prefix("import_rollback_class"),
-                    description: "must fail".to_string(),
-                    json_schema: None,
-                    validate_schema: Some(false),
-                    collection_ref: Some("collection:missing".to_string()),
-                    collection_key: None,
-                    condition: None,
-                    timestamps: None,
-                }),
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateClass(ImportClassInput {
+                        ref_: Some("class:rollback_failure".to_string()),
+                        name: prefix("import_rollback_class"),
+                        description: "must fail".to_string(),
+                        json_schema: None,
+                        validate_schema: Some(false),
+                        collection_ref: Some("collection:missing".to_string()),
+                        collection_key: None,
+                        condition: None,
+                        timestamps: None,
+                    }),
+                )
+                .expect("valid class input should cross the storage boundary"),
             ),
         ];
         assert!(backend.apply_import_strict(rollback_plan).await.is_err());
         assert!(
             backend
-                .import_collection_child_by_name(root.id, &rollback_name)
+                .import_collection_child_by_name(root_id, &rollback_name)
                 .await
                 .expect("strict rollback should remain queryable")
                 .is_none(),
@@ -1281,30 +1296,36 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 vec![
                     StorageImportPlanItem::new(
                         0,
-                        StorageImportOperation::CreateCollection(collection_input(
-                            &best_effort_name,
-                            "collection:best_effort",
-                        )),
+                        crate::services::import_boundary::import_operation_to_storage(
+                            ApplicationImportOperation::CreateCollection(collection_input(
+                                &best_effort_name,
+                                "collection:best_effort",
+                            )),
+                        )
+                        .expect("valid collection input should cross the storage boundary"),
                     ),
                     StorageImportPlanItem::new(
                         1,
-                        StorageImportOperation::CreateClass(ImportClassInput {
-                            ref_: Some("class:best_effort_failure".to_string()),
-                            name: prefix("import_best_effort_class"),
-                            description: "must fail".to_string(),
-                            json_schema: None,
-                            validate_schema: Some(false),
-                            collection_ref: Some("collection:missing".to_string()),
-                            collection_key: None,
-                            condition: None,
-                            timestamps: None,
-                        }),
+                        crate::services::import_boundary::import_operation_to_storage(
+                            ApplicationImportOperation::CreateClass(ImportClassInput {
+                                ref_: Some("class:best_effort_failure".to_string()),
+                                name: prefix("import_best_effort_class"),
+                                description: "must fail".to_string(),
+                                json_schema: None,
+                                validate_schema: Some(false),
+                                collection_ref: Some("collection:missing".to_string()),
+                                collection_key: None,
+                                condition: None,
+                                timestamps: None,
+                            }),
+                        )
+                        .expect("valid class input should cross the storage boundary"),
                     ),
                 ],
-                ImportMode {
+                crate::services::import_boundary::import_mode_to_storage(ImportMode {
                     atomicity: Some(ImportAtomicity::BestEffort),
                     ..ImportMode::default()
-                },
+                }),
             )
             .await
             .expect("certified backend should apply a best-effort import");
@@ -1315,11 +1336,13 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
         assert!(best_effort[1].error().is_some());
 
         for name in [&preflight_name, &best_effort_name] {
-            backend
-                .import_collection_child_by_name(root.id, name)
+            let collection = backend
+                .import_collection_child_by_name(root_id, name)
                 .await
                 .expect("committed import collection should remain queryable")
-                .expect("committed import collection should exist")
+                .expect("committed import collection should exist");
+            crate::services::storage_boundary::collection_from_storage(collection)
+                .expect("backend collection should satisfy application invariants")
                 .delete_without_events(pool.get_ref())
                 .await
                 .expect("import compatibility fixture should be removed");

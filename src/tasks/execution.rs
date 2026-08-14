@@ -291,13 +291,13 @@ async fn finalize_task(
 
 fn import_storage_plan(
     planned_items: &[PlannedItem],
-) -> Vec<crate::storage::StorageImportPlanItem> {
+) -> Result<Vec<crate::storage::StorageImportPlanItem>, ApiError> {
     planned_items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| {
-            item.execution
-                .clone()
+        .filter_map(|(index, item)| item.execution.clone().map(|execution| (index, execution)))
+        .map(|(index, execution)| {
+            crate::services::import_boundary::import_operation_to_storage(execution)
                 .map(|execution| crate::storage::StorageImportPlanItem::new(index, execution))
         })
         .collect()
@@ -310,7 +310,7 @@ pub(super) async fn execute_import_strict(
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
     crate::storage::storage_handle(pool)
-        .apply_import_strict(import_storage_plan(planned_items))
+        .apply_import_strict(import_storage_plan(planned_items)?)
         .await?;
 
     for item in planned_items {
@@ -328,7 +328,10 @@ pub(super) async fn execute_import_best_effort(
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
     let (outcomes, aborted) = crate::storage::storage_handle(pool)
-        .apply_import_best_effort(import_storage_plan(planned_items), mode.clone())
+        .apply_import_best_effort(
+            import_storage_plan(planned_items)?,
+            crate::services::import_boundary::import_mode_to_storage(mode.clone()),
+        )
         .await?
         .into_parts();
     let cutoff = aborted

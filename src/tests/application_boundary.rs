@@ -232,10 +232,10 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
         "semantic coverage must inventory every complete-backend trait exactly"
     );
 
-    let contract = read_source(&root.join("src/storage/contract.rs"))
+    let contract = read_source(&root.join("crates/hubuum-storage-core/src/backend.rs"))
         .expect("complete storage contract should be readable");
     let aggregate = contract
-        .split_once("pub(crate) trait StorageBackend:")
+        .split_once("pub trait StorageBackend:")
         .and_then(|(_, remainder)| remainder.split_once("\n{"))
         .map(|(body, _)| body)
         .expect("StorageBackend should have a readable aggregate declaration")
@@ -1380,9 +1380,12 @@ fn resource_services_depend_on_their_exact_storage_families() {
 #[test]
 fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable() {
     let root = repository_root();
-    let contract_path = root.join("src/storage/contract.rs");
+    let contract_path = root.join("crates/hubuum-storage-core/src/backend.rs");
     let contract_source = read_source(&contract_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
+    let composition_path = root.join("src/storage/contract.rs");
+    let composition_source = read_source(&composition_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", composition_path.display()));
     let context_path = root.join("src/storage/context");
     let context_source = read_rust_module_tree(&context_path);
     let notification_adapter_path = root.join("src/storage/postgres/notifications.rs");
@@ -1395,7 +1398,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         });
 
     let contract_body = contract_source
-        .split_once("pub(crate) trait StorageBackend:")
+        .split_once("pub trait StorageBackend:")
         .and_then(|(_, remainder)| remainder.split_once("\n{"))
         .map(|(body, _)| body)
         .expect("StorageBackend should have a readable aggregate trait declaration");
@@ -1406,11 +1409,11 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     assert!(
-        contract_source.contains("impl StorageBackend for PostgresStorage {}"),
+        composition_source.contains("impl StorageBackend for PostgresStorage {}"),
         "PostgreSQL must explicitly opt into the complete storage contract"
     );
     assert!(
-        !contract_source.contains("StorageBackend for MemoryStorageModel"),
+        !composition_source.contains("StorageBackend for MemoryStorageModel"),
         "the focused memory contract model must not be selectable as a full backend"
     );
     for forbidden_marker in ["WorkflowStorage", "OperationalStorage"] {

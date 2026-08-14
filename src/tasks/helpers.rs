@@ -5,11 +5,8 @@ use tracing::debug;
 
 use crate::errors::ApiError;
 #[cfg(test)]
-use crate::models::ImportMode;
-use crate::models::{
-    Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy,
-    ImportPermissionPolicy,
-};
+use crate::models::{HubuumClass, ImportMode};
+use crate::models::{ImportAtomicity, ImportCollisionPolicy, ImportPermissionPolicy};
 use crate::storage::{ImportStorage, storage_handle};
 
 use super::types::{
@@ -159,16 +156,20 @@ pub(super) fn identifier_collection(collection: &CollectionResolution) -> String
     collection.name.clone()
 }
 
-pub(super) fn collection_to_resolution(collection: Collection) -> CollectionResolution {
+pub(super) fn storage_collection_to_resolution(
+    collection: crate::storage::StorageCollection,
+) -> CollectionResolution {
+    let (id, name, description, _, _, parent_collection_id, _) = collection.into_parts();
     CollectionResolution {
-        id: collection.id,
-        name: collection.name,
-        description: collection.description,
-        parent_collection_id: collection.parent_collection_id,
+        id,
+        name,
+        description,
+        parent_collection_id,
         exists_in_db: true,
     }
 }
 
+#[cfg(test)]
 pub(super) fn class_to_resolution(class: HubuumClass) -> ClassResolution {
     ClassResolution {
         id: class.id,
@@ -180,12 +181,29 @@ pub(super) fn class_to_resolution(class: HubuumClass) -> ClassResolution {
     }
 }
 
-pub(super) fn object_to_resolution(object: HubuumObject) -> ObjectResolution {
+pub(super) fn storage_class_to_resolution(
+    class: crate::storage::StorageClassRecord,
+) -> ClassResolution {
+    let (id, name, collection_id, json_schema, validate_schema, _, _, _, _) = class.into_parts();
+    ClassResolution {
+        id,
+        name,
+        collection_id,
+        json_schema,
+        validate_schema,
+        exists_in_db: true,
+    }
+}
+
+pub(super) fn storage_object_to_resolution(
+    object: crate::storage::StorageObject,
+) -> ObjectResolution {
+    let (id, name, collection_id, class_id, _, _, _, _, _) = object.into_parts();
     ObjectResolution {
-        id: object.id,
-        name: object.name,
-        collection_id: object.collection_id,
-        class_id: object.hubuum_class_id,
+        id,
+        name,
+        collection_id,
+        class_id,
         exists_in_db: true,
     }
 }
