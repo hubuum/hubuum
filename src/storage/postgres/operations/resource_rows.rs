@@ -12,6 +12,7 @@ use crate::storage::{
     StorageRecordMetadata, StorageResolvedClass, StorageResolvedObject,
 };
 use crate::traits::SelfAccessors;
+use hubuum_storage_postgres::PostgresRevision;
 
 pub(in crate::storage::postgres) fn collection_to_storage(
     collection: Collection,
@@ -111,7 +112,7 @@ pub(in crate::storage::postgres) fn class_record_from_storage(
         description,
         created_at,
         updated_at,
-        revision: crate::models::ResourceRevision::new(revision)?,
+        revision: PostgresRevision::new(revision)?.into_domain(),
     })
 }
 
@@ -215,7 +216,7 @@ pub(in crate::storage::postgres) fn object_from_storage(
         description,
         created_at,
         updated_at,
-        revision: crate::models::ResourceRevision::new(revision)?,
+        revision: PostgresRevision::new(revision)?.into_domain(),
     })
 }
 

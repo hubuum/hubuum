@@ -10,6 +10,7 @@ pub mod jsonb;
 mod migrations;
 mod pool;
 mod query_capture;
+mod revision;
 #[doc(hidden)]
 pub mod schema;
 
@@ -22,3 +23,5 @@ pub use pool::{
     build_postgres_pool,
 };
 pub use query_capture::{QueryCaptureSnapshot, capture_queries, configure_connection};
+#[doc(hidden)]
+pub use revision::PostgresRevision;

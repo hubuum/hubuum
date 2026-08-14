@@ -184,7 +184,7 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
 async fn permission_owner_revision(
     conn: &mut crate::storage::postgres::PostgresConnection,
     target_collection_id: i32,
-) -> Result<crate::models::ResourceRevision, ApiError> {
+) -> Result<PostgresRevision, ApiError> {
     use crate::schema::collection_authorization_state::dsl::{
         collection_authorization_state, collection_id, revision,
     };
@@ -199,7 +199,7 @@ async fn permission_owner_revision(
 async fn lock_permission_owner(
     conn: &mut crate::storage::postgres::PostgresConnection,
     target_collection_id: i32,
-) -> Result<crate::models::ResourceRevision, ApiError> {
+) -> Result<PostgresRevision, ApiError> {
     use crate::schema::collection_authorization_state::dsl::{
         collection_authorization_state, collection_id, revision,
     };
@@ -227,10 +227,7 @@ fn granted_permission_names(permission: &Permission) -> Vec<String> {
     permission_names(&permission.granted())
 }
 
-fn permission_snapshot(
-    permission: &Permission,
-    revision: crate::models::ResourceRevision,
-) -> serde_json::Value {
+fn permission_snapshot(permission: &Permission, revision: PostgresRevision) -> serde_json::Value {
     serde_json::json!({
         "id": permission.id,
         "collection_id": permission.collection_id,
@@ -245,7 +242,7 @@ fn permission_snapshot(
 fn empty_permission_snapshot(
     collection_id: i32,
     group_id: i32,
-    revision: crate::models::ResourceRevision,
+    revision: PostgresRevision,
 ) -> serde_json::Value {
     serde_json::json!({
         "collection_id": collection_id,

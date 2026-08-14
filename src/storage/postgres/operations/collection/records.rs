@@ -20,7 +20,7 @@ pub(crate) struct CollectionRow {
     pub(crate) created_at: chrono::NaiveDateTime,
     pub(crate) updated_at: chrono::NaiveDateTime,
     pub(crate) parent_collection_id: Option<i32>,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<CollectionRow> for Collection {
@@ -32,7 +32,7 @@ impl From<CollectionRow> for Collection {
             created_at: row.created_at,
             updated_at: row.updated_at,
             parent_collection_id: row.parent_collection_id,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }

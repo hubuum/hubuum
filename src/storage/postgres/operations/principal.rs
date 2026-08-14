@@ -8,8 +8,8 @@ use crate::events::{Action, EntityType, NewEvent};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     NewPrincipal, Principal, PrincipalKind, PrincipalMemberResponse, PrincipalSettings,
-    PrincipalSettingsPatch, PrincipalSettingsResponse, ResourceRevision,
-    ServiceAccountPointResponse, UserPointResponse,
+    PrincipalSettingsPatch, PrincipalSettingsResponse, ServiceAccountPointResponse,
+    UserPointResponse,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::service_account::ServiceAccountRow;
@@ -34,7 +34,7 @@ pub(crate) struct PrincipalRow {
     pub(crate) external_subject: Option<String>,
     pub(crate) last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub(crate) last_sync_success_at: Option<chrono::NaiveDateTime>,
-    pub(crate) revision: ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<PrincipalRow> for Principal {
@@ -51,7 +51,7 @@ impl From<PrincipalRow> for Principal {
             external_subject: row.external_subject,
             last_sync_attempted_at: row.last_sync_attempted_at,
             last_sync_success_at: row.last_sync_success_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }
@@ -222,7 +222,7 @@ pub async fn load_principal_by_id(
 pub(crate) async fn principal_revision_conn(
     conn: &mut PostgresConnection,
     principal_id_value: i32,
-) -> Result<crate::models::ResourceRevision, ApiError> {
+) -> Result<PostgresRevision, ApiError> {
     use crate::schema::principals::dsl::{id, principals, revision};
 
     Ok(principals
@@ -235,7 +235,7 @@ pub(crate) async fn principal_revision_conn(
 pub(crate) async fn lock_principal_revision_conn(
     conn: &mut PostgresConnection,
     principal_id_value: i32,
-) -> Result<crate::models::ResourceRevision, ApiError> {
+) -> Result<PostgresRevision, ApiError> {
     use crate::schema::principals::dsl::{id, principals, revision};
 
     let owner_revision = principals
@@ -263,13 +263,13 @@ pub async fn load_principal_settings(
         principals_table
             .filter(id.eq(principal_id_value))
             .select((settings, revision))
-            .first::<(serde_json::Value, crate::models::ResourceRevision)>(conn)
+            .first::<(serde_json::Value, PostgresRevision)>(conn)
             .await
     })
     .await?;
     Ok(PrincipalSettingsResponse::new(
         principal_id_value,
-        stored_revision,
+        stored_revision.into_domain(),
         stored_principal_settings(principal_id_value, value)?,
     ))
 }
@@ -349,7 +349,7 @@ async fn write_principal_settings(
                     principals::revision,
                 ))
                 .for_update()
-                .first::<(String, String, Value, ResourceRevision)>(conn)
+                .first::<(String, String, Value, PostgresRevision)>(conn)
                 .await?;
             assert_locked_revision_precondition(
                 conn,
@@ -363,7 +363,7 @@ async fn write_principal_settings(
             if before == after {
                 return Ok(PrincipalSettingsResponse::new(
                     principal_id_value,
-                    before_revision,
+                    before_revision.into_domain(),
                     after,
                 ));
             }
@@ -372,7 +372,7 @@ async fn write_principal_settings(
                 diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
                     .set(principals::settings.eq(after.as_value()))
                     .returning(principals::revision)
-                    .get_result::<ResourceRevision>(conn)
+                    .get_result::<PostgresRevision>(conn)
                     .await?;
 
             let entity_type = match PrincipalKind::from_db(&kind)? {
@@ -394,7 +394,7 @@ async fn write_principal_settings(
 
             Ok(PrincipalSettingsResponse::new(
                 principal_id_value,
-                after_revision,
+                after_revision.into_domain(),
                 after,
             ))
         },
@@ -432,7 +432,7 @@ pub(crate) async fn load_user_point_response(
                     principals::provider_managed,
                     principals::revision,
                 ))
-                .first(conn)
+                .first::<(UserRow, i32, String, bool, PostgresRevision)>(conn)
                 .await
         })
         .await?;
@@ -442,7 +442,7 @@ pub(crate) async fn load_user_point_response(
         identity_scope_id,
         name,
         provider_managed,
-        revision,
+        revision.into_domain(),
     ))
 }
 
@@ -464,7 +464,7 @@ pub(crate) async fn load_service_account_point_response(
                     principals::name,
                     principals::revision,
                 ))
-                .first(conn)
+                .first::<(ServiceAccountRow, i32, String, PostgresRevision)>(conn)
                 .await
         })
         .await?;
@@ -473,6 +473,6 @@ pub(crate) async fn load_service_account_point_response(
         service_account.into(),
         identity_scope_id,
         name,
-        revision,
+        revision.into_domain(),
     ))
 }

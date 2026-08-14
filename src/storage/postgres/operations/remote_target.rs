@@ -10,7 +10,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::remote_target::RemoteCallResult;
 use crate::models::remote_target::RemoteTargetID;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
+use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -50,7 +50,7 @@ pub(crate) struct RemoteTargetRow {
     pub(crate) enabled: bool,
     pub(crate) created_at: chrono::NaiveDateTime,
     pub(crate) updated_at: chrono::NaiveDateTime,
-    pub(crate) revision: ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl_redacted_remote_target_row_debug!(

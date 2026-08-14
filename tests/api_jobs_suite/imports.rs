@@ -6,6 +6,7 @@ mod tests {
     use diesel::{ExpressionMethods, QueryDsl};
     use diesel_async::RunQueryDsl;
     use futures::join;
+    use hubuum_storage_postgres::PostgresRevision;
     use rstest::rstest;
     use std::time::Duration;
 
@@ -1624,11 +1625,12 @@ mod tests {
                 .filter(definition::owner_user_id.is_null())
                 .filter(definition::key.eq(&key))
                 .select(definition::revision)
-                .first::<ResourceRevision>(conn)
+                .first::<PostgresRevision>(conn)
                 .await
         })
         .await
-        .unwrap();
+        .unwrap()
+        .into_domain();
 
         let dry_run = shared_computed_field_import_request(
             class,

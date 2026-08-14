@@ -70,8 +70,8 @@ impl From<MemoryStorageModelError> for StorageError {
     }
 }
 
-pub(super) fn map_memory_error(error: ApiError) -> StorageError {
-    MemoryStorageModelError::from(error).into()
+pub(super) fn map_memory_error(error: impl Into<ApiError>) -> StorageError {
+    MemoryStorageModelError::from(error.into()).into()
 }
 
 #[cfg(test)]

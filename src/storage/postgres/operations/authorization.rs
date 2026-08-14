@@ -528,7 +528,7 @@ pub(crate) async fn load_local_collection_permission_set(
                     collection_authorization_state::revision,
                     Option::<PermissionRow>::as_select(),
                 ))
-                .load::<(crate::models::ResourceRevision, Option<PermissionRow>)>(conn)
+                .load::<(PostgresRevision, Option<PermissionRow>)>(conn)
                 .await
         } else {
             collection_authorization_state::table
@@ -540,7 +540,7 @@ pub(crate) async fn load_local_collection_permission_set(
                     collection_authorization_state::revision,
                     Option::<PermissionRow>::as_select(),
                 ))
-                .load::<(crate::models::ResourceRevision, Option<PermissionRow>)>(conn)
+                .load::<(PostgresRevision, Option<PermissionRow>)>(conn)
                 .await
         }
     })

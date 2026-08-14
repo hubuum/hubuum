@@ -1,6 +1,5 @@
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
-use crate::models::ResourceRevision;
 use crate::models::search::QueryOptions;
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
@@ -107,7 +106,7 @@ pub(crate) struct CollectionHistoryRow {
     actor_kind: Option<String>,
     initiator_user_id: Option<i32>,
     task_id: Option<i32>,
-    revision: ResourceRevision,
+    revision: PostgresRevision,
 }
 
 impl_history_pagination!(CollectionHistoryRow, "collections_history");
@@ -146,7 +145,7 @@ pub(crate) struct ExportTemplateHistoryRow {
     actor_kind: Option<String>,
     initiator_user_id: Option<i32>,
     task_id: Option<i32>,
-    revision: ResourceRevision,
+    revision: PostgresRevision,
 }
 
 impl_history_pagination!(ExportTemplateHistoryRow, "export_templates_history");
@@ -177,7 +176,7 @@ pub(crate) struct RemoteTargetHistoryRow {
     actor_kind: Option<String>,
     initiator_user_id: Option<i32>,
     task_id: Option<i32>,
-    revision: ResourceRevision,
+    revision: PostgresRevision,
 }
 
 impl_history_pagination!(RemoteTargetHistoryRow, "remote_targets_history");
@@ -201,7 +200,7 @@ pub(crate) struct HubuumObjectHistoryRow {
     actor_kind: Option<String>,
     initiator_user_id: Option<i32>,
     task_id: Option<i32>,
-    revision: ResourceRevision,
+    revision: PostgresRevision,
 }
 
 impl_history_pagination!(HubuumObjectHistoryRow, "hubuumobject_history");
@@ -225,7 +224,7 @@ pub(crate) struct HubuumClassHistoryRow {
     actor_kind: Option<String>,
     initiator_user_id: Option<i32>,
     task_id: Option<i32>,
-    revision: ResourceRevision,
+    revision: PostgresRevision,
 }
 
 impl_history_pagination!(HubuumClassHistoryRow, "hubuumclass_history");
@@ -274,7 +273,7 @@ macro_rules! metadata_to_storage {
             $row.valid_to,
             $row.history_id,
             NonZeroI64::new($row.revision.get())
-                .expect("ResourceRevision always contains a positive value"),
+                .expect("PostgresRevision always contains a positive value"),
         )
         .actor($row.actor_id, $row.actor_kind)
         .initiator_principal_id($row.initiator_user_id)

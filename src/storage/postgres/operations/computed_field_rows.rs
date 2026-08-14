@@ -5,12 +5,13 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     ClassComputationState, ComputedFieldDefinition, NewComputedFieldDefinition,
-    NewObjectComputedData, ObjectComputedData, ResourceRevision,
+    NewObjectComputedData, ObjectComputedData,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::{class_computation_state, computed_field_definitions, object_computed_data};
+use hubuum_storage_postgres::PostgresRevision;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = computed_field_definitions)]
@@ -25,7 +26,7 @@ pub struct ComputedFieldDefinitionRow {
     pub operation: serde_json::Value,
     pub result_type: String,
     pub enabled: bool,
-    pub revision: ResourceRevision,
+    pub revision: PostgresRevision,
     pub semantics_version: i16,
     pub created_by: Option<i32>,
     pub updated_by: Option<i32>,
@@ -61,7 +62,7 @@ impl From<ComputedFieldDefinitionRow> for ComputedFieldDefinition {
             operation: row.operation,
             result_type: row.result_type,
             enabled: row.enabled,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
             semantics_version: row.semantics_version,
             created_by: row.created_by,
             updated_by: row.updated_by,

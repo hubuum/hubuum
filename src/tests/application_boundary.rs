@@ -1305,11 +1305,12 @@ fn workflow_domain_types_are_free_of_persistence_implementation_details() {
             ][..],
         ),
         (
-            "src/storage/postgres/revision.rs",
+            "crates/hubuum-storage-postgres/src/revision.rs",
             &[
-                "Queryable<ST, DB> for ResourceRevision",
-                "ToSql<BigInt, Pg> for ResourceRevision",
-                "FromSql<BigInt, DB> for ResourceRevision",
+                "struct PostgresRevision",
+                "ToSql<BigInt, Pg> for PostgresRevision",
+                "FromSql<BigInt, DB> for PostgresRevision",
+                "From<PostgresRevision> for ResourceRevision",
             ][..],
         ),
         (
@@ -1788,7 +1789,7 @@ fn storage_error_translation_has_one_way_dependency_direction() {
     let errors_path = root.join("src/errors.rs");
     let errors_source = read_source(&errors_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", errors_path.display()));
-    let postgres_error_path = root.join("src/storage/postgres/error.rs");
+    let postgres_error_path = root.join("crates/hubuum-storage-postgres/src/error.rs");
     let postgres_error_source = read_source(&postgres_error_path).unwrap_or_else(|error| {
         panic!("could not read {}: {error}", postgres_error_path.display())
     });

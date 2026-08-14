@@ -8,7 +8,7 @@ use std::num::ParseIntError;
 
 use tracing::error;
 
-use hubuum_domain::EventPolicyError;
+use hubuum_domain::{EventPolicyError, ResourceRevisionError};
 
 use crate::models::TokenPolicyError;
 use crate::observability::metrics;
@@ -194,6 +194,19 @@ impl From<TokenPolicyError> for ApiError {
 impl From<EventPolicyError> for ApiError {
     fn from(error: EventPolicyError) -> Self {
         Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<ResourceRevisionError> for ApiError {
+    fn from(error: ResourceRevisionError) -> Self {
+        match error {
+            ResourceRevisionError::NonPositive => {
+                Self::BadRequest("Resource revision must be greater than zero".to_string())
+            }
+            ResourceRevisionError::Overflow => Self::Conflict(
+                "Resource revision cannot advance beyond the maximum 64-bit value".to_string(),
+            ),
+        }
     }
 }
 

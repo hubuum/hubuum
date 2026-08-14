@@ -14,7 +14,6 @@ pub(crate) use imports::{
 pub mod operations;
 mod remote_targets;
 mod restores;
-mod revision;
 mod runtime;
 mod task_execution;
 mod task_queue;

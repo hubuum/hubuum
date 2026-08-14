@@ -458,7 +458,7 @@ async fn load_service_account_by_id_conn(
 fn service_account_snapshot(
     sa: &ServiceAccount,
     name: &str,
-    revision: crate::models::ResourceRevision,
+    revision: PostgresRevision,
 ) -> serde_json::Value {
     json!({
         "id": sa.id,
@@ -657,12 +657,7 @@ where
                 principals::name,
                 principals::revision,
             ))
-            .load::<(
-                ServiceAccountRow,
-                String,
-                String,
-                crate::models::ResourceRevision,
-            )>(conn)
+            .load::<(ServiceAccountRow, String, String, PostgresRevision)>(conn)
             .await
     })
     .await?;
@@ -670,7 +665,12 @@ where
     Ok(rows
         .into_iter()
         .map(|(account, scope, name, revision)| {
-            ServiceAccountWithName::from_tuple((account.into(), scope, name, revision))
+            ServiceAccountWithName::from_tuple((
+                account.into(),
+                scope,
+                name,
+                revision.into_domain(),
+            ))
         })
         .collect())
 }

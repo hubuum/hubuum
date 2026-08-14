@@ -2175,6 +2175,9 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "rstest",
+ "serde",
+ "serde_json",
+ "utoipa",
 ]
 
 [[package]]
@@ -2307,11 +2310,13 @@ dependencies = [
  "diesel-async",
  "diesel_migrations",
  "futures-util",
+ "hubuum-domain",
  "hubuum-storage-core",
  "pq-sys",
  "rstest",
  "rustls",
  "rustls-platform-verifier",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-postgres",

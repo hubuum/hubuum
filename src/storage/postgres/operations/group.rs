@@ -33,7 +33,7 @@ pub(crate) struct GroupRow {
     pub(crate) external_key: Option<String>,
     pub(crate) last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub(crate) last_sync_success_at: Option<chrono::NaiveDateTime>,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<GroupRow> for Group {
@@ -49,7 +49,7 @@ impl From<GroupRow> for Group {
             external_key: row.external_key,
             last_sync_attempted_at: row.last_sync_attempted_at,
             last_sync_success_at: row.last_sync_success_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }
@@ -61,7 +61,7 @@ pub(crate) struct PrincipalGroupRow {
     pub(crate) group_id: i32,
     pub(crate) created_at: chrono::NaiveDateTime,
     pub(crate) updated_at: chrono::NaiveDateTime,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<PrincipalGroupRow> for PrincipalGroup {
@@ -71,7 +71,7 @@ impl From<PrincipalGroupRow> for PrincipalGroup {
             group_id: row.group_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }

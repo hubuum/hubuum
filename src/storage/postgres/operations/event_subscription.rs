@@ -8,11 +8,11 @@ use crate::api::etag::RevisionOwner;
 use crate::apply_query_options;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
+use crate::models::REDACTED_DEBUG_VALUE;
 use crate::models::event_subscription::{
     EventSink, EventSinkID, EventSinkKind, EventSubscription, EventSubscriptionID,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -56,7 +56,7 @@ pub(crate) struct EventSinkRow {
     pub(crate) enabled: bool,
     pub(crate) created_at: NaiveDateTime,
     pub(crate) updated_at: NaiveDateTime,
-    pub(crate) revision: ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl_redacted_event_sink_row_debug!(
@@ -129,7 +129,7 @@ pub(crate) struct EventSubscriptionRow {
     pub(crate) enabled: bool,
     pub(crate) created_at: NaiveDateTime,
     pub(crate) updated_at: NaiveDateTime,
-    pub(crate) revision: ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl_redacted_event_subscription_row_debug!(
@@ -241,7 +241,7 @@ impl TryFrom<EventSinkRow> for EventSink {
             enabled: row.enabled,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         })
     }
 }
@@ -263,7 +263,7 @@ impl TryFrom<EventSubscriptionRow> for EventSubscription {
             enabled: row.enabled,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         })
     }
 }
@@ -1053,7 +1053,7 @@ mod tests {
             enabled: true,
             created_at: timestamp(),
             updated_at: timestamp(),
-            revision: ResourceRevision::INITIAL,
+            revision: PostgresRevision::INITIAL,
         };
 
         assert_omits(
@@ -1079,7 +1079,7 @@ mod tests {
             enabled: true,
             created_at: timestamp(),
             updated_at: timestamp(),
-            revision: ResourceRevision::INITIAL,
+            revision: PostgresRevision::INITIAL,
         };
 
         assert_omits(&format!("{row:?}"), &["stored-routing-secret"]);
@@ -1105,7 +1105,7 @@ mod tests {
             enabled: true,
             created_at: timestamp(),
             updated_at: timestamp(),
-            revision: crate::models::ResourceRevision::INITIAL,
+            revision: PostgresRevision::INITIAL,
         };
 
         let snapshot = event_subscription_snapshot(&row);

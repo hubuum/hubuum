@@ -33,6 +33,7 @@ use crate::traits::CursorPaginated;
 use crate::utilities::extensions::CustomStringExtensions;
 use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
+use hubuum_storage_postgres::PostgresRevision;
 use std::collections::BTreeMap;
 
 fn class_relations_from_rows(
@@ -4624,7 +4625,7 @@ impl User {
                     bool,
                     Option<chrono::NaiveDateTime>,
                     Option<chrono::NaiveDateTime>,
-                    crate::models::ResourceRevision,
+                    PostgresRevision,
                 )>(conn)
                 .await
         })
@@ -4642,7 +4643,7 @@ impl User {
                         managed,
                         attempted,
                         succeeded,
-                        revision,
+                        revision.into_domain(),
                     ))
                 },
             )

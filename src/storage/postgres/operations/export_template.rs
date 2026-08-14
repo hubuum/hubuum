@@ -12,7 +12,6 @@ use crate::storage::postgres::prelude::*;
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
-use crate::models::ResourceRevision;
 use crate::models::export_template::ExportTemplateID;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::pagination::{
@@ -41,7 +40,7 @@ pub(crate) struct ExportTemplateRow {
     pub(crate) default_limits: Option<serde_json::Value>,
     pub(crate) created_at: chrono::NaiveDateTime,
     pub(crate) updated_at: chrono::NaiveDateTime,
-    pub(crate) revision: ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl ExportTemplateRow {
@@ -57,7 +56,7 @@ impl ExportTemplateRow {
         &self.name
     }
 
-    pub(crate) fn revision(&self) -> ResourceRevision {
+    pub(crate) fn revision(&self) -> PostgresRevision {
         self.revision
     }
 

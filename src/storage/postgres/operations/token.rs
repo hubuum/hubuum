@@ -8,7 +8,7 @@ use crate::models::principal::PrincipalKind;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenMetadata,
-    ResourceRevision, TokenIssuancePolicy, TokenScope, TokenScopeDetails,
+    TokenIssuancePolicy, TokenScope, TokenScopeDetails,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -35,7 +35,7 @@ pub(crate) struct PrincipalTokenRow {
     pub(crate) revoked_at: Option<chrono::NaiveDateTime>,
     pub(crate) permission_scoped: bool,
     pub(crate) resource_scoped: bool,
-    pub(crate) revision: ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<PrincipalTokenRow> for PrincipalToken {
@@ -52,7 +52,7 @@ impl From<PrincipalTokenRow> for PrincipalToken {
             revoked_at: row.revoked_at,
             permission_scoped: row.permission_scoped,
             resource_scoped: row.resource_scoped,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }

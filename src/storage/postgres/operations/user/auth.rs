@@ -8,16 +8,13 @@ use crate::storage::postgres::operations::principal::{
 };
 use crate::storage::postgres::operations::token::revoke_all_tokens_for_principal_conn;
 use diesel_async::RunQueryDsl;
+use hubuum_storage_postgres::PostgresRevision;
 
 /// Sentinel password value set during anonymization. It is not a valid Argon2
 /// PHC hash, so verification can never succeed.
 const ANONYMIZED_PASSWORD: &str = "!anonymized-no-login";
 
-fn user_snapshot(
-    user: &User,
-    name: &str,
-    revision: crate::models::ResourceRevision,
-) -> serde_json::Value {
+fn user_snapshot(user: &User, name: &str, revision: PostgresRevision) -> serde_json::Value {
     serde_json::json!({
         "id": user.id,
         "name": name,

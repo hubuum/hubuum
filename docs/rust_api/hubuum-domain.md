@@ -15,8 +15,9 @@ experimental period, incompatible public API changes require a minor-version
 bump, changelog migration guidance, and a deprecation period when practical.
 The MSRV is Rust 1.88.
 
-The crate has no feature flags. Its values are in-memory contracts; it makes no
-wire-format guarantee unless a type's documentation explicitly says otherwise.
+Its values are in-memory contracts; it makes no wire-format guarantee unless a
+type's documentation explicitly says otherwise. The optional `openapi` feature
+implements Utoipa schema traits for values also used by Hubuum's HTTP API.
 
 ## Errors, Runtime, and Security
 

@@ -75,9 +75,9 @@ mod tests {
             let (revision, updated_at) = principals::table
                 .filter(principals::id.eq(principal_id))
                 .select((principals::revision, principals::updated_at))
-                .first::<(ResourceRevision, NaiveDateTime)>(conn)
+                .first::<(PostgresRevision, NaiveDateTime)>(conn)
                 .await?;
-            Ok::<_, ApiError>((revision, updated_at))
+            Ok::<_, ApiError>((revision.into_domain(), updated_at))
         })
         .await
         .unwrap();

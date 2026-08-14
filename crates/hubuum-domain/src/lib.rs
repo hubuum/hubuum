@@ -6,6 +6,7 @@
 
 mod event_policy;
 mod maintenance;
+mod revision;
 mod token;
 
 pub use event_policy::{
@@ -13,6 +14,7 @@ pub use event_policy::{
     EventRetentionSettings,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
+pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use token::{
     MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TokenIssuancePolicy, TokenLifetime, TokenPolicyError,
     TokenRetentionBatchSize, TokenRetentionCutoffs, TokenRetentionPeriod, TokenRetentionSettings,

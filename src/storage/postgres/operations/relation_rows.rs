@@ -32,7 +32,7 @@ pub(crate) struct HubuumClassRelationRow {
     pub(crate) updated_at: chrono::NaiveDateTime,
     pub(crate) from_max_relations: Option<i32>,
     pub(crate) to_max_relations: Option<i32>,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 fn persisted_relation_limit(value: Option<i32>) -> Result<Option<ObjectRelationLimit>, ApiError> {
@@ -61,7 +61,7 @@ impl TryFrom<HubuumClassRelationRow> for HubuumClassRelation {
             updated_at: row.updated_at,
             from_max_relations: persisted_relation_limit(row.from_max_relations)?,
             to_max_relations: persisted_relation_limit(row.to_max_relations)?,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         })
     }
 }
@@ -173,7 +173,7 @@ pub(crate) struct HubuumObjectRelationRow {
     pub(crate) class_relation_id: i32,
     pub(crate) created_at: chrono::NaiveDateTime,
     pub(crate) updated_at: chrono::NaiveDateTime,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<HubuumObjectRelationRow> for HubuumObjectRelation {
@@ -185,7 +185,7 @@ impl From<HubuumObjectRelationRow> for HubuumObjectRelation {
             class_relation_id: row.class_relation_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }
@@ -401,9 +401,9 @@ pub(crate) struct ClassGraphQueryRow {
     #[diesel(sql_type = diesel::sql_types::Timestamp)]
     pub(crate) descendant_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) ancestor_revision: crate::models::ResourceRevision,
+    pub(crate) ancestor_revision: PostgresRevision,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) descendant_revision: crate::models::ResourceRevision,
+    pub(crate) descendant_revision: PostgresRevision,
 }
 
 impl From<ClassGraphQueryRow> for ClassGraphRow {
@@ -427,8 +427,8 @@ impl From<ClassGraphQueryRow> for ClassGraphRow {
             descendant_created_at: row.descendant_created_at,
             ancestor_updated_at: row.ancestor_updated_at,
             descendant_updated_at: row.descendant_updated_at,
-            ancestor_revision: row.ancestor_revision,
-            descendant_revision: row.descendant_revision,
+            ancestor_revision: row.ancestor_revision.into_domain(),
+            descendant_revision: row.descendant_revision.into_domain(),
         }
     }
 }
@@ -578,9 +578,9 @@ pub(crate) struct RelatedObjectGraphQueryRow {
     #[diesel(sql_type = diesel::sql_types::Timestamp)]
     pub(crate) descendant_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) ancestor_revision: crate::models::ResourceRevision,
+    pub(crate) ancestor_revision: PostgresRevision,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) descendant_revision: crate::models::ResourceRevision,
+    pub(crate) descendant_revision: PostgresRevision,
 }
 
 impl From<RelatedObjectGraphQueryRow> for RelatedObjectGraphRow {
@@ -604,8 +604,8 @@ impl From<RelatedObjectGraphQueryRow> for RelatedObjectGraphRow {
             descendant_created_at: row.descendant_created_at,
             ancestor_updated_at: row.ancestor_updated_at,
             descendant_updated_at: row.descendant_updated_at,
-            ancestor_revision: row.ancestor_revision,
-            descendant_revision: row.descendant_revision,
+            ancestor_revision: row.ancestor_revision.into_domain(),
+            descendant_revision: row.descendant_revision.into_domain(),
         }
     }
 }
@@ -786,7 +786,7 @@ pub(crate) struct RelatedObjectForRootQueryRow {
     #[diesel(sql_type = diesel::sql_types::Timestamp)]
     pub(crate) descendant_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) descendant_revision: crate::models::ResourceRevision,
+    pub(crate) descendant_revision: PostgresRevision,
 }
 
 impl From<RelatedObjectForRootQueryRow> for RelatedObjectForRootRow {
@@ -803,7 +803,7 @@ impl From<RelatedObjectForRootQueryRow> for RelatedObjectForRootRow {
             descendant_data: row.descendant_data,
             descendant_created_at: row.descendant_created_at,
             descendant_updated_at: row.descendant_updated_at,
-            descendant_revision: row.descendant_revision,
+            descendant_revision: row.descendant_revision.into_domain(),
         }
     }
 }
@@ -868,7 +868,7 @@ pub(in crate::storage::postgres) fn class_relation_from_storage(
         updated_at,
         from_max_relations: persisted_relation_limit(from_max_relations)?,
         to_max_relations: persisted_relation_limit(to_max_relations)?,
-        revision: crate::models::ResourceRevision::new(revision)?,
+        revision: PostgresRevision::new(revision)?.into_domain(),
     })
 }
 
@@ -959,7 +959,7 @@ pub(in crate::storage::postgres) fn object_relation_from_storage(
         class_relation_id,
         created_at,
         updated_at,
-        revision: crate::models::ResourceRevision::new(revision)?,
+        revision: PostgresRevision::new(revision)?.into_domain(),
     })
 }
 

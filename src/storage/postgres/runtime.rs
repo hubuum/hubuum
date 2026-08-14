@@ -1,4 +1,6 @@
-pub use hubuum_storage_postgres::{PostgresConnection, PostgresPool, PostgresPoolSettings};
+pub use hubuum_storage_postgres::{
+    PostgresConnection, PostgresPool, PostgresPoolSettings, PostgresRevision,
+};
 #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
 pub use hubuum_storage_postgres::{QueryCaptureSnapshot, capture_queries};
 
@@ -27,6 +29,7 @@ pub mod prelude {
         QueryResult,
     };
     pub use diesel_async::{AsyncConnection, RunQueryDsl, SaveChangesDsl};
+    pub use hubuum_storage_postgres::PostgresRevision;
 }
 
 use diesel_async::{AsyncConnection, RunQueryDsl};
@@ -330,8 +333,9 @@ async fn set_local_revision_precondition(
 pub(crate) async fn assert_locked_revision_precondition(
     conn: &mut PostgresConnection,
     owner_key: &str,
-    revision: crate::models::ResourceRevision,
+    revision: impl Into<hubuum_domain::ResourceRevision>,
 ) -> Result<(), diesel::result::Error> {
+    let revision = revision.into();
     diesel::sql_query("SELECT hubuum_assert_revision_precondition($1, $2)")
         .bind::<diesel::sql_types::Text, _>(owner_key)
         .bind::<diesel::sql_types::BigInt, _>(revision.get())

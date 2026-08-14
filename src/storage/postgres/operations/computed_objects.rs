@@ -234,7 +234,7 @@ mod tests {
             description: String::new(),
             created_at: chrono::NaiveDateTime::default(),
             updated_at: chrono::NaiveDateTime::default(),
-            revision: crate::models::ResourceRevision::new(1).unwrap(),
+            revision: hubuum_domain::ResourceRevision::new(1).unwrap(),
         }
     }
 

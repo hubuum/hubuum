@@ -12,7 +12,7 @@ use crate::models::{
     ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportWriteCondition,
     NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permission,
-    Permissions, PermissionsList, Principal, ResourceRevision, RestoreTimestamps, UpdateCollection,
+    Permissions, PermissionsList, Principal, RestoreTimestamps, UpdateCollection,
     UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::class::{
@@ -41,13 +41,13 @@ use crate::storage::postgres::{SendAsyncFn, with_connection};
 
 fn assert_import_revision(
     condition: Option<ImportWriteCondition>,
-    current_revision: ResourceRevision,
+    current_revision: PostgresRevision,
 ) -> Result<(), ApiError> {
     let Some(expected_revision) = condition.and_then(ImportWriteCondition::expected_revision)
     else {
         return Ok(());
     };
-    if expected_revision == current_revision {
+    if expected_revision == current_revision.into_domain() {
         return Ok(());
     }
     crate::observability::metrics::revision_condition("async_stale");
@@ -515,7 +515,7 @@ pub async fn update_collection_db(
         .filter(id.eq(collection_id_value))
         .select(crate::schema::collections::revision)
         .for_update()
-        .first::<ResourceRevision>(conn)
+        .first::<PostgresRevision>(conn)
         .await
         .optional()?;
     let current_revision = require_existing_import_target(current_revision, input.condition)?;
@@ -617,7 +617,7 @@ pub async fn update_class_db(
         .filter(id.eq(class_id_value))
         .select(crate::schema::hubuumclass::revision)
         .for_update()
-        .first::<ResourceRevision>(conn)
+        .first::<PostgresRevision>(conn)
         .await
         .optional()?;
     let current_revision = require_existing_import_target(current_revision, input.condition)?;
@@ -726,7 +726,7 @@ pub async fn update_object_db(
         .filter(id.eq(object_id_value))
         .select(crate::schema::hubuumobject::revision)
         .for_update()
-        .first::<ResourceRevision>(conn)
+        .first::<PostgresRevision>(conn)
         .await
         .optional()?;
     let current_revision = require_existing_import_target(current_revision, input.condition)?;
@@ -1220,7 +1220,7 @@ pub async fn upsert_group_membership_db(
         .filter(m::group_id.eq(group_id_value))
         .select((m::created_at, m::updated_at, m::revision))
         .for_update()
-        .first::<(NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
+        .first::<(NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
         .await
         .optional()?;
     if let Some((_, _, revision)) = existing_membership {
@@ -1467,7 +1467,7 @@ pub async fn upsert_export_template_db(
         .filter(t::name.eq(&input.name))
         .select((t::id, t::created_at, t::updated_at, t::revision))
         .for_update()
-        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
         .await
         .optional()?;
     if let Some((_, _, _, revision)) = existing {
@@ -1571,7 +1571,7 @@ pub async fn upsert_remote_target_db(
         .filter(r::name.eq(&input.name))
         .select((r::id, r::created_at, r::updated_at, r::revision))
         .for_update()
-        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
         .await
         .optional()?;
     if let Some((_, _, _, revision)) = existing {
@@ -1653,7 +1653,7 @@ pub async fn upsert_event_sink_db(
         .filter(s::name.eq(&input.name))
         .select((s::id, s::created_at, s::updated_at, s::revision))
         .for_update()
-        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
         .await
         .optional()?;
     if let Some((_, _, _, revision)) = existing {
@@ -1730,7 +1730,7 @@ pub async fn upsert_event_subscription_db(
         .filter(s::name.eq(&input.name))
         .select((s::id, s::created_at, s::updated_at, s::revision))
         .for_update()
-        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(conn)
         .await
         .optional()?;
     if let Some((_, _, _, revision)) = existing {
@@ -1882,7 +1882,7 @@ pub async fn check_class_relation_import_condition_db(
         .filter(to_hubuum_class_id.eq(pair.1))
         .select(revision)
         .for_update()
-        .first::<ResourceRevision>(conn)
+        .first::<PostgresRevision>(conn)
         .await
         .optional()?;
     let current_revision = require_existing_import_target(current_revision, condition)?;
@@ -1994,7 +1994,7 @@ pub async fn check_object_relation_import_condition_db(
         .filter(to_hubuum_object_id.eq(pair.1))
         .select(revision)
         .for_update()
-        .first::<ResourceRevision>(conn)
+        .first::<PostgresRevision>(conn)
         .await
         .optional()?;
     let current_revision = require_existing_import_target(current_revision, condition)?;
@@ -2018,7 +2018,7 @@ pub async fn apply_permissions_db(
         .find(collection_id_value)
         .select(crate::schema::collection_authorization_state::revision)
         .for_update()
-        .first::<ResourceRevision>(conn)
+        .first::<PostgresRevision>(conn)
         .await
         .optional()?;
     let authorization_revision = require_existing_import_target(authorization_revision, condition)?;
@@ -2212,7 +2212,7 @@ mod tests {
         let error = require_existing_import_target::<()>(
             None,
             Some(ImportWriteCondition::IfRevision {
-                expected_revision: ResourceRevision::INITIAL,
+                expected_revision: hubuum_domain::ResourceRevision::INITIAL,
             }),
         )
         .unwrap_err();

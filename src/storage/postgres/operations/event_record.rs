@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::events::{Event, NewEvent};
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
+use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -42,8 +42,8 @@ pub(crate) struct EventRow {
     pub(crate) fanout_claim_token: Option<Uuid>,
     pub(crate) initiator_user_id: Option<i32>,
     pub(crate) task_id: Option<i32>,
-    pub(crate) before_revision: Option<ResourceRevision>,
-    pub(crate) after_revision: Option<ResourceRevision>,
+    pub(crate) before_revision: Option<PostgresRevision>,
+    pub(crate) after_revision: Option<PostgresRevision>,
 }
 
 impl fmt::Debug for EventRow {
@@ -103,8 +103,8 @@ impl From<EventRow> for Event {
             schema_version: row.schema_version,
             initiator_user_id: row.initiator_user_id,
             task_id: row.task_id,
-            before_revision: row.before_revision,
-            after_revision: row.after_revision,
+            before_revision: row.before_revision.map(PostgresRevision::into_domain),
+            after_revision: row.after_revision.map(PostgresRevision::into_domain),
         }
     }
 }

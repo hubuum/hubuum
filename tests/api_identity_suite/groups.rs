@@ -52,14 +52,14 @@ mod tests {
                     identity_scopes::revision,
                     identity_scopes::updated_at,
                 ))
-                .get_result::<(i32, crate::models::ResourceRevision, chrono::NaiveDateTime)>(conn)
+                .get_result::<(i32, PostgresRevision, chrono::NaiveDateTime)>(conn)
                 .await
         })
         .await
         .unwrap();
 
         assert_eq!(returned.0, created.id);
-        assert_eq!(returned.1, created.revision);
+        assert_eq!(returned.1.into_domain(), created.revision);
         assert_eq!(returned.2, created.updated_at);
     }
 

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use diesel_async::AsyncConnection;
+use hubuum_storage_postgres::PostgresRevision;
 
 use crate::errors::ApiError;
 use crate::models::{
@@ -373,7 +374,7 @@ async fn observed_revision_for_planned_item(
     conn: &mut PostgresConnection,
     runtime: &RuntimeState,
     execution: &StorageImportBoundaryOperation,
-) -> Result<Option<crate::models::ResourceRevision>, ApiError> {
+) -> Result<Option<PostgresRevision>, ApiError> {
     use crate::models::ImportComputedFieldVisibility;
     use crate::storage::postgres::prelude::*;
 
@@ -1225,13 +1226,13 @@ impl ImportStorage for PostgresStorage {
                         match result {
                             Ok(()) => outcomes.push(StorageImportPreflightItem::success(
                                 index,
-                                revision.map(crate::models::ResourceRevision::get),
+                                revision.map(PostgresRevision::get),
                             )),
                             Err(error) => {
                                 aborted = should_abort_preflight(&error, &mode);
                                 outcomes.push(StorageImportPreflightItem::failure(
                                     index,
-                                    revision.map(crate::models::ResourceRevision::get),
+                                    revision.map(PostgresRevision::get),
                                     map_postgres_error(error),
                                 ));
                                 if aborted {

@@ -71,7 +71,7 @@ hmac = "0.13"
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }
-hubuum-domain = { path = "crates/hubuum-domain" }
+hubuum-domain = { path = "crates/hubuum-domain", features = ["openapi"] }
 hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
 hubuum-event-sink-email = { path = "crates/hubuum-event-sink-email", optional = true }
 hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional = true }

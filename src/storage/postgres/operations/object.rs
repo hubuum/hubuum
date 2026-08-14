@@ -38,7 +38,7 @@ pub(crate) struct HubuumObjectRow {
     pub(crate) description: String,
     pub(crate) created_at: chrono::NaiveDateTime,
     pub(crate) updated_at: chrono::NaiveDateTime,
-    pub(crate) revision: crate::models::ResourceRevision,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl From<HubuumObjectRow> for HubuumObject {
@@ -52,7 +52,7 @@ impl From<HubuumObjectRow> for HubuumObject {
             description: row.description,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            revision: row.revision,
+            revision: row.revision.into_domain(),
         }
     }
 }

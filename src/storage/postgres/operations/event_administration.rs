@@ -1,3 +1,9 @@
+use crate::errors::ApiError;
+use crate::events::EventResponse;
+use crate::models::{
+    EventDeliveryID, EventSink, EventSinkID, EventSubscription, EventSubscriptionID,
+};
+use crate::storage::postgres::PostgresPool;
 use hubuum_events_core::EventEnvelope;
 use hubuum_storage_core::{
     StorageAuditEvent, StorageAuditEventListQuery, StorageEventDelivery,
@@ -6,13 +12,6 @@ use hubuum_storage_core::{
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
 };
-
-use crate::errors::ApiError;
-use crate::events::EventResponse;
-use crate::models::{
-    EventDeliveryID, EventSink, EventSinkID, EventSubscription, EventSubscriptionID,
-};
-use crate::storage::postgres::PostgresPool;
 
 use super::event_delivery::EventDeliveryRow;
 use super::event_subscription::{
@@ -25,10 +24,10 @@ use super::event_subscription::{
 fn storage_audit_event(event: EventResponse) -> StorageAuditEvent {
     let before_revision = event
         .before_revision
-        .map(crate::models::ResourceRevision::get);
+        .map(hubuum_domain::ResourceRevision::get);
     let after_revision = event
         .after_revision
-        .map(crate::models::ResourceRevision::get);
+        .map(hubuum_domain::ResourceRevision::get);
     let envelope = EventEnvelope {
         id: event.id,
         event_id: event.event_id,

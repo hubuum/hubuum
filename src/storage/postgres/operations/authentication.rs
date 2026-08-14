@@ -63,7 +63,7 @@ pub(crate) async fn authenticate_bearer_token(
                 bool,
                 bool,
                 Option<NaiveDateTime>,
-                crate::models::ResourceRevision,
+                PostgresRevision,
             )>(conn)
             .await
             .optional()
