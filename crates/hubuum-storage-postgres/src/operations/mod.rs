@@ -24,5 +24,6 @@ pub mod meta;
 pub mod metrics;
 pub mod object;
 pub mod probe;
+pub mod relation;
 pub mod remote_target;
 pub mod unified_search;

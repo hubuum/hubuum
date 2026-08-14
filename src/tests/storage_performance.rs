@@ -1147,11 +1147,11 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
         capture_queries(relation.save(&scope.pool, &EventContext::system())).await;
     saved.expect("object relation should save with an event");
 
-    assert_eq!(queries.total_queries(), 6, "{:#?}", queries.query_counts());
-    assert_eq!(queries.domain_queries(), 4, "{:#?}", queries.query_counts());
+    assert_eq!(queries.total_queries(), 5, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 3, "{:#?}", queries.query_counts());
     assert_eq!(queries.control_queries(), 2);
-    assert_eq!(queries.connection_checkouts(), 3);
-    assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 1);
     assert_eq!(
         queries.queries_matching("INSERT INTO \"hubuumobject_relation\""),
         1

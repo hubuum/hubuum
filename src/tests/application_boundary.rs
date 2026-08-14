@@ -2064,6 +2064,70 @@ fn object_lifecycle_is_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/relation.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    for contract in [
+        "ClassRelationStore for PostgresStorage",
+        "ObjectRelationStore for PostgresStorage",
+    ] {
+        let implementation = item_body(&capability, "impl", contract);
+        assert!(
+            implementation.contains("hubuum_storage_postgres::operations::relation"),
+            "the {contract} implementation must delegate into the adapter crate"
+        );
+        for forbidden in [
+            "HubuumClassRelationID::new",
+            "HubuumObjectRelationID::new",
+            "prepare_class_relation_record",
+            "prepare_object_relation_record",
+            "save_class_relation_record",
+            "save_object_relation_record",
+        ] {
+            assert!(
+                !implementation.contains(forbidden),
+                "the {contract} implementation retains application detail {forbidden}"
+            );
+        }
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/relations.rs");
+    let legacy = read_source(&legacy_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
+    for removed_lifecycle in [
+        "trait PrepareClassRelationRecord",
+        "trait SaveClassRelationRecord",
+        "trait DeleteClassRelationRecord",
+        "trait PrepareObjectRelationRecord",
+        "trait SaveObjectRelationRecord",
+        "trait DeleteObjectRelationRecord",
+    ] {
+        assert!(
+            !legacy.contains(removed_lifecycle),
+            "legacy application module still owns {removed_lifecycle}"
+        );
+    }
+}
+
+#[test]
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [

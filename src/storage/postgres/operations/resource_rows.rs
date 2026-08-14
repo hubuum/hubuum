@@ -57,33 +57,6 @@ pub(in crate::storage::postgres) fn class_record_to_storage(
     .build()
 }
 
-pub(in crate::storage::postgres) fn class_record_from_storage(
-    class: StorageClassRecord,
-) -> Result<HubuumClass, ApiError> {
-    let (
-        id,
-        name,
-        collection_id,
-        json_schema,
-        validate_schema,
-        description,
-        created_at,
-        updated_at,
-        revision,
-    ) = class.into_parts();
-    Ok(HubuumClass {
-        id,
-        name,
-        collection_id,
-        json_schema,
-        validate_schema,
-        description,
-        created_at,
-        updated_at,
-        revision: PostgresRevision::new(revision)?.into_domain(),
-    })
-}
-
 pub(in crate::storage::postgres) fn object_to_storage(object: HubuumObject) -> StorageObject {
     StorageObject::new(
         StorageRecordMetadata::new(

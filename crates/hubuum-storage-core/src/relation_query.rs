@@ -51,6 +51,41 @@ impl StorageClassRelation {
     }
 
     #[must_use]
+    pub const fn metadata(&self) -> StorageRecordMetadata {
+        self.metadata
+    }
+
+    #[must_use]
+    pub const fn from_class_id(&self) -> i32 {
+        self.from_class_id
+    }
+
+    #[must_use]
+    pub const fn to_class_id(&self) -> i32 {
+        self.to_class_id
+    }
+
+    #[must_use]
+    pub fn forward_template_alias(&self) -> Option<&str> {
+        self.forward_template_alias.as_deref()
+    }
+
+    #[must_use]
+    pub fn reverse_template_alias(&self) -> Option<&str> {
+        self.reverse_template_alias.as_deref()
+    }
+
+    #[must_use]
+    pub const fn from_max_relations(&self) -> Option<i32> {
+        self.from_max_relations
+    }
+
+    #[must_use]
+    pub const fn to_max_relations(&self) -> Option<i32> {
+        self.to_max_relations
+    }
+
+    #[must_use]
     #[allow(clippy::type_complexity)]
     pub fn into_parts(
         self,
@@ -104,6 +139,26 @@ impl StorageObjectRelation {
             to_object_id,
             class_relation_id,
         }
+    }
+
+    #[must_use]
+    pub const fn metadata(&self) -> StorageRecordMetadata {
+        self.metadata
+    }
+
+    #[must_use]
+    pub const fn from_object_id(&self) -> i32 {
+        self.from_object_id
+    }
+
+    #[must_use]
+    pub const fn to_object_id(&self) -> i32 {
+        self.to_object_id
+    }
+
+    #[must_use]
+    pub const fn class_relation_id(&self) -> i32 {
+        self.class_relation_id
     }
 
     #[must_use]

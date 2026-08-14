@@ -10,15 +10,6 @@ use crate::storage::postgres::operations::authorization::{
     group_grant_to_storage as authorization_group_grant_to_storage,
     group_to_storage as authorization_group_to_storage, permission_from_storage,
 };
-use crate::storage::postgres::operations::relation_rows::{
-    class_relation_create_from_storage, class_relation_to_storage,
-    object_relation_create_from_storage, object_relation_create_selector_from_storage,
-    object_relation_selector_from_storage, object_relation_to_storage,
-    prepared_class_relation_from_storage, prepared_class_relation_to_storage,
-    prepared_object_relation_from_storage, prepared_object_relation_to_storage,
-    resolved_class_relation_from_storage, resolved_class_relation_to_storage,
-    resolved_object_relation_from_storage, resolved_object_relation_to_storage,
-};
 fn effective_grant_to_storage(row: EffectiveGroupPermission) -> AuthorizationEffectiveGroupGrant {
     AuthorizationEffectiveGroupGrant::new(
         authorization_collection_to_storage(row.target_collection),
@@ -633,24 +624,21 @@ impl ClassRelationStore for PostgresStorage {
         &self,
         command: StorageClassRelationCreate,
     ) -> Result<StoragePreparedClassRelation, StorageError> {
-        class_relation_create_from_storage(&command)
-            .map_err(map_postgres_error)?
-            .prepare_class_relation_record(&self.pool)
-            .await
-            .map(prepared_class_relation_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::prepare_class_relation(
+            self.runtime(),
+            command,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn resolve_class_relation(
         &self,
         id: i32,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        HubuumClassRelationID::new(id)
-            .map_err(map_postgres_error)?
-            .resolve_class_relation_target_record(&self.pool)
+        hubuum_storage_postgres::operations::relation::resolve_class_relation(self.runtime(), id)
             .await
-            .map(resolved_class_relation_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn create_class_relation(
@@ -658,19 +646,13 @@ impl ClassRelationStore for PostgresStorage {
         prepared: &StoragePreparedClassRelation,
         context: Option<&EventContext>,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        let prepared =
-            prepared_class_relation_from_storage(prepared).map_err(map_postgres_error)?;
-        let relation = prepared
-            .create_prepared_class_relation_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)?;
-        ResolvedClassRelationTarget::new(
-            relation,
-            prepared.from_class().clone(),
-            prepared.to_class().clone(),
+        hubuum_storage_postgres::operations::relation::create_class_relation(
+            self.runtime(),
+            prepared,
+            context,
         )
-        .map(resolved_class_relation_to_storage)
-        .map_err(map_postgres_error)
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_class_relation(
@@ -678,11 +660,13 @@ impl ClassRelationStore for PostgresStorage {
         target: &StorageResolvedClassRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        let target = resolved_class_relation_from_storage(target).map_err(map_postgres_error)?;
-        target
-            .delete_resolved_class_relation_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::delete_class_relation(
+            self.runtime(),
+            target,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn create_class_relation_from_command(
@@ -690,12 +674,13 @@ impl ClassRelationStore for PostgresStorage {
         command: StorageClassRelationCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRelation, StorageError> {
-        class_relation_create_from_storage(&command)
-            .map_err(map_postgres_error)?
-            .save_class_relation_record(&self.pool, context)
-            .await
-            .map(class_relation_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::create_class_relation_from_command(
+            self.runtime(),
+            command,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_class_relation_by_id(
@@ -703,11 +688,13 @@ impl ClassRelationStore for PostgresStorage {
         id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        HubuumClassRelationID::new(id)
-            .map_err(map_postgres_error)?
-            .delete_class_relation_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::delete_class_relation_by_id(
+            self.runtime(),
+            id,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 
@@ -717,24 +704,24 @@ impl ObjectRelationStore for PostgresStorage {
         &self,
         selector: StorageObjectRelationCreateSelector,
     ) -> Result<StoragePreparedObjectRelation, StorageError> {
-        object_relation_create_selector_from_storage(selector)
-            .map_err(map_postgres_error)?
-            .prepare_object_relation_record(&self.pool)
-            .await
-            .map(prepared_object_relation_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::prepare_object_relation(
+            self.runtime(),
+            selector,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn resolve_object_relation(
         &self,
         selector: StorageObjectRelationSelector,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
-        object_relation_selector_from_storage(selector)
-            .map_err(map_postgres_error)?
-            .resolve_object_relation_target_record(&self.pool)
-            .await
-            .map(resolved_object_relation_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::resolve_object_relation(
+            self.runtime(),
+            selector,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn create_object_relation(
@@ -742,20 +729,13 @@ impl ObjectRelationStore for PostgresStorage {
         prepared: &StoragePreparedObjectRelation,
         context: Option<&EventContext>,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
-        let prepared =
-            prepared_object_relation_from_storage(prepared).map_err(map_postgres_error)?;
-        let relation = prepared
-            .create_prepared_object_relation_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)?;
-        ResolvedObjectRelationTarget::new(
-            relation,
-            prepared.from_object().clone(),
-            prepared.to_object().clone(),
-            prepared.class_relation().clone(),
+        hubuum_storage_postgres::operations::relation::create_object_relation(
+            self.runtime(),
+            prepared,
+            context,
         )
-        .map(resolved_object_relation_to_storage)
-        .map_err(map_postgres_error)
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_object_relation(
@@ -763,11 +743,13 @@ impl ObjectRelationStore for PostgresStorage {
         target: &StorageResolvedObjectRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        resolved_object_relation_from_storage(target)
-            .map_err(map_postgres_error)?
-            .delete_resolved_object_relation_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::delete_object_relation(
+            self.runtime(),
+            target,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn create_object_relation_from_command(
@@ -775,11 +757,13 @@ impl ObjectRelationStore for PostgresStorage {
         command: StorageObjectRelationCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageObjectRelation, StorageError> {
-        object_relation_create_from_storage(command)
-            .save_object_relation_record(&self.pool, context)
-            .await
-            .map(object_relation_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::create_object_relation_from_command(
+            self.runtime(),
+            command,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_object_relation_by_id(
@@ -787,11 +771,13 @@ impl ObjectRelationStore for PostgresStorage {
         id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        HubuumObjectRelationID::new(id)
-            .map_err(map_postgres_error)?
-            .delete_object_relation_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation::delete_object_relation_by_id(
+            self.runtime(),
+            id,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 
