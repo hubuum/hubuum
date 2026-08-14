@@ -22,7 +22,7 @@ use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStora
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::hubuumclass_relation)]
-struct ClassRelationRow {
+pub(crate) struct ClassRelationRow {
     id: i32,
     from_hubuum_class_id: i32,
     to_hubuum_class_id: i32,
@@ -36,7 +36,7 @@ struct ClassRelationRow {
 }
 
 impl ClassRelationRow {
-    fn into_storage(self) -> StorageClassRelation {
+    pub(crate) fn into_storage(self) -> StorageClassRelation {
         StorageClassRelation::new(
             StorageRecordMetadata::new(
                 self.id,
@@ -93,7 +93,7 @@ impl<'command> From<&'command StorageClassRelationCreate> for NewClassRelationRo
 
 #[derive(Clone, Copy, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::hubuumobject_relation)]
-struct ObjectRelationRow {
+pub(crate) struct ObjectRelationRow {
     id: i32,
     from_hubuum_object_id: i32,
     to_hubuum_object_id: i32,
@@ -104,7 +104,7 @@ struct ObjectRelationRow {
 }
 
 impl ObjectRelationRow {
-    fn into_storage(self) -> StorageObjectRelation {
+    pub(crate) fn into_storage(self) -> StorageObjectRelation {
         StorageObjectRelation::new(
             StorageRecordMetadata::new(
                 self.id,

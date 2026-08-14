@@ -8,8 +8,8 @@ use crate::models::{
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 use crate::storage::{
-    StorageClassGraphRow, StorageClassRelation, StorageGraphClass, StorageGraphObject,
-    StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation, StorageRecordMetadata,
+    StorageClassGraphRow, StorageGraphClass, StorageGraphObject, StorageGraphResource,
+    StorageObjectGraphRow, StorageRecordMetadata,
     StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
 };
 use crate::traits::{CursorPaginated, CursorValue};
@@ -809,32 +809,6 @@ fn metadata(
     revision: i64,
 ) -> StorageRecordMetadata {
     StorageRecordMetadata::new(id, created_at, updated_at, revision)
-}
-
-pub(in crate::storage::postgres) fn class_relation_to_storage(
-    row: HubuumClassRelation,
-) -> StorageClassRelation {
-    StorageClassRelation::new(
-        metadata(row.id, row.created_at, row.updated_at, row.revision.get()),
-        row.from_hubuum_class_id,
-        row.to_hubuum_class_id,
-    )
-    .with_template_aliases(row.forward_template_alias, row.reverse_template_alias)
-    .with_relation_limits(
-        row.from_max_relations.map(|limit| limit.value()),
-        row.to_max_relations.map(|limit| limit.value()),
-    )
-}
-
-pub(in crate::storage::postgres) fn object_relation_to_storage(
-    row: HubuumObjectRelation,
-) -> StorageObjectRelation {
-    StorageObjectRelation::new(
-        metadata(row.id, row.created_at, row.updated_at, row.revision.get()),
-        row.from_hubuum_object_id,
-        row.to_hubuum_object_id,
-        row.class_relation_id,
-    )
 }
 
 fn graph_resource(

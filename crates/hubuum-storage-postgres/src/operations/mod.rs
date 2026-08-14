@@ -30,6 +30,7 @@ pub mod object;
 pub mod principal;
 pub mod probe;
 pub mod relation;
+pub mod relation_query;
 pub mod remote_target;
 pub mod service_account;
 pub mod token;

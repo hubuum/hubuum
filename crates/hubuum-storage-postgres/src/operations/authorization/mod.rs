@@ -117,6 +117,8 @@ macro_rules! apply_permission_filter {
     };
 }
 
+pub(crate) use apply_permission_filter;
+
 mod mutations;
 mod queries;
 mod rows;

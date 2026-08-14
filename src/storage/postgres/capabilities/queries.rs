@@ -190,72 +190,96 @@ impl RelationQueryStorage for PostgresStorage {
         &self,
         query: RelationListQuery,
     ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
-        operations::relation_query::list_class_relations(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::list_class_relations(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_object_relations(
         &self,
         query: RelationListQuery,
     ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
-        operations::relation_query::list_object_relations(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::list_object_relations(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_class_relations_touching(
         &self,
         query: RelationTouchingQuery,
     ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
-        operations::relation_query::list_class_relations_touching(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::list_class_relations_touching(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_object_relations_touching(
         &self,
         query: RelationTouchingQuery,
     ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
-        operations::relation_query::list_object_relations_touching(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::list_object_relations_touching(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn class_relations_touching_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
-        operations::relation_query::class_relations_touching_ids(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::class_relations_touching_ids(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn class_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
-        operations::relation_query::class_relations_between_ids(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::class_relations_between_ids(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn object_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
-        operations::relation_query::object_relations_between_ids(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::object_relations_between_ids(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn object_relations_touching_ids(
         &self,
         query: ObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
-        operations::relation_query::object_relations_touching_ids(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::relation_query::object_relations_touching_ids(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn related_classes(
