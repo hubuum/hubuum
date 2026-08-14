@@ -20,10 +20,9 @@ use crate::storage::postgres::operations::relation_rows::{
     resolved_object_relation_from_storage, resolved_object_relation_to_storage,
 };
 use crate::storage::postgres::operations::resource_rows::{
-    class_create_from_storage, class_record_to_storage, class_selector_from_storage,
-    class_update_from_storage, object_create_from_storage, object_patch_from_storage,
+    class_record_to_storage, object_create_from_storage, object_patch_from_storage,
     object_to_storage, object_update_from_storage, resolved_class_from_storage,
-    resolved_class_to_storage, resolved_object_from_storage, resolved_object_to_storage,
+    resolved_object_from_storage, resolved_object_to_storage,
 };
 
 fn effective_grant_to_storage(row: EffectiveGroupPermission) -> AuthorizationEffectiveGroupGrant {
@@ -586,14 +585,9 @@ impl ClassStore for PostgresStorage {
         &self,
         selector: StorageClassSelector,
     ) -> Result<StorageResolvedClass, StorageError> {
-        let selector = class_selector_from_storage(selector).map_err(map_postgres_error)?;
-        let class = selector
-            .resolve_class_selector_record(&self.pool)
+        hubuum_storage_postgres::operations::class::resolve_class(self.runtime(), selector)
             .await
-            .map_err(map_postgres_error)?;
-        Ok(resolved_class_to_storage(ResolvedClassTarget::new(
-            selector, class,
-        )))
+            .map_err(StorageError::from)
     }
 
     async fn create_class(
@@ -601,13 +595,9 @@ impl ClassStore for PostgresStorage {
         command: StorageClassCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRecord, StorageError> {
-        let command = class_create_from_storage(&command);
-        command.validate_schema().map_err(map_postgres_error)?;
-        command
-            .create_class_record(&self.pool, context)
+        hubuum_storage_postgres::operations::class::create_class(self.runtime(), command, context)
             .await
-            .map(class_record_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn update_class(
@@ -616,20 +606,14 @@ impl ClassStore for PostgresStorage {
         changes: StorageClassUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRecord, StorageError> {
-        let target = resolved_class_from_storage(target).map_err(map_postgres_error)?;
-        let update = class_update_from_storage(&changes);
-        let result = if let Some(context) = context {
-            update
-                .update_resolved_class_record(&self.pool, &target, context)
-                .await
-        } else {
-            update
-                .update_class_record(&self.pool, target.class().id, None)
-                .await
-        };
-        result
-            .map(class_record_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::class::update_class(
+            self.runtime(),
+            target,
+            changes,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_class(
@@ -637,26 +621,15 @@ impl ClassStore for PostgresStorage {
         target: &StorageResolvedClass,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        let target = resolved_class_from_storage(target).map_err(map_postgres_error)?;
-        if let Some(context) = context {
-            target
-                .delete_resolved_class_record(&self.pool, context)
-                .await
-                .map_err(map_postgres_error)
-        } else {
-            target
-                .class()
-                .delete_class_record(&self.pool, None)
-                .await
-                .map_err(map_postgres_error)
-        }
+        hubuum_storage_postgres::operations::class::delete_class(self.runtime(), target, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
-        let class_ids = ClassIdSet::new(class_ids).map_err(map_postgres_error)?;
-        load_class_names(&self.pool, &class_ids)
+        hubuum_storage_postgres::operations::class::class_names(self.runtime(), class_ids)
             .await
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 }
 

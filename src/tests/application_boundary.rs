@@ -1959,6 +1959,50 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn class_lifecycle_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/class.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "ClassStore for PostgresStorage");
+    assert!(
+        implementation.contains("hubuum_storage_postgres::operations::class"),
+        "the class trait implementation must delegate into the adapter crate"
+    );
+    for forbidden in [
+        "ClassSelector::",
+        "class_selector_from_storage",
+        "NewHubuumClass",
+        "UpdateHubuumClass",
+        "create_class_record",
+        "update_class_record",
+        "delete_class_record",
+        "load_class_names",
+    ] {
+        assert!(
+            !implementation.contains(forbidden),
+            "the class trait implementation retains application detail {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [

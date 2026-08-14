@@ -2,6 +2,7 @@ use std::fmt;
 
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
+use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind};
 use hubuum_storage_core::{StorageError, StorageErrorKind};
 use tracing::{debug, error};
 
@@ -54,6 +55,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::Validation, message, None)
+    }
+
+    #[must_use]
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::NotFound, message, None)
     }
@@ -61,6 +67,16 @@ impl PostgresStorageError {
     #[must_use]
     pub fn precondition_failed(message: impl Into<String>, current_etag: Option<String>) -> Self {
         Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
+    }
+}
+
+impl From<JsonSchemaError> for PostgresStorageError {
+    fn from(error: JsonSchemaError) -> Self {
+        let (kind, message) = error.into_parts();
+        match kind {
+            JsonSchemaErrorKind::InvalidSchema => Self::bad_request(message),
+            JsonSchemaErrorKind::InvalidValue => Self::validation(message),
+        }
     }
 }
 

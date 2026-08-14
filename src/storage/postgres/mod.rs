@@ -37,15 +37,12 @@ use crate::events::{
 use crate::models::output::EffectiveGroupPermission;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ClassIdSet, CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
+    CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
     HubuumObjectRelationID, MaintenanceState, PrincipalID, PrincipalSettings,
-    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
-    ResolvedObjectTarget, TokenRetentionSettings,
+    ResolvedClassRelationTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget,
+    TokenRetentionSettings,
 };
-use crate::storage::postgres::operations::class::{
-    CreateClassRecord, DeleteClassRecord, DeleteResolvedClassRecord, LoadClassRecord,
-    ResolveClassSelectorRecord, UpdateClassRecord, UpdateResolvedClassRecord, load_class_names,
-};
+use crate::storage::postgres::operations::class::LoadClassRecord;
 use crate::storage::postgres::operations::collection::{
     effective_group_on_from_backend, effective_principal_on_from_backend,
     group_can_on_from_backend, group_on_from_backend, groups_can_on_from_backend,

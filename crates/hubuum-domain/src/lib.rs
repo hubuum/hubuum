@@ -8,6 +8,7 @@ mod event_delivery;
 mod event_policy;
 mod identifier;
 mod identity;
+mod json_schema;
 mod maintenance;
 mod revision;
 mod token;
@@ -26,6 +27,10 @@ pub use identifier::{
 pub use identity::{
     EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,
     MANUAL_MEMBERSHIP_SOURCE,
+};
+pub use json_schema::{
+    JsonSchemaError, JsonSchemaErrorKind, validate_json_schema, validate_json_schema_for_instances,
+    validate_json_value,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};

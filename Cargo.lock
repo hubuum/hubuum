@@ -2105,7 +2105,6 @@ dependencies = [
  "hubuum-templates",
  "ipnet",
  "json-patch",
- "jsonschema",
  "libc",
  "lru",
  "minijinja",
@@ -2174,9 +2173,12 @@ name = "hubuum-domain"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "jsonschema",
+ "lru",
  "rstest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "utoipa",
 ]
 

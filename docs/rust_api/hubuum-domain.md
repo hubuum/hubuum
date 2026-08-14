@@ -22,9 +22,10 @@ implements Utoipa schema traits for values also used by Hubuum's HTTP API.
 ## Errors, Runtime, and Security
 
 Validation returns crate-owned errors and does not panic for caller input.
-There is no asynchronous runtime requirement, global state, I/O, credential
-handling, or cancellation behavior. Private fields and validating builders
-protect invariants.
+There is no asynchronous runtime requirement, I/O, credential handling, or
+cancellation behavior. JSON Schema validation rejects external references and
+uses a bounded process-local compilation cache; cache contents do not change
+validation results. Private fields and validating builders protect invariants.
 
 ## Ownership and Verification
 

@@ -814,6 +814,14 @@ impl ClassStore for MemoryStorageModel {
         command: StorageClassCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRecord, StorageError> {
+        if let Some(schema) = command.json_schema() {
+            crate::utilities::json_schema::validate_json_schema(schema)
+                .map_err(map_memory_error)?;
+            if command.validates_schema() {
+                crate::utilities::json_schema::compile_json_schema(schema)
+                    .map_err(map_memory_error)?;
+            }
+        }
         let command = NewHubuumClass {
             name: command.name().to_string(),
             collection_id: command.collection_id(),
@@ -821,7 +829,6 @@ impl ClassStore for MemoryStorageModel {
             validate_schema: Some(command.validates_schema()),
             description: command.description().to_string(),
         };
-        command.validate_schema().map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         if state.class_name_in_use(&command.name, None) {
             return Err(StorageError::conflict(format!(

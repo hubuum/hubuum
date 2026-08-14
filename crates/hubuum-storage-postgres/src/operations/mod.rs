@@ -4,6 +4,7 @@ pub mod authentication;
 pub mod authorization;
 pub mod backup;
 pub mod bootstrap;
+pub mod class;
 pub mod collection;
 pub mod event_audit;
 pub mod event_delivery;

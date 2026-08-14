@@ -55,7 +55,8 @@ use crate::storage::{
     RelationIdsQuery, RelationListQuery, RelationQueryStorage, RelationTouchingQuery,
     RemoteTargetStorage, RestoreStorage, RetainedEvent, StorageAuditEventFilters,
     StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
+    StorageClassCreate, StorageClassSelector, StorageClassUpdate, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
     StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
     StorageComputedFieldVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
     StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
@@ -2212,6 +2213,108 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
         .delete_without_events(pool.get_ref())
         .await
         .expect("collection record compatibility group should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_class_lifecycle() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let group = crate::tests::create_test_group(pool.get_ref()).await;
+
+    for backend in available_backends() {
+        let collections = backend.collection_store();
+        let collection = collections
+            .create_collection(
+                StorageCollectionCreate::new(
+                    prefix("class_lifecycle_collection"),
+                    "class lifecycle collection",
+                    group.id,
+                    None,
+                ),
+                None,
+            )
+            .await
+            .expect("certified backend should create the class collection");
+        let classes = backend.class_store();
+        let class_name = prefix("class_lifecycle");
+        let created = classes
+            .create_class(
+                StorageClassCreate::builder(&class_name, collection.id(), "class lifecycle")
+                    .json_schema(Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}}
+                    })))
+                    .validate_schema(true)
+                    .build(),
+                Some(&EventContext::system()),
+            )
+            .await
+            .expect("certified backend should create classes");
+        assert_eq!(created.collection_id(), collection.id());
+        assert!(created.validates_schema());
+
+        let resolved_by_id = classes
+            .resolve_class(StorageClassSelector::Id(created.id()))
+            .await
+            .expect("certified backend should resolve classes by id");
+        assert_eq!(resolved_by_id.class().name(), class_name);
+        let resolved_by_name = classes
+            .resolve_class(StorageClassSelector::Name(class_name))
+            .await
+            .expect("certified backend should resolve classes by name");
+        assert_eq!(resolved_by_name.class().id(), created.id());
+
+        let updated = classes
+            .update_class(
+                &resolved_by_id,
+                StorageClassUpdate::builder()
+                    .description(Some("updated class lifecycle".to_string()))
+                    .build(),
+                Some(&EventContext::system()),
+            )
+            .await
+            .expect("certified backend should update classes");
+        assert_eq!(updated.description(), "updated class lifecycle");
+        assert_eq!(
+            classes
+                .class_names(vec![created.id(), created.id()])
+                .await
+                .expect("certified backend should resolve a complete class-name set"),
+            vec![(created.id(), updated.name().to_string())]
+        );
+        let missing = classes
+            .class_names(vec![created.id(), i32::MAX])
+            .await
+            .expect_err("certified backend must reject a partial class-name mapping");
+        assert_eq!(missing.kind(), StorageErrorKind::NotFound);
+
+        let updated_target = classes
+            .resolve_class(StorageClassSelector::Id(updated.id()))
+            .await
+            .expect("certified backend should resolve the updated class");
+        classes
+            .delete_class(&updated_target, Some(&EventContext::system()))
+            .await
+            .expect("certified backend should delete classes");
+        assert_eq!(
+            classes
+                .resolve_class(StorageClassSelector::Id(updated.id()))
+                .await
+                .err()
+                .expect("deleted classes must not resolve")
+                .kind(),
+            StorageErrorKind::NotFound
+        );
+        collections
+            .delete_collection(collection.id(), None)
+            .await
+            .expect("class lifecycle collection should be removable");
+    }
+
+    group
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("class lifecycle group should be removed");
 }
 
 #[actix_web::test]

@@ -5,9 +5,9 @@ use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
 use crate::models::{
-    ClassIdSet, ClassSelector, ClassSelectorKind, Collection, HubuumClass, HubuumClassExpanded,
-    HubuumClassID, HubuumClassRelation, HubuumClassRelationID, NewHubuumClass,
-    NewHubuumClassRelation, ResolvedClassTarget, UpdateHubuumClass,
+    ClassSelector, ClassSelectorKind, Collection, HubuumClass, HubuumClassExpanded, HubuumClassID,
+    HubuumClassRelation, HubuumClassRelationID, NewHubuumClass, NewHubuumClassRelation,
+    ResolvedClassTarget, UpdateHubuumClass,
 };
 use crate::storage::postgres::operations::GetClass;
 use crate::storage::postgres::operations::collection::CollectionRow;
@@ -772,27 +772,4 @@ impl ClassCollectionLookup for HubuumClassID {
             .lookup_class_collection(pool)
             .await
     }
-}
-
-/// Load `(id, name)` pairs for a normalized class set. Missing ids are absent;
-/// callers that require completeness must check the returned keys.
-pub(crate) async fn load_class_names(
-    pool: &crate::storage::postgres::PostgresPool,
-    class_ids: &ClassIdSet,
-) -> Result<Vec<(i32, String)>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
-
-    if class_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let ids = class_ids.as_slice().to_vec();
-    with_connection(pool, async |conn| {
-        hubuumclass
-            .filter(id.eq_any(ids))
-            .select((id, name))
-            .load::<(i32, String)>(conn)
-            .await
-    })
-    .await
 }

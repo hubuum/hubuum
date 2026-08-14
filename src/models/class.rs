@@ -78,19 +78,6 @@ impl UpdateHubuumClass {
     }
 }
 
-impl NewHubuumClass {
-    pub(crate) fn validate_schema(&self) -> Result<(), ApiError> {
-        let Some(schema) = self.json_schema.as_ref() else {
-            return Ok(());
-        };
-        crate::utilities::json_schema::validate_json_schema(schema)?;
-        if self.validate_schema.unwrap_or(false) {
-            crate::utilities::json_schema::compile_json_schema(schema)?;
-        }
-        Ok(())
-    }
-}
-
 impl HubuumClass {
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
         ResourceRef {

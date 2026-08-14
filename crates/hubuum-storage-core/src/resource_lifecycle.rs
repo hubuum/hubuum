@@ -58,6 +58,36 @@ impl StorageClassRecord {
     }
 
     #[must_use]
+    pub const fn json_schema(&self) -> Option<&Value> {
+        self.json_schema.as_ref()
+    }
+
+    #[must_use]
+    pub const fn validates_schema(&self) -> bool {
+        self.validate_schema
+    }
+
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> i64 {
+        self.revision
+    }
+
+    #[must_use]
     #[allow(clippy::type_complexity)]
     pub fn into_parts(
         self,
