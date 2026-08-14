@@ -1,16 +1,15 @@
 use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserProfile};
 use hubuum_storage_core::{
-    AuthenticationResourceScope, AuthenticationTokenScope, StorageError, StorageExternalGroup,
+    AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupListQuery,
-    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
-    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageRecordMetadata, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate,
+    StorageIdentityGroup, StorageIdentityPage, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StorageRecordMetadata, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
+    StorageTokenListState, StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke,
+    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
 };
 
 use crate::errors::ApiError;
@@ -30,7 +29,6 @@ use crate::storage::postgres::operations::user::{
 };
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresPool, with_connection};
-use hubuum_storage_postgres::PostgresRuntime;
 
 fn storage_user(user: User) -> StorageUser {
     StorageUser::new(
@@ -192,69 +190,6 @@ pub(crate) fn token_scope_from_storage(
         })
         .transpose()?;
     TokenScope::from_stored_parts(permissions, resources)
-}
-
-pub(crate) async fn reset_local_password(
-    runtime: &PostgresRuntime,
-    request: StorageLocalPasswordReset,
-) -> Result<usize, StorageError> {
-    hubuum_storage_postgres::operations::identity_credentials::reset_local_password(
-        runtime, request,
-    )
-    .await
-    .map_err(StorageError::from)
-}
-
-pub(crate) async fn ensure_identity_scope(
-    runtime: &PostgresRuntime,
-    request: StorageIdentityScopeEnsure,
-) -> Result<StorageIdentityScope, StorageError> {
-    runtime
-        .with_connection(async |connection| {
-            hubuum_storage_postgres::operations::identity_scope::ensure_identity_scope_on_connection(
-                connection,
-                request.name(),
-                request.provider_kind(),
-            )
-            .await
-        })
-    .await
-    .map_err(StorageError::from)
-}
-
-pub(crate) async fn identity_scope_name(
-    runtime: &PostgresRuntime,
-    scope_id: i32,
-) -> Result<String, StorageError> {
-    runtime
-        .with_connection(async |connection| {
-            hubuum_storage_postgres::operations::identity_scope::identity_scope_name_by_id_on_connection(
-                connection,
-                scope_id,
-            )
-            .await
-        })
-        .await
-        .map_err(StorageError::from)
-}
-
-pub(crate) async fn identity_scope_names(
-    runtime: &PostgresRuntime,
-    scope_ids: Vec<i32>,
-) -> Result<Vec<(i32, String)>, StorageError> {
-    let names = runtime
-        .with_connection(async |connection| {
-            hubuum_storage_postgres::operations::identity_scope::identity_scope_names_by_ids_on_connection(
-                connection,
-                &scope_ids,
-            )
-            .await
-        })
-        .await
-        .map_err(StorageError::from)?;
-    let mut names = names.into_iter().collect::<Vec<_>>();
-    names.sort_unstable_by_key(|(id, _)| *id);
-    Ok(names)
 }
 
 pub(crate) async fn load_principal_group(

@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::schema::identity_scopes;
-use crate::{PostgresConnection, PostgresRevision, PostgresStorageError};
+use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::StorageIdentityScope;
+use hubuum_storage_core::StorageIdentityScopeEnsure;
 
 #[derive(Debug, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::identity_scopes)]
@@ -124,5 +125,61 @@ pub async fn ensure_identity_scope_on_connection(
             .await
             .map(Into::into)
             .map_err(PostgresStorageError::from),
+    }
+}
+
+/// Ensure one identity scope through the adapter-owned runtime boundary.
+pub async fn ensure_identity_scope(
+    runtime: &PostgresRuntime,
+    request: StorageIdentityScopeEnsure,
+) -> Result<StorageIdentityScope, PostgresStorageError> {
+    let name = request.name().to_string();
+    let provider_kind = request.provider_kind().to_string();
+    runtime
+        .with_connection(async move |connection| {
+            ensure_identity_scope_on_connection(connection, &name, &provider_kind).await
+        })
+        .await
+}
+
+/// Resolve one identity-scope name through the adapter-owned runtime boundary.
+pub async fn identity_scope_name(
+    runtime: &PostgresRuntime,
+    scope_id: i32,
+) -> Result<String, PostgresStorageError> {
+    validate_scope_id(scope_id)?;
+    runtime
+        .with_connection(async move |connection| {
+            identity_scope_name_by_id_on_connection(connection, scope_id).await
+        })
+        .await
+}
+
+/// Resolve identity-scope names once and return them in stable identifier order.
+pub async fn identity_scope_names(
+    runtime: &PostgresRuntime,
+    scope_ids: Vec<i32>,
+) -> Result<Vec<(i32, String)>, PostgresStorageError> {
+    for scope_id in &scope_ids {
+        validate_scope_id(*scope_id)?;
+    }
+    let mut names = runtime
+        .with_connection(async move |connection| {
+            identity_scope_names_by_ids_on_connection(connection, &scope_ids).await
+        })
+        .await?
+        .into_iter()
+        .collect::<Vec<_>>();
+    names.sort_unstable_by_key(|(id, _)| *id);
+    Ok(names)
+}
+
+fn validate_scope_id(scope_id: i32) -> Result<(), PostgresStorageError> {
+    if scope_id > 0 {
+        Ok(())
+    } else {
+        Err(PostgresStorageError::bad_request(
+            "Invalid identity scope id: expected a positive integer",
+        ))
     }
 }

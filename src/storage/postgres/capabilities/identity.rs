@@ -65,25 +65,45 @@ impl IdentityStorage for PostgresStorage {
         &self,
         request: StorageLocalPasswordReset,
     ) -> Result<usize, StorageError> {
-        operations::identity_operations::reset_local_password(self.runtime(), request).await
+        hubuum_storage_postgres::operations::identity_credentials::reset_local_password(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn ensure_identity_scope(
         &self,
         request: StorageIdentityScopeEnsure,
     ) -> Result<StorageIdentityScope, StorageError> {
-        operations::identity_operations::ensure_identity_scope(self.runtime(), request).await
+        hubuum_storage_postgres::operations::identity_scope::ensure_identity_scope(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
-        operations::identity_operations::identity_scope_name(self.runtime(), scope_id).await
+        hubuum_storage_postgres::operations::identity_scope::identity_scope_name(
+            self.runtime(),
+            scope_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn identity_scope_names(
         &self,
         scope_ids: Vec<i32>,
     ) -> Result<Vec<(i32, String)>, StorageError> {
-        operations::identity_operations::identity_scope_names(self.runtime(), scope_ids).await
+        hubuum_storage_postgres::operations::identity_scope::identity_scope_names(
+            self.runtime(),
+            scope_ids,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_principal_group(
