@@ -2176,6 +2176,47 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn principal_state_queries_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/identity_principals.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    for method in [
+        "load_principal_group",
+        "is_human_owner_group_member",
+        "principal_is_disabled",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::identity_principals"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+}
+
+#[test]
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [

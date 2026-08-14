@@ -111,9 +111,13 @@ impl IdentityStorage for PostgresStorage {
         principal_id: i32,
         group_id: i32,
     ) -> Result<StoragePrincipalGroup, StorageError> {
-        operations::identity_operations::load_principal_group(&self.pool, principal_id, group_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::identity_principals::load_principal_group(
+            self.runtime(),
+            principal_id,
+            group_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_principal_groups(
@@ -148,19 +152,22 @@ impl IdentityStorage for PostgresStorage {
         principal_id: i32,
         owner_group_id: i32,
     ) -> Result<bool, StorageError> {
-        operations::identity_operations::is_human_owner_group_member(
-            &self.pool,
+        hubuum_storage_postgres::operations::identity_principals::is_human_owner_group_member(
+            self.runtime(),
             principal_id,
             owner_group_id,
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn principal_is_disabled(&self, principal_id: i32) -> Result<bool, StorageError> {
-        operations::identity_operations::principal_is_disabled(&self.pool, principal_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::identity_principals::principal_is_disabled(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_service_account(

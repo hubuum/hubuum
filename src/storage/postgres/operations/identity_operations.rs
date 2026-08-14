@@ -2,14 +2,14 @@ use hubuum_auth_core::{AuthenticatedExternalUser, ExternalGroup, ExternalUserPro
 use hubuum_storage_core::{
     AuthenticationResourceScope, AuthenticationTokenScope, StorageExternalGroup,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupListQuery,
-    StorageIdentityGroup, StorageIdentityPage, StoragePrincipalGroup,
-    StoragePrincipalGroupListQuery, StorageRecordMetadata, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke,
-    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    StorageIdentityGroup, StorageIdentityPage, StoragePrincipalGroupListQuery,
+    StorageRecordMetadata, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate,
 };
 
 use crate::errors::ApiError;
@@ -20,6 +20,7 @@ use crate::models::{
     TokenResourceScope, TokenScope, UpdateServiceAccount, UpdateUser, User, UserWithName,
 };
 use crate::pagination::count_query_options;
+use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::service_account::{
     DisableServiceAccount, SaveServiceAccount,
     delete_service_account as delete_service_account_record, update_service_account_record,
@@ -27,8 +28,6 @@ use crate::storage::postgres::operations::service_account::{
 use crate::storage::postgres::operations::user::{
     CreateUserRecord, LoadUserGroupsPaginated, UpdateUserRecord,
 };
-use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{PostgresPool, with_connection};
 
 fn storage_user(user: User) -> StorageUser {
     StorageUser::new(
@@ -54,16 +53,6 @@ fn storage_user_list_item(item: UserWithName) -> StorageUserListItem {
     .last_sync_attempted_at(item.last_sync_attempted_at)
     .last_sync_success_at(item.last_sync_success_at)
     .build()
-}
-
-fn storage_principal_group(group: crate::models::PrincipalGroup) -> StoragePrincipalGroup {
-    StoragePrincipalGroup::new(
-        group.principal_id,
-        group.group_id,
-        group.created_at,
-        group.updated_at,
-        group.revision.get(),
-    )
 }
 
 fn storage_identity_group(group: Group) -> StorageIdentityGroup {
@@ -192,20 +181,6 @@ pub(crate) fn token_scope_from_storage(
     TokenScope::from_stored_parts(permissions, resources)
 }
 
-pub(crate) async fn load_principal_group(
-    pool: &PostgresPool,
-    principal_id: i32,
-    group_id: i32,
-) -> Result<StoragePrincipalGroup, ApiError> {
-    crate::storage::postgres::operations::group::principal_group_by_ids(
-        pool,
-        principal_id,
-        group_id,
-    )
-    .await
-    .map(storage_principal_group)
-}
-
 pub(crate) async fn list_principal_groups(
     pool: &PostgresPool,
     query: StoragePrincipalGroupListQuery,
@@ -256,33 +231,6 @@ pub(crate) async fn list_retained_tokens(
         rows.into_iter().map(storage_token_metadata).collect(),
         include_total.then_some(total),
     ))
-}
-
-pub(crate) async fn is_human_owner_group_member(
-    pool: &PostgresPool,
-    principal_id: i32,
-    owner_group_id: i32,
-) -> Result<bool, ApiError> {
-    super::service_account::is_human_owner_group_member(pool, principal_id, owner_group_id).await
-}
-
-pub(crate) async fn principal_is_disabled(
-    pool: &PostgresPool,
-    principal_id: i32,
-) -> Result<bool, ApiError> {
-    use crate::schema::service_accounts;
-
-    Ok(with_connection(pool, async |conn| {
-        service_accounts::table
-            .find(principal_id)
-            .select(service_accounts::disabled_at)
-            .first::<Option<chrono::NaiveDateTime>>(conn)
-            .await
-            .optional()
-    })
-    .await?
-    .flatten()
-    .is_some())
 }
 
 pub(crate) async fn load_service_account(

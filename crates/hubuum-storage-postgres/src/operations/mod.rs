@@ -18,6 +18,7 @@ mod event_rows;
 pub mod event_subscription;
 pub mod history;
 pub mod identity_credentials;
+pub mod identity_principals;
 pub mod identity_scope;
 pub mod inventory;
 pub mod maintenance;
