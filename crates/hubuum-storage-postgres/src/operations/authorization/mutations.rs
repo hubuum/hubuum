@@ -184,6 +184,22 @@ impl UpdatePermission {
     }
 }
 
+pub(crate) async fn insert_full_collection_grant(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+    group_id: i32,
+) -> Result<(), PostgresStorageError> {
+    diesel::insert_into(crate::schema::permissions::table)
+        .values(NewPermission::new(
+            collection_id,
+            group_id,
+            &AuthorizationPermission::ALL,
+        ))
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
 pub async fn apply_local_collection_grant(
     runtime: &PostgresRuntime,
     mutation: AuthorizationGrantMutation,

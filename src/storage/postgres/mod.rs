@@ -42,20 +42,17 @@ use crate::models::{
     ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
     ResolvedObjectTarget, TokenRetentionSettings,
 };
-use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::class::{
     CreateClassRecord, DeleteClassRecord, DeleteResolvedClassRecord, LoadClassRecord,
     ResolveClassSelectorRecord, UpdateClassRecord, UpdateResolvedClassRecord, load_class_names,
 };
 use crate::storage::postgres::operations::collection::{
-    DeleteCollectionRecord, SaveCollectionWithAssigneeRecord, UpdateCollectionRecord,
-    collection_ancestors_from_backend, collection_children_from_backend,
     effective_group_on_from_backend, effective_principal_on_from_backend,
     group_can_on_from_backend, group_on_from_backend, groups_can_on_from_backend,
     groups_can_on_paginated_with_total_count_from_backend, groups_on_from_backend,
-    groups_on_paginated_with_total_count_from_backend, move_collection_record_from_backend,
-    principal_all_permissions_from_backend, principal_on_from_backend,
-    principal_on_paginated_with_total_count_from_backend, user_can_on_any_from_backend,
+    groups_on_paginated_with_total_count_from_backend, principal_all_permissions_from_backend,
+    principal_on_from_backend, principal_on_paginated_with_total_count_from_backend,
+    user_can_on_any_from_backend,
 };
 use crate::storage::postgres::operations::group::{
     DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord, UpdateGroupRecord,

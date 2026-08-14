@@ -308,6 +308,32 @@ pub(crate) async fn assert_locked_revision_precondition(
     Ok(())
 }
 
+pub(crate) fn require_existing_revision_target<T>(
+    target: Option<T>,
+    owner_key: &str,
+) -> Result<T, PostgresStorageError> {
+    match target {
+        Some(target) => Ok(target),
+        None => {
+            let has_matching_precondition = AMBIENT_REVISION_PRECONDITION
+                .try_with(|precondition| {
+                    precondition
+                        .as_ref()
+                        .is_some_and(|precondition| precondition.owner_key() == owner_key)
+                })
+                .unwrap_or(false);
+            if has_matching_precondition {
+                Err(PostgresStorageError::precondition_failed(
+                    "The resource changed since the supplied validator was issued",
+                    None,
+                ))
+            } else {
+                Err(PostgresStorageError::not_found("Entity not found"))
+            }
+        }
+    }
+}
+
 struct TransactionLocalContext {
     query_budget: Option<StorageQueryBudget>,
     provenance: Option<MutationProvenance>,

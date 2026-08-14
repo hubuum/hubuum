@@ -21,8 +21,7 @@ use crate::storage::postgres::operations::relation_rows::{
 };
 use crate::storage::postgres::operations::resource_rows::{
     class_create_from_storage, class_record_to_storage, class_selector_from_storage,
-    class_update_from_storage, collection_create_from_storage, collection_to_storage,
-    collection_update_from_storage, object_create_from_storage, object_patch_from_storage,
+    class_update_from_storage, object_create_from_storage, object_patch_from_storage,
     object_to_storage, object_update_from_storage, resolved_class_from_storage,
     resolved_class_to_storage, resolved_object_from_storage, resolved_object_to_storage,
 };
@@ -503,12 +502,9 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 #[async_trait]
 impl CollectionStore for PostgresStorage {
     async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
-        CollectionID::new(id)
-            .map_err(map_postgres_error)?
-            .collection_from_backend(&self.pool)
+        hubuum_storage_postgres::operations::collection::get_collection(self.runtime(), id)
             .await
-            .map(collection_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn create_collection(
@@ -516,12 +512,13 @@ impl CollectionStore for PostgresStorage {
         command: StorageCollectionCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        let command = collection_create_from_storage(&command).map_err(map_postgres_error)?;
-        command
-            .save_collection_with_assignee_record(&self.pool, context)
-            .await
-            .map(collection_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::collection::create_collection(
+            self.runtime(),
+            command,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn update_collection(
@@ -530,12 +527,14 @@ impl CollectionStore for PostgresStorage {
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        CollectionID::new(id).map_err(map_postgres_error)?;
-        collection_update_from_storage(&changes)
-            .update_collection_record(&self.pool, id, context)
-            .await
-            .map(collection_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::collection::update_collection(
+            self.runtime(),
+            id,
+            changes,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_collection(
@@ -543,27 +542,25 @@ impl CollectionStore for PostgresStorage {
         id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        CollectionID::new(id)
-            .map_err(map_postgres_error)?
-            .delete_collection_record(&self.pool, context)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::collection::delete_collection(
+            self.runtime(),
+            id,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        CollectionID::new(id).map_err(map_postgres_error)?;
-        collection_children_from_backend(&self.pool, id)
+        hubuum_storage_postgres::operations::collection::collection_children(self.runtime(), id)
             .await
-            .map(|rows| rows.into_iter().map(collection_to_storage).collect())
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        CollectionID::new(id).map_err(map_postgres_error)?;
-        collection_ancestors_from_backend(&self.pool, id)
+        hubuum_storage_postgres::operations::collection::collection_ancestors(self.runtime(), id)
             .await
-            .map(|rows| rows.into_iter().map(collection_to_storage).collect())
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn move_collection(
@@ -572,12 +569,14 @@ impl CollectionStore for PostgresStorage {
         new_parent_id: i32,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        CollectionID::new(id).map_err(map_postgres_error)?;
-        CollectionID::new(new_parent_id).map_err(map_postgres_error)?;
-        move_collection_record_from_backend(&self.pool, id, new_parent_id, context)
-            .await
-            .map(collection_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::collection::move_collection(
+            self.runtime(),
+            id,
+            new_parent_id,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

@@ -1917,6 +1917,48 @@ fn storage_error_translation_has_one_way_dependency_direction() {
 }
 
 #[test]
+fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/collection.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "CollectionStore for PostgresStorage");
+    assert!(
+        implementation.contains("hubuum_storage_postgres::operations::collection"),
+        "the collection trait implementation must delegate into the adapter crate"
+    );
+    for forbidden in [
+        "CollectionID::new",
+        "NewCollection",
+        "save_collection_record",
+        "update_collection_record",
+        "delete_collection_record",
+        "move_collection_record",
+    ] {
+        assert!(
+            !implementation.contains(forbidden),
+            "the collection trait implementation retains application detail {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [

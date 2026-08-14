@@ -6,6 +6,7 @@
 
 pub mod cursor;
 mod error;
+mod failpoints;
 #[doc(hidden)]
 pub mod filters;
 pub mod jsonb;
@@ -21,6 +22,8 @@ mod runtime;
 pub mod schema;
 
 pub use error::PostgresStorageError;
+#[doc(hidden)]
+pub use failpoints::{PostgresFailpoint, check_failpoint, with_failpoint};
 #[cfg(feature = "embedded-migrations")]
 pub use migrations::run_embedded_migrations;
 pub use pool::{

@@ -1,15 +1,14 @@
 use crate::errors::ApiError;
 use crate::models::{
     ClassSelector, Collection, HubuumClass, HubuumClassExpanded, HubuumClassID, HubuumObject,
-    HubuumObjectID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumObject,
-    ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget, ResolvedObjectTarget,
-    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    HubuumObjectID, NewHubuumClass, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector,
+    ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::storage::{
     StorageClass, StorageClassCreate, StorageClassRecord, StorageClassSelector, StorageClassUpdate,
-    StorageCollection, StorageCollectionCreate, StorageCollectionUpdate, StorageObject,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectSelector, StorageObjectUpdate,
-    StorageRecordMetadata, StorageResolvedClass, StorageResolvedObject,
+    StorageCollection, StorageObject, StorageObjectCreate, StorageObjectDataPatch,
+    StorageObjectSelector, StorageObjectUpdate, StorageRecordMetadata, StorageResolvedClass,
+    StorageResolvedObject,
 };
 use crate::traits::SelfAccessors;
 use hubuum_storage_postgres::PostgresRevision;
@@ -28,29 +27,6 @@ pub(in crate::storage::postgres) fn collection_to_storage(
         collection.description,
         collection.parent_collection_id,
     )
-}
-
-pub(in crate::storage::postgres) fn collection_create_from_storage(
-    command: &StorageCollectionCreate,
-) -> Result<NewCollectionWithAssignee, ApiError> {
-    Ok(NewCollectionWithAssignee {
-        name: command.name().to_string(),
-        description: command.description().to_string(),
-        group_id: crate::models::GroupID::new(command.owner_group_id())?,
-        parent_collection_id: command
-            .parent_collection_id()
-            .map(crate::models::CollectionID::new)
-            .transpose()?,
-    })
-}
-
-pub(in crate::storage::postgres) fn collection_update_from_storage(
-    update: &StorageCollectionUpdate,
-) -> UpdateCollection {
-    UpdateCollection {
-        name: update.name().map(str::to_string),
-        description: update.description().map(str::to_string),
-    }
 }
 
 pub(in crate::storage::postgres) fn class_to_storage(class: HubuumClassExpanded) -> StorageClass {
