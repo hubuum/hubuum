@@ -271,18 +271,24 @@ impl EventDeliveryStorage for PostgresStorage {
         &self,
         settings: crate::events::EventDeliverySettings,
     ) -> Result<EventDeliveryBatch, StorageError> {
-        operations::event_delivery::claim_event_delivery_batch_from_storage(&self.pool, settings)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_batch(
+            self.runtime(),
+            settings,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn mark_event_delivery_succeeded(
         &self,
         claim: &EventDeliveryClaim,
     ) -> Result<(), StorageError> {
-        operations::event_delivery::mark_event_delivery_claim_succeeded(&self.pool, claim)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_delivery::mark_event_delivery_succeeded(
+            self.runtime(),
+            claim,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn mark_event_delivery_failed(
@@ -291,11 +297,14 @@ impl EventDeliveryStorage for PostgresStorage {
         settings: crate::events::EventDeliverySettings,
         error: &str,
     ) -> Result<(), StorageError> {
-        operations::event_delivery::mark_event_delivery_claim_failed(
-            &self.pool, claim, settings, error,
+        hubuum_storage_postgres::operations::event_delivery::mark_event_delivery_failed(
+            self.runtime(),
+            claim,
+            settings,
+            error,
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 }
 

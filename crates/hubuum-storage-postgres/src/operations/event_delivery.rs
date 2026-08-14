@@ -1,0 +1,617 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
+use chrono::{NaiveDateTime, Utc};
+use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
+use diesel::sql_types::{Nullable, Timestamp};
+use diesel::{Queryable, QueryableByName};
+use diesel_async::RunQueryDsl;
+use hubuum_domain::{EventDeliverySettings, EventDeliveryStatus};
+use hubuum_events_core::{
+    Action, EntityType, EventEnvelope, Provenance, ProvenanceActor, ProvenancePrincipal,
+};
+use hubuum_storage_core::{
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
+    EventDeliveryWorkItem,
+};
+use serde_json::Value;
+use uuid::Uuid;
+
+use crate::operations::maintenance::maintenance_state_on_connection;
+use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
+
+#[derive(Queryable)]
+struct DeliveryRow {
+    id: i64,
+    event_id: i64,
+    subscription_id: i32,
+    attempts: i32,
+    claim_token: Option<Uuid>,
+}
+
+#[derive(Clone, Queryable)]
+struct DeliveryEventRow {
+    id: i64,
+    event_id: Uuid,
+    occurred_at: NaiveDateTime,
+    entity_type: String,
+    entity_id: Option<i32>,
+    entity_name: Option<String>,
+    collection_id: Option<i32>,
+    action: String,
+    actor_user_id: Option<i32>,
+    actor_kind: String,
+    request_id: Option<Uuid>,
+    correlation_id: Option<String>,
+    summary: String,
+    before: Option<Value>,
+    after: Option<Value>,
+    metadata: Value,
+    schema_version: i32,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+}
+
+impl DeliveryEventRow {
+    fn apply_legacy_task_provenance(&mut self, queued_initiators: &HashMap<i32, Option<i32>>) {
+        if self.entity_type != EntityType::Task.as_str() {
+            return;
+        }
+        let Some(task_id) = self.entity_id else {
+            return;
+        };
+        self.task_id.get_or_insert(task_id);
+        if self.initiator_user_id.is_none() {
+            self.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
+        }
+    }
+
+    fn into_envelope(self, principal_names: &HashMap<i32, String>) -> EventEnvelope {
+        let principal = |principal_id| ProvenancePrincipal {
+            principal_id,
+            name: principal_names.get(&principal_id).cloned(),
+        };
+        let provenance = Provenance {
+            actor: ProvenanceActor {
+                kind: Some(self.actor_kind.clone()),
+                principal: self.actor_user_id.map(principal),
+            },
+            initiator: self.initiator_user_id.map(principal),
+            task_id: self.task_id,
+        };
+        EventEnvelope {
+            id: self.id,
+            event_id: self.event_id,
+            occurred_at: self.occurred_at,
+            entity_type: self.entity_type,
+            entity_id: self.entity_id,
+            entity_name: self.entity_name,
+            collection_id: self.collection_id,
+            action: self.action,
+            actor_user_id: self.actor_user_id,
+            actor_kind: self.actor_kind,
+            provenance,
+            request_id: self.request_id,
+            correlation_id: self.correlation_id,
+            summary: self.summary,
+            before: self.before,
+            after: self.after,
+            metadata: self.metadata,
+            schema_version: self.schema_version,
+        }
+    }
+}
+
+#[derive(Queryable)]
+struct DeliverySubscriptionRow {
+    id: i32,
+    sink_id: i32,
+    name: String,
+    routing: Value,
+}
+
+#[derive(Queryable)]
+struct DeliverySinkRow {
+    id: i32,
+    name: String,
+    kind: String,
+    configuration: Value,
+    secret_ref: Option<String>,
+}
+
+#[derive(QueryableByName)]
+struct ScheduledDeliveryWakeup {
+    #[diesel(sql_type = Nullable<Timestamp>)]
+    wakeup_at: Option<NaiveDateTime>,
+}
+
+/// Atomically claim and fully enrich one bounded batch of due deliveries.
+///
+/// Selection, claim mutation, and all enrichment queries share one
+/// transaction. If persisted event, subscription, sink, or provenance data
+/// cannot be converted into the backend-neutral work item, the claim rolls
+/// back instead of leaving an in-flight row for a worker that never received
+/// it.
+pub async fn claim_event_delivery_batch(
+    runtime: &PostgresRuntime,
+    settings: EventDeliverySettings,
+) -> Result<EventDeliveryBatch, PostgresStorageError> {
+    runtime
+        .with_transaction(
+            async |connection| -> Result<EventDeliveryBatch, PostgresStorageError> {
+                if !maintenance_state_on_connection(connection)
+                    .await?
+                    .is_normal()
+                {
+                    return Ok(EventDeliveryBatch::default());
+                }
+
+                let now = Utc::now().naive_utc();
+                let delivery_ids = select_due_delivery_ids(connection, now, settings).await?;
+                if delivery_ids.is_empty() {
+                    let next_wakeup_in = next_wakeup_on_connection(connection, now).await?;
+                    return Ok(EventDeliveryBatch::new(Vec::new(), next_wakeup_in));
+                }
+
+                let deliveries =
+                    claim_delivery_ids(connection, &delivery_ids, now, settings).await?;
+                let work_items = load_work_items(connection, deliveries).await?;
+                Ok(EventDeliveryBatch::new(work_items, None))
+            },
+        )
+        .await
+}
+
+async fn select_due_delivery_ids(
+    connection: &mut PostgresConnection,
+    now: NaiveDateTime,
+    settings: EventDeliverySettings,
+) -> Result<Vec<i64>, PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        event_deliveries, id, locked_until, next_attempt_at, status,
+    };
+
+    event_deliveries
+        .filter(
+            status
+                .eq(EventDeliveryStatus::Pending.as_str())
+                .or(status
+                    .eq(EventDeliveryStatus::Failed.as_str())
+                    .and(next_attempt_at.le(now)))
+                .or(status
+                    .eq(EventDeliveryStatus::InFlight.as_str())
+                    .and(locked_until.lt(now))),
+        )
+        .order((next_attempt_at.asc(), id.asc()))
+        .for_update()
+        .skip_locked()
+        .limit(settings.query_batch_size())
+        .select(id)
+        .load::<i64>(connection)
+        .await
+        .map_err(PostgresStorageError::from)
+}
+
+async fn claim_delivery_ids(
+    connection: &mut PostgresConnection,
+    delivery_ids: &[i64],
+    now: NaiveDateTime,
+    settings: EventDeliverySettings,
+) -> Result<Vec<DeliveryRow>, PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        attempts, claim_token, event_deliveries, event_id, id, locked_until, status,
+        subscription_id,
+    };
+
+    let lock_deadline = settings.lock_deadline(now).ok_or_else(|| {
+        PostgresStorageError::database(
+            "Event delivery lock timeout exceeds the PostgreSQL timestamp range",
+        )
+    })?;
+    let claim = Uuid::new_v4();
+    diesel::update(event_deliveries.filter(id.eq_any(delivery_ids)))
+        .set((
+            status.eq(EventDeliveryStatus::InFlight.as_str()),
+            locked_until.eq(Some(lock_deadline)),
+            claim_token.eq(Some(claim)),
+        ))
+        .returning((id, event_id, subscription_id, attempts, claim_token))
+        .get_results::<DeliveryRow>(connection)
+        .await
+        .map_err(PostgresStorageError::from)
+}
+
+async fn load_work_items(
+    connection: &mut PostgresConnection,
+    deliveries: Vec<DeliveryRow>,
+) -> Result<Vec<EventDeliveryWorkItem>, PostgresStorageError> {
+    use crate::schema::{event_sinks, event_subscriptions, events};
+
+    let event_ids = deliveries
+        .iter()
+        .map(|delivery| delivery.event_id)
+        .collect::<Vec<_>>();
+    let subscription_ids = deliveries
+        .iter()
+        .map(|delivery| delivery.subscription_id)
+        .collect::<Vec<_>>();
+    let mut loaded_events = events::table
+        .filter(events::id.eq_any(&event_ids))
+        .select((
+            events::id,
+            events::event_id,
+            events::occurred_at,
+            events::entity_type,
+            events::entity_id,
+            events::entity_name,
+            events::collection_id,
+            events::action,
+            events::actor_user_id,
+            events::actor_kind,
+            events::request_id,
+            events::correlation_id,
+            events::summary,
+            events::before,
+            events::after,
+            events::metadata,
+            events::schema_version,
+            events::initiator_user_id,
+            events::task_id,
+        ))
+        .load::<DeliveryEventRow>(connection)
+        .await?
+        .into_iter()
+        .map(|event| (event.id, event))
+        .collect::<HashMap<_, _>>();
+
+    let task_ids = loaded_events
+        .values()
+        .filter(|event| {
+            event.entity_type == EntityType::Task.as_str()
+                && (event.initiator_user_id.is_none() || event.task_id.is_none())
+        })
+        .filter_map(|event| event.entity_id)
+        .collect::<Vec<_>>();
+    let queued_initiators = load_queued_task_initiators(connection, &task_ids).await?;
+    for event in loaded_events.values_mut() {
+        event.apply_legacy_task_provenance(&queued_initiators);
+    }
+
+    let principal_ids = loaded_events
+        .values()
+        .flat_map(|event| [event.actor_user_id, event.initiator_user_id])
+        .flatten()
+        .collect::<Vec<_>>();
+    let principal_names = load_principal_names(connection, principal_ids).await?;
+
+    let loaded_subscriptions = event_subscriptions::table
+        .filter(event_subscriptions::id.eq_any(&subscription_ids))
+        .select((
+            event_subscriptions::id,
+            event_subscriptions::sink_id,
+            event_subscriptions::name,
+            event_subscriptions::routing,
+        ))
+        .load::<DeliverySubscriptionRow>(connection)
+        .await?
+        .into_iter()
+        .map(|subscription| (subscription.id, subscription))
+        .collect::<HashMap<_, _>>();
+    let sink_ids = loaded_subscriptions
+        .values()
+        .map(|subscription| subscription.sink_id)
+        .collect::<Vec<_>>();
+    let loaded_sinks = event_sinks::table
+        .filter(event_sinks::id.eq_any(&sink_ids))
+        .select((
+            event_sinks::id,
+            event_sinks::name,
+            event_sinks::kind,
+            event_sinks::config,
+            event_sinks::secret_ref,
+        ))
+        .load::<DeliverySinkRow>(connection)
+        .await?
+        .into_iter()
+        .map(|sink| (sink.id, sink))
+        .collect::<HashMap<_, _>>();
+
+    deliveries
+        .into_iter()
+        .map(|delivery| {
+            let event = loaded_events
+                .get(&delivery.event_id)
+                .cloned()
+                .ok_or_else(|| PostgresStorageError::not_found("Event for delivery not found"))?;
+            let subscription = loaded_subscriptions
+                .get(&delivery.subscription_id)
+                .ok_or_else(|| {
+                    PostgresStorageError::not_found("Event subscription for delivery not found")
+                })?;
+            let sink = loaded_sinks.get(&subscription.sink_id).ok_or_else(|| {
+                PostgresStorageError::not_found("Event sink for delivery subscription not found")
+            })?;
+            let claim_token = delivery.claim_token.ok_or_else(|| {
+                PostgresStorageError::database(
+                    "Claimed event delivery is missing its PostgreSQL claim token",
+                )
+            })?;
+
+            Ok(EventDeliveryWorkItem::new(
+                EventDeliveryClaim::new(delivery.id, delivery.attempts, claim_token),
+                event.into_envelope(&principal_names),
+                EventDeliverySubscription::new(
+                    subscription.id,
+                    subscription.name.clone(),
+                    subscription.routing.clone(),
+                ),
+                EventDeliverySink::new(
+                    sink.id,
+                    sink.name.clone(),
+                    sink.kind.clone(),
+                    sink.configuration.clone(),
+                    sink.secret_ref.clone(),
+                ),
+            ))
+        })
+        .collect()
+}
+
+async fn load_queued_task_initiators(
+    connection: &mut PostgresConnection,
+    task_ids: &[i32],
+) -> Result<HashMap<i32, Option<i32>>, PostgresStorageError> {
+    use crate::schema::events::dsl as stored;
+
+    if task_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    Ok(stored::events
+        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
+        .filter(stored::action.eq(Action::Queued.as_str()))
+        .filter(stored::entity_id.eq_any(task_ids.iter().copied().map(Some)))
+        .order(stored::id.asc())
+        .select((
+            stored::entity_id,
+            stored::initiator_user_id,
+            stored::actor_user_id,
+        ))
+        .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
+        .await?
+        .into_iter()
+        .filter_map(|(task_id, initiator_user_id, actor_user_id)| {
+            task_id.map(|task_id| (task_id, initiator_user_id.or(actor_user_id)))
+        })
+        .collect())
+}
+
+async fn load_principal_names(
+    connection: &mut PostgresConnection,
+    mut principal_ids: Vec<i32>,
+) -> Result<HashMap<i32, String>, PostgresStorageError> {
+    use crate::schema::principals::dsl::{id, name, principals};
+
+    principal_ids.sort_unstable();
+    principal_ids.dedup();
+    if principal_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    Ok(principals
+        .filter(id.eq_any(principal_ids))
+        .select((id, name))
+        .load::<(i32, String)>(connection)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+async fn next_wakeup_on_connection(
+    connection: &mut PostgresConnection,
+    now: NaiveDateTime,
+) -> Result<Option<Duration>, PostgresStorageError> {
+    let schedule = diesel::sql_query(
+        "WITH scheduled AS ( \
+             (SELECT next_attempt_at AS wakeup_at \
+              FROM event_deliveries \
+              WHERE status = 'failed' \
+                AND next_attempt_at > $1 \
+              ORDER BY next_attempt_at \
+              LIMIT 1) \
+             UNION ALL \
+             (SELECT locked_until AS wakeup_at \
+              FROM event_deliveries \
+              WHERE status = 'in_flight' \
+                AND locked_until > $1 \
+              ORDER BY locked_until \
+              LIMIT 1) \
+         ) \
+         SELECT MIN(scheduled.wakeup_at) AS wakeup_at \
+         FROM scheduled",
+    )
+    .bind::<Timestamp, _>(now)
+    .get_result::<ScheduledDeliveryWakeup>(connection)
+    .await?;
+
+    Ok(schedule.wakeup_at.map(|wakeup_at| {
+        wakeup_at
+            .signed_duration_since(now)
+            .to_std()
+            .unwrap_or_default()
+    }))
+}
+
+/// Mark an in-flight claim as successfully delivered.
+pub async fn mark_event_delivery_succeeded(
+    runtime: &PostgresRuntime,
+    claim: &EventDeliveryClaim,
+) -> Result<(), PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        claim_token, event_deliveries, id, last_error, locked_until, status,
+    };
+
+    runtime
+        .with_connection(async |connection| {
+            diesel::update(
+                event_deliveries
+                    .filter(id.eq(claim.delivery_id()))
+                    .filter(claim_token.eq(claim.token()))
+                    .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
+            )
+            .set((
+                status.eq(EventDeliveryStatus::Succeeded.as_str()),
+                locked_until.eq::<Option<NaiveDateTime>>(None),
+                claim_token.eq::<Option<Uuid>>(None),
+                last_error.eq::<Option<String>>(None),
+            ))
+            .returning(id)
+            .get_result::<i64>(connection)
+            .await
+            .map(|_| ())
+        })
+        .await
+}
+
+/// Record a failed delivery and schedule its next retry or terminal state.
+pub async fn mark_event_delivery_failed(
+    runtime: &PostgresRuntime,
+    claim: &EventDeliveryClaim,
+    settings: EventDeliverySettings,
+    error: &str,
+) -> Result<(), PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        attempts, claim_token, event_deliveries, id, last_error, locked_until, next_attempt_at,
+        status,
+    };
+
+    let next_attempts = claim.attempts() + 1;
+    let next_status = if next_attempts >= settings.max_attempts() {
+        EventDeliveryStatus::Dead
+    } else {
+        EventDeliveryStatus::Failed
+    };
+    let next_attempt = settings
+        .retry_deadline(Utc::now().naive_utc(), next_attempts)
+        .ok_or_else(|| {
+            PostgresStorageError::database(
+                "Event delivery retry backoff exceeds the PostgreSQL timestamp range",
+            )
+        })?;
+    let error = truncate_delivery_error(error);
+
+    runtime
+        .with_connection(async |connection| {
+            diesel::update(
+                event_deliveries
+                    .filter(id.eq(claim.delivery_id()))
+                    .filter(claim_token.eq(claim.token()))
+                    .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
+            )
+            .set((
+                status.eq(next_status.as_str()),
+                attempts.eq(next_attempts),
+                next_attempt_at.eq(next_attempt),
+                last_error.eq(Some(error)),
+                locked_until.eq::<Option<NaiveDateTime>>(None),
+                claim_token.eq::<Option<Uuid>>(None),
+            ))
+            .returning(id)
+            .get_result::<i64>(connection)
+            .await
+            .map(|_| ())
+        })
+        .await
+}
+
+fn truncate_delivery_error(error: &str) -> String {
+    const MAX_ERROR_BYTES: usize = 4096;
+    if error.len() <= MAX_ERROR_BYTES {
+        return error.to_string();
+    }
+
+    let mut end = MAX_ERROR_BYTES;
+    while !error.is_char_boundary(end) {
+        end -= 1;
+    }
+    error[..end].to_string()
+}
+
+/// Claim one known delivery for adapter compatibility tests.
+#[doc(hidden)]
+pub async fn claim_event_delivery_by_id(
+    runtime: &PostgresRuntime,
+    delivery_id: i64,
+    settings: EventDeliverySettings,
+) -> Result<EventDeliveryWorkItem, PostgresStorageError> {
+    use crate::schema::event_deliveries::dsl::{
+        attempts, claim_token, event_deliveries, event_id, id, locked_until, next_attempt_at,
+        status, subscription_id,
+    };
+
+    runtime
+        .with_transaction(
+            async |connection| -> Result<EventDeliveryWorkItem, PostgresStorageError> {
+                let now = Utc::now().naive_utc();
+                let lock_deadline = settings.lock_deadline(now).ok_or_else(|| {
+                    PostgresStorageError::database(
+                        "Event delivery lock timeout exceeds the PostgreSQL timestamp range",
+                    )
+                })?;
+                let token = Uuid::new_v4();
+                let delivery = diesel::update(
+                    event_deliveries.filter(id.eq(delivery_id)).filter(
+                        status
+                            .eq(EventDeliveryStatus::Pending.as_str())
+                            .or(status
+                                .eq(EventDeliveryStatus::Failed.as_str())
+                                .and(next_attempt_at.le(now)))
+                            .or(status
+                                .eq(EventDeliveryStatus::InFlight.as_str())
+                                .and(locked_until.lt(now))),
+                    ),
+                )
+                .set((
+                    status.eq(EventDeliveryStatus::InFlight.as_str()),
+                    locked_until.eq(Some(lock_deadline)),
+                    claim_token.eq(Some(token)),
+                ))
+                .returning((id, event_id, subscription_id, attempts, claim_token))
+                .get_result::<DeliveryRow>(connection)
+                .await?;
+
+                load_work_items(connection, vec![delivery])
+                    .await?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        PostgresStorageError::not_found("Event delivery work item not found")
+                    })
+            },
+        )
+        .await
+}
+
+/// Return the earliest known delivery retry or expired-claim wake-up.
+#[doc(hidden)]
+pub async fn next_event_delivery_wakeup_in(
+    runtime: &PostgresRuntime,
+) -> Result<Option<Duration>, PostgresStorageError> {
+    let now = Utc::now().naive_utc();
+    runtime
+        .with_connection(async |connection| next_wakeup_on_connection(connection, now).await)
+        .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_delivery_error;
+
+    #[test]
+    fn delivery_error_truncation_preserves_utf8_boundaries() {
+        let error = format!("{}é", "x".repeat(4095));
+
+        let truncated = truncate_delivery_error(&error);
+
+        assert_eq!(truncated.len(), 4095);
+        assert!(truncated.is_char_boundary(truncated.len()));
+    }
+}

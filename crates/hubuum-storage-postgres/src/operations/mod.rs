@@ -3,6 +3,7 @@
 pub mod authentication;
 pub mod backup;
 pub mod bootstrap;
+pub mod event_delivery;
 pub mod event_fanout;
 pub mod event_observability;
 pub mod event_retention;

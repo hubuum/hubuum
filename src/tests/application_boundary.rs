@@ -1923,6 +1923,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "authentication",
         "backup",
         "bootstrap",
+        "event_delivery",
         "event_fanout",
         "event_observability",
         "event_retention",
@@ -1948,7 +1949,21 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         }
 
         let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
-        if matches!(
+        if operation == "event_delivery" {
+            let administration = read_source(&old_path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
+            for moved_worker_operation in [
+                "claim_event_delivery_batch",
+                "mark_event_delivery_succeeded",
+                "mark_event_delivery_failed",
+            ] {
+                assert!(
+                    !administration.contains(moved_worker_operation),
+                    "{} retains worker operation {moved_worker_operation}",
+                    old_path.display()
+                );
+            }
+        } else if matches!(
             operation,
             "event_fanout" | "event_retention" | "maintenance"
         ) {

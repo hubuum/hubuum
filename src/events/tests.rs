@@ -34,9 +34,7 @@ use crate::models::{
 };
 use crate::schema::events::dsl::events;
 use crate::storage::postgres::operations::event_delivery::{
-    ClaimedEventDelivery, EventDeliveryRow, claim_event_deliveries, claim_event_delivery_by_id,
-    claimed_event_delivery_work_item, mark_event_delivery_dead, mark_event_delivery_failed,
-    next_event_delivery_wakeup_in_db,
+    EventDeliveryRow, mark_event_delivery_dead,
 };
 use crate::storage::postgres::operations::event_fanout::{
     claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
@@ -60,13 +58,15 @@ use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::storage::storage_handle;
 use crate::storage::{
-    EventArchive, EventDeliverySink, EventDeliverySubscription, EventRetentionStorage,
-    RetainedEvent, StorageError,
+    EventArchive, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
+    EventDeliverySubscription, EventDeliveryWorkItem, EventRetentionStorage, RetainedEvent,
+    StorageError, StorageErrorKind,
 };
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, GroupIdApplicationExt, PermissionController};
+use hubuum_storage_postgres::PostgresRuntime;
 
 static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
 static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
@@ -75,10 +75,38 @@ async fn process_claimed_event_delivery(
     pool: &crate::storage::postgres::PostgresPool,
     settings: EventDeliverySettings,
     resolver: &dyn crate::events::SinkResolver,
-    claimed: ClaimedEventDelivery,
+    work_item: EventDeliveryWorkItem,
 ) -> Result<(), ApiError> {
-    let work_item = claimed_event_delivery_work_item(pool, claimed).await?;
     process_event_delivery_work_item(&storage_handle(pool), settings, resolver, work_item).await
+}
+
+async fn claim_event_delivery_by_id(
+    pool: &crate::storage::postgres::PostgresPool,
+    delivery_id: i64,
+    settings: EventDeliverySettings,
+) -> EventDeliveryWorkItem {
+    hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
+        &PostgresRuntime::new(pool.clone()),
+        delivery_id,
+        settings,
+    )
+    .await
+    .unwrap()
+}
+
+async fn claim_event_delivery_ids(
+    pool: &crate::storage::postgres::PostgresPool,
+    settings: EventDeliverySettings,
+) -> Vec<i64> {
+    let (deliveries, _) = storage_handle(pool)
+        .claim_event_delivery_batch(settings)
+        .await
+        .unwrap()
+        .into_parts();
+    deliveries
+        .into_iter()
+        .map(|delivery| delivery.into_parts().0.delivery_id())
+        .collect()
 }
 
 #[rstest]
@@ -1145,9 +1173,7 @@ async fn event_delivery_worker_marks_successful_delivery_succeeded() {
 
     let delivery = delivery_for_event(&scope, event.id).await;
     let settings = make_delivery_settings(3);
-    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
-        .await
-        .unwrap();
+    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings).await;
     process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
         .await
         .unwrap();
@@ -1174,9 +1200,7 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     let settings = make_delivery_settings(2);
 
     let delivery = delivery_for_event(&scope, event.id).await;
-    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
-        .await
-        .unwrap();
+    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings).await;
     let failure_started_at = chrono::Utc::now().naive_utc();
     process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
         .await
@@ -1186,7 +1210,12 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     assert_eq!(first_failure.attempts, 1);
     assert_eq!(first_failure.last_error.as_deref(), Some("delivery failed"));
     assert!(first_failure.next_attempt_at > failure_started_at);
-    let wakeup = next_event_delivery_wakeup_in_db(&scope.pool).await.unwrap();
+    let wakeup =
+        hubuum_storage_postgres::operations::event_delivery::next_event_delivery_wakeup_in(
+            &PostgresRuntime::new(scope.pool.get_ref().clone()),
+        )
+        .await
+        .unwrap();
     assert!(wakeup.is_none_or(|wait| wait <= std::time::Duration::from_millis(1_000)));
 
     with_connection(&scope.pool, async |conn| {
@@ -1200,9 +1229,7 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     .await
     .unwrap();
 
-    let claimed = claim_event_delivery_by_id(&scope.pool, first_failure.id, settings)
-        .await
-        .unwrap();
+    let claimed = claim_event_delivery_by_id(&scope.pool, first_failure.id, settings).await;
     process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
         .await
         .unwrap();
@@ -1224,28 +1251,18 @@ async fn event_delivery_claims_expired_in_flight_rows_again() {
     fanout_event(&scope.pool, event.id).await.unwrap();
     let settings = make_delivery_settings(3);
 
-    let claimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
-    let delivery_id = claimed
-        .iter()
-        .find(|claimed| claimed.delivery.event_id == event.id)
-        .map(|claimed| claimed.delivery.id)
-        .expect("test delivery should be claimed");
+    let delivery = delivery_for_event(&scope, event.id).await;
+    let claimed = claim_event_delivery_ids(&scope.pool, settings).await;
+    assert!(claimed.contains(&delivery.id));
+    let delivery_id = delivery.id;
 
-    let blocked = claim_event_deliveries(&scope.pool, settings).await.unwrap();
-    assert!(
-        !blocked
-            .iter()
-            .any(|claimed| claimed.delivery.id == delivery_id)
-    );
+    let blocked = claim_event_delivery_ids(&scope.pool, settings).await;
+    assert!(!blocked.contains(&delivery_id));
 
     expire_delivery_claim(&scope, delivery_id).await;
 
-    let reclaimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
-    assert!(
-        reclaimed
-            .iter()
-            .any(|claimed| claimed.delivery.id == delivery_id)
-    );
+    let reclaimed = claim_event_delivery_ids(&scope.pool, settings).await;
+    assert!(reclaimed.contains(&delivery_id));
 }
 
 #[actix_web::test]
@@ -1263,16 +1280,24 @@ async fn event_delivery_failed_mark_respects_claim_token() {
     let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     fanout_event(&scope.pool, event.id).await.unwrap();
     let settings = make_delivery_settings(3);
-    let mut claimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
-    let mut delivery = claimed.remove(0).delivery;
-    delivery.claim_token = Some(Uuid::new_v4());
+    let delivery = delivery_for_event(&scope, event.id).await;
+    let work_item = claim_event_delivery_by_id(&scope.pool, delivery.id, settings).await;
+    let (claim, _, _, _) = work_item.into_parts();
+    let wrong_claim =
+        EventDeliveryClaim::new(claim.delivery_id(), claim.attempts(), Uuid::new_v4());
 
-    let error = mark_event_delivery_failed(&scope.pool, &delivery, settings, "wrong claim").await;
-
-    assert!(matches!(error, Err(ApiError::NotFound(_))));
-    mark_event_delivery_dead(&scope.pool, EventDeliveryID::new(delivery.id).unwrap())
+    let error = storage_handle(&scope.pool)
+        .mark_event_delivery_failed(&wrong_claim, settings, "wrong claim")
         .await
-        .unwrap();
+        .unwrap_err();
+
+    assert_eq!(error.kind(), StorageErrorKind::NotFound);
+    mark_event_delivery_dead(
+        &scope.pool,
+        EventDeliveryID::new(claim.delivery_id()).unwrap(),
+    )
+    .await
+    .unwrap();
 }
 
 #[actix_web::test]
