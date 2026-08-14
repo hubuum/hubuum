@@ -97,9 +97,7 @@ use crate::events::{
 };
 use crate::models::output::EffectiveGroupPermission;
 use crate::models::search::QueryOptions;
-use crate::models::{
-    CollectionID, GroupID, MaintenanceState, PrincipalID, PrincipalSettings, TokenRetentionSettings,
-};
+use crate::models::{CollectionID, GroupID, MaintenanceState, PrincipalID, TokenRetentionSettings};
 use crate::storage::postgres::operations::collection::{
     effective_group_on_from_backend, effective_principal_on_from_backend,
     group_can_on_from_backend, group_on_from_backend, groups_can_on_from_backend,

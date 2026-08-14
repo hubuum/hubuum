@@ -1,23 +1,15 @@
-use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
-use hubuum_events_core::EventContext;
-use serde_json::{Value, json};
-
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, NewEvent};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    NewPrincipal, Principal, PrincipalKind, PrincipalMemberResponse, PrincipalSettings,
-    PrincipalSettingsPatch, PrincipalSettingsResponse, ServiceAccountPointResponse,
+    NewPrincipal, Principal, PrincipalMemberResponse, ServiceAccountPointResponse,
     UserPointResponse,
 };
-use crate::storage::postgres::operations::event_record::emit_event;
+use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::service_account::ServiceAccountRow;
 use crate::storage::postgres::operations::user::UserRow;
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{
-    PostgresConnection, assert_locked_revision_precondition, with_connection, with_transaction,
-};
+use crate::storage::postgres::{PostgresConnection, with_connection};
 use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Debug, Queryable, Selectable, Clone)]
@@ -204,21 +196,6 @@ impl InsertPrincipalRecord for NewPrincipal<'_> {
     }
 }
 
-pub async fn load_principal_by_id(
-    pool: &crate::storage::postgres::PostgresPool,
-    principal_id_value: i32,
-) -> Result<Principal, ApiError> {
-    use crate::schema::principals::dsl::{id, principals as principals_table};
-    with_connection(pool, async |conn| {
-        principals_table
-            .filter(id.eq(principal_id_value))
-            .first::<PrincipalRow>(conn)
-            .await
-            .map(Into::into)
-    })
-    .await
-}
-
 pub(crate) async fn principal_revision_conn(
     conn: &mut PostgresConnection,
     principal_id_value: i32,
@@ -251,166 +228,6 @@ pub(crate) async fn lock_principal_revision_conn(
     )
     .await?;
     Ok(owner_revision)
-}
-
-pub async fn load_principal_settings(
-    pool: &crate::storage::postgres::PostgresPool,
-    principal_id_value: i32,
-) -> Result<PrincipalSettingsResponse, ApiError> {
-    use crate::schema::principals::dsl::{id, principals as principals_table, revision, settings};
-
-    let (value, stored_revision) = with_connection(pool, async |conn| {
-        principals_table
-            .filter(id.eq(principal_id_value))
-            .select((settings, revision))
-            .first::<(serde_json::Value, PostgresRevision)>(conn)
-            .await
-    })
-    .await?;
-    Ok(PrincipalSettingsResponse::new(
-        principal_id_value,
-        stored_revision.into_domain(),
-        stored_principal_settings(principal_id_value, value)?,
-    ))
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum PrincipalSettingsMutation {
-    Replace,
-    Patch,
-    Reset,
-}
-
-pub async fn mutate_principal_settings(
-    pool: &crate::storage::postgres::PostgresPool,
-    principal_id_value: i32,
-    mutation: PrincipalSettingsMutation,
-    input: PrincipalSettings,
-    event_context: &EventContext,
-) -> Result<PrincipalSettingsResponse, ApiError> {
-    let mutation = match mutation {
-        PrincipalSettingsMutation::Replace => PrincipalSettingsWrite::Replace(input),
-        PrincipalSettingsMutation::Patch => {
-            PrincipalSettingsWrite::Patch(PrincipalSettingsPatch::MergePatch(input))
-        }
-        PrincipalSettingsMutation::Reset => PrincipalSettingsWrite::Reset,
-    };
-    write_principal_settings(pool, principal_id_value, mutation, event_context).await
-}
-
-pub(crate) async fn apply_principal_settings_patch(
-    pool: &crate::storage::postgres::PostgresPool,
-    principal_id_value: i32,
-    patch: PrincipalSettingsPatch,
-    event_context: &EventContext,
-) -> Result<PrincipalSettingsResponse, ApiError> {
-    write_principal_settings(
-        pool,
-        principal_id_value,
-        PrincipalSettingsWrite::Patch(patch),
-        event_context,
-    )
-    .await
-}
-
-enum PrincipalSettingsWrite {
-    Replace(PrincipalSettings),
-    Patch(PrincipalSettingsPatch),
-    Reset,
-}
-
-impl PrincipalSettingsWrite {
-    fn apply(self, before: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
-        match self {
-            Self::Replace(settings) => Ok(settings),
-            Self::Patch(patch) => patch.apply(before),
-            Self::Reset => Ok(PrincipalSettings::default()),
-        }
-    }
-}
-
-async fn write_principal_settings(
-    pool: &crate::storage::postgres::PostgresPool,
-    principal_id_value: i32,
-    mutation: PrincipalSettingsWrite,
-    event_context: &EventContext,
-) -> Result<PrincipalSettingsResponse, ApiError> {
-    use crate::schema::principals;
-
-    with_transaction(
-        pool,
-        async |conn| -> Result<PrincipalSettingsResponse, ApiError> {
-            let (kind, name, stored_before, before_revision) = principals::table
-                .filter(principals::id.eq(principal_id_value))
-                .select((
-                    principals::kind,
-                    principals::name,
-                    principals::settings,
-                    principals::revision,
-                ))
-                .for_update()
-                .first::<(String, String, Value, PostgresRevision)>(conn)
-                .await?;
-            assert_locked_revision_precondition(
-                conn,
-                &RevisionOwner::Principal.key(principal_id_value),
-                before_revision,
-            )
-            .await?;
-            let before = stored_principal_settings(principal_id_value, stored_before)?;
-            let after = mutation.apply(&before)?;
-
-            if before == after {
-                return Ok(PrincipalSettingsResponse::new(
-                    principal_id_value,
-                    before_revision.into_domain(),
-                    after,
-                ));
-            }
-
-            let after_revision =
-                diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
-                    .set(principals::settings.eq(after.as_value()))
-                    .returning(principals::revision)
-                    .get_result::<PostgresRevision>(conn)
-                    .await?;
-
-            let entity_type = match PrincipalKind::from_db(&kind)? {
-                PrincipalKind::Human => EntityType::User,
-                PrincipalKind::ServiceAccount => EntityType::ServiceAccount,
-            };
-            let event = NewEvent::new(
-                entity_type,
-                Action::Updated,
-                event_context.actor_kind(),
-                format!("Principal settings for '{name}' updated"),
-            )?
-            .with_context(event_context)
-            .with_entity_id(principal_id_value)
-            .with_entity_name(name)
-            .with_before(json!({ "revision": before_revision, "settings": before }))
-            .with_after(json!({ "revision": after_revision, "settings": after }));
-            emit_event(conn, &event).await?;
-
-            Ok(PrincipalSettingsResponse::new(
-                principal_id_value,
-                after_revision.into_domain(),
-                after,
-            ))
-        },
-    )
-    .await
-}
-
-fn stored_principal_settings(
-    principal_id_value: i32,
-    value: Value,
-) -> Result<PrincipalSettings, ApiError> {
-    PrincipalSettings::new(value).map_err(|_| {
-        ApiError::InternalServerError(format!(
-            "Principal '{principal_id_value}' has invalid settings in the database"
-        ))
-    })
 }
 
 /// Load the user point body and its validator revision in one SQL statement.

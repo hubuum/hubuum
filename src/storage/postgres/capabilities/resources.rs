@@ -1,8 +1,7 @@
 use super::super::*;
 use crate::services::storage_boundary::{
     group_create_from_storage, group_to_storage, group_update_from_storage,
-    principal_group_to_storage, principal_settings_mutation_from_storage,
-    principal_settings_to_storage, principal_to_storage,
+    principal_group_to_storage, principal_to_storage,
 };
 use crate::storage::postgres::operations::authorization::{
     collection_to_storage as authorization_collection_to_storage,
@@ -180,22 +179,21 @@ impl GroupStorage for PostgresStorage {
 #[async_trait]
 impl PrincipalStorage for PostgresStorage {
     async fn load_principal(&self, principal_id: i32) -> Result<StoragePrincipal, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::principal::load_principal_by_id(&self.pool, principal_id)
+        hubuum_storage_postgres::operations::principal::load_principal(self.runtime(), principal_id)
             .await
-            .map(principal_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn load_principal_settings(
         &self,
         principal_id: i32,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        operations::principal::load_principal_settings(&self.pool, principal_id)
-            .await
-            .map(principal_settings_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::principal::load_principal_settings(
+            self.runtime(),
+            principal_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn mutate_principal_settings(
@@ -204,44 +202,14 @@ impl PrincipalStorage for PostgresStorage {
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        PrincipalID::new(principal_id).map_err(map_postgres_error)?;
-        let result = match mutation {
-            StoragePrincipalSettingsMutation::Replace(value) => {
-                operations::principal::mutate_principal_settings(
-                    &self.pool,
-                    principal_id,
-                    operations::principal::PrincipalSettingsMutation::Replace,
-                    PrincipalSettings::new(value).map_err(map_postgres_error)?,
-                    context,
-                )
-                .await
-            }
-            StoragePrincipalSettingsMutation::Reset => {
-                operations::principal::mutate_principal_settings(
-                    &self.pool,
-                    principal_id,
-                    operations::principal::PrincipalSettingsMutation::Reset,
-                    PrincipalSettings::default(),
-                    context,
-                )
-                .await
-            }
-            patch => {
-                let patch = principal_settings_mutation_from_storage(patch)
-                    .map_err(map_postgres_error)?
-                    .expect("merge and JSON Patch mutations contain a patch");
-                operations::principal::apply_principal_settings_patch(
-                    &self.pool,
-                    principal_id,
-                    patch,
-                    context,
-                )
-                .await
-            }
-        };
-        result
-            .map(principal_settings_to_storage)
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::principal::mutate_principal_settings(
+            self.runtime(),
+            principal_id,
+            mutation,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

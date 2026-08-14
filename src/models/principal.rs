@@ -8,8 +8,7 @@ use crate::models::ResourceRevision;
 use crate::models::json_patch::{
     BoundedJsonPatch, MAX_JSON_PATCH_BYTES, MAX_JSON_PATCH_OPERATIONS,
     MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
-    apply_bounded_json_patch, bounded_json_patch_openapi_schema,
-    register_bounded_json_patch_openapi_schemas,
+    bounded_json_patch_openapi_schema, register_bounded_json_patch_openapi_schemas,
 };
 use crate::models::search::{FilterField, SortParam};
 use crate::services::storage_boundary::{
@@ -177,38 +176,6 @@ impl PrincipalSettings {
     pub fn as_value(&self) -> &serde_json::Value {
         &self.0
     }
-
-    /// Apply JSON Merge Patch object semantics to this document.
-    ///
-    /// Object values merge recursively, `null` removes a key, and every other
-    /// value replaces the value currently stored at that key.
-    pub fn merge_patch(mut self, patch: &Self) -> Self {
-        let target = self
-            .0
-            .as_object_mut()
-            .expect("PrincipalSettings always contains an object");
-        let patch = patch
-            .0
-            .as_object()
-            .expect("PrincipalSettings always contains an object");
-        merge_settings_objects(target, patch);
-        self
-    }
-}
-
-impl PrincipalSettingsPatchDocument {
-    fn apply(&self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
-        PrincipalSettings::new(apply_bounded_json_patch(&self.0, settings.as_value())?)
-    }
-}
-
-impl PrincipalSettingsPatch {
-    pub(crate) fn apply(self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
-        match self {
-            Self::MergePatch(patch) => Ok(settings.clone().merge_patch(&patch)),
-            Self::JsonPatch(patch) => patch.apply(settings),
-        }
-    }
 }
 
 impl Default for PrincipalSettings {
@@ -224,36 +191,6 @@ impl<'de> Deserialize<'de> for PrincipalSettings {
     {
         let value = serde_json::Value::deserialize(deserializer)?;
         Self::new(value).map_err(serde::de::Error::custom)
-    }
-}
-
-fn merge_settings_objects(
-    target: &mut serde_json::Map<String, serde_json::Value>,
-    patch: &serde_json::Map<String, serde_json::Value>,
-) {
-    for (key, patch_value) in patch {
-        match patch_value {
-            serde_json::Value::Null => {
-                target.remove(key);
-            }
-            serde_json::Value::Object(patch_object) => {
-                let target_value = target
-                    .entry(key.clone())
-                    .or_insert_with(|| serde_json::json!({}));
-                if !target_value.is_object() {
-                    *target_value = serde_json::json!({});
-                }
-                merge_settings_objects(
-                    target_value
-                        .as_object_mut()
-                        .expect("replacement settings value is an object"),
-                    patch_object,
-                );
-            }
-            _ => {
-                target.insert(key.clone(), patch_value.clone());
-            }
-        }
     }
 }
 

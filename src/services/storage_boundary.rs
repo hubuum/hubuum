@@ -7,10 +7,10 @@ use crate::models::{
     ObjectRelationCreateSelectorKind, ObjectRelationEndpoint, ObjectRelationLimit,
     ObjectRelationSelector, ObjectRelationSelectorKind, ObjectSelector, ObjectSelectorKind,
     PreparedClassRelation, PreparedObjectRelation, Principal, PrincipalGroup, PrincipalSettings,
-    PrincipalSettingsPatch, PrincipalSettingsPatchDocument, PrincipalSettingsResponse,
-    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
-    ResolvedObjectTarget, ResourceRevision, TokenResourceScope, TokenScope, UpdateCollection,
-    UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
+    PrincipalSettingsPatch, PrincipalSettingsResponse, ResolvedClassRelationTarget,
+    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision,
+    TokenResourceScope, TokenScope, UpdateCollection, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 use crate::permissions::permission_to_storage;
 use crate::storage::{
@@ -217,16 +217,6 @@ pub(crate) fn principal_settings_from_storage(
     ))
 }
 
-pub(crate) fn principal_settings_to_storage(
-    row: PrincipalSettingsResponse,
-) -> StoragePrincipalSettings {
-    StoragePrincipalSettings::new(
-        row.principal_id(),
-        row.revision.get(),
-        row.settings.as_value().clone(),
-    )
-}
-
 pub(crate) fn principal_settings_mutation_to_storage(
     mutation: PrincipalSettingsPatch,
 ) -> Result<StoragePrincipalSettingsMutation, ApiError> {
@@ -237,24 +227,6 @@ pub(crate) fn principal_settings_mutation_to_storage(
         PrincipalSettingsPatch::JsonPatch(document) => Ok(
             StoragePrincipalSettingsMutation::JsonPatch(serde_json::to_value(document)?),
         ),
-    }
-}
-
-pub(crate) fn principal_settings_mutation_from_storage(
-    mutation: StoragePrincipalSettingsMutation,
-) -> Result<Option<PrincipalSettingsPatch>, ApiError> {
-    match mutation {
-        StoragePrincipalSettingsMutation::Replace(_) | StoragePrincipalSettingsMutation::Reset => {
-            Ok(None)
-        }
-        StoragePrincipalSettingsMutation::MergePatch(value) => Ok(Some(
-            PrincipalSettingsPatch::MergePatch(PrincipalSettings::new(value)?),
-        )),
-        StoragePrincipalSettingsMutation::JsonPatch(value) => {
-            Ok(Some(PrincipalSettingsPatch::JsonPatch(
-                serde_json::from_value::<PrincipalSettingsPatchDocument>(value)?,
-            )))
-        }
     }
 }
 

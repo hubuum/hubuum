@@ -2217,6 +2217,61 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn principal_resources_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/principal.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(&capability, "impl", "PrincipalStorage for PostgresStorage");
+    for method in [
+        "load_principal",
+        "load_principal_settings",
+        "mutate_principal_settings",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::principal"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/principal.rs");
+    let legacy = read_source(&legacy_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
+    for removed in [
+        "fn load_principal_by_id",
+        "fn load_principal_settings",
+        "fn mutate_principal_settings",
+        "fn apply_principal_settings_patch",
+    ] {
+        assert!(
+            !legacy.contains(removed),
+            "the application-owned PostgreSQL facade still owns {removed}"
+        );
+    }
+}
+
+#[test]
 fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     let root = repository_root();
     for operation in [
