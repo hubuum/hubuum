@@ -6,10 +6,16 @@
 
 mod error;
 pub mod jsonb;
+#[cfg(feature = "embedded-migrations")]
+mod migrations;
 mod pool;
 mod query_capture;
+#[doc(hidden)]
+pub mod schema;
 
 pub use error::PostgresStorageError;
+#[cfg(feature = "embedded-migrations")]
+pub use migrations::run_embedded_migrations;
 pub use pool::{
     PostgresConnection, PostgresEndpoint, PostgresPool, PostgresPoolBuildError,
     PostgresPoolSettings, PostgresPoolSettingsBuilder, PostgresPooledConnection,

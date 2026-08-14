@@ -35,7 +35,8 @@ pub mod observability;
 pub mod pagination;
 pub mod permissions;
 pub mod restores;
-pub mod schema;
+#[doc(hidden)]
+pub use hubuum_storage_postgres::schema;
 pub mod services;
 #[doc(hidden)]
 pub mod storage;

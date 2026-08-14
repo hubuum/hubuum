@@ -519,7 +519,7 @@ Writes performed by background tasks (e.g., imports, async jobs in `src/tasks`) 
 
 ## References
 
-- **Schema**: `migrations/2023-12-27-011440_initial/up.sql`
+- **Schema**: `crates/hubuum-storage-postgres/migrations/2023-12-27-011440_initial/up.sql`
 - **Database actor plumbing**: `src/storage/postgres/runtime.rs`
 - **Request-scoped actor context**: `src/middlewares/actor_context.rs`
 - **Anonymization logic**: `src/utilities/iam.rs`

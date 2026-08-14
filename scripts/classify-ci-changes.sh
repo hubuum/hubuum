@@ -125,6 +125,13 @@ for path in "$@"; do
       code=true
       benchmarks=true
       ;;
+    crates/hubuum-storage-postgres/migrations/*)
+      code=true
+      container=true
+      artifacts=true
+      postgres_benchmark=true
+      runtime_benchmark=true
+      ;;
     crates/*)
       code=true
       container=true
@@ -145,13 +152,6 @@ for path in "$@"; do
     benches/*)
       code=true
       benchmarks=true
-      ;;
-    migrations/*)
-      code=true
-      container=true
-      artifacts=true
-      postgres_benchmark=true
-      runtime_benchmark=true
       ;;
     Cargo.toml | Cargo.lock)
       code=true

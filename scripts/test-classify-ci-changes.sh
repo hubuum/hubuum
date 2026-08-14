@@ -197,6 +197,15 @@ assert_flag "$treetop_docs_output" code false
 assert_flag "$treetop_docs_output" markdown true
 assert_flag "$treetop_docs_output" treetop_conformance true
 
+migration_output="$(bash "$classifier" \
+  crates/hubuum-storage-postgres/migrations/2026-08-03-000001_resource_revisions/up.sql)"
+assert_flag "$migration_output" code true
+assert_flag "$migration_output" container true
+assert_flag "$migration_output" artifacts true
+assert_flag "$migration_output" benchmarks false
+assert_flag "$migration_output" postgres_benchmark true
+assert_flag "$migration_output" runtime_benchmark true
+
 benchmark_output="$(bash "$classifier" .github/workflows/benchmarks.yml)"
 assert_flag "$benchmark_output" benchmarks true
 assert_flag "$benchmark_output" postgres_benchmark true

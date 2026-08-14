@@ -39,7 +39,7 @@ Relevant code:
 
 - [src/models/task.rs](../src/models/task.rs)
 - [src/storage/postgres/operations/task.rs](../src/storage/postgres/operations/task.rs)
-- [migrations/2023-12-27-011440_initial/up.sql](../migrations/2023-12-27-011440_initial/up.sql)
+- [PostgreSQL initial migration](../crates/hubuum-storage-postgres/migrations/2023-12-27-011440_initial/up.sql)
 
 ### `tasks`
 

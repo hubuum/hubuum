@@ -830,19 +830,19 @@ mod tests {
         let migrations = [
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/migrations/2026-07-25-000001_token_explicit_expiry_retention_index/up.sql"
+                "/crates/hubuum-storage-postgres/migrations/2026-07-25-000001_token_explicit_expiry_retention_index/up.sql"
             )),
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/migrations/2026-07-25-000002_token_implicit_expiry_retention_index/up.sql"
+                "/crates/hubuum-storage-postgres/migrations/2026-07-25-000002_token_implicit_expiry_retention_index/up.sql"
             )),
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/migrations/2026-07-25-000003_task_submitted_token_retention_index/up.sql"
+                "/crates/hubuum-storage-postgres/migrations/2026-07-25-000003_task_submitted_token_retention_index/up.sql"
             )),
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/migrations/2026-08-04-000001_token_revoked_retention_index/up.sql"
+                "/crates/hubuum-storage-postgres/migrations/2026-08-04-000001_token_revoked_retention_index/up.sql"
             )),
         ];
 

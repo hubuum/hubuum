@@ -5,8 +5,6 @@ mod error;
 mod export_templates;
 mod failpoints;
 mod imports;
-#[cfg(feature = "embedded-migrations")]
-mod migrations;
 mod notifications;
 #[cfg(test)]
 pub(crate) use imports::{
@@ -143,7 +141,7 @@ pub(crate) struct PostgresStorage {
 }
 
 #[cfg(feature = "embedded-migrations")]
-pub(in crate::storage) use migrations::run_embedded_migrations;
+pub(in crate::storage) use hubuum_storage_postgres::run_embedded_migrations;
 
 impl PostgresStorage {
     pub(crate) fn new(pool: PostgresPool) -> Self {

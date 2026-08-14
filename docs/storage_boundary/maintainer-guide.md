@@ -41,7 +41,7 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Concern | Primary location |
 | --- | --- |
 | Extracted traits, DTOs, errors, descriptors | `crates/hubuum-storage-core/src/*` |
-| Extracted PostgreSQL pool, TLS, JSONB, query capture | `crates/hubuum-storage-postgres/src/*` |
+| Extracted PostgreSQL pool, TLS, schema, migrations, JSONB, query capture | `crates/hubuum-storage-postgres/*` |
 | Complete aggregate | `crates/hubuum-storage-core/src/backend.rs` |
 | Application-owned backend opt-in | `src/storage/contract.rs` |
 | Opaque context, dispatch, common observation | `src/storage/context/*` |
@@ -239,7 +239,8 @@ The current workspace extraction is intentionally incremental:
 - `hubuum-domain` owns extracted backend-independent domain values.
 - `hubuum-storage-core` owns extracted contract traits and DTOs, including
   backend-neutral metrics snapshots and pool diagnostics.
-- `hubuum-storage-postgres` owns pool construction and selected native helpers.
+- `hubuum-storage-postgres` owns pool construction, schema, migrations, and
+  selected native helpers.
 - The root crate owns composition and still contains traits and PostgreSQL
   queries that depend on root domain types.
 
@@ -256,7 +257,6 @@ A safe continuation is:
    `hubuum-storage-postgres`.
 4. Extract the reusable test harness after it depends only on public contract
    values and a backend fixture interface.
-5. Move schema and embedded migrations with the adapter that owns the queries.
 
 When workspace membership or manifests change, update the Docker manifest-copy
 stage and run the container parity and production build required by

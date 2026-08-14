@@ -164,7 +164,8 @@ hubuum application
   backend identity. It has no Actix, Diesel, global
   configuration, or `ApiError` dependency.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS setup,
-  endpoint diagnostics, JSONB validation, and query instrumentation.
+  endpoint diagnostics, generated schema, migrations, JSONB validation, and
+  query instrumentation.
 - The root crate still owns application services, composition, several traits
   whose domain values have not yet been extracted, and most PostgreSQL query
   implementations.

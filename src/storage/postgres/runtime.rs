@@ -779,7 +779,8 @@ mod tests {
 
     #[test]
     fn required_database_migration_matches_latest_migration_directory() {
-        let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/hubuum-storage-postgres/migrations");
         let latest = std::fs::read_dir(migrations)
             .expect("migration directory")
             .filter_map(Result::ok)
@@ -795,8 +796,9 @@ mod tests {
 
     #[test]
     fn resource_scope_rollback_revokes_tokens_before_dropping_scope_tables() {
-        let rollback =
-            include_str!("../../../migrations/2026-07-22-000001_token_resource_scopes/down.sql");
+        let rollback = include_str!(
+            "../../../crates/hubuum-storage-postgres/migrations/2026-07-22-000001_token_resource_scopes/down.sql"
+        );
         let revoke = rollback
             .find("WHERE resource_scoped")
             .expect("rollback revokes resource-scoped tokens");
@@ -809,18 +811,21 @@ mod tests {
 
     #[test]
     fn resource_revision_rollback_drops_the_persistent_computed_field_index() {
-        let rollback =
-            include_str!("../../../migrations/2026-08-03-000001_resource_revisions/down.sql");
+        let rollback = include_str!(
+            "../../../crates/hubuum-storage-postgres/migrations/2026-08-03-000001_resource_revisions/down.sql"
+        );
 
         assert!(rollback.contains("DROP INDEX IF EXISTS computed_field_class_revision_id_idx;"));
     }
 
     #[test]
     fn resource_revision_migration_has_explicit_phase_transactions() {
-        let migration =
-            include_str!("../../../migrations/2026-08-03-000001_resource_revisions/up.sql");
-        let metadata =
-            include_str!("../../../migrations/2026-08-03-000001_resource_revisions/metadata.toml");
+        let migration = include_str!(
+            "../../../crates/hubuum-storage-postgres/migrations/2026-08-03-000001_resource_revisions/up.sql"
+        );
+        let metadata = include_str!(
+            "../../../crates/hubuum-storage-postgres/migrations/2026-08-03-000001_resource_revisions/metadata.toml"
+        );
         let transaction_count = migration
             .lines()
             .filter(|line| line.trim() == "BEGIN;")

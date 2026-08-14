@@ -60,7 +60,9 @@ mod tests {
             Some("etag".to_string()),
         ));
 
-        assert_eq!(error.kind(), StorageErrorKind::PreconditionFailed);
-        assert_eq!(error.current_etag(), Some("etag"));
+        let (kind, message, current_etag) = error.into_parts();
+        assert_eq!(kind, StorageErrorKind::PreconditionFailed);
+        assert_eq!(message, "stale resource");
+        assert_eq!(current_etag.as_deref(), Some("etag"));
     }
 }

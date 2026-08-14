@@ -8,7 +8,7 @@ DB_PASSWORD="${HUBUUM_TEST_DB_PASSWORD:-}"  # No default for password
 DB_HOST="${HUBUUM_TEST_DB_HOST:-localhost}" # Default to 'localhost' if not set
 DB_PORT="${HUBUUM_TEST_DB_PORT:-5432}"      # Default to '5432' if not set
 TEST_DB_PREFIX="hubuum_test_db_"
-MIGRATIONS_DIR="./migrations"               # Your migrations directory
+MIGRATIONS_DIR="./crates/hubuum-storage-postgres/migrations" # Adapter migrations
 CA_CERT="aiven.pem"
 
 # Check if HUBUUM_TEST_DB_PASSWORD is set
