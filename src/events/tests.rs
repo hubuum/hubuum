@@ -59,7 +59,10 @@ use crate::storage::postgres::operations::remote_target::{
 use crate::storage::postgres::operations::token::PrincipalTokenRow;
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::storage::storage_handle;
-use crate::storage::{EventDeliverySink, EventDeliverySubscription};
+use crate::storage::{
+    EventArchive, EventDeliverySink, EventDeliverySubscription, EventRetentionStorage,
+    RetainedEvent, StorageError,
+};
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
 };
@@ -818,6 +821,10 @@ async fn event_retention_skips_a_batch_while_another_replica_holds_the_coordinat
     .await
     .unwrap();
     assert_eq!(remaining, 1);
+
+    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+        .await
+        .expect("coordinator-lock fixture should be removed after the assertion");
 }
 
 #[actix_web::test]
@@ -846,6 +853,102 @@ async fn event_retention_purge_deletes_old_events_through_guarded_path() {
     .await
     .unwrap();
     assert_eq!(remaining, 0);
+}
+
+#[actix_web::test]
+async fn event_retention_archive_failure_rolls_back_the_purge() {
+    struct FailingArchive;
+
+    impl EventArchive for FailingArchive {
+        fn archive(&self, _events: &[RetainedEvent]) -> Result<(), StorageError> {
+            Err(StorageError::internal("archive rejected the batch"))
+        }
+    }
+
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
+    let scope = test_scope();
+    let old_event = insert_collection_created_event_at(
+        &scope,
+        1,
+        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
+    )
+    .await;
+    mark_event_dispatched(&scope, old_event.id).await;
+
+    let error = storage_handle(&scope.pool)
+        .process_event_retention_batch(make_retention_settings(), &FailingArchive)
+        .await
+        .expect_err("archive failure must reject the retention transaction");
+
+    assert_eq!(error.kind(), crate::storage::StorageErrorKind::Internal);
+    let remaining = with_connection(&scope.pool, async |connection| {
+        events
+            .filter(crate::schema::events::dsl::id.eq(old_event.id))
+            .count()
+            .get_result::<i64>(connection)
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(remaining, 1);
+
+    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+        .await
+        .expect("rollback fixture should be removed after the assertion");
+}
+
+#[actix_web::test]
+async fn event_retention_archives_the_complete_postgres_event_record() {
+    #[derive(Default)]
+    struct CapturingArchive(std::sync::Mutex<Vec<String>>);
+
+    impl EventArchive for CapturingArchive {
+        fn archive(&self, retained: &[RetainedEvent]) -> Result<(), StorageError> {
+            self.0
+                .lock()
+                .expect("capture mutex should not be poisoned")
+                .extend(retained.iter().map(|event| event.json().to_string()));
+            Ok(())
+        }
+    }
+
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
+    let scope = test_scope();
+    let old_event = insert_collection_created_event_at(
+        &scope,
+        1,
+        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
+    )
+    .await;
+    mark_event_dispatched(&scope, old_event.id).await;
+    let archive = CapturingArchive::default();
+
+    let summary = storage_handle(&scope.pool)
+        .process_event_retention_batch(make_retention_settings(), &archive)
+        .await
+        .expect("retention should archive and purge the eligible event");
+
+    assert!(summary.purged_events() >= 1);
+    let captured = archive
+        .0
+        .lock()
+        .expect("capture mutex should not be poisoned");
+    let records = captured
+        .iter()
+        .map(|json| {
+            serde_json::from_str::<serde_json::Value>(json)
+                .expect("archive should contain valid event JSON")
+        })
+        .collect::<Vec<_>>();
+    let record = records
+        .iter()
+        .find(|record| record["id"] == old_event.id)
+        .expect("archive should contain the test event");
+    assert_eq!(record["id"], old_event.id);
+    assert_eq!(record["entity_type"], EntityType::Collection.as_str());
+    assert!(record.get("fanout_claim_token").is_some());
+    assert!(record.get("before_revision").is_some());
+    assert!(record.get("after_revision").is_some());
 }
 
 #[actix_web::test]

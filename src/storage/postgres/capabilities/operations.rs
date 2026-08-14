@@ -321,9 +321,13 @@ impl EventRetentionStorage for PostgresStorage {
         settings: EventRetentionSettings,
         archive: &dyn EventArchive,
     ) -> Result<EventRetentionSummary, StorageError> {
-        operations::event_retention::process_event_retention_batch(&self.pool, settings, archive)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_retention::process_event_retention_batch(
+            self.runtime(),
+            settings,
+            archive,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

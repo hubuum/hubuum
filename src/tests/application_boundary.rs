@@ -1925,6 +1925,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "bootstrap",
         "event_fanout",
         "event_observability",
+        "event_retention",
         "identity_credentials",
         "identity_scope",
         "inventory",
@@ -1947,7 +1948,10 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         }
 
         let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
-        if matches!(operation, "event_fanout" | "maintenance") {
+        if matches!(
+            operation,
+            "event_fanout" | "event_retention" | "maintenance"
+        ) {
             let shim = read_source(&old_path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
             assert!(
