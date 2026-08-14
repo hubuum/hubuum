@@ -9,6 +9,7 @@ use std::num::ParseIntError;
 use tracing::error;
 
 use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevisionError};
+use hubuum_events_core::EventCatalogError;
 
 use crate::models::TokenPolicyError;
 use crate::observability::metrics;
@@ -194,6 +195,17 @@ impl From<TokenPolicyError> for ApiError {
 impl From<EventPolicyError> for ApiError {
     fn from(error: EventPolicyError) -> Self {
         Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<EventCatalogError> for ApiError {
+    fn from(error: EventCatalogError) -> Self {
+        match error {
+            EventCatalogError::InvalidActionForType { .. } => {
+                Self::ValidationError(error.to_string())
+            }
+            _ => Self::BadRequest(error.to_string()),
+        }
     }
 }
 

@@ -229,7 +229,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             .await
             .optional()?;
         let historical_task_event = events::table
-            .filter(events::event_id.eq(historical_task_event_id))
+            .filter(events::event_id.eq(historical_task_event_id.as_uuid()))
             .select((events::initiator_user_id, events::task_id))
             .first::<(Option<i32>, Option<i32>)>(conn)
             .await

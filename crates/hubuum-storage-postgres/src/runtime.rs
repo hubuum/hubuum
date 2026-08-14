@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use diesel::QueryableByName;
+use diesel::sql_types::{BigInt, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::MutationProvenance;
 use hubuum_storage_core::{
@@ -292,6 +293,19 @@ where
     AMBIENT_REVISION_PRECONDITION
         .scope(precondition, future)
         .await
+}
+
+pub(crate) async fn assert_locked_revision_precondition(
+    connection: &mut PostgresConnection,
+    owner_key: &str,
+    revision: crate::PostgresRevision,
+) -> Result<(), PostgresStorageError> {
+    diesel::sql_query("SELECT hubuum_assert_revision_precondition($1, $2)")
+        .bind::<Text, _>(owner_key)
+        .bind::<BigInt, _>(revision.get())
+        .execute(connection)
+        .await?;
+    Ok(())
 }
 
 struct TransactionLocalContext {

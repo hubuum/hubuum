@@ -186,6 +186,76 @@ macro_rules! postgres_datetime_filter {
 }
 
 #[macro_export]
+macro_rules! postgres_integer_filter {
+    ($query:ident, $param:expr, $field:expr) => {{
+        use diesel::dsl::not;
+        use hubuum_query::{DataType, Operator};
+
+        let operator = $param.operator.clone();
+        let (operation, negated) = operator.op_and_neg();
+        if operation == Operator::IsNull {
+            $crate::postgres_is_null_filter!($query, $param, operator, $field);
+        } else {
+            if !operator.is_applicable_to(DataType::NumericOrDate) {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator '{operator:?}' is not applicable to field '{}'",
+                    $param.field
+                )));
+            }
+            let values = hubuum_query::parse_integer_list(&$param.value)
+                .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+            let Some(minimum) = values.iter().min().copied() else {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Searching on field '{}' requires a value",
+                    $param.field
+                )));
+            };
+            let maximum = values.iter().max().copied().unwrap_or(minimum);
+            if operation == Operator::Between && values.len() != 2 {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{}'",
+                    $param.field
+                )));
+            }
+            if matches!(operation, Operator::Equals | Operator::In) && values.len() > 50 {
+                return Err($crate::PostgresStorageError::bad_request(format!(
+                    "Operator '{operation}' is limited to 50 values, got {} (use between?)",
+                    values.len()
+                )));
+            }
+            match (operation.clone(), negated) {
+                (Operator::Equals | Operator::In, false) => {
+                    $query = $query.filter($field.eq_any(values))
+                }
+                (Operator::Equals | Operator::In, true) => {
+                    $query = $query.filter(not($field.eq_any(values)))
+                }
+                (Operator::Gt, false) => $query = $query.filter($field.gt(maximum)),
+                (Operator::Gt, true) => $query = $query.filter($field.le(maximum)),
+                (Operator::Gte, false) => $query = $query.filter($field.ge(maximum)),
+                (Operator::Gte, true) => $query = $query.filter($field.lt(maximum)),
+                (Operator::Lt, false) => $query = $query.filter($field.lt(minimum)),
+                (Operator::Lt, true) => $query = $query.filter($field.ge(minimum)),
+                (Operator::Lte, false) => $query = $query.filter($field.le(minimum)),
+                (Operator::Lte, true) => $query = $query.filter($field.gt(minimum)),
+                (Operator::Between, false) => {
+                    $query = $query.filter($field.between(values[0], values[1]))
+                }
+                (Operator::Between, true) => {
+                    $query = $query.filter(not($field.between(values[0], values[1])))
+                }
+                _ => {
+                    return Err($crate::PostgresStorageError::bad_request(format!(
+                        "Operator '{operation}' not implemented for field '{}' (type: numeric)",
+                        $param.field
+                    )));
+                }
+            }
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! postgres_revision_filter {
     ($query:ident, $param:expr, $field:expr) => {{
         use diesel::dsl::not;

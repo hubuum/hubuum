@@ -131,57 +131,77 @@ impl AuditEventStorage for PostgresStorage {
 #[async_trait]
 impl EventSubscriptionStorage for PostgresStorage {
     async fn enabled_event_sink_count(&self) -> Result<i64, StorageError> {
-        operations::event_administration::enabled_event_sink_count(&self.pool)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::enabled_event_sink_count(
+            self.runtime(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_event_sinks(
         &self,
         query: StorageEventSinkListQuery,
     ) -> Result<StorageEventPage<StorageEventSink>, StorageError> {
-        operations::event_administration::list_event_sinks(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::list_event_sinks(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_event_sink(&self, sink_id: i32) -> Result<StorageEventSink, StorageError> {
-        operations::event_administration::load_event_sink(&self.pool, sink_id)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::load_event_sink(
+            self.runtime(),
+            sink_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn create_event_sink(
         &self,
         request: StorageEventSinkCreate,
     ) -> Result<StorageEventSink, StorageError> {
-        operations::event_administration::create_event_sink(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::create_event_sink(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn update_event_sink(
         &self,
         request: StorageEventSinkUpdate,
     ) -> Result<StorageEventSink, StorageError> {
-        operations::event_administration::update_event_sink(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::update_event_sink(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_event_sink(&self, request: StorageEventSinkDelete) -> Result<(), StorageError> {
-        operations::event_administration::delete_event_sink(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::delete_event_sink(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn list_event_subscriptions(
         &self,
         query: StorageEventSubscriptionListQuery,
     ) -> Result<StorageEventPage<StorageEventSubscription>, StorageError> {
-        operations::event_administration::list_event_subscriptions(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::list_event_subscriptions(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_event_subscription(
@@ -189,40 +209,49 @@ impl EventSubscriptionStorage for PostgresStorage {
         collection_id: i32,
         subscription_id: i32,
     ) -> Result<StorageEventSubscription, StorageError> {
-        operations::event_administration::load_event_subscription(
-            &self.pool,
+        hubuum_storage_postgres::operations::event_subscription::load_event_subscription(
+            self.runtime(),
             collection_id,
             subscription_id,
         )
         .await
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn create_event_subscription(
         &self,
         request: StorageEventSubscriptionCreate,
     ) -> Result<StorageEventSubscription, StorageError> {
-        operations::event_administration::create_event_subscription(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::create_event_subscription(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn update_event_subscription(
         &self,
         request: StorageEventSubscriptionUpdate,
     ) -> Result<StorageEventSubscription, StorageError> {
-        operations::event_administration::update_event_subscription(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::update_event_subscription(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_event_subscription(
         &self,
         request: StorageEventSubscriptionDelete,
     ) -> Result<(), StorageError> {
-        operations::event_administration::delete_event_subscription(&self.pool, request)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::event_subscription::delete_event_subscription(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

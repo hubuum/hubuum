@@ -1927,7 +1927,9 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "event_delivery",
         "event_fanout",
         "event_observability",
+        "event_record",
         "event_retention",
+        "event_subscription",
         "identity_credentials",
         "identity_scope",
         "inventory",
@@ -1968,6 +1970,21 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                     old_path.display()
                 );
             }
+        } else if operation == "event_record" {
+            let shim = read_source(&old_path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
+            assert!(
+                shim.contains("hubuum_storage_postgres::operations::event_record"),
+                "the temporary event-record shim must delegate appends into the adapter crate"
+            );
+            for removed_append_detail in ["struct NewEventRow", "insert_into(crate::schema::events"]
+            {
+                assert!(
+                    !shim.contains(removed_append_detail),
+                    "{} retains append detail {removed_append_detail}",
+                    old_path.display()
+                );
+            }
         } else if matches!(
             operation,
             "event_fanout" | "event_retention" | "maintenance"
@@ -2003,14 +2020,11 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         );
     }
 
-    let event_administration = root.join("src/storage/postgres/operations/event_administration.rs");
-    let source = read_source(&event_administration).unwrap_or_else(|error| {
-        panic!("could not read {}: {error}", event_administration.display())
-    });
     assert!(
-        !source.contains("pub(crate) async fn list_audit_events("),
-        "{} retains the PostgreSQL audit read implementation",
-        event_administration.display()
+        !root
+            .join("src/storage/postgres/operations/event_administration.rs")
+            .exists(),
+        "the application crate must not retain event-administration queries"
     );
 }
 

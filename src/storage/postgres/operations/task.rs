@@ -1288,9 +1288,7 @@ async fn emit_task_lifecycle_event(
         )));
     }
     let lifecycle_event = task_lifecycle_event(task, event, provenance)?;
-    emit_event(conn, &lifecycle_event)
-        .await
-        .map_err(ApiError::from)
+    emit_event(conn, &lifecycle_event).await
 }
 
 impl NewTaskEventRecord {
@@ -2107,7 +2105,7 @@ mod tests {
         with_transaction(&context.pool, async |conn| {
             emit_event(conn, &queued).await?;
             emit_event(conn, &running).await?;
-            Ok::<_, diesel::result::Error>(())
+            Ok::<_, ApiError>(())
         })
         .await
         .unwrap();

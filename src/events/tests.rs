@@ -42,9 +42,6 @@ use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::event_retention::{
     purge_event_retention_without_archive, try_acquire_event_retention_lock,
 };
-use crate::storage::postgres::operations::event_subscription::{
-    NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
-};
 use crate::storage::postgres::operations::events::{
     EventListFilters, list_events_with_total_count,
 };
@@ -58,7 +55,8 @@ use crate::storage::storage_handle;
 use crate::storage::{
     EventArchive, EventDeliveryAdministrationStorage, EventDeliveryClaim, EventDeliverySink,
     EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem, EventRetentionStorage,
-    RetainedEvent, StorageError, StorageErrorKind,
+    RetainedEvent, StorageError, StorageErrorKind, StorageEventSinkCreate,
+    StorageEventSubscriptionCreate,
 };
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
@@ -184,7 +182,7 @@ async fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
     .with_request_id(Uuid::new_v4())
     .with_correlation_id("client-provided-correlation-id")
     .with_metadata(serde_json::json!({"k": "v"}));
-    let event_uuid = new_event.event_id();
+    let event_uuid = new_event.event_id().as_uuid();
 
     let result: Result<Event, ApiError> = with_transaction(&pool, async |conn| {
         let event = emit_event(conn, &new_event).await?;
@@ -230,10 +228,10 @@ fn new_event_rejects_invalid_action_for_type() {
         "bad pair",
     )
     .unwrap_err();
-    assert!(
-        matches!(err, ApiError::ValidationError(ref m) if m.contains("not valid for entity_type")),
-        "expected ValidationError, got {err:?}"
-    );
+    assert!(matches!(
+        err,
+        hubuum_events_core::EventCatalogError::InvalidActionForType { .. }
+    ));
 }
 
 #[test]
@@ -346,32 +344,39 @@ async fn create_collection_event_subscription_with_filter(
     enabled: bool,
     filter: hubuum_events_core::EventSubscriptionFilter,
 ) -> i32 {
-    let sink = NewEventSinkRow {
-        name: scope.scoped_name(&format!("{label}_sink")),
-        kind: EventSinkKind::Webhook.as_str().to_string(),
-        config: serde_json::json!({}),
-        secret_ref: None,
-        enabled: true,
-    }
-    .save_event_sink_record_without_events(&scope.pool)
+    let runtime = PostgresRuntime::new(scope.pool.get_ref().clone());
+    let sink = hubuum_storage_postgres::operations::event_subscription::create_event_sink(
+        &runtime,
+        StorageEventSinkCreate::builder(
+            scope.scoped_name(&format!("{label}_sink")),
+            EventSinkKind::Webhook.as_str(),
+            EventContext::system(),
+        )
+        .configuration(serde_json::json!({}))
+        .enabled(true)
+        .build(),
+    )
     .await
     .unwrap();
 
-    NewEventSubscriptionRow {
-        collection_id,
-        sink_id: sink.id,
-        name: scope.scoped_name(&format!("{label}_subscription")),
-        description: String::new(),
-        entity_types: serde_json::json!([EntityType::Collection.as_str()]),
-        actions: serde_json::json!([Action::Created.as_str()]),
-        filter: serde_json::to_value(filter).unwrap(),
-        routing: serde_json::json!({}),
-        enabled,
-    }
-    .save_event_subscription_record_without_events(&scope.pool)
+    hubuum_storage_postgres::operations::event_subscription::create_event_subscription(
+        &runtime,
+        StorageEventSubscriptionCreate::builder(
+            collection_id,
+            sink.id(),
+            scope.scoped_name(&format!("{label}_subscription")),
+            EventContext::system(),
+        )
+        .entity_types(vec![EntityType::Collection.as_str().to_string()])
+        .actions(vec![Action::Created.as_str().to_string()])
+        .filter(filter)
+        .routing(serde_json::json!({}))
+        .enabled(enabled)
+        .build(),
+    )
     .await
     .unwrap()
-    .id
+    .id()
 }
 
 async fn emit_collection_created_event(scope: &TestScope, collection_id: i32) -> Event {
@@ -417,7 +422,7 @@ async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queri
     with_transaction(&scope.pool, async |conn| {
         emit_event(conn, &queued).await?;
         emit_event(conn, &running).await?;
-        Ok::<_, diesel::result::Error>(())
+        Ok::<_, ApiError>(())
     })
     .await
     .unwrap();

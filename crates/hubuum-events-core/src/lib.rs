@@ -761,6 +761,393 @@ pub fn is_valid_pair(entity_type: EntityType, action: Action) -> bool {
     valid_actions(entity_type).contains(&action)
 }
 
+/// Canonical, client-deduplicable identity for an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventId(Uuid);
+
+impl EventId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
+        self.0
+    }
+}
+
+impl Default for EventId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Uuid> for EventId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
+impl From<EventId> for Uuid {
+    fn from(event_id: EventId) -> Self {
+        event_id.0
+    }
+}
+
+/// A validated event mutation ready to be appended by a storage adapter.
+///
+/// Storage-owned columns such as the database id, occurrence timestamp, and
+/// dispatch claim state are intentionally absent. Debug output never exposes
+/// snapshots or metadata because those values can contain credentials.
+pub struct NewEvent {
+    event_id: EventId,
+    entity_type: EntityType,
+    entity_id: Option<i32>,
+    entity_name: Option<String>,
+    collection_id: Option<i32>,
+    action: Action,
+    actor_user_id: Option<i32>,
+    actor_kind: ActorKind,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    request_id: Option<Uuid>,
+    correlation_id: Option<String>,
+    summary: String,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
+    metadata: serde_json::Value,
+    schema_version: i32,
+}
+
+impl fmt::Debug for NewEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NewEvent")
+            .field("event_id", &self.event_id)
+            .field("entity_type", &self.entity_type)
+            .field("entity_id", &self.entity_id)
+            .field("entity_name", &self.entity_name)
+            .field("collection_id", &self.collection_id)
+            .field("action", &self.action)
+            .field("actor_user_id", &self.actor_user_id)
+            .field("actor_kind", &self.actor_kind)
+            .field("initiator_user_id", &self.initiator_user_id)
+            .field("task_id", &self.task_id)
+            .field("request_id", &self.request_id)
+            .field("correlation_id", &self.correlation_id)
+            .field("summary", &self.summary)
+            .field("before", &self.before.as_ref().map(|_| "<redacted>"))
+            .field("after", &self.after.as_ref().map(|_| "<redacted>"))
+            .field("metadata", &"<redacted>")
+            .field("schema_version", &self.schema_version)
+            .finish()
+    }
+}
+
+impl NewEvent {
+    /// Validate the event catalog pair and initialize a new event mutation.
+    pub fn new(
+        entity_type: EntityType,
+        action: Action,
+        actor_kind: ActorKind,
+        summary: impl Into<String>,
+    ) -> Result<Self, EventCatalogError> {
+        if !is_valid_pair(entity_type, action) {
+            return Err(EventCatalogError::InvalidActionForType {
+                entity_type,
+                action,
+            });
+        }
+        Ok(Self {
+            event_id: EventId::new(),
+            entity_type,
+            entity_id: None,
+            entity_name: None,
+            collection_id: None,
+            action,
+            actor_user_id: None,
+            actor_kind,
+            initiator_user_id: None,
+            task_id: None,
+            request_id: None,
+            correlation_id: None,
+            summary: summary.into(),
+            before: None,
+            after: None,
+            metadata: serde_json::Value::Object(serde_json::Map::new()),
+            schema_version: 1,
+        })
+    }
+
+    #[must_use]
+    pub fn with_entity_id(mut self, entity_id: i32) -> Self {
+        self.entity_id = Some(entity_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_entity_name(mut self, entity_name: impl Into<String>) -> Self {
+        self.entity_name = Some(entity_name.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_collection_id(mut self, collection_id: i32) -> Self {
+        self.collection_id = Some(collection_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_actor_user_id(mut self, actor_user_id: i32) -> Self {
+        self.actor_user_id = Some(actor_user_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_context(mut self, context: &EventContext) -> Self {
+        self.actor_kind = context.actor_kind();
+        self.actor_user_id = context.actor_user_id();
+        self.initiator_user_id = context.initiator_user_id();
+        self.task_id = context.task_id();
+        self.request_id = context.request_id();
+        self.correlation_id = context.correlation_id().map(ToOwned::to_owned);
+        self
+    }
+
+    #[must_use]
+    pub fn with_mutation_provenance(mut self, provenance: &MutationProvenance) -> Self {
+        self.actor_kind = provenance.actor_kind();
+        self.actor_user_id = provenance.actor_user_id();
+        self.initiator_user_id = provenance.initiator_user_id();
+        self.task_id = provenance.task_id();
+        self
+    }
+
+    #[must_use]
+    pub fn with_request_id(mut self, request_id: Uuid) -> Self {
+        self.request_id = Some(request_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_before(mut self, before: serde_json::Value) -> Self {
+        self.before = Some(before);
+        self
+    }
+
+    #[must_use]
+    pub fn with_before_opt(mut self, before: Option<serde_json::Value>) -> Self {
+        self.before = before;
+        self
+    }
+
+    #[must_use]
+    pub fn with_after(mut self, after: serde_json::Value) -> Self {
+        self.after = Some(after);
+        self
+    }
+
+    #[must_use]
+    pub fn with_after_opt(mut self, after: Option<serde_json::Value>) -> Self {
+        self.after = after;
+        self
+    }
+
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    #[must_use]
+    pub const fn event_id(&self) -> EventId {
+        self.event_id
+    }
+
+    #[must_use]
+    pub const fn entity_type(&self) -> EntityType {
+        self.entity_type
+    }
+
+    #[must_use]
+    pub const fn entity_id(&self) -> Option<i32> {
+        self.entity_id
+    }
+
+    #[must_use]
+    pub fn entity_name(&self) -> Option<&str> {
+        self.entity_name.as_deref()
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> Option<i32> {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub const fn action(&self) -> Action {
+        self.action
+    }
+
+    #[must_use]
+    pub const fn actor_kind(&self) -> ActorKind {
+        self.actor_kind
+    }
+
+    #[must_use]
+    pub const fn actor_user_id(&self) -> Option<i32> {
+        self.actor_user_id
+    }
+
+    #[must_use]
+    pub const fn initiator_user_id(&self) -> Option<i32> {
+        self.initiator_user_id
+    }
+
+    #[must_use]
+    pub const fn task_id(&self) -> Option<i32> {
+        self.task_id
+    }
+
+    #[must_use]
+    pub const fn request_id(&self) -> Option<Uuid> {
+        self.request_id
+    }
+
+    #[must_use]
+    pub fn correlation_id(&self) -> Option<&str> {
+        self.correlation_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    #[must_use]
+    pub const fn before(&self) -> Option<&serde_json::Value> {
+        self.before.as_ref()
+    }
+
+    #[must_use]
+    pub const fn after(&self) -> Option<&serde_json::Value> {
+        self.after.as_ref()
+    }
+
+    #[must_use]
+    pub const fn metadata(&self) -> &serde_json::Value {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> i32 {
+        self.schema_version
+    }
+}
+
+/// Redact credentials from persisted sink configuration and routing values.
+#[must_use]
+pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value {
+    match config {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    let redacted = if is_sensitive_config_key(key) {
+                        serde_json::Value::String("[redacted]".to_string())
+                    } else if key.eq_ignore_ascii_case("uri") || key.eq_ignore_ascii_case("url") {
+                        redact_uri_value(value)
+                    } else {
+                        redact_event_sink_config(value)
+                    };
+                    (key.clone(), redacted)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(redact_event_sink_config)
+                .collect::<Vec<_>>(),
+        ),
+        value => value.clone(),
+    }
+}
+
+fn is_sensitive_config_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let compact = lower
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>();
+    if [
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "authorization",
+        "auth",
+        "credential",
+        "credentials",
+        "apikey",
+        "privatekey",
+        "accesskey",
+    ]
+    .iter()
+    .any(|suffix| compact.ends_with(suffix))
+    {
+        return true;
+    }
+
+    let mut previous = None;
+    for segment in lower
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|segment| !segment.is_empty())
+    {
+        if matches!(
+            segment,
+            "password"
+                | "passwd"
+                | "token"
+                | "secret"
+                | "authorization"
+                | "credential"
+                | "credentials"
+                | "apikey"
+        ) || (segment == "key" && matches!(previous, Some("api" | "private" | "access")))
+        {
+            return true;
+        }
+        previous = Some(segment);
+    }
+    false
+}
+
+fn redact_uri_value(value: &serde_json::Value) -> serde_json::Value {
+    let Some(uri) = value.as_str() else {
+        return redact_event_sink_config(value);
+    };
+    serde_json::Value::String(redact_uri_userinfo(uri))
+}
+
+fn redact_uri_userinfo(uri: &str) -> String {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return uri.to_string();
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let Some((_, host)) = authority.rsplit_once('@') else {
+        return uri.to_string();
+    };
+    format!("{scheme}://[redacted]@{host}{}", &rest[authority_end..])
+}
+
 /// Catalog-level validation errors. Callers map these into their public error
 /// surface (e.g. Hubuum's `ApiError`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1039,5 +1426,47 @@ mod tests {
         assert!(!debug.contains("before-secret"));
         assert!(!debug.contains("after-secret"));
         assert!(!debug.contains("metadata-secret"));
+    }
+
+    #[test]
+    fn new_event_validates_catalog_pairs_and_redacts_debug_payloads() {
+        assert!(matches!(
+            NewEvent::new(
+                EntityType::ObjectRelation,
+                Action::Updated,
+                ActorKind::System,
+                "invalid"
+            ),
+            Err(EventCatalogError::InvalidActionForType { .. })
+        ));
+        let event = NewEvent::new(
+            EntityType::Collection,
+            Action::Created,
+            ActorKind::User,
+            "created",
+        )
+        .unwrap()
+        .with_before(serde_json::json!({"token": "before-secret"}))
+        .with_after(serde_json::json!({"token": "after-secret"}))
+        .with_metadata(serde_json::json!({"token": "metadata-secret"}));
+
+        let debug = format!("{event:?}");
+
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("before-secret"));
+        assert!(!debug.contains("after-secret"));
+        assert!(!debug.contains("metadata-secret"));
+    }
+
+    #[test]
+    fn sink_redaction_covers_nested_keys_and_uri_userinfo() {
+        let redacted = redact_event_sink_config(&serde_json::json!({
+            "url": "https://user:password@example.invalid/events",
+            "headers": {"X-API-Key": "secret", "routing_key": "visible"}
+        }));
+
+        assert_eq!(redacted["url"], "https://[redacted]@example.invalid/events");
+        assert_eq!(redacted["headers"]["X-API-Key"], "[redacted]");
+        assert_eq!(redacted["headers"]["routing_key"], "visible");
     }
 }

@@ -2,9 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventContext, EventEnvelope, EventSubscriptionFilter,
-};
+use hubuum_events_core::{Action, ActorKind, EntityType, EventContext, EventSubscriptionFilter};
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
@@ -243,33 +241,8 @@ impl fmt::Debug for StorageAuditEventListQuery {
     }
 }
 
-/// Backend-neutral audit event with optimistic-revision projections.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageAuditEvent {
-    envelope: EventEnvelope,
-    before_revision: Option<i64>,
-    after_revision: Option<i64>,
-}
-
-impl StorageAuditEvent {
-    #[must_use]
-    pub const fn new(
-        envelope: EventEnvelope,
-        before_revision: Option<i64>,
-        after_revision: Option<i64>,
-    ) -> Self {
-        Self {
-            envelope,
-            before_revision,
-            after_revision,
-        }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (EventEnvelope, Option<i64>, Option<i64>) {
-        (self.envelope, self.before_revision, self.after_revision)
-    }
-}
+/// Audit-facing name for the shared committed-event boundary DTO.
+pub type StorageAuditEvent = crate::events::StorageRecordedEvent;
 
 /// Read-only audit stream behavior required from every selectable backend.
 #[async_trait]

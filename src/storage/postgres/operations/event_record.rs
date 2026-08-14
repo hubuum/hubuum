@@ -4,9 +4,10 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::errors::ApiError;
 use crate::events::{Event, NewEvent};
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
+use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -163,62 +164,16 @@ impl CursorSqlMapping for EventRow {
     }
 }
 
-#[derive(Insertable)]
-#[diesel(table_name = crate::schema::events)]
-struct NewEventRow<'a> {
-    event_id: Uuid,
-    entity_type: &'a str,
-    entity_id: Option<i32>,
-    entity_name: Option<&'a str>,
-    collection_id: Option<i32>,
-    action: &'a str,
-    actor_user_id: Option<i32>,
-    actor_kind: &'static str,
-    initiator_user_id: Option<i32>,
-    task_id: Option<i32>,
-    request_id: Option<Uuid>,
-    correlation_id: Option<&'a str>,
-    summary: &'a str,
-    before: Option<&'a serde_json::Value>,
-    after: Option<&'a serde_json::Value>,
-    metadata: &'a serde_json::Value,
-    schema_version: i32,
-}
-
-impl<'a> From<&'a NewEvent> for NewEventRow<'a> {
-    fn from(event: &'a NewEvent) -> Self {
-        Self {
-            event_id: event.event_id(),
-            entity_type: event.entity_type_value(),
-            entity_id: event.entity_id_value(),
-            entity_name: event.entity_name_value(),
-            collection_id: event.collection_id_value(),
-            action: event.action_value(),
-            actor_user_id: event.actor_user_id(),
-            actor_kind: event.actor_kind().as_str(),
-            initiator_user_id: event.initiator_user_id(),
-            task_id: event.task_id(),
-            request_id: event.request_id(),
-            correlation_id: event.correlation_id(),
-            summary: event.summary(),
-            before: event.before(),
-            after: event.after(),
-            metadata: event.metadata(),
-            schema_version: event.schema_version(),
-        }
-    }
-}
-
 /// Append one event on the caller-owned PostgreSQL transaction connection.
 pub(crate) async fn emit_event(
     conn: &mut crate::storage::postgres::PostgresConnection,
     event: &NewEvent,
-) -> Result<Event, diesel::result::Error> {
-    let row = diesel::insert_into(crate::schema::events::table)
-        .values(NewEventRow::from(event))
-        .get_result::<EventRow>(conn)
-        .await?;
-    let event = Event::from(row);
+) -> Result<Event, ApiError> {
+    let event = event_from_storage(
+        hubuum_storage_postgres::operations::event_record::append_event(conn, event)
+            .await
+            .map_err(hubuum_storage_core::StorageError::from)?,
+    )?;
     log_event_mutation(&event);
     Ok(event)
 }
@@ -227,23 +182,47 @@ pub(crate) async fn emit_event(
 pub(crate) async fn emit_events(
     conn: &mut crate::storage::postgres::PostgresConnection,
     events: &[NewEvent],
-) -> Result<Vec<Event>, diesel::result::Error> {
-    if events.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let rows = events.iter().map(NewEventRow::from).collect::<Vec<_>>();
-    let persisted = diesel::insert_into(crate::schema::events::table)
-        .values(rows)
-        .get_results::<EventRow>(conn)
-        .await?
+) -> Result<Vec<Event>, ApiError> {
+    let persisted = hubuum_storage_postgres::operations::event_record::append_events(conn, events)
+        .await
+        .map_err(hubuum_storage_core::StorageError::from)?
         .into_iter()
-        .map(Event::from)
-        .collect::<Vec<_>>();
+        .map(event_from_storage)
+        .collect::<Result<Vec<_>, _>>()?;
     for event in &persisted {
         log_event_mutation(event);
     }
     Ok(persisted)
+}
+
+fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Result<Event, ApiError> {
+    let (event, before_revision, after_revision) = event.into_parts();
+    Ok(Event {
+        id: event.id,
+        event_id: event.event_id,
+        occurred_at: event.occurred_at,
+        entity_type: event.entity_type,
+        entity_id: event.entity_id,
+        entity_name: event.entity_name,
+        collection_id: event.collection_id,
+        action: event.action,
+        actor_user_id: event.actor_user_id,
+        actor_kind: event.actor_kind,
+        request_id: event.request_id,
+        correlation_id: event.correlation_id,
+        summary: event.summary,
+        before: event.before,
+        after: event.after,
+        metadata: event.metadata,
+        schema_version: event.schema_version,
+        initiator_user_id: event
+            .provenance
+            .initiator
+            .map(|principal| principal.principal_id),
+        task_id: event.provenance.task_id,
+        before_revision: before_revision.map(ResourceRevision::new).transpose()?,
+        after_revision: after_revision.map(ResourceRevision::new).transpose()?,
+    })
 }
 
 fn log_event_mutation(event: &Event) {

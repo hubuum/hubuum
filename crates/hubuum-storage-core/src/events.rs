@@ -7,6 +7,37 @@ use uuid::Uuid;
 
 use crate::StorageError;
 
+/// One committed event returned by a storage adapter after an append or read.
+///
+/// The envelope is backend-neutral and revisions remain primitive boundary
+/// values. Application code validates and converts them into its public model.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageRecordedEvent {
+    envelope: EventEnvelope,
+    before_revision: Option<i64>,
+    after_revision: Option<i64>,
+}
+
+impl StorageRecordedEvent {
+    #[must_use]
+    pub const fn new(
+        envelope: EventEnvelope,
+        before_revision: Option<i64>,
+        after_revision: Option<i64>,
+    ) -> Self {
+        Self {
+            envelope,
+            before_revision,
+            after_revision,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (EventEnvelope, Option<i64>, Option<i64>) {
+        (self.envelope, self.before_revision, self.after_revision)
+    }
+}
+
 /// Atomic event-to-delivery fan-out required from every storage backend.
 ///
 /// The implementation owns claiming, subscription matching, delivery-row

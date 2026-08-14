@@ -27,7 +27,7 @@ pub(crate) use fanout::event_fanout_worker_health;
 pub use fanout::{
     ensure_event_fanout_worker_running, event_fanout_wakeup_stats, kick_event_fanout_worker,
 };
-pub use model::{Event, EventId, EventResponse, NewEvent};
+pub use model::{Event, EventResponse};
 pub(crate) use model::{PrincipalNames, StoredProvenance};
 pub use retention::ensure_event_retention_worker_running;
 pub(crate) use settings::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
@@ -36,8 +36,8 @@ pub use sink::{
 };
 
 pub use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventCatalogError, EventContext, MutationProvenance, Provenance,
-    ProvenanceActor, ProvenancePrincipal, is_valid_pair, valid_actions,
+    Action, ActorKind, EntityType, EventCatalogError, EventContext, EventId, MutationProvenance,
+    NewEvent, Provenance, ProvenanceActor, ProvenancePrincipal, is_valid_pair, valid_actions,
 };
 
 #[cfg(test)]

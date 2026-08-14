@@ -91,7 +91,7 @@ pub use event_administration::{
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
-    EventRetentionSummary, RetainedEvent,
+    EventRetentionSummary, RetainedEvent, StorageRecordedEvent,
 };
 pub use execution::{
     StorageCallSite, StorageExecution, StorageRevisionPrecondition,

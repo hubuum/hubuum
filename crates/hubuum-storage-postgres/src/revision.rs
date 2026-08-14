@@ -25,6 +25,25 @@ use hubuum_domain::{ResourceRevision, ResourceRevisionError};
 #[serde(transparent)]
 pub struct PostgresRevision(ResourceRevision);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RevisionOwner {
+    EventSink,
+    EventSubscription,
+}
+
+impl RevisionOwner {
+    const fn table_name(self) -> &'static str {
+        match self {
+            Self::EventSink => "event_sinks",
+            Self::EventSubscription => "event_subscriptions",
+        }
+    }
+
+    pub(crate) fn key(self, resource_id: i32) -> String {
+        format!("{}:{resource_id}", self.table_name())
+    }
+}
+
 impl PostgresRevision {
     pub const INITIAL: Self = Self(ResourceRevision::INITIAL);
 

@@ -18,7 +18,6 @@ use crate::models::{
     RemoteCallResult, TaskKind, validate_sink_parts, validate_subscription_parts,
 };
 use crate::services::Services;
-use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::postgres::operations::event_delivery::{
     load_event_delivery_for_event, set_event_delivery_claim_token_for_test,
@@ -28,10 +27,8 @@ use crate::storage::postgres::operations::event_fanout::fanout_event;
 use crate::storage::postgres::operations::event_record::{
     count_events_for_test, emit_event, list_events_for_test,
 };
-use crate::storage::postgres::operations::event_subscription::{
-    NewEventSinkRow, NewEventSubscriptionRow, SaveEventSinkRecord, SaveEventSubscriptionRecord,
-};
 use crate::storage::postgres::operations::remote_target::load_remote_call_result_for_task;
+use crate::storage::{StorageEventSinkCreate, StorageEventSubscriptionCreate, StorageHandle};
 
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
@@ -223,19 +220,27 @@ pub async fn set_event_delivery_claim_token(
 
 pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<i32, ApiError> {
     validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
-    let sink = NewEventSinkRow {
-        name: sink.name,
-        kind: sink.kind.as_str().to_string(),
-        config: sink.config,
-        secret_ref: sink
-            .secret_ref
+    let request = StorageEventSinkCreate::builder(
+        sink.name,
+        sink.kind.as_str(),
+        hubuum_events_core::EventContext::system(),
+    )
+    .configuration(sink.config)
+    .secret_ref(
+        sink.secret_ref
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
-        enabled: sink.enabled,
-    }
-    .save_event_sink_record_without_events(pool)
-    .await?;
-    Ok(sink.id)
+    )
+    .enabled(sink.enabled)
+    .build();
+    hubuum_storage_postgres::operations::event_subscription::create_event_sink(
+        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        request,
+    )
+    .await
+    .map(|sink| sink.id())
+    .map_err(hubuum_storage_core::StorageError::from)
+    .map_err(ApiError::from)
 }
 
 pub async fn save_event_subscription(
@@ -249,20 +254,27 @@ pub async fn save_event_subscription(
         &subscription.filter,
         &subscription.routing,
     )?;
-    let subscription = NewEventSubscriptionRow {
-        collection_id: collection_id.id(),
-        sink_id: subscription.sink_id.id(),
-        name: subscription.name,
-        description: subscription.description,
-        entity_types: serde_json::to_value(subscription.entity_types)?,
-        actions: serde_json::to_value(subscription.actions)?,
-        filter: serde_json::to_value(subscription.filter)?,
-        routing: subscription.routing,
-        enabled: subscription.enabled,
-    }
-    .save_event_subscription_record_without_events(pool)
-    .await?;
-    Ok(subscription.id)
+    let request = StorageEventSubscriptionCreate::builder(
+        collection_id.id(),
+        subscription.sink_id.id(),
+        subscription.name,
+        hubuum_events_core::EventContext::system(),
+    )
+    .description(subscription.description)
+    .entity_types(subscription.entity_types)
+    .actions(subscription.actions)
+    .filter(subscription.filter)
+    .routing(subscription.routing)
+    .enabled(subscription.enabled)
+    .build();
+    hubuum_storage_postgres::operations::event_subscription::create_event_subscription(
+        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        request,
+    )
+    .await
+    .map(|subscription| subscription.id())
+    .map_err(hubuum_storage_core::StorageError::from)
+    .map_err(ApiError::from)
 }
 
 pub async fn sync_external_user(

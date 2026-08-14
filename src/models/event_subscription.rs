@@ -11,6 +11,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, ResourceRevision};
 use crate::pagination::{CursorPaginated, CursorValue};
 
 pub use hubuum_domain::{EventSinkId as EventSinkID, EventSubscriptionId as EventSubscriptionID};
+pub use hubuum_events_core::redact_event_sink_config;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -335,32 +336,6 @@ fn empty_json_object() -> serde_json::Value {
     serde_json::json!({})
 }
 
-pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value {
-    match config {
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(key, value)| {
-                    let redacted = if is_sensitive_config_key(key) {
-                        serde_json::Value::String("[redacted]".to_string())
-                    } else if key.eq_ignore_ascii_case("uri") || key.eq_ignore_ascii_case("url") {
-                        redact_uri_value(value)
-                    } else {
-                        redact_event_sink_config(value)
-                    };
-                    (key.clone(), redacted)
-                })
-                .collect(),
-        ),
-        serde_json::Value::Array(values) => serde_json::Value::Array(
-            values
-                .iter()
-                .map(redact_event_sink_config)
-                .collect::<Vec<_>>(),
-        ),
-        value => value.clone(),
-    }
-}
-
 fn serialize_redacted_event_sink_value<S>(
     value: &serde_json::Value,
     serializer: S,
@@ -369,74 +344,6 @@ where
     S: Serializer,
 {
     redact_event_sink_config(value).serialize(serializer)
-}
-
-fn is_sensitive_config_key(key: &str) -> bool {
-    let lower = key.to_ascii_lowercase();
-    let compact = lower
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .collect::<String>();
-    if [
-        "password",
-        "passwd",
-        "token",
-        "secret",
-        "authorization",
-        "auth",
-        "credential",
-        "credentials",
-        "apikey",
-        "privatekey",
-        "accesskey",
-    ]
-    .iter()
-    .any(|suffix| compact.ends_with(suffix))
-    {
-        return true;
-    }
-
-    let mut previous = None;
-    for segment in lower
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .filter(|segment| !segment.is_empty())
-    {
-        if matches!(
-            segment,
-            "password"
-                | "passwd"
-                | "token"
-                | "secret"
-                | "authorization"
-                | "credential"
-                | "credentials"
-                | "apikey"
-        ) || (segment == "key" && matches!(previous, Some("api" | "private" | "access")))
-        {
-            return true;
-        }
-        previous = Some(segment);
-    }
-    false
-}
-
-fn redact_uri_value(value: &serde_json::Value) -> serde_json::Value {
-    let Some(uri) = value.as_str() else {
-        return redact_event_sink_config(value);
-    };
-    serde_json::Value::String(redact_uri_userinfo(uri))
-}
-
-fn redact_uri_userinfo(uri: &str) -> String {
-    let Some((scheme, rest)) = uri.split_once("://") else {
-        return uri.to_string();
-    };
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    let Some((_, host)) = authority.rsplit_once('@') else {
-        return uri.to_string();
-    };
-    format!("{scheme}://[redacted]@{host}{}", &rest[authority_end..])
 }
 
 fn default_enabled() -> bool {
@@ -543,7 +450,8 @@ mod tests {
     #[case::credentials("database_credentials")]
     #[case::private_key("private_key")]
     fn common_secret_key_spellings_are_sensitive(#[case] key: &str) {
-        assert!(is_sensitive_config_key(key));
+        let redacted = redact_event_sink_config(&serde_json::json!({key: "secret"}));
+        assert_eq!(redacted[key], "[redacted]");
     }
 
     #[rstest]
@@ -551,7 +459,8 @@ mod tests {
     #[case::ordinary_key_suffix("monkey")]
     #[case::public_key("public_key")]
     fn non_secret_keys_remain_visible(#[case] key: &str) {
-        assert!(!is_sensitive_config_key(key));
+        let redacted = redact_event_sink_config(&serde_json::json!({key: "visible"}));
+        assert_eq!(redacted[key], "visible");
     }
 
     #[test]
