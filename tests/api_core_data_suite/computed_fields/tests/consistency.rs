@@ -644,13 +644,19 @@ async fn raw_computed_sort_only_enriches_a_nonterminal_cursor_boundary(
     let large_page: Vec<serde_json::Value> = test::read_body_json(large_response).await;
     assert_eq!(large_page.len(), 8);
 
+    // Resolving a nonterminal cursor boundary needs one enrichment query, but
+    // it stays inside the adapter's existing read snapshot and must not add a
+    // pool checkout.
     assert_eq!(
         small_queries.domain_queries(),
-        large_queries.domain_queries() + 1
+        large_queries.domain_queries() + 1,
+        "small: {:#?}\nlarge: {:#?}",
+        small_queries.query_counts(),
+        large_queries.query_counts()
     );
     assert_eq!(
         small_queries.connection_checkouts(),
-        large_queries.connection_checkouts() + 1
+        large_queries.connection_checkouts()
     );
     assert_eq!(
         large_queries.queries_matching("hubuum_computed_evaluate_scope"),

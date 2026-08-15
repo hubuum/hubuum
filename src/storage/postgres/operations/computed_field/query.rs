@@ -200,22 +200,6 @@ impl ComputedQuerySnapshot {
     }
 }
 
-pub(crate) fn object_cursor_sql_fields(
-    sorts: &[SortParam],
-    snapshot: &ComputedQuerySnapshot,
-) -> Result<Vec<CursorSqlField<String>>, ApiError> {
-    sorts
-        .iter()
-        .map(|sort| {
-            if sort.field.computed_query().is_none() {
-                return <HubuumObjectRow as CursorSqlMapping>::sql_field(&sort.field)
-                    .map(Into::into);
-            }
-            object_computed_sql_field(&sort.field, snapshot)
-        })
-        .collect()
-}
-
 fn object_computed_sql_field(
     field: &FilterField,
     snapshot: &ComputedQuerySnapshot,

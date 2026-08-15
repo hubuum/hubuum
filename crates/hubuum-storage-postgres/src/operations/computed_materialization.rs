@@ -3,15 +3,15 @@
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_computed_fields::{
-    Definition, EvaluationLimits, FieldKey, MAX_SHARED_DEFINITIONS, Operation, ResultType, evaluate,
-};
+use hubuum_computed_fields::MAX_SHARED_DEFINITIONS;
 use sha2::{Digest, Sha256};
 
+use crate::operations::computed_definition::{
+    ComputedDefinitionRow, SHARED_VISIBILITY, evaluate_definitions,
+};
 use crate::{PostgresConnection, PostgresStorageError};
 
 const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
-const SHARED_VISIBILITY: &str = "shared";
 
 /// Borrowed canonical object data required for computed materialization.
 #[derive(Clone, Copy, Debug)]
@@ -44,38 +44,6 @@ pub(crate) struct ComputedEvaluationSummary {
 impl ComputedEvaluationSummary {
     pub(crate) fn error_codes(&self) -> &[&'static str] {
         &self.error_codes
-    }
-}
-
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = crate::schema::computed_field_definitions)]
-struct SharedDefinitionRow {
-    id: i32,
-    key: String,
-    label: String,
-    description: String,
-    operation: serde_json::Value,
-    result_type: String,
-    enabled: bool,
-}
-
-impl SharedDefinitionRow {
-    fn into_evaluator(self) -> Result<Definition, PostgresStorageError> {
-        let operation = serde_json::from_value::<Operation>(self.operation)
-            .map_err(|error| invalid_definition(self.id, format!("invalid operation: {error}")))?;
-        let key = FieldKey::new(self.key)
-            .map_err(|error| invalid_definition(self.id, error.to_string()))?;
-        let result_type = result_type_from_database(&self.result_type)
-            .ok_or_else(|| invalid_definition(self.id, "unknown result type"))?;
-        Definition::new(
-            key,
-            self.label,
-            self.description,
-            operation,
-            result_type,
-            self.enabled,
-        )
-        .map_err(|error| invalid_definition(self.id, error.to_string()))
     }
 }
 
@@ -145,19 +113,7 @@ pub(crate) async fn materialize_object(
         return Ok(None);
     }
     let state = ensure_computation_state(connection, object.class_id).await?;
-    let definitions = definitions
-        .into_iter()
-        .map(SharedDefinitionRow::into_evaluator)
-        .collect::<Result<Vec<_>, _>>()?;
-    let result = evaluate(
-        object.data,
-        &definitions,
-        MAX_SHARED_DEFINITIONS,
-        EvaluationLimits::standard(),
-    )
-    .map_err(|error| {
-        PostgresStorageError::internal(format!("Computed-field evaluation failed: {error}"))
-    })?;
+    let result = evaluate_definitions(object.data, &definitions, MAX_SHARED_DEFINITIONS)?;
     let summary = ComputedEvaluationSummary {
         error_codes: result
             .errors
@@ -195,12 +151,12 @@ pub(crate) async fn materialize_object(
 async fn shared_definitions(
     connection: &mut PostgresConnection,
     class_id: i32,
-) -> Result<Vec<SharedDefinitionRow>, PostgresStorageError> {
+) -> Result<Vec<ComputedDefinitionRow>, PostgresStorageError> {
     crate::schema::computed_field_definitions::table
         .filter(crate::schema::computed_field_definitions::class_id.eq(class_id))
         .filter(crate::schema::computed_field_definitions::visibility.eq(SHARED_VISIBILITY))
         .order(crate::schema::computed_field_definitions::id.asc())
-        .select(SharedDefinitionRow::as_select())
+        .select(ComputedDefinitionRow::as_select())
         .load(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -273,24 +229,6 @@ fn canonical_json(
         ),
     }
     Ok(())
-}
-
-fn result_type_from_database(value: &str) -> Option<ResultType> {
-    Some(match value {
-        "string" => ResultType::String,
-        "number" => ResultType::Number,
-        "integer" => ResultType::Integer,
-        "boolean" => ResultType::Boolean,
-        "object" => ResultType::Object,
-        "array" => ResultType::Array,
-        _ => return None,
-    })
-}
-
-fn invalid_definition(id: i32, detail: impl std::fmt::Display) -> PostgresStorageError {
-    PostgresStorageError::internal(format!(
-        "Computed-field definition {id} is invalid: {detail}"
-    ))
 }
 
 #[cfg(test)]

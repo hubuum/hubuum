@@ -4,15 +4,11 @@ use crate::models::search::{
     RelatedFilterTarget, RelatedObjectField,
 };
 use crate::models::token_scope::TokenScope;
-use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::storage::postgres::operations::authz::{
     AuthzSubject as PostgresAuthzSubject, principal_is_admin, scope_allows,
 };
 use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::collection::CollectionRow;
-use crate::storage::postgres::operations::computed_field::{
-    ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
-};
 use crate::storage::postgres::operations::object::HubuumObjectRow;
 use crate::storage::postgres::operations::permissions::PermissionFilter;
 use crate::storage::postgres::operations::relation_rows::{
@@ -36,48 +32,9 @@ fn class_relations_from_rows(
     rows.into_iter().map(TryInto::try_into).collect()
 }
 
-pub struct ObjectQueryPlan<'a>(ObjectQueryPlanKind<'a>);
+pub struct ObjectQueryPlan(QueryOptions);
 
-enum ObjectQueryPlanKind<'a> {
-    Ordinary(QueryOptions),
-    Computed {
-        options: QueryOptions,
-        snapshot: &'a ComputedQuerySnapshot,
-        authorized_object_ids: Option<&'a AuthorizedObjectIds>,
-    },
-}
-
-#[derive(Clone, Copy)]
-enum ObjectQueryMode<'a> {
-    Ordinary,
-    Computed {
-        snapshot: &'a ComputedQuerySnapshot,
-        authorized_object_ids: Option<&'a AuthorizedObjectIds>,
-    },
-}
-
-impl<'a> ObjectQueryMode<'a> {
-    fn snapshot(self) -> Result<&'a ComputedQuerySnapshot, ApiError> {
-        match self {
-            Self::Computed { snapshot, .. } => Ok(snapshot),
-            Self::Ordinary => Err(ApiError::BadRequest(
-                "Computed object queries require a resolved query plan".to_string(),
-            )),
-        }
-    }
-
-    fn authorized_object_ids(self) -> Option<&'a AuthorizedObjectIds> {
-        match self {
-            Self::Computed {
-                authorized_object_ids,
-                ..
-            } => authorized_object_ids,
-            Self::Ordinary => None,
-        }
-    }
-}
-
-impl<'a> ObjectQueryPlan<'a> {
+impl ObjectQueryPlan {
     fn ordinary(options: QueryOptions) -> Result<Self, ApiError> {
         let has_computed_fields = options
             .filters
@@ -92,44 +49,11 @@ impl<'a> ObjectQueryPlan<'a> {
                 "Computed object queries require a resolved query plan".to_string(),
             ));
         }
-        Ok(Self(ObjectQueryPlanKind::Ordinary(options)))
+        Ok(Self(options))
     }
 
-    fn computed(options: QueryOptions, snapshot: &'a ComputedQuerySnapshot) -> Self {
-        Self(ObjectQueryPlanKind::Computed {
-            options,
-            snapshot,
-            authorized_object_ids: None,
-        })
-    }
-
-    fn computed_for_authorized_objects(
-        options: QueryOptions,
-        snapshot: &'a ComputedQuerySnapshot,
-        authorized_object_ids: &'a AuthorizedObjectIds,
-    ) -> Self {
-        Self(ObjectQueryPlanKind::Computed {
-            options,
-            snapshot,
-            authorized_object_ids: Some(authorized_object_ids),
-        })
-    }
-
-    fn into_parts(self) -> (QueryOptions, ObjectQueryMode<'a>) {
-        match self.0 {
-            ObjectQueryPlanKind::Ordinary(options) => (options, ObjectQueryMode::Ordinary),
-            ObjectQueryPlanKind::Computed {
-                options,
-                snapshot,
-                authorized_object_ids,
-            } => (
-                options,
-                ObjectQueryMode::Computed {
-                    snapshot,
-                    authorized_object_ids,
-                },
-            ),
-        }
+    fn into_options(self) -> QueryOptions {
+        self.0
     }
 }
 
@@ -250,44 +174,6 @@ where
         scopes,
     )?;
     dynamic_sql_predicate(component).map(Some)
-}
-
-pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
-    user: &U,
-    pool: &crate::storage::postgres::PostgresPool,
-    query_options: QueryOptions,
-    snapshot: &ComputedQuerySnapshot,
-    authorized_object_ids: &AuthorizedObjectIds,
-) -> Result<Vec<HubuumObject>, ApiError>
-where
-    U: UserSearchBackend + ?Sized,
-{
-    let plan = ObjectQueryPlan::computed_for_authorized_objects(
-        query_options,
-        snapshot,
-        authorized_object_ids,
-    );
-    user.search_objects_from_backend_with_query_plan(pool, plan, true, None)
-        .await
-}
-
-pub(crate) async fn count_computed_objects_with_authorized_ids<U>(
-    user: &U,
-    pool: &crate::storage::postgres::PostgresPool,
-    query_options: QueryOptions,
-    snapshot: &ComputedQuerySnapshot,
-    authorized_object_ids: &AuthorizedObjectIds,
-) -> Result<i64, ApiError>
-where
-    U: UserSearchBackend + ?Sized,
-{
-    let plan = ObjectQueryPlan::computed_for_authorized_objects(
-        query_options,
-        snapshot,
-        authorized_object_ids,
-    );
-    user.count_objects_from_backend_with_query_plan(pool, plan, true, None)
-        .await
 }
 
 pub trait UserSearchBackend: UserCollectionAccessors {
@@ -800,23 +686,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             .await
     }
 
-    async fn search_objects_with_computed_query_from_backend_with_admin_status(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: QueryOptions,
-        is_admin: bool,
-        scopes: Option<&TokenScope>,
-        snapshot: &ComputedQuerySnapshot,
-    ) -> Result<Vec<HubuumObject>, ApiError> {
-        let plan = ObjectQueryPlan::computed(query_options, snapshot);
-        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
-            .await
-    }
-
     async fn search_objects_from_backend_with_query_plan(
         &self,
         pool: &crate::storage::postgres::PostgresPool,
-        query_plan: ObjectQueryPlan<'_>,
+        query_plan: ObjectQueryPlan,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
@@ -826,7 +699,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             name as object_name, revision as object_revision, updated_at as object_updated_at,
         };
 
-        let (query_options, query_mode) = query_plan.into_parts();
+        let query_options = query_plan.into_options();
         let query_params = query_options.filters.clone();
 
         debug!(
@@ -864,9 +737,6 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         if let Some(scope) = resource_scope_ids(scopes) {
             base_query = base_query.filter(object_scope_predicate(scope));
         }
-        if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
-            base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
-        }
         if let Some(predicate) =
             related_object_filter_predicate(self, pool, &query_params, is_admin, scopes).await?
         {
@@ -893,9 +763,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 continue;
             }
             if param.field.computed_query().is_some() {
-                let snapshot = query_mode.snapshot()?;
-                base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
-                continue;
+                return Err(ApiError::BadRequest(
+                    "Computed object queries require the storage computed-object capability"
+                        .to_string(),
+                ));
             }
             let operator = param.operator.clone();
             match param.field {
@@ -933,40 +804,19 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        let computed_sorting = query_options
-            .sort
-            .iter()
-            .any(|sort| sort.field.computed_query().is_some());
-        if computed_sorting {
-            let snapshot = query_mode.snapshot()?;
-            let sql_fields = object_cursor_sql_fields(&query_options.sort, snapshot)?;
-            crate::apply_query_options_with_fields!(base_query, query_options, sql_fields);
-        } else {
-            crate::apply_query_options!(base_query, query_options, HubuumObjectRow);
-        }
+        crate::apply_query_options!(base_query, query_options, HubuumObjectRow);
 
         trace_query!(base_query, "Searching objects");
 
-        if computed_sorting {
-            with_connection(pool, async |conn| {
-                base_query
-                    .select(hubuumobject::all_columns())
-                    .load::<HubuumObjectRow>(conn)
-                    .await
-            })
-            .await
-            .map(|rows| rows.into_iter().map(Into::into).collect())
-        } else {
-            with_connection(pool, async |conn| {
-                base_query
-                    .select(hubuumobject::all_columns())
-                    .distinct()
-                    .load::<HubuumObjectRow>(conn)
-                    .await
-            })
-            .await
-            .map(|rows| rows.into_iter().map(Into::into).collect())
-        }
+        with_connection(pool, async |conn| {
+            base_query
+                .select(hubuumobject::all_columns())
+                .distinct()
+                .load::<HubuumObjectRow>(conn)
+                .await
+        })
+        .await
+        .map(|rows| rows.into_iter().map(Into::into).collect())
     }
 
     async fn count_objects_from_backend_with_admin_status(
@@ -981,23 +831,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             .await
     }
 
-    async fn count_objects_with_computed_query_from_backend_with_admin_status(
-        &self,
-        pool: &crate::storage::postgres::PostgresPool,
-        query_options: QueryOptions,
-        is_admin: bool,
-        scopes: Option<&TokenScope>,
-        snapshot: &ComputedQuerySnapshot,
-    ) -> Result<i64, ApiError> {
-        let plan = ObjectQueryPlan::computed(query_options, snapshot);
-        self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
-            .await
-    }
-
     async fn count_objects_from_backend_with_query_plan(
         &self,
         pool: &crate::storage::postgres::PostgresPool,
-        query_plan: ObjectQueryPlan<'_>,
+        query_plan: ObjectQueryPlan,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
@@ -1007,7 +844,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             name as object_name, revision as object_revision, updated_at as object_updated_at,
         };
 
-        let (query_options, query_mode) = query_plan.into_parts();
+        let query_options = query_plan.into_options();
         let query_params = query_options.filters.clone();
 
         let mut permission_list = query_params.permissions()?;
@@ -1031,9 +868,6 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         if let Some(scope) = resource_scope_ids(scopes) {
             base_query = base_query.filter(object_scope_predicate(scope));
         }
-        if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
-            base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
-        }
         if let Some(predicate) =
             related_object_filter_predicate(self, pool, &query_params, is_admin, scopes).await?
         {
@@ -1053,9 +887,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 continue;
             }
             if param.field.computed_query().is_some() {
-                let snapshot = query_mode.snapshot()?;
-                base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
-                continue;
+                return Err(ApiError::BadRequest(
+                    "Computed object queries require the storage computed-object capability"
+                        .to_string(),
+                ));
             }
             let operator = param.operator.clone();
             match param.field {

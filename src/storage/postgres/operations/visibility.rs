@@ -1,13 +1,7 @@
 use crate::errors::ApiError;
-use crate::models::{
-    CollectionID, HubuumClassID, HubuumObjectID, TokenResourceScope, TokenScope, UserID,
-};
+use crate::models::{CollectionID, HubuumClassID, HubuumObjectID, TokenResourceScope, TokenScope};
 use crate::storage::StorageVisibility;
 use crate::storage::postgres::operations::authorization::permission_from_storage;
-
-pub(super) fn principal(visibility: &StorageVisibility) -> Result<UserID, ApiError> {
-    Ok(UserID::new(visibility.principal_id())?)
-}
 
 pub(super) fn token_scope(visibility: &StorageVisibility) -> Result<Option<TokenScope>, ApiError> {
     let permissions = visibility.permissions().map(|permissions| {

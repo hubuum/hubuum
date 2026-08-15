@@ -156,18 +156,24 @@ impl ComputedObjectStorage for PostgresStorage {
         &self,
         query: ComputedObjectListQuery,
     ) -> Result<ComputedObjectPage, StorageError> {
-        operations::computed_objects::list_computed_objects(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::computed_objects::list_computed_objects(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn enrich_objects_with_computed(
         &self,
         query: ComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
-        operations::computed_objects::enrich_computed_objects(&self.pool, query)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::computed_objects::enrich_objects_with_computed(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

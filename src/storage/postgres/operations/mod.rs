@@ -5,7 +5,6 @@ pub mod class;
 pub mod collection;
 pub mod computed_field;
 pub mod computed_field_rows;
-pub(crate) mod computed_objects;
 pub mod event_delivery;
 pub mod event_fanout;
 pub(crate) mod event_record;

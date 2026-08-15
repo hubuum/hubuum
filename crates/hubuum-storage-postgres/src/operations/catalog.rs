@@ -228,7 +228,7 @@ fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresSt
     Ok(())
 }
 
-fn object_query<'query>(
+pub(crate) fn object_query<'query>(
     collection_ids: &'query [i32],
     resource_scope: Option<&'query UnifiedSearchResourceScope>,
 ) -> crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg> {
@@ -248,7 +248,7 @@ fn object_query<'query>(
     query
 }
 
-fn apply_object_filters<'query>(
+pub(crate) fn apply_object_filters<'query>(
     mut query: crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg>,
     options: &QueryOptions,
     related_predicate: Option<BoundSqlPredicate>,
@@ -263,9 +263,7 @@ fn apply_object_filters<'query>(
             continue;
         }
         if parameter.field.computed_query().is_some() {
-            return Err(PostgresStorageError::bad_request(
-                "Computed object queries require a resolved query plan",
-            ));
+            continue;
         }
         match &parameter.field {
             FilterField::Id => {
@@ -312,56 +310,60 @@ fn object_cursor_fields(
     options
         .sort
         .iter()
-        .map(|sort| {
-            Ok(match sort.field {
-                FilterField::Id => CursorSqlField {
-                    column: "hubuumobject.id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                },
-                FilterField::Name => CursorSqlField {
-                    column: "hubuumobject.name",
-                    sql_type: CursorSqlType::String,
-                    nullable: false,
-                },
-                FilterField::Description => CursorSqlField {
-                    column: "hubuumobject.description",
-                    sql_type: CursorSqlType::String,
-                    nullable: false,
-                },
-                FilterField::Collections | FilterField::CollectionId => CursorSqlField {
-                    column: "hubuumobject.collection_id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                },
-                FilterField::ClassId | FilterField::Classes => CursorSqlField {
-                    column: "hubuumobject.hubuum_class_id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                },
-                FilterField::CreatedAt => CursorSqlField {
-                    column: "hubuumobject.created_at",
-                    sql_type: CursorSqlType::DateTime,
-                    nullable: false,
-                },
-                FilterField::UpdatedAt => CursorSqlField {
-                    column: "hubuumobject.updated_at",
-                    sql_type: CursorSqlType::DateTime,
-                    nullable: false,
-                },
-                FilterField::Revision => CursorSqlField {
-                    column: "hubuumobject.revision",
-                    sql_type: CursorSqlType::BigInt,
-                    nullable: false,
-                },
-                ref other => {
-                    return Err(PostgresStorageError::bad_request(format!(
-                        "Field '{other}' is not orderable for objects"
-                    )));
-                }
-            })
-        })
+        .map(|sort| object_cursor_field(&sort.field))
         .collect()
+}
+
+pub(crate) fn object_cursor_field(
+    field: &FilterField,
+) -> Result<CursorSqlField, PostgresStorageError> {
+    Ok(match field {
+        FilterField::Id => CursorSqlField {
+            column: "hubuumobject.id",
+            sql_type: CursorSqlType::Integer,
+            nullable: false,
+        },
+        FilterField::Name => CursorSqlField {
+            column: "hubuumobject.name",
+            sql_type: CursorSqlType::String,
+            nullable: false,
+        },
+        FilterField::Description => CursorSqlField {
+            column: "hubuumobject.description",
+            sql_type: CursorSqlType::String,
+            nullable: false,
+        },
+        FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+            column: "hubuumobject.collection_id",
+            sql_type: CursorSqlType::Integer,
+            nullable: false,
+        },
+        FilterField::ClassId | FilterField::Classes => CursorSqlField {
+            column: "hubuumobject.hubuum_class_id",
+            sql_type: CursorSqlType::Integer,
+            nullable: false,
+        },
+        FilterField::CreatedAt => CursorSqlField {
+            column: "hubuumobject.created_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: false,
+        },
+        FilterField::UpdatedAt => CursorSqlField {
+            column: "hubuumobject.updated_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: false,
+        },
+        FilterField::Revision => CursorSqlField {
+            column: "hubuumobject.revision",
+            sql_type: CursorSqlType::BigInt,
+            nullable: false,
+        },
+        other => {
+            return Err(PostgresStorageError::bad_request(format!(
+                "Field '{other}' is not orderable for objects"
+            )));
+        }
+    })
 }
 
 fn class_query<'query>(

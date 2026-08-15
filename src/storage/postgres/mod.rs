@@ -132,6 +132,14 @@ impl PostgresTelemetry for ApplicationPostgresTelemetry {
     fn computed_evaluation(&self, scope: &'static str, error_codes: &[&'static str]) {
         crate::observability::metrics::computed_evaluation_summary(scope, error_codes);
     }
+
+    fn computed_live_fallback(&self) {
+        crate::observability::metrics::computed_live_fallback();
+    }
+
+    fn computed_read_repair(&self, outcome: &'static str) {
+        crate::observability::metrics::computed_read_repair(outcome);
+    }
 }
 
 /// Canonical production storage adapter.

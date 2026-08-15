@@ -2003,6 +2003,53 @@ fn catalog_queries_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn computed_object_queries_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/computed_objects.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "ComputedObjectStorage for PostgresStorage",
+    );
+    for method in ["list_computed_objects", "enrich_objects_with_computed"] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::computed_objects"),
+            "the {method} computed-object implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} computed-object implementation leaks the PostgreSQL pool"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/computed_objects.rs");
+    assert!(
+        !legacy_path.exists(),
+        "the application-owned PostgreSQL computed-object facade still exists"
+    );
+}
+
+#[test]
 fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path =

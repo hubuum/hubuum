@@ -63,13 +63,46 @@ pub enum ComputedObjectProjection {
     CursorBoundary { page_limit: usize },
 }
 
+/// Client-visible and execution forms of one computed-object query.
+#[derive(Clone, PartialEq)]
+pub struct ComputedObjectQueryOptions {
+    requested: QueryOptions,
+    execution: QueryOptions,
+}
+
+impl ComputedObjectQueryOptions {
+    /// Preserve both the client-visible query and the backend execution query.
+    ///
+    /// The application may increase the execution limit to discover whether a
+    /// next page exists. The adapter resolves computed field types in both
+    /// copies, but the result must retain the requested limit for response
+    /// pagination.
+    #[must_use]
+    pub const fn new(requested: QueryOptions, execution: QueryOptions) -> Self {
+        Self {
+            requested,
+            execution,
+        }
+    }
+
+    #[must_use]
+    pub const fn requested(&self) -> &QueryOptions {
+        &self.requested
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (QueryOptions, QueryOptions) {
+        (self.requested, self.execution)
+    }
+}
+
 /// One computed filter/sort query with authorization already selected by the
 /// application layer.
 #[derive(Clone, PartialEq)]
 pub struct ComputedObjectListQuery {
     class_id: i32,
     personal_owner_id: Option<i32>,
-    options: QueryOptions,
+    options: ComputedObjectQueryOptions,
     visibility: ComputedObjectVisibility,
     projection: ComputedObjectProjection,
 }
@@ -79,7 +112,7 @@ impl ComputedObjectListQuery {
     pub const fn new(
         class_id: i32,
         personal_owner_id: Option<i32>,
-        options: QueryOptions,
+        options: ComputedObjectQueryOptions,
         visibility: ComputedObjectVisibility,
         projection: ComputedObjectProjection,
     ) -> Self {
@@ -94,7 +127,7 @@ impl ComputedObjectListQuery {
 
     #[must_use]
     pub const fn options(&self) -> &QueryOptions {
-        &self.options
+        self.options.requested()
     }
 
     #[must_use]
@@ -103,7 +136,7 @@ impl ComputedObjectListQuery {
     ) -> (
         i32,
         Option<i32>,
-        QueryOptions,
+        ComputedObjectQueryOptions,
         ComputedObjectVisibility,
         ComputedObjectProjection,
     ) {
@@ -121,11 +154,11 @@ impl fmt::Debug for ComputedObjectListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ComputedObjectListQuery")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.requested.filters.len())
+            .field("sort_count", &self.options.requested.sort.len())
+            .field("limit", &self.options.requested.limit)
+            .field("has_cursor", &self.options.requested.cursor.is_some())
+            .field("include_total", &self.options.requested.include_total)
             .field("visibility", &self.visibility)
             .field("projection", &self.projection)
             .finish_non_exhaustive()
@@ -337,17 +370,30 @@ mod tests {
         let query = ComputedObjectListQuery::new(
             7,
             Some(9),
-            QueryOptions {
-                filters: vec![ParsedQueryParam {
-                    field: FilterField::Name,
-                    operator: SearchOperator::Equals { is_negated: false },
-                    value: "secret object".to_string(),
-                }],
-                sort: Vec::new(),
-                limit: Some(20),
-                cursor: Some("secret cursor".to_string()),
-                include_total: true,
-            },
+            ComputedObjectQueryOptions::new(
+                QueryOptions {
+                    filters: vec![ParsedQueryParam {
+                        field: FilterField::Name,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: "secret object".to_string(),
+                    }],
+                    sort: Vec::new(),
+                    limit: Some(20),
+                    cursor: Some("secret cursor".to_string()),
+                    include_total: true,
+                },
+                QueryOptions {
+                    filters: vec![ParsedQueryParam {
+                        field: FilterField::Name,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: "secret object".to_string(),
+                    }],
+                    sort: Vec::new(),
+                    limit: Some(21),
+                    cursor: Some("secret cursor".to_string()),
+                    include_total: true,
+                },
+            ),
             ComputedObjectVisibility::authorized_object_ids(42, [11, 12]),
             ComputedObjectProjection::All,
         );

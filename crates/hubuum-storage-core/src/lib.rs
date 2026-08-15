@@ -74,9 +74,9 @@ pub use computed_field_lifecycle::{
 };
 pub use computed_objects::{
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
-    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility,
-    StorageComputedFieldError, StorageComputedObject, StorageComputedScope,
-    StorageSharedComputedScope,
+    ComputedObjectProjection, ComputedObjectQueryOptions, ComputedObjectStorage,
+    ComputedObjectVisibility, StorageComputedFieldError, StorageComputedObject,
+    StorageComputedScope, StorageSharedComputedScope,
 };
 pub use event_administration::{
     AuditEventStorage, EventDeliveryAdministrationStorage, EventSubscriptionStorage,

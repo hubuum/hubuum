@@ -1,7 +1,5 @@
-use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClass, HubuumObject};
 use crate::storage::{StorageClassRecord, StorageCollection, StorageObject, StorageRecordMetadata};
-use hubuum_storage_postgres::PostgresRevision;
 
 pub(in crate::storage::postgres) fn collection_to_storage(
     collection: Collection,
@@ -52,31 +50,4 @@ pub(in crate::storage::postgres) fn object_to_storage(object: HubuumObject) -> S
         object.data,
         object.description,
     )
-}
-
-pub(in crate::storage::postgres) fn object_from_storage(
-    object: StorageObject,
-) -> Result<HubuumObject, ApiError> {
-    let (
-        id,
-        name,
-        collection_id,
-        hubuum_class_id,
-        data,
-        description,
-        created_at,
-        updated_at,
-        revision,
-    ) = object.into_parts();
-    Ok(HubuumObject {
-        id,
-        name,
-        collection_id,
-        hubuum_class_id,
-        data,
-        description,
-        created_at,
-        updated_at,
-        revision: PostgresRevision::new(revision)?.into_domain(),
-    })
 }

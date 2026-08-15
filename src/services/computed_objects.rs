@@ -4,14 +4,16 @@ use crate::models::{
     ComputedFieldErrorResponse, ComputedObjectScopesResponse, ComputedScopeResponse, HubuumObject,
     HubuumObjectComputedResponse, SharedComputedScopeResponse, TokenScope,
 };
+use crate::pagination::prepare_db_pagination;
 use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::services::storage_boundary::{
     object_from_storage, object_to_storage, visibility as storage_visibility,
 };
 use crate::storage::{
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
-    ComputedObjectStorage, ComputedObjectVisibility, StorageComputedFieldError,
-    StorageComputedObject, StorageComputedScope, StorageContext, storage_handle,
+    ComputedObjectQueryOptions, ComputedObjectStorage, ComputedObjectVisibility,
+    StorageComputedFieldError, StorageComputedObject, StorageComputedScope, StorageContext,
+    storage_handle,
 };
 
 pub(crate) enum ComputedObjectAccess<'a> {
@@ -64,11 +66,20 @@ pub(crate) async fn list_computed_objects(
     access: ComputedObjectAccess<'_>,
     projection: ComputedObjectProjection,
 ) -> Result<ComputedObjectListResult, ApiError> {
+    let computed_sorting = options
+        .sort
+        .iter()
+        .any(|sort| sort.field.computed_query().is_some());
+    let execution_options = if computed_sorting {
+        prepare_db_pagination::<HubuumObjectComputedResponse>(&options)?
+    } else {
+        prepare_db_pagination::<HubuumObject>(&options)?
+    };
     let (objects, total, computed, resolved_options) = storage_handle(backend)
         .list_computed_objects(ComputedObjectListQuery::new(
             class_id,
             personal_owner_id,
-            options,
+            ComputedObjectQueryOptions::new(options, execution_options),
             access.into_storage()?,
             projection,
         ))

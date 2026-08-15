@@ -40,6 +40,10 @@ pub trait PostgresTelemetry: Send + Sync {
     }
 
     fn computed_evaluation(&self, _scope: &'static str, _error_codes: &[&'static str]) {}
+
+    fn computed_live_fallback(&self) {}
+
+    fn computed_read_repair(&self, _outcome: &'static str) {}
 }
 
 #[derive(Debug, Default)]
@@ -240,6 +244,14 @@ impl PostgresRuntime {
         error_codes: &[&'static str],
     ) {
         self.telemetry.computed_evaluation(scope, error_codes);
+    }
+
+    pub(crate) fn record_computed_live_fallback(&self) {
+        self.telemetry.computed_live_fallback();
+    }
+
+    pub(crate) fn record_computed_read_repair(&self, outcome: &'static str) {
+        self.telemetry.computed_read_repair(outcome);
     }
 }
 
