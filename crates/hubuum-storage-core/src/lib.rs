@@ -35,6 +35,7 @@ mod resource_lifecycle;
 mod restore;
 mod task_execution;
 mod task_queue;
+mod transaction;
 mod unified_search;
 mod worker_notifications;
 
@@ -248,6 +249,11 @@ pub use task_queue::{
     StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
     StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
     TaskQueueStorage,
+};
+pub use transaction::{
+    StorageTransaction, StorageTransactionFuture, TransactionalClassRelations,
+    TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,
+    TransactionalObjects, TransactionalStorage,
 };
 pub use unified_search::{
     UnifiedSearchClass, UnifiedSearchClassBuilder, UnifiedSearchCollection, UnifiedSearchCursor,

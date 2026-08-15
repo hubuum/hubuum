@@ -109,12 +109,17 @@ pub async fn resolve_class(
     selector: StorageClassSelector,
 ) -> Result<StorageResolvedClass, PostgresStorageError> {
     validate_class_selector(&selector)?;
-    let selector_for_query = selector.clone();
-    let class = runtime
-        .with_connection(async move |connection| {
-            load_class_by_selector(connection, &selector_for_query).await
-        })
-        .await?;
+    runtime
+        .with_connection(async move |connection| resolve_class_on(connection, selector).await)
+        .await
+}
+
+pub(crate) async fn resolve_class_on(
+    connection: &mut PostgresConnection,
+    selector: StorageClassSelector,
+) -> Result<StorageResolvedClass, PostgresStorageError> {
+    validate_class_selector(&selector)?;
+    let class = load_class_by_selector(connection, &selector).await?;
     Ok(StorageResolvedClass::new(selector, class.into_storage()))
 }
 
@@ -130,29 +135,37 @@ pub async fn create_class(
     if context.is_none() {
         return runtime
             .with_connection(async move |connection| {
-                insert_class(connection, &command)
-                    .await
-                    .map(ClassRow::into_storage)
+                create_class_on(connection, command, context.as_ref()).await
             })
             .await;
     }
 
     runtime
         .with_transaction(async move |connection| {
-            let class = insert_class(connection, &command).await?;
-            if let Some(context) = context.as_ref() {
-                let event = class_event(
-                    &class,
-                    Action::Created,
-                    context,
-                    format!("Class '{}' created", class.name),
-                )?
-                .with_after(class.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(class.into_storage())
+            create_class_on(connection, command, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn create_class_on(
+    connection: &mut PostgresConnection,
+    command: StorageClassCreate,
+    context: Option<&EventContext>,
+) -> Result<StorageClassRecord, PostgresStorageError> {
+    validate_positive_id(command.collection_id(), "collection id")?;
+    validate_class_create(&command)?;
+    let class = insert_class(connection, &command).await?;
+    if let Some(context) = context {
+        let event = class_event(
+            &class,
+            Action::Created,
+            context,
+            format!("Class '{}' created", class.name),
+        )?
+        .with_after(class.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(class.into_storage())
 }
 
 pub async fn update_class(
@@ -169,37 +182,49 @@ pub async fn update_class(
     let context = context.cloned();
     runtime
         .with_transaction(async move |connection| {
-            let before = if context.is_some() {
-                lock_resolved_class(connection, &target).await?
-            } else {
-                lock_class(connection, target.class().id()).await?
-            };
-            validate_class_update(&changes, &before)?;
-            let update = UpdateClassRow::from(&changes);
-            if !update.changes(&before) {
-                return Ok(before.into_storage());
-            }
-            let updated = diesel::update(
-                crate::schema::hubuumclass::table
-                    .filter(crate::schema::hubuumclass::id.eq(before.id)),
-            )
-            .set(update)
-            .get_result::<ClassRow>(connection)
-            .await?;
-            if let Some(context) = context.as_ref() {
-                let event = class_event(
-                    &updated,
-                    Action::Updated,
-                    context,
-                    format!("Class '{}' updated", updated.name),
-                )?
-                .with_before(before.snapshot())
-                .with_after(updated.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(updated.into_storage())
+            update_class_on(connection, &target, changes, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn update_class_on(
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedClass,
+    changes: StorageClassUpdate,
+    context: Option<&EventContext>,
+) -> Result<StorageClassRecord, PostgresStorageError> {
+    validate_positive_id(target.class().id(), "class id")?;
+    if let Some(collection_id) = changes.collection_id() {
+        validate_positive_id(collection_id, "collection id")?;
+    }
+    let before = if context.is_some() {
+        lock_resolved_class(connection, target).await?
+    } else {
+        lock_class(connection, target.class().id()).await?
+    };
+    validate_class_update(&changes, &before)?;
+    let update = UpdateClassRow::from(&changes);
+    if !update.changes(&before) {
+        return Ok(before.into_storage());
+    }
+    let updated = diesel::update(
+        crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
+    )
+    .set(update)
+    .get_result::<ClassRow>(connection)
+    .await?;
+    if let Some(context) = context {
+        let event = class_event(
+            &updated,
+            Action::Updated,
+            context,
+            format!("Class '{}' updated", updated.name),
+        )?
+        .with_before(before.snapshot())
+        .with_after(updated.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(updated.into_storage())
 }
 
 pub async fn delete_class(
@@ -214,43 +239,68 @@ pub async fn delete_class(
     if context.is_none() {
         return runtime
             .with_connection(async move |connection| {
-                diesel::delete(
-                    crate::schema::hubuumclass::table
-                        .filter(crate::schema::hubuumclass::id.eq(target.class().id())),
-                )
-                .execute(connection)
-                .await?;
-                Ok::<_, PostgresStorageError>(())
+                delete_class_on(connection, &target, context.as_ref()).await
             })
             .await;
     }
 
     runtime
         .with_transaction(async move |connection| {
-            let before = lock_resolved_class(connection, &target).await?;
-            diesel::delete(
-                crate::schema::hubuumclass::table
-                    .filter(crate::schema::hubuumclass::id.eq(before.id)),
-            )
-            .execute(connection)
-            .await?;
-            if let Some(context) = context.as_ref() {
-                let event = class_event(
-                    &before,
-                    Action::Deleted,
-                    context,
-                    format!("Class '{}' deleted", before.name),
-                )?
-                .with_before(before.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(())
+            delete_class_on(connection, &target, context.as_ref()).await
         })
         .await
 }
 
+pub(crate) async fn delete_class_on(
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedClass,
+    context: Option<&EventContext>,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(target.class().id(), "class id")?;
+    if context.is_none() {
+        diesel::delete(
+            crate::schema::hubuumclass::table
+                .filter(crate::schema::hubuumclass::id.eq(target.class().id())),
+        )
+        .execute(connection)
+        .await?;
+        return Ok(());
+    }
+    let before = lock_resolved_class(connection, target).await?;
+    diesel::delete(
+        crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
+    )
+    .execute(connection)
+    .await?;
+    if let Some(context) = context {
+        let event = class_event(
+            &before,
+            Action::Deleted,
+            context,
+            format!("Class '{}' deleted", before.name),
+        )?
+        .with_before(before.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(())
+}
+
 pub async fn class_names(
     runtime: &PostgresRuntime,
+    class_ids: Vec<i32>,
+) -> Result<Vec<(i32, String)>, PostgresStorageError> {
+    if class_ids.iter().any(|id| *id <= 0) {
+        return Err(PostgresStorageError::bad_request(
+            "class ids must be greater than zero",
+        ));
+    }
+    runtime
+        .with_connection(async move |connection| class_names_on(connection, class_ids).await)
+        .await
+}
+
+pub(crate) async fn class_names_on(
+    connection: &mut PostgresConnection,
     mut class_ids: Vec<i32>,
 ) -> Result<Vec<(i32, String)>, PostgresStorageError> {
     if class_ids.iter().any(|id| *id <= 0) {
@@ -264,32 +314,28 @@ pub async fn class_names(
         return Ok(Vec::new());
     }
 
-    runtime
-        .with_connection(async move |connection| {
-            let rows = crate::schema::hubuumclass::table
-                .filter(crate::schema::hubuumclass::id.eq_any(&class_ids))
-                .select((
-                    crate::schema::hubuumclass::id,
-                    crate::schema::hubuumclass::name,
-                ))
-                .order(crate::schema::hubuumclass::id.asc())
-                .load::<(i32, String)>(connection)
-                .await?;
-            if rows.len() != class_ids.len() {
-                let missing = class_ids
-                    .into_iter()
-                    .find(|id| {
-                        rows.binary_search_by_key(id, |(row_id, _)| *row_id)
-                            .is_err()
-                    })
-                    .expect("row count mismatch must identify a missing class");
-                return Err(PostgresStorageError::not_found(format!(
-                    "Class {missing} was not found"
-                )));
-            }
-            Ok::<_, PostgresStorageError>(rows)
-        })
-        .await
+    let rows = crate::schema::hubuumclass::table
+        .filter(crate::schema::hubuumclass::id.eq_any(&class_ids))
+        .select((
+            crate::schema::hubuumclass::id,
+            crate::schema::hubuumclass::name,
+        ))
+        .order(crate::schema::hubuumclass::id.asc())
+        .load::<(i32, String)>(connection)
+        .await?;
+    if rows.len() != class_ids.len() {
+        let missing = class_ids
+            .into_iter()
+            .find(|id| {
+                rows.binary_search_by_key(id, |(row_id, _)| *row_id)
+                    .is_err()
+            })
+            .expect("row count mismatch must identify a missing class");
+        return Err(PostgresStorageError::not_found(format!(
+            "Class {missing} was not found"
+        )));
+    }
+    Ok(rows)
 }
 
 async fn load_class_by_selector(

@@ -8,11 +8,12 @@ use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
 };
 use hubuum::services::Services;
-use hubuum::storage::BenchmarkStorageContext;
 use hubuum::storage::postgres::{
     ensure_postgres_schema_ready, init_postgres_pool_with_statement_timeout,
 };
+use hubuum::storage::{BenchmarkStorageContext, TransactionalStorage};
 use hubuum::traits::{CanDelete, CanSave};
+use hubuum_storage_core::StorageCollectionCreate;
 use tokio::runtime::{Builder, Runtime};
 
 static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -188,6 +189,40 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                     .expect("timed collection create should succeed");
                 measured += started.elapsed();
 
+                fixture.cleanup_created_collection(&runtime, &collection);
+            }
+            measured
+        });
+    });
+    group.bench_function("collection_create_with_event_in_unit_of_work", |b| {
+        b.iter_custom(|iterations| {
+            let mut measured = Duration::ZERO;
+            for _ in 0..iterations {
+                let command = StorageCollectionCreate::new(
+                    unique_name("storage-bench-transaction-create"),
+                    "PostgreSQL storage transaction create benchmark",
+                    fixture.owner_group.id,
+                    Some(point_read_id.id()),
+                );
+                let started = Instant::now();
+                let collection = runtime
+                    .block_on(fixture.storage.transaction(
+                        EventContext::system(),
+                        move |transaction| {
+                            Box::pin(async move { transaction.collections().create(command).await })
+                        },
+                    ))
+                    .expect("timed transaction collection create should succeed");
+                measured += started.elapsed();
+
+                let collection = runtime
+                    .block_on(
+                        collections.get(
+                            CollectionID::new(collection.id())
+                                .expect("transaction-created collection id should be positive"),
+                        ),
+                    )
+                    .expect("transaction-created collection should resolve");
                 fixture.cleanup_created_collection(&runtime, &collection);
             }
             measured

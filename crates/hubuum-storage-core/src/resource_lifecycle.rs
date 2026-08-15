@@ -645,6 +645,10 @@ impl StorageResolvedObject {
 }
 
 /// Complete collection lifecycle required from a selectable backend.
+///
+/// An event context makes a mutation audited. `None` is an adapter-facing seam
+/// for dedicated migrations, restores, imports, and fixtures; normal
+/// application mutations use an audited service or [`crate::TransactionalStorage`].
 #[async_trait]
 pub trait CollectionStore: Send + Sync {
     async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError>;
@@ -681,6 +685,10 @@ pub trait CollectionStore: Send + Sync {
 }
 
 /// Complete class lifecycle required from a selectable backend.
+///
+/// An event context makes a mutation audited. `None` is an adapter-facing seam
+/// for dedicated migrations, restores, imports, and fixtures; normal
+/// application mutations use an audited service or [`crate::TransactionalStorage`].
 #[async_trait]
 pub trait ClassStore: Send + Sync {
     async fn resolve_class(
@@ -715,6 +723,10 @@ pub trait ClassStore: Send + Sync {
 }
 
 /// Complete object lifecycle required from a selectable backend.
+///
+/// An event context makes a mutation audited. `None` is an adapter-facing seam
+/// for dedicated migrations, restores, imports, and fixtures; normal
+/// application mutations use an audited service or [`crate::TransactionalStorage`].
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     /// Load one object and its class by object ID.

@@ -112,11 +112,17 @@ pub async fn get_object(
     object_id: i32,
 ) -> Result<StorageResolvedObject, PostgresStorageError> {
     validate_positive_id(object_id, "object id")?;
-    let (class, object) = runtime
-        .with_connection(async move |connection| {
-            load_object_and_class_by_id(connection, object_id).await
-        })
-        .await?;
+    runtime
+        .with_connection(async move |connection| get_object_on(connection, object_id).await)
+        .await
+}
+
+pub(crate) async fn get_object_on(
+    connection: &mut PostgresConnection,
+    object_id: i32,
+) -> Result<StorageResolvedObject, PostgresStorageError> {
+    validate_positive_id(object_id, "object id")?;
+    let (class, object) = load_object_and_class_by_id(connection, object_id).await?;
     Ok(StorageResolvedObject::new(
         StorageObjectSelector::Ids {
             class_id: class.id,
@@ -132,12 +138,17 @@ pub async fn resolve_object(
     selector: StorageObjectSelector,
 ) -> Result<StorageResolvedObject, PostgresStorageError> {
     validate_object_selector(&selector)?;
-    let selector_for_query = selector.clone();
-    let (class, object) = runtime
-        .with_connection(async move |connection| {
-            load_object_by_selector(connection, &selector_for_query).await
-        })
-        .await?;
+    runtime
+        .with_connection(async move |connection| resolve_object_on(connection, selector).await)
+        .await
+}
+
+pub(crate) async fn resolve_object_on(
+    connection: &mut PostgresConnection,
+    selector: StorageObjectSelector,
+) -> Result<StorageResolvedObject, PostgresStorageError> {
+    validate_object_selector(&selector)?;
+    let (class, object) = load_object_by_selector(connection, &selector).await?;
     Ok(StorageResolvedObject::new(
         selector,
         class.into_storage(),
@@ -155,30 +166,49 @@ pub async fn create_object(
     validate_positive_id(command.collection_id(), "collection id")?;
     let target = target.clone();
     let context = context.cloned();
-    let (object, evaluation) = runtime
+    let operation_runtime = runtime.clone();
+    runtime
         .with_transaction(async move |connection| {
-            acquire_computed_class_shared_lock(connection, target.class().id()).await?;
-            let class = lock_resolved_class(connection, &target).await?;
-            validate_object_create(&command, &class)?;
-            let object = insert_object(connection, &command).await?;
-            let evaluation = materialize_object(
+            create_object_on(
+                &operation_runtime,
                 connection,
-                ObjectMaterializationInput::new(object.id, object.hubuum_class_id, &object.data),
+                &target,
+                command,
+                context.as_ref(),
             )
-            .await?;
-            if let Some(context) = context.as_ref() {
-                let event = object_event(
-                    &object,
-                    Action::Created,
-                    context,
-                    format!("Object '{}' created", object.name),
-                )?
-                .with_after(object.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>((object, evaluation))
+            .await
         })
-        .await?;
+        .await
+}
+
+pub(crate) async fn create_object_on(
+    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedClass,
+    command: StorageObjectCreate,
+    context: Option<&EventContext>,
+) -> Result<StorageObject, PostgresStorageError> {
+    validate_positive_id(command.class_id(), "class id")?;
+    validate_positive_id(command.collection_id(), "collection id")?;
+    acquire_computed_class_shared_lock(connection, target.class().id()).await?;
+    let class = lock_resolved_class(connection, target).await?;
+    validate_object_create(&command, &class)?;
+    let object = insert_object(connection, &command).await?;
+    let evaluation = materialize_object(
+        connection,
+        ObjectMaterializationInput::new(object.id, object.hubuum_class_id, &object.data),
+    )
+    .await?;
+    if let Some(context) = context {
+        let event = object_event(
+            &object,
+            Action::Created,
+            context,
+            format!("Object '{}' created", object.name),
+        )?
+        .with_after(object.snapshot());
+        append_event(connection, &event).await?;
+    }
     record_computed_evaluation(runtime, evaluation.as_ref());
     Ok(object.into_storage())
 }
@@ -198,16 +228,42 @@ pub async fn update_object(
     }
     let target = target.clone();
     let context = context.cloned();
-    let (object, evaluation) = runtime
+    let operation_runtime = runtime.clone();
+    runtime
         .with_transaction(async move |connection| {
-            let (class, before) = if context.is_some() {
-                lock_resolved_object(connection, &target).await?
-            } else {
-                lock_object_and_update_class(connection, target.object().id(), &changes).await?
-            };
-            persist_object_update(connection, &changes, &class, before, context.as_ref()).await
+            update_object_on(
+                &operation_runtime,
+                connection,
+                &target,
+                changes,
+                context.as_ref(),
+            )
+            .await
         })
-        .await?;
+        .await
+}
+
+pub(crate) async fn update_object_on(
+    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedObject,
+    changes: StorageObjectUpdate,
+    context: Option<&EventContext>,
+) -> Result<StorageObject, PostgresStorageError> {
+    validate_positive_id(target.object().id(), "object id")?;
+    if let Some(class_id) = changes.class_id() {
+        validate_positive_id(class_id, "class id")?;
+    }
+    if let Some(collection_id) = changes.collection_id() {
+        validate_positive_id(collection_id, "collection id")?;
+    }
+    let (class, before) = if context.is_some() {
+        lock_resolved_object(connection, target).await?
+    } else {
+        lock_object_and_update_class(connection, target.object().id(), &changes).await?
+    };
+    let (object, evaluation) =
+        persist_object_update(connection, &changes, &class, before, context).await?;
     record_computed_evaluation(runtime, evaluation.as_ref());
     Ok(object.into_storage())
 }
@@ -221,56 +277,63 @@ pub async fn patch_object_data(
     validate_positive_id(target.object().id(), "object id")?;
     let target = target.clone();
     let context = context.clone();
-    let (object, evaluation) = runtime
+    let operation_runtime = runtime.clone();
+    runtime
         .with_transaction(async move |connection| {
-            let (class, before) = lock_resolved_object(connection, &target).await?;
-            let patched_data = patch
-                .apply(&before.data)
-                .map_err(postgres_error_from_storage)?;
-            validate_object_state(
-                before.hubuum_class_id,
-                before.collection_id,
-                &patched_data,
-                &class,
-            )?;
-            if patched_data == before.data {
-                let evaluation = materialize_object(
-                    connection,
-                    ObjectMaterializationInput::new(
-                        before.id,
-                        before.hubuum_class_id,
-                        &before.data,
-                    ),
-                )
-                .await?;
-                return Ok((before, evaluation));
-            }
-            let updated = diesel::update(
-                crate::schema::hubuumobject::table
-                    .filter(crate::schema::hubuumobject::id.eq(before.id)),
-            )
-            .set(crate::schema::hubuumobject::data.eq(patched_data))
-            .get_result::<ObjectRow>(connection)
-            .await?;
-            let evaluation = materialize_object(
-                connection,
-                ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
-            )
-            .await?;
-            let event = object_event(
-                &updated,
-                Action::Updated,
-                &context,
-                format!("Object '{}' updated", updated.name),
-            )?
-            .with_before(before.snapshot())
-            .with_after(updated.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>((updated, evaluation))
+            patch_object_data_on(&operation_runtime, connection, &target, patch, &context).await
         })
+        .await
+}
+
+pub(crate) async fn patch_object_data_on(
+    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedObject,
+    patch: StorageObjectDataPatch,
+    context: &EventContext,
+) -> Result<StorageObject, PostgresStorageError> {
+    validate_positive_id(target.object().id(), "object id")?;
+    let (class, before) = lock_resolved_object(connection, target).await?;
+    let patched_data = patch
+        .apply(&before.data)
+        .map_err(postgres_error_from_storage)?;
+    validate_object_state(
+        before.hubuum_class_id,
+        before.collection_id,
+        &patched_data,
+        &class,
+    )?;
+    if patched_data == before.data {
+        let evaluation = materialize_object(
+            connection,
+            ObjectMaterializationInput::new(before.id, before.hubuum_class_id, &before.data),
+        )
         .await?;
+        record_computed_evaluation(runtime, evaluation.as_ref());
+        return Ok(before.into_storage());
+    }
+    let updated = diesel::update(
+        crate::schema::hubuumobject::table.filter(crate::schema::hubuumobject::id.eq(before.id)),
+    )
+    .set(crate::schema::hubuumobject::data.eq(patched_data))
+    .get_result::<ObjectRow>(connection)
+    .await?;
+    let evaluation = materialize_object(
+        connection,
+        ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
+    )
+    .await?;
+    let event = object_event(
+        &updated,
+        Action::Updated,
+        context,
+        format!("Object '{}' updated", updated.name),
+    )?
+    .with_before(before.snapshot())
+    .with_after(updated.snapshot());
+    append_event(connection, &event).await?;
     record_computed_evaluation(runtime, evaluation.as_ref());
-    Ok(object.into_storage())
+    Ok(updated.into_storage())
 }
 
 pub async fn delete_object(
@@ -284,39 +347,49 @@ pub async fn delete_object(
     if context.is_none() {
         return runtime
             .with_connection(async move |connection| {
-                diesel::delete(
-                    crate::schema::hubuumobject::table
-                        .filter(crate::schema::hubuumobject::id.eq(target.object().id())),
-                )
-                .execute(connection)
-                .await?;
-                Ok::<_, PostgresStorageError>(())
+                delete_object_on(connection, &target, context.as_ref()).await
             })
             .await;
     }
-
     runtime
         .with_transaction(async move |connection| {
-            let (_, before) = lock_resolved_object(connection, &target).await?;
-            diesel::delete(
-                crate::schema::hubuumobject::table
-                    .filter(crate::schema::hubuumobject::id.eq(before.id)),
-            )
-            .execute(connection)
-            .await?;
-            if let Some(context) = context.as_ref() {
-                let event = object_event(
-                    &before,
-                    Action::Deleted,
-                    context,
-                    format!("Object '{}' deleted", before.name),
-                )?
-                .with_before(before.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(())
+            delete_object_on(connection, &target, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn delete_object_on(
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedObject,
+    context: Option<&EventContext>,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(target.object().id(), "object id")?;
+    if context.is_none() {
+        diesel::delete(
+            crate::schema::hubuumobject::table
+                .filter(crate::schema::hubuumobject::id.eq(target.object().id())),
+        )
+        .execute(connection)
+        .await?;
+        return Ok(());
+    }
+    let (_, before) = lock_resolved_object(connection, target).await?;
+    diesel::delete(
+        crate::schema::hubuumobject::table.filter(crate::schema::hubuumobject::id.eq(before.id)),
+    )
+    .execute(connection)
+    .await?;
+    if let Some(context) = context {
+        let event = object_event(
+            &before,
+            Action::Deleted,
+            context,
+            format!("Object '{}' deleted", before.name),
+        )?
+        .with_before(before.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(())
 }
 
 pub async fn validate_object(
@@ -326,16 +399,23 @@ pub async fn validate_object(
     validate_positive_id(object.class_id(), "class id")?;
     validate_positive_id(object.collection_id(), "collection id")?;
     runtime
-        .with_connection(async move |connection| {
-            let class = load_class(connection, object.class_id()).await?;
-            validate_object_state(
-                object.class_id(),
-                object.collection_id(),
-                object.data(),
-                &class,
-            )
-        })
+        .with_connection(async move |connection| validate_object_on(connection, object).await)
         .await
+}
+
+pub(crate) async fn validate_object_on(
+    connection: &mut PostgresConnection,
+    object: StorageObject,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(object.class_id(), "class id")?;
+    validate_positive_id(object.collection_id(), "collection id")?;
+    let class = load_class(connection, object.class_id()).await?;
+    validate_object_state(
+        object.class_id(),
+        object.collection_id(),
+        object.data(),
+        &class,
+    )
 }
 
 pub async fn validate_object_create_command(
@@ -346,10 +426,19 @@ pub async fn validate_object_create_command(
     validate_positive_id(command.collection_id(), "collection id")?;
     runtime
         .with_connection(async move |connection| {
-            let class = load_class(connection, command.class_id()).await?;
-            validate_object_create(&command, &class)
+            validate_object_create_command_on(connection, command).await
         })
         .await
+}
+
+pub(crate) async fn validate_object_create_command_on(
+    connection: &mut PostgresConnection,
+    command: StorageObjectCreate,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(command.class_id(), "class id")?;
+    validate_positive_id(command.collection_id(), "collection id")?;
+    let class = load_class(connection, command.class_id()).await?;
+    validate_object_create(&command, &class)
 }
 
 pub async fn validate_object_update_command(
@@ -366,12 +455,27 @@ pub async fn validate_object_update_command(
     }
     runtime
         .with_connection(async move |connection| {
-            let object = load_object(connection, object_id).await?;
-            let class_id = changes.class_id().unwrap_or(object.hubuum_class_id);
-            let class = load_class(connection, class_id).await?;
-            validate_object_update(&changes, &object, &class)
+            validate_object_update_command_on(connection, object_id, changes).await
         })
         .await
+}
+
+pub(crate) async fn validate_object_update_command_on(
+    connection: &mut PostgresConnection,
+    object_id: i32,
+    changes: StorageObjectUpdate,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(object_id, "object id")?;
+    if let Some(class_id) = changes.class_id() {
+        validate_positive_id(class_id, "class id")?;
+    }
+    if let Some(collection_id) = changes.collection_id() {
+        validate_positive_id(collection_id, "collection id")?;
+    }
+    let object = load_object(connection, object_id).await?;
+    let class_id = changes.class_id().unwrap_or(object.hubuum_class_id);
+    let class = load_class(connection, class_id).await?;
+    validate_object_update(&changes, &object, &class)
 }
 
 async fn load_object_and_class_by_id(

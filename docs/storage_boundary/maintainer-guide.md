@@ -33,6 +33,10 @@ adapter operation and private row conversion
 with_connection or with_transaction
 ```
 
+A composed resource workflow follows the same path, but
+`TransactionalStorage` creates one opaque `StorageTransaction` and all of its
+resource operation accessors reuse the same native unit of work.
+
 Results travel back as storage DTOs, then domain or API values. Errors travel
 back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 
@@ -50,6 +54,8 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Application-owned PostgreSQL construction and telemetry wiring | `src/storage/postgres/mod.rs`, `src/storage/factory.rs` |
 | Test-only legacy PostgreSQL row and SQL harness | `src/storage/postgres/operations/*` |
 | Native connection and transaction helpers | `crates/hubuum-storage-postgres/src/runtime.rs` |
+| Backend-neutral unit of work and operation accessors | `crates/hubuum-storage-core/src/transaction.rs` |
+| PostgreSQL transaction-scoped capability implementation | `crates/hubuum-storage-postgres/src/backend/transaction.rs` |
 | Adapter error conversion | `crates/hubuum-storage-postgres/src/error.rs` |
 | Storage construction and settings | `src/storage/factory.rs` |
 | Application use cases and DTO conversion | `src/services/*` |
@@ -93,6 +99,17 @@ If yes:
 
 If the proposed method is merely "return this table row" or "give me a
 connection so I can query," redesign it around the use case.
+
+Before adding a method, ask whether the use case only composes existing safe
+resource semantics. If it does, implement the orchestration in the application
+through `TransactionalStorage`. Add a trait method when storage needs a new
+query semantic, a hidden lock or state machine, or one invariant that callers
+cannot safely reconstruct.
+
+```text
+existing safe primitives + application orchestration -> StorageTransaction
+new persistence semantic or hidden invariant          -> owning trait method
+```
 
 ### New public API behavior
 
@@ -160,8 +177,18 @@ must share PostgreSQL's schema.
 
 ## Transactions
 
-Use one trait call for one required atomic outcome. Inside PostgreSQL:
+Use `TransactionalStorage` for application-owned composition of existing safe
+collection, class, object, and relation semantics. The transaction requires an
+`EventContext`; its operation types attach that context to every mutation.
 
+Keep a single operation-shaped trait method for task, restore, import,
+permission, retention, delivery, and other state machines whose invariants the
+backend must own.
+
+Inside PostgreSQL:
+
+- implement transaction-scoped resource calls with private connection-level
+  helpers that never start a nested transaction;
 - use `with_transaction` for multi-step writes that must roll back together;
 - use `with_connection` for a single read, a single write, or intentionally
   non-atomic work; and
@@ -170,6 +197,8 @@ Use one trait call for one required atomic outcome. Inside PostgreSQL:
 
 Revision checks, audit events, task claims, and destructive restore ownership
 must be verified inside the same native transaction as the protected write.
+The transaction compatibility test must prove rollback of both state and audit
+events for every composable lifecycle family.
 
 ## Errors
 
@@ -217,6 +246,12 @@ storage-operation metrics:
 Keep both. Do not infer one from the other or silently omit the common wrapper
 because native instrumentation exists.
 
+The complete transaction callback is one logical operation labeled
+`transactions/run`. Its constituent resource calls are steps inside that
+entrypoint. PostgreSQL pool, transaction, and query diagnostics provide the
+lower-level view without double-counting each step as an independent
+application call.
+
 ## Administrator Configuration
 
 The administrator endpoint, startup logs, and backend-info metric must agree on
@@ -263,7 +298,8 @@ The current source guards verify that:
 - contract DTOs contain no adapter or HTTP types;
 - only adapters convert implementation errors into `StorageError`;
 - only the application converts `StorageError` into `ApiError`;
-- all required capability traits remain in the aggregate;
+- all required capability traits, including `TransactionalStorage`, remain in
+  the aggregate;
 - the semantic inventory exactly matches aggregate traits, trait methods,
   tracked input variants, and existing evidence functions;
 - PostgreSQL explicitly implements the aggregate and the memory model does not;
@@ -282,7 +318,9 @@ Before considering a boundary change complete:
 - [ ] The operation has one clear owning family and trait.
 - [ ] No application consumer imports adapter details.
 - [ ] DTOs express intent without mirroring a native schema.
-- [ ] Required atomicity is implemented inside one adapter operation.
+- [ ] Existing safe semantics are composed through the opaque unit of work.
+- [ ] Hidden invariants remain inside one adapter operation.
+- [ ] Audited state and event side effects share one commit boundary.
 - [ ] Errors follow the one-way conversion path.
 - [ ] Dispatch is exhaustive and commonly observed.
 - [ ] Labels and debug output are bounded and non-sensitive.

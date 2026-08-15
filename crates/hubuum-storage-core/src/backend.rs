@@ -8,7 +8,7 @@ use crate::{
     InventoryStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
     RestoreStorage, StorageExecution, StorageIdentity, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
+    TokenRetentionStorage, TokenStorage, TransactionalStorage, UnifiedSearchStorage, UserStorage,
     WorkerNotificationStorage,
 };
 
@@ -64,5 +64,6 @@ pub trait StorageBackend:
     + ExportTemplateStorage
     + WorkerNotificationStorage
     + StorageExecution
+    + TransactionalStorage
 {
 }

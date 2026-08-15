@@ -37,7 +37,9 @@ use super::{
     StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
     StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
     StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
-    StorageResolvedObjectRelation,
+    StorageResolvedObjectRelation, StorageTransaction, StorageTransactionFuture,
+    TransactionalClassRelations, TransactionalClasses, TransactionalCollections,
+    TransactionalObjectRelations, TransactionalObjects, TransactionalStorage,
 };
 use error::map_memory_error;
 
@@ -78,6 +80,7 @@ pub(crate) struct MemoryObjectRelationEvent {
     pub(crate) context: EventContext,
 }
 
+#[derive(Clone)]
 struct MemoryState {
     next_collection_id: i32,
     next_class_id: i32,
@@ -540,6 +543,66 @@ impl MemoryStorageModel {
 impl StorageIdentity for MemoryStorageModel {
     fn storage_name(&self) -> &'static str {
         "memory_contract_model"
+    }
+}
+
+struct MemoryTransaction {
+    storage: MemoryStorageModel,
+    event_context: EventContext,
+}
+
+impl StorageTransaction for MemoryTransaction {
+    fn collections(&self) -> TransactionalCollections<'_> {
+        TransactionalCollections::new(&self.storage, &self.event_context)
+    }
+
+    fn classes(&self) -> TransactionalClasses<'_> {
+        TransactionalClasses::new(&self.storage, &self.event_context)
+    }
+
+    fn class_relations(&self) -> TransactionalClassRelations<'_> {
+        TransactionalClassRelations::new(&self.storage, &self.event_context)
+    }
+
+    fn objects(&self) -> TransactionalObjects<'_> {
+        TransactionalObjects::new(&self.storage, &self.event_context)
+    }
+
+    fn object_relations(&self) -> TransactionalObjectRelations<'_> {
+        TransactionalObjectRelations::new(&self.storage, &self.event_context)
+    }
+}
+
+#[async_trait]
+impl TransactionalStorage for MemoryStorageModel {
+    async fn transaction<F, R>(
+        &self,
+        event_context: EventContext,
+        operation: F,
+    ) -> Result<R, StorageError>
+    where
+        F: for<'transaction> FnOnce(
+                &'transaction dyn StorageTransaction,
+            ) -> StorageTransactionFuture<'transaction, R>
+            + Send,
+        R: Send,
+    {
+        // Hold the authoritative write lock for the whole unit of work. The
+        // callback operates on a private snapshot and only swaps it into place
+        // after success, giving the test adapter serializable commit/rollback
+        // behavior without exposing its synchronization mechanism.
+        let mut committed = self.state.write().await;
+        let transaction = MemoryTransaction {
+            storage: Self {
+                state: Arc::new(RwLock::new(committed.clone())),
+            },
+            event_context,
+        };
+        let result = operation(&transaction).await;
+        if result.is_ok() {
+            *committed = transaction.storage.state.read().await.clone();
+        }
+        result
     }
 }
 

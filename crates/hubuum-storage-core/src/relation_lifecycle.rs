@@ -387,6 +387,10 @@ impl StorageResolvedObjectRelation {
 }
 
 /// Complete class-relation lifecycle required from a selectable backend.
+///
+/// An event context makes a mutation audited. `None` is an adapter-facing seam
+/// for dedicated migrations, restores, imports, and fixtures; normal
+/// application mutations use an audited service or [`crate::TransactionalStorage`].
 #[async_trait]
 pub trait ClassRelationStore: Send + Sync {
     async fn prepare_class_relation(
@@ -425,6 +429,10 @@ pub trait ClassRelationStore: Send + Sync {
 }
 
 /// Complete object-relation lifecycle required from a selectable backend.
+///
+/// An event context makes a mutation audited. `None` is an adapter-facing seam
+/// for dedicated migrations, restores, imports, and fixtures; normal
+/// application mutations use an audited service or [`crate::TransactionalStorage`].
 #[async_trait]
 pub trait ObjectRelationStore: Send + Sync {
     async fn prepare_object_relation(

@@ -13,7 +13,7 @@ This document separates what each test layer proves from what it does not.
 | Area | Confidence | Reason |
 | --- | --- | --- |
 | PostgreSQL behavior on a real database | Strong | The full suite creates and migrates an isolated PostgreSQL database and exercises queries, transactions, triggers, workers, services, and APIs. |
-| Resource lifecycle semantics | Strong | Focused family contracts run against PostgreSQL and a deterministic memory model, with extensive API coverage above them. |
+| Resource lifecycle semantics | Strong | Focused family contracts run against PostgreSQL and a deterministic memory model, including whole-graph transaction commit and state-plus-event rollback. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
 | Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and the registry covers every selectable kind. |
 | Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The scenarios still require human review for semantic depth. |
@@ -74,7 +74,8 @@ guard the dependency direction. Among other checks, they verify that:
 - only adapters that explicitly implement the complete aggregate are selectable;
 - the focused memory resource model is not selectable; and
 - every logical contract method crosses exactly one common observer with a
-  unique, bounded label pair.
+  unique, bounded label pair; and
+- every selectable backend implements the mandatory transaction capability.
 
 These are valuable compile-time-adjacent regression guards. Some inspect
 source text, so they protect known boundaries rather than providing a formal
@@ -102,6 +103,17 @@ This is the strongest independent evidence that resource services rely on
 behavior rather than PostgreSQL mechanics. The memory model deliberately stops
 there; it does not stand in for a complete alternative backend.
 
+`src/tests/storage_transactions.rs` applies one generic transaction scenario
+to both implementations. The scenario commits a complete resource graph, then
+repeats every lifecycle family and deliberately returns an application error.
+It verifies that committed state has family-specific audit evidence, then that
+the failed callback's state and all five family-specific audit events roll back.
+
+The memory model implements a serializable copy-on-write unit of work for this
+purpose. That proves the application-facing semantics are independently
+implementable; it does not claim to model PostgreSQL isolation or failure
+timing.
+
 ## Selectable-Backend Compatibility
 
 `src/tests/storage_contract.rs` owns the current compatibility registry.
@@ -119,7 +131,7 @@ The suite covers these family-level behaviors:
 
 | Family | Shared compatibility behavior |
 | --- | --- |
-| `domain_lifecycle` | Lifecycle service contracts plus record compatibility operations |
+| `domain_lifecycle` | Lifecycle service contracts, record compatibility operations, and cross-family transaction commit/rollback |
 | `catalog_queries` | Collection, class, and object listing with real matching rows |
 | `computed_object_queries` | Computed filtering and enrichment |
 | `computed_field_lifecycle` | Shared and personal definitions, class state, scheduling, and claimed rebuild execution |
@@ -162,6 +174,7 @@ Tests alongside `crates/hubuum-storage-postgres`, plus the test-only legacy harn
 
 - pool and TLS settings plus safe endpoint diagnostics;
 - transaction and connection context reset;
+- native commit and rollback beneath the backend-neutral unit of work;
 - error classification;
 - SQL filtering and cursor mapping;
 - audit triggers, provenance, and revision serialization;
@@ -172,7 +185,8 @@ Tests alongside `crates/hubuum-storage-postgres`, plus the test-only legacy harn
 - restore transactions and recovery; and
 - notification visibility only after commit.
 
-Adapter-private, task-local failpoints interrupt a compound collection create
+The shared transaction test proves state-plus-event rollback through the
+public contract. Adapter-private, task-local failpoints additionally interrupt a compound collection create
 after its rows are written and task finalization after its terminal audit event
 is written. Both tests assert that the surrounding PostgreSQL transaction
 rolls back all intermediate state. Failpoint selection does not cross
@@ -285,7 +299,7 @@ The next improvements should be:
    coordination, lease loss, and connection failure.
 3. Produce periodic line and branch coverage reports for diagnosis, focusing
    review on error and rollback paths rather than a repository-wide percentage.
-4. Run the unchanged service and HTTP suites through a second complete adapter
+4. Run the unchanged service, transaction, and HTTP suites through a second complete adapter
    as part of its acceptance testing.
 
 ## Interpreting a Green Suite

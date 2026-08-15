@@ -22,9 +22,10 @@ use crate::services::Services;
 use crate::services::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
+use crate::services::storage_boundary::{object_create_to_storage, resolved_class_to_storage};
 use crate::storage::postgres::prelude::{QueryableByName, RunQueryDsl};
 use crate::storage::postgres::{PostgresPool, capture_queries, with_connection};
-use crate::storage::with_mutation_provenance;
+use crate::storage::{StorageHandle, TransactionalStorage, with_mutation_provenance};
 use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
 
@@ -674,6 +675,58 @@ async fn object_storage_query_budget_create_with_event_is_fixed() {
     ))
     .await;
     created.expect("object should save with an event");
+    assert_eq!(queries.total_queries(), 10, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 8);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.queries_matching("INSERT INTO \"hubuumobject\""), 1);
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
+    let scope = TestScope::new();
+    let fixture = scope
+        .collection_fixture("query_budget_object_transaction_create")
+        .await;
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
+    let storage = StorageHandle::postgres(scope.pool.get_ref().clone());
+    let class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_object_transaction_create_class"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "object transaction query budget class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("class fixture should save");
+    let class_target = services
+        .classes()
+        .resolve(ClassSelector::by_id(
+            HubuumClassID::new(class.id).expect("valid class id"),
+        ))
+        .await
+        .expect("class fixture should resolve");
+    let storage_class = resolved_class_to_storage(&class_target);
+    let command = object_create_to_storage(NewHubuumObject {
+        name: scope.scoped_name("query_budget_object_transaction_create"),
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        data: serde_json::json!({"value": 1}),
+        description: "object transaction query budget".to_string(),
+    });
+
+    let (created, queries) = capture_queries(storage.transaction(
+        EventContext::system(),
+        move |transaction| {
+            Box::pin(async move { transaction.objects().create(&storage_class, command).await })
+        },
+    ))
+    .await;
+    created.expect("transactional object should save with an event");
     assert_eq!(queries.total_queries(), 10, "{:#?}", queries.query_counts());
     assert_eq!(queries.domain_queries(), 8);
     assert_eq!(queries.control_queries(), 2);

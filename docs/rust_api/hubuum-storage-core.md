@@ -11,6 +11,11 @@ Backend crates may live outside this workspace and depend through crates.io,
 Git, or a path. Hubuum uses static Cargo composition; this is not a dynamic
 plugin ABI and has no runtime contract version handshake.
 
+The crate also exposes the mandatory `TransactionalStorage` unit of work.
+Applications compose safe lifecycle semantics through the crate-owned
+operation types returned by `StorageTransaction`; native connections and query
+interfaces remain private to each adapter.
+
 The root `hubuum` crate remains an internal application composition crate.
 HTTP clients should use Hubuum's versioned API instead of this storage API.
 
@@ -36,7 +41,10 @@ Async methods require a Send-capable executor but do not prescribe Tokio or an
 I/O driver. Dropping a returned future requests cancellation; a backend must
 document and test any operation that can continue or commit after cancellation.
 Multi-step writes that promise atomicity must use the backend's transaction
-mechanism.
+mechanism. A `TransactionalStorage` implementation commits when its callback
+returns `Ok` and rolls back when it returns `Err`. Transaction-scoped mutations
+inherit one required event context, and adapters must commit or roll back state
+and audit side effects together.
 
 ## Security and Observability
 

@@ -88,12 +88,12 @@ use crate::storage::{
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
     StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate,
     StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation,
-    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete,
-    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
-    StorageUserUpdate, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationStorage,
+    StorageTokenRenew, StorageTokenRevoke, StorageTransaction, StorageTransactionFuture,
+    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, TaskExecutionStorage,
+    TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage, TransactionalStorage,
+    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
+    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -178,6 +178,7 @@ mod queries;
 mod relations;
 mod resources;
 mod tasks;
+mod transaction;
 mod workflows;
 
 pub use api::StorageContext;

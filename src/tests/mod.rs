@@ -20,6 +20,8 @@ pub(crate) mod storage_contract;
 #[cfg(test)]
 pub mod storage_performance;
 #[cfg(test)]
+mod storage_transactions;
+#[cfg(test)]
 pub mod temporal;
 #[cfg(test)]
 pub mod validation;

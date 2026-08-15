@@ -174,6 +174,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "ExportTemplateStorage",
     "WorkerNotificationStorage",
     "StorageExecution",
+    "TransactionalStorage",
 ];
 
 #[test]
@@ -188,6 +189,7 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
         "backend-author-guide.md",
         "maintainer-guide.md",
         "testing.md",
+        "transactions-and-events.md",
     ] {
         let relative_link = format!("storage_boundary/{document}");
         assert!(
@@ -733,6 +735,67 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "application consumers crossed the opaque backend boundary:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn resource_services_cannot_request_unrecorded_mutations() {
+    let root = repository_root();
+    let files_and_mutations = [
+        (
+            "src/services/collections.rs",
+            &[
+                ".create_collection(",
+                ".update_collection(",
+                ".delete_collection(",
+                ".move_collection(",
+            ][..],
+        ),
+        (
+            "src/services/classes.rs",
+            &[".create_class(", ".update_class(", ".delete_class("][..],
+        ),
+        (
+            "src/services/objects.rs",
+            &[".create_object(", ".update_object(", ".delete_object("][..],
+        ),
+        (
+            "src/services/class_relations.rs",
+            &[".create_class_relation(", ".delete_class_relation("][..],
+        ),
+        (
+            "src/services/object_relations.rs",
+            &[".create_object_relation(", ".delete_object_relation("][..],
+        ),
+    ];
+
+    for (relative_path, mutations) in files_and_mutations {
+        let path = root.join(relative_path);
+        let source = read_source(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for mutation in mutations {
+            let mut remainder = production;
+            while let Some(offset) = remainder.find(mutation) {
+                let call = &remainder[offset..];
+                let call = call
+                    .split_once(".await")
+                    .map_or(call, |(before_await, _)| before_await);
+                assert!(
+                    call.contains("Some(context)"),
+                    "{} uses {mutation} without the required audit context",
+                    path.display()
+                );
+                remainder = &remainder[offset + mutation.len()..];
+            }
+        }
+        for forbidden in ["save_without_events", "delete_without_events"] {
+            assert!(
+                !production.contains(forbidden),
+                "{} exposes an unrecorded mutation through {forbidden}",
+                path.display()
+            );
+        }
+    }
 }
 
 #[test]

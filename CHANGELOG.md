@@ -35,6 +35,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for every registered backend, and uses adapter-private deterministic
   failpoints to verify rollback of compound collection and task-finalization
   writes.
+- Storage backends now provide a mandatory backend-neutral unit of work for
+  composing collection, class, object, and relation operations. Transactional
+  mutations inherit one audit context, and shared PostgreSQL and memory-model
+  tests verify whole-graph commit plus state-and-event rollback.
 
 ### Changed
 
@@ -63,6 +67,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   alias for `exports.storage_query_budget_ms`.
   No client migration is required because the token-resource and
   remote-invocation `oneOf` variants are schema-identical to v0.0.9.
+- **Breaking (experimental Rust API):** complete storage adapters must now
+  implement `TransactionalStorage` in addition to the existing capability
+  traits. External adapter authors must provide an atomic callback runner and
+  all transaction-scoped lifecycle accessors; applications continue to select
+  adapters statically, with no dynamic plugin interface.
 - Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;
   PostgreSQL pool statistics are converted into private, structured contract
   values at the adapter boundary rather than being represented by root-owned

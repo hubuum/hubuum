@@ -218,6 +218,11 @@ source = "crates/hubuum-storage-core/src/execution.rs"
 methods = ["run_with_call_site", "run_with_call_site_send", "run_with_mutation_provenance", "run_with_revision_precondition"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context"]
 
+[traits.TransactionalStorage]
+source = "crates/hubuum-storage-core/src/transaction.rs"
+methods = ["transaction"]
+shared_scenarios = ["src/tests/storage_transactions.rs::memory_transaction_composes_resources_and_rolls_back_events", "src/tests/storage_transactions.rs::postgres_transaction_composes_resources_and_rolls_back_events"]
+
 # Boundary enums accepted by backend methods or dispatch. The inventory is
 # exact: adding a variant requires consciously extending its semantic evidence.
 

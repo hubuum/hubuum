@@ -94,12 +94,18 @@ pub async fn get_collection(
 ) -> Result<StorageCollection, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     runtime
-        .with_connection(async |connection| {
-            load_collection(connection, collection_id)
-                .await
-                .map(CollectionRow::into_storage)
-        })
+        .with_connection(async |connection| get_collection_on(connection, collection_id).await)
         .await
+}
+
+pub(crate) async fn get_collection_on(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+) -> Result<StorageCollection, PostgresStorageError> {
+    validate_positive_id(collection_id, "collection id")?;
+    load_collection(connection, collection_id)
+        .await
+        .map(CollectionRow::into_storage)
 }
 
 pub async fn create_collection(
@@ -114,29 +120,40 @@ pub async fn create_collection(
     let context = context.cloned();
     runtime
         .with_transaction(async move |connection| {
-            let parent_id =
-                resolve_parent_collection_id(connection, command.parent_collection_id()).await?;
-            let created =
-                insert_collection(connection, command.name(), command.description(), parent_id)
-                    .await?;
-            insert_collection_closure_rows(connection, created.id, parent_id).await?;
-            insert_full_collection_grant(connection, created.id, command.owner_group_id()).await?;
-
-            if let Some(context) = context.as_ref() {
-                check_failpoint(PostgresFailpoint::CollectionCreateAfterRecords)?;
-                let event = collection_event(
-                    &created,
-                    Action::Created,
-                    context,
-                    format!("Collection '{}' created", created.name),
-                )?
-                .with_after(created.snapshot())
-                .with_metadata(json!({ "assignee_group_id": command.owner_group_id() }));
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(created.into_storage())
+            create_collection_on(connection, command, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn create_collection_on(
+    connection: &mut PostgresConnection,
+    command: StorageCollectionCreate,
+    context: Option<&EventContext>,
+) -> Result<StorageCollection, PostgresStorageError> {
+    validate_positive_id(command.owner_group_id(), "group id")?;
+    if let Some(parent_id) = command.parent_collection_id() {
+        validate_positive_id(parent_id, "parent collection id")?;
+    }
+    let parent_id =
+        resolve_parent_collection_id(connection, command.parent_collection_id()).await?;
+    let created =
+        insert_collection(connection, command.name(), command.description(), parent_id).await?;
+    insert_collection_closure_rows(connection, created.id, parent_id).await?;
+    insert_full_collection_grant(connection, created.id, command.owner_group_id()).await?;
+
+    if let Some(context) = context {
+        check_failpoint(PostgresFailpoint::CollectionCreateAfterRecords)?;
+        let event = collection_event(
+            &created,
+            Action::Created,
+            context,
+            format!("Collection '{}' created", created.name),
+        )?
+        .with_after(created.snapshot())
+        .with_metadata(json!({ "assignee_group_id": command.owner_group_id() }));
+        append_event(connection, &event).await?;
+    }
+    Ok(created.into_storage())
 }
 
 pub async fn update_collection(
@@ -150,49 +167,68 @@ pub async fn update_collection(
     if !update.has_fields() {
         return get_collection(runtime, collection_id).await;
     }
-
-    let Some(context) = context.cloned() else {
+    let context = context.cloned();
+    if context.is_none() {
         return runtime
             .with_connection(async |connection| {
-                diesel::update(
-                    crate::schema::collections::table
-                        .filter(crate::schema::collections::id.eq(collection_id)),
-                )
-                .set(UpdateCollectionRow::from(&changes))
-                .get_result::<CollectionRow>(connection)
-                .await
-                .map(CollectionRow::into_storage)
-                .map_err(PostgresStorageError::from)
+                update_collection_on(connection, collection_id, changes, None).await
             })
             .await;
-    };
+    }
 
     runtime
         .with_transaction(async move |connection| {
-            let before = lock_revisioned_collection(connection, collection_id).await?;
-            let update = UpdateCollectionRow::from(&changes);
-            if !update.changes(&before) {
-                return Ok(before.into_storage());
-            }
-            let updated = diesel::update(
-                crate::schema::collections::table
-                    .filter(crate::schema::collections::id.eq(collection_id)),
-            )
-            .set(update)
-            .get_result::<CollectionRow>(connection)
-            .await?;
-            let event = collection_event(
-                &updated,
-                Action::Updated,
-                &context,
-                format!("Collection '{}' updated", updated.name),
-            )?
-            .with_before(before.snapshot())
-            .with_after(updated.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(updated.into_storage())
+            update_collection_on(connection, collection_id, changes, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn update_collection_on(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+    changes: StorageCollectionUpdate,
+    context: Option<&EventContext>,
+) -> Result<StorageCollection, PostgresStorageError> {
+    validate_positive_id(collection_id, "collection id")?;
+    let update = UpdateCollectionRow::from(&changes);
+    if !update.has_fields() {
+        return get_collection_on(connection, collection_id).await;
+    }
+    if context.is_none() {
+        return diesel::update(
+            crate::schema::collections::table
+                .filter(crate::schema::collections::id.eq(collection_id)),
+        )
+        .set(update)
+        .get_result::<CollectionRow>(connection)
+        .await
+        .map(CollectionRow::into_storage)
+        .map_err(PostgresStorageError::from);
+    }
+
+    let before = lock_revisioned_collection(connection, collection_id).await?;
+    let update = UpdateCollectionRow::from(&changes);
+    if !update.changes(&before) {
+        return Ok(before.into_storage());
+    }
+    let updated = diesel::update(
+        crate::schema::collections::table.filter(crate::schema::collections::id.eq(collection_id)),
+    )
+    .set(update)
+    .get_result::<CollectionRow>(connection)
+    .await?;
+    if let Some(context) = context {
+        let event = collection_event(
+            &updated,
+            Action::Updated,
+            context,
+            format!("Collection '{}' updated", updated.name),
+        )?
+        .with_before(before.snapshot())
+        .with_after(updated.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(updated.into_storage())
 }
 
 pub async fn delete_collection(
@@ -204,27 +240,35 @@ pub async fn delete_collection(
     let context = context.cloned();
     runtime
         .with_transaction(async move |connection| {
-            let collection = lock_revisioned_collection(connection, collection_id).await?;
-            validate_collection_can_be_deleted(connection, &collection).await?;
-            diesel::delete(
-                crate::schema::collections::table
-                    .filter(crate::schema::collections::id.eq(collection_id)),
-            )
-            .execute(connection)
-            .await?;
-            if let Some(context) = context.as_ref() {
-                let event = collection_event(
-                    &collection,
-                    Action::Deleted,
-                    context,
-                    format!("Collection '{}' deleted", collection.name),
-                )?
-                .with_before(collection.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(())
+            delete_collection_on(connection, collection_id, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn delete_collection_on(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+    context: Option<&EventContext>,
+) -> Result<(), PostgresStorageError> {
+    validate_positive_id(collection_id, "collection id")?;
+    let collection = lock_revisioned_collection(connection, collection_id).await?;
+    validate_collection_can_be_deleted(connection, &collection).await?;
+    diesel::delete(
+        crate::schema::collections::table.filter(crate::schema::collections::id.eq(collection_id)),
+    )
+    .execute(connection)
+    .await?;
+    if let Some(context) = context {
+        let event = collection_event(
+            &collection,
+            Action::Deleted,
+            context,
+            format!("Collection '{}' deleted", collection.name),
+        )?
+        .with_before(collection.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(())
 }
 
 pub async fn collection_children(
@@ -233,17 +277,21 @@ pub async fn collection_children(
 ) -> Result<Vec<StorageCollection>, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     runtime
-        .with_connection(async |connection| {
-            let rows = crate::schema::collections::table
-                .filter(crate::schema::collections::parent_collection_id.eq(collection_id))
-                .order(crate::schema::collections::name.asc())
-                .load::<CollectionRow>(connection)
-                .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter().map(CollectionRow::into_storage).collect(),
-            )
-        })
+        .with_connection(async |connection| collection_children_on(connection, collection_id).await)
         .await
+}
+
+pub(crate) async fn collection_children_on(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+) -> Result<Vec<StorageCollection>, PostgresStorageError> {
+    validate_positive_id(collection_id, "collection id")?;
+    let rows = crate::schema::collections::table
+        .filter(crate::schema::collections::parent_collection_id.eq(collection_id))
+        .order(crate::schema::collections::name.asc())
+        .load::<CollectionRow>(connection)
+        .await?;
+    Ok(rows.into_iter().map(CollectionRow::into_storage).collect())
 }
 
 pub async fn collection_ancestors(
@@ -253,24 +301,29 @@ pub async fn collection_ancestors(
     validate_positive_id(collection_id, "collection id")?;
     runtime
         .with_connection(async |connection| {
-            use crate::schema::{collection_closure, collections};
-
-            let rows = collection_closure::table
-                .inner_join(
-                    collections::table
-                        .on(collections::id.eq(collection_closure::ancestor_collection_id)),
-                )
-                .filter(collection_closure::descendant_collection_id.eq(collection_id))
-                .filter(collection_closure::depth.gt(0))
-                .order(collection_closure::depth.asc())
-                .select(CollectionRow::as_select())
-                .load::<CollectionRow>(connection)
-                .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter().map(CollectionRow::into_storage).collect(),
-            )
+            collection_ancestors_on(connection, collection_id).await
         })
         .await
+}
+
+pub(crate) async fn collection_ancestors_on(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+) -> Result<Vec<StorageCollection>, PostgresStorageError> {
+    use crate::schema::{collection_closure, collections};
+
+    validate_positive_id(collection_id, "collection id")?;
+    let rows = collection_closure::table
+        .inner_join(
+            collections::table.on(collections::id.eq(collection_closure::ancestor_collection_id)),
+        )
+        .filter(collection_closure::descendant_collection_id.eq(collection_id))
+        .filter(collection_closure::depth.gt(0))
+        .order(collection_closure::depth.asc())
+        .select(CollectionRow::as_select())
+        .load::<CollectionRow>(connection)
+        .await?;
+    Ok(rows.into_iter().map(CollectionRow::into_storage).collect())
 }
 
 pub async fn move_collection(
@@ -284,63 +337,74 @@ pub async fn move_collection(
     let context = context.cloned();
     runtime
         .with_transaction(async move |connection| {
-            use crate::schema::{collection_closure, collections};
-
-            let before = collections::table
-                .filter(collections::id.eq(collection_id))
-                .for_update()
-                .first::<CollectionRow>(connection)
-                .await?;
-            if before.parent_collection_id.is_none() {
-                return Err(PostgresStorageError::conflict(
-                    "The root collection cannot be moved",
-                ));
-            }
-            if before.parent_collection_id == Some(new_parent_id) {
-                return Ok(before.into_storage());
-            }
-            if collection_id == new_parent_id {
-                return Err(PostgresStorageError::bad_request(
-                    "A collection cannot be moved under itself",
-                ));
-            }
-            collections::table
-                .filter(collections::id.eq(new_parent_id))
-                .select(collections::id)
-                .first::<i32>(connection)
-                .await?;
-            let new_parent_is_descendant = collection_closure::table
-                .filter(collection_closure::ancestor_collection_id.eq(collection_id))
-                .filter(collection_closure::descendant_collection_id.eq(new_parent_id))
-                .count()
-                .get_result::<i64>(connection)
-                .await?
-                > 0;
-            if new_parent_is_descendant {
-                return Err(PostgresStorageError::bad_request(
-                    "A collection cannot be moved under one of its descendants",
-                ));
-            }
-            diesel::update(collections::table.filter(collections::id.eq(collection_id)))
-                .set(collections::parent_collection_id.eq(new_parent_id))
-                .execute(connection)
-                .await?;
-            move_collection_closure_rows(connection, collection_id, new_parent_id).await?;
-            let updated = load_collection(connection, collection_id).await?;
-            if let Some(context) = context.as_ref() {
-                let event = collection_event(
-                    &updated,
-                    Action::Updated,
-                    context,
-                    format!("Collection '{}' moved", updated.name),
-                )?
-                .with_before(before.snapshot())
-                .with_after(updated.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(updated.into_storage())
+            move_collection_on(connection, collection_id, new_parent_id, context.as_ref()).await
         })
         .await
+}
+
+pub(crate) async fn move_collection_on(
+    connection: &mut PostgresConnection,
+    collection_id: i32,
+    new_parent_id: i32,
+    context: Option<&EventContext>,
+) -> Result<StorageCollection, PostgresStorageError> {
+    use crate::schema::{collection_closure, collections};
+
+    validate_positive_id(collection_id, "collection id")?;
+    validate_positive_id(new_parent_id, "parent collection id")?;
+    let before = collections::table
+        .filter(collections::id.eq(collection_id))
+        .for_update()
+        .first::<CollectionRow>(connection)
+        .await?;
+    if before.parent_collection_id.is_none() {
+        return Err(PostgresStorageError::conflict(
+            "The root collection cannot be moved",
+        ));
+    }
+    if before.parent_collection_id == Some(new_parent_id) {
+        return Ok(before.into_storage());
+    }
+    if collection_id == new_parent_id {
+        return Err(PostgresStorageError::bad_request(
+            "A collection cannot be moved under itself",
+        ));
+    }
+    collections::table
+        .filter(collections::id.eq(new_parent_id))
+        .select(collections::id)
+        .first::<i32>(connection)
+        .await?;
+    let new_parent_is_descendant = collection_closure::table
+        .filter(collection_closure::ancestor_collection_id.eq(collection_id))
+        .filter(collection_closure::descendant_collection_id.eq(new_parent_id))
+        .count()
+        .get_result::<i64>(connection)
+        .await?
+        > 0;
+    if new_parent_is_descendant {
+        return Err(PostgresStorageError::bad_request(
+            "A collection cannot be moved under one of its descendants",
+        ));
+    }
+    diesel::update(collections::table.filter(collections::id.eq(collection_id)))
+        .set(collections::parent_collection_id.eq(new_parent_id))
+        .execute(connection)
+        .await?;
+    move_collection_closure_rows(connection, collection_id, new_parent_id).await?;
+    let updated = load_collection(connection, collection_id).await?;
+    if let Some(context) = context {
+        let event = collection_event(
+            &updated,
+            Action::Updated,
+            context,
+            format!("Collection '{}' moved", updated.name),
+        )?
+        .with_before(before.snapshot())
+        .with_after(updated.snapshot());
+        append_event(connection, &event).await?;
+    }
+    Ok(updated.into_storage())
 }
 
 async fn load_collection(

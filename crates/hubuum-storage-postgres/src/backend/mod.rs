@@ -26,6 +26,7 @@ mod remote_targets;
 mod restores;
 mod task_execution;
 mod task_queue;
+mod transaction;
 
 /// Complete statically linked PostgreSQL storage backend.
 ///

@@ -26,6 +26,7 @@ StorageBackend
 |
 |-- foundation
 |   |-- domain lifecycle
+|   |-- audited transaction composition
 |   `-- identity and authorization data
 |
 |-- read models
@@ -70,6 +71,8 @@ lifecycle and workflow mutations
           v
 atomic audit events -> fan-out -> delivery -> retention
 
+safe lifecycle primitives -> TransactionalStorage -> one atomic unit of work
+
 task queue -> task execution
      |            |
      `------------+--> imports, exports, backups, remote calls,
@@ -92,6 +95,7 @@ the atomic operations each use case requires.
 Required traits:
 
 - `StorageIdentity`;
+- `TransactionalStorage`;
 - `CollectionStore`, `ClassStore`, and `ObjectStore`; and
 - `ClassRelationStore` and `ObjectRelationStore`.
 
@@ -100,11 +104,21 @@ mutation. Implementations own locking, hierarchy maintenance, JSON validation
 coordination, relation cardinality, cascades, initial grants, revisions, and
 atomic lifecycle events.
 
-The resource traits include the validation, bulk lookup, and event-suppressed
-operations needed by imports, fixtures, and other application workflows. These
-are operation-shaped capabilities, not table repositories: a backend decides
-how each operation is implemented and never exposes rows, connections, or a
-query builder.
+`TransactionalStorage` composes safe lifecycle primitives without exposing a
+native transaction. Its `StorageTransaction` accessors return crate-owned
+operation types for collections, classes, class relations, objects, and object
+relations. Transaction-scoped mutations inherit one required `EventContext`,
+so state and audit events commit or roll back together.
+
+The resource traits also include validation, bulk lookup, and explicitly
+event-suppressed adapter seams needed by imports, migrations, fixtures, and
+other dedicated workflows. Normal application mutations use an audited
+service method or the transaction-scoped operation types. See
+[transactions and side effects](transactions-and-events.md).
+
+These are operation-shaped capabilities, not table repositories. A backend
+decides how each operation is implemented and never exposes rows, connections,
+or a query builder.
 
 ### `identity_and_authorization_data`
 

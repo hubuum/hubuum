@@ -46,12 +46,14 @@ The following order minimizes rework:
    pool.
 2. Define the adapter error and its conversion to `StorageError`.
 3. Implement foundational lifecycle, identity, and authorization facts.
-4. Implement permission-aware read models.
-5. Implement task execution and workflow families.
-6. Implement event and operational families.
-7. Add exhaustive dispatch, common observation, administrator projection, and
+4. Implement `TransactionalStorage` over the lifecycle operations and prove
+   state-plus-event commit and rollback.
+5. Implement permission-aware read models.
+6. Implement task execution and workflow families.
+7. Implement event and operational families.
+8. Add exhaustive dispatch, common observation, administrator projection, and
    the explicit `StorageBackend` implementation.
-8. Run shared compatibility and backend-native verification tests.
+9. Run shared compatibility and backend-native verification tests.
 
 Later families depend conceptually on the earlier facts, but this order does
 not authorize direct trait-to-trait backend recovery. Prefer private adapter
@@ -84,9 +86,20 @@ may legitimately touch many native tables.
 
 ## Atomicity and Consistency
 
-If an application invariant requires several writes to succeed or fail
-together, expose one storage operation and implement one native transaction.
-Examples include:
+Every selectable backend implements `TransactionalStorage`. It provides an
+opaque unit of work for composing the safe resource operations exposed by
+`StorageTransaction`. The callback sees crate-owned operation types, never a
+native connection, driver session, or query interface.
+
+Use transaction composition when an application workflow combines existing
+safe resource semantics. For example, an application may create two objects
+and the relation between them in one unit of work. The adapter must use one
+native atomic mechanism and reuse its ordinary validation, revision, and event
+semantics.
+
+If an invariant depends on a hidden state machine, lock protocol, or
+backend-specific consistency rule, expose one operation-shaped method instead
+of rebuilding it through the generic unit of work. Examples include:
 
 - a lifecycle mutation plus its audit event;
 - a grant mutation plus owner-revision advancement;
@@ -96,8 +109,14 @@ Examples include:
   cleanup.
 
 The backend also owns native locking, isolation, optimistic revision checks,
-identifier allocation, uniqueness enforcement, and rollback behavior. Do not
-ask the application to hold a transaction open across multiple trait calls.
+identifier allocation, uniqueness enforcement, and rollback behavior. The
+application may hold an opaque `StorageTransaction` across several safe
+resource calls; it must never hold or recover the native transaction.
+
+Transaction-scoped mutations inherit one required `EventContext`. The adapter
+must commit or roll back state, audit events, and transactional notifications
+together. It must serialize access when its native transaction cannot safely
+execute concurrent operations.
 
 Read contracts state whether paging, totals, visibility, and projections must
 come from one snapshot. Implement those semantics even when a native store
@@ -176,6 +195,11 @@ An adapter may add native pool, transaction, or query diagnostics. Those are a
 second implementation-level view, not a replacement for common storage
 observation.
 
+`TransactionalStorage::transaction` is one logical observed entrypoint. Calls
+made through its operation accessors are constituent steps rather than new
+composition entrypoints. Native transaction and query instrumentation supplies
+the implementation-level detail without multiplying logical metrics.
+
 Never use an entity ID, name, query, URL, credential, error message, or payload
 as a metric label. Redact adapter settings and DTO `Debug` output by
 construction.
@@ -248,6 +272,8 @@ behavior that every backend should share.
 Add adapter-specific tests for mechanics the shared contract cannot express:
 
 - transaction commit and rollback;
+- rollback of lifecycle state, audit events, and transactional notifications
+  when a transaction callback returns an application error;
 - isolation and lock contention;
 - uniqueness and constraint mapping;
 - claim and lease concurrency;
@@ -278,7 +304,9 @@ A backend is selectable only when all of the following are true:
 - [ ] Every `StorageBackend` supertrait has a real implementation.
 - [ ] All 20 capability families preserve their documented semantics.
 - [ ] DTOs and errors contain no native implementation types.
-- [ ] Atomic application invariants are native atomic operations.
+- [ ] Safe lifecycle compositions use one native unit of work.
+- [ ] Hidden state-machine invariants remain native atomic operations.
+- [ ] Transaction rollback removes both state and audit side effects.
 - [ ] Dispatch is exhaustive and has no fallback backend.
 - [ ] Common observation covers every entry point with bounded labels.
 - [ ] Native diagnostics contain no sensitive data.
