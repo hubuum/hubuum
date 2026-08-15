@@ -2110,6 +2110,51 @@ fn object_aggregate_queries_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn worker_notification_io_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/worker_notifications.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in ["LISTEN", "UNLISTEN", "pg_notify", "notifications_stream"] {
+        assert!(
+            adapter.contains(required),
+            "the PostgreSQL notification adapter is missing native behavior {required}"
+        );
+    }
+    for forbidden in [
+        "crate::errors",
+        "crate::lifecycle",
+        "crate::storage::postgres",
+        "ApiError",
+        "actix_rt",
+        "get_config",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "the PostgreSQL notification adapter depends on application detail {forbidden}"
+        );
+    }
+
+    let composition_path = root.join("src/storage/postgres/notifications.rs");
+    let composition = read_source(&composition_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", composition_path.display()));
+    let production = composition
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or(&composition);
+    assert!(
+        production.contains("hubuum_storage_postgres::worker_notifications::listen"),
+        "application lifecycle composition must delegate native listening to the adapter crate"
+    );
+    for forbidden in ["LISTEN", "UNLISTEN", "pg_notify", "notifications_stream"] {
+        assert!(
+            !production.contains(forbidden),
+            "application lifecycle composition still owns PostgreSQL notification behavior {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path =

@@ -1,61 +1,34 @@
-use std::time::Duration;
-
-use crate::storage::postgres::prelude::*;
-use futures_util::StreamExt;
-use tracing::{debug, error, info};
-
-use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
+use crate::errors::ApiError;
+use crate::lifecycle::spawn_background_worker;
 use crate::storage::{StorageNotification, WorkerNotificationStorage};
 
 use super::{PostgresPool, PostgresStorage};
 
-#[derive(Clone, Copy)]
-struct NotificationChannel(&'static str);
-
-impl NotificationChannel {
-    const fn new(channel: &'static str) -> Self {
-        Self(channel)
-    }
-
-    const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-const EVENT_FANOUT_CHANNEL: NotificationChannel = NotificationChannel::new("hubuum_events_fanout");
-const EVENT_DELIVERY_CHANNEL: NotificationChannel =
-    NotificationChannel::new("hubuum_event_delivery");
-const TASK_QUEUE_CHANNEL: NotificationChannel = NotificationChannel::new("hubuum_task_queue");
-
 pub(crate) async fn notify_task_queue(
     conn: &mut super::PostgresConnection,
     task_id: i32,
-) -> QueryResult<usize> {
-    let payload = task_id.to_string();
-    notify_channel(conn, TASK_QUEUE_CHANNEL, &payload).await
-}
-
-async fn notify_channel(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    channel: NotificationChannel,
-    payload: &str,
-) -> QueryResult<usize> {
-    diesel::sql_query("SELECT pg_notify($1, $2)")
-        .bind::<diesel::sql_types::Text, _>(channel.as_str())
-        .bind::<diesel::sql_types::Text, _>(payload)
-        .execute(conn)
+) -> Result<usize, ApiError> {
+    hubuum_storage_postgres::worker_notifications::notify_task_queue(conn, task_id)
         .await
+        .map_err(hubuum_storage_core::StorageError::from)
+        .map_err(ApiError::from)
 }
 
 fn spawn_postgres_notification_listener(
     pool: PostgresPool,
-    channel: NotificationChannel,
+    topic: StorageNotification,
     thread_name: &'static str,
     on_notification: fn(),
 ) {
     spawn_background_worker(thread_name, move |shutdown| {
         let system = actix_rt::System::new();
-        system.block_on(listen_loop(pool, channel, on_notification, || {}, shutdown));
+        system.block_on(hubuum_storage_postgres::worker_notifications::listen(
+            pool,
+            topic,
+            on_notification,
+            || {},
+            shutdown.requested(),
+        ));
     });
 }
 
@@ -66,130 +39,12 @@ impl WorkerNotificationStorage for PostgresStorage {
         worker_name: &'static str,
         on_notification: fn(),
     ) {
-        let channel = match topic {
-            StorageNotification::EventFanout => EVENT_FANOUT_CHANNEL,
-            StorageNotification::EventDelivery => EVENT_DELIVERY_CHANNEL,
-            StorageNotification::TaskQueue => TASK_QUEUE_CHANNEL,
-        };
         spawn_postgres_notification_listener(
             self.notification_listener_pool(),
-            channel,
+            topic,
             worker_name,
             on_notification,
         );
-    }
-}
-
-async fn listen_loop(
-    pool: PostgresPool,
-    channel: NotificationChannel,
-    on_notification: fn(),
-    on_listening: fn(),
-    shutdown: ShutdownSignal,
-) {
-    loop {
-        let connection = tokio::select! {
-            biased;
-            _ = shutdown.requested() => break,
-            connection = pool.get() => connection,
-        };
-        match connection {
-            Ok(mut conn) => {
-                let listen_result = tokio::select! {
-                    biased;
-                    _ = shutdown.requested() => break,
-                    result = diesel::sql_query(format!("LISTEN {}", channel.as_str()))
-                        .execute(&mut conn) => result,
-                };
-                if let Err(error) = listen_result {
-                    error!(
-                        message = "Failed to register Postgres notification listener",
-                        channel = channel.as_str(),
-                        error = %error
-                    );
-                    if !wait_for_retry_or_shutdown(&shutdown).await {
-                        break;
-                    }
-                    continue;
-                }
-
-                info!(
-                    message = "Listening for Postgres worker notifications",
-                    channel = channel.as_str()
-                );
-                on_listening();
-                if poll_notifications(&mut conn, channel, on_notification, &shutdown).await {
-                    if let Err(error) = diesel::sql_query(format!("UNLISTEN {}", channel.as_str()))
-                        .execute(&mut conn)
-                        .await
-                    {
-                        info!(
-                            message = "Postgres notification connection closed during shutdown",
-                            channel = channel.as_str(),
-                            error = %error
-                        );
-                    }
-                    break;
-                }
-            }
-            Err(error) => {
-                error!(
-                    message = "Failed to acquire Postgres notification listener connection",
-                    channel = channel.as_str(),
-                    error = %error
-                );
-                if !wait_for_retry_or_shutdown(&shutdown).await {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-async fn wait_for_retry_or_shutdown(shutdown: &ShutdownSignal) -> bool {
-    tokio::select! {
-        biased;
-        _ = shutdown.requested() => false,
-        _ = actix_rt::time::sleep(Duration::from_secs(1)) => true,
-    }
-}
-
-async fn poll_notifications(
-    conn: &mut super::PostgresConnection,
-    channel: NotificationChannel,
-    on_notification: fn(),
-    shutdown: &ShutdownSignal,
-) -> bool {
-    let notifications = conn.notifications_stream();
-    futures_util::pin_mut!(notifications);
-    loop {
-        let notification = tokio::select! {
-            biased;
-            _ = shutdown.requested() => return true,
-            notification = notifications.next() => notification,
-        };
-        let Some(notification) = notification else {
-            return false;
-        };
-        match notification {
-            Ok(notification) if notification.channel == channel.as_str() => {
-                debug!(
-                    message = "Received Postgres worker notification",
-                    channel = channel.as_str(),
-                    process_id = notification.process_id
-                );
-                on_notification();
-            }
-            Ok(_) => {}
-            Err(error) => {
-                error!(
-                    message = "Postgres notification listener failed",
-                    channel = channel.as_str(),
-                    error = %error
-                );
-                return false;
-            }
-        }
     }
 }
 
@@ -197,6 +52,7 @@ async fn poll_notifications(
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI32, AtomicI64, AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use diesel::sql_types::Text;
     use futures_util::StreamExt;
@@ -205,14 +61,14 @@ mod tests {
     use crate::config::get_config;
     use crate::errors::ApiError;
     use crate::events::{Action, ActorKind, EntityType, NewEvent};
+    use crate::lifecycle::ShutdownSignal;
     use crate::storage::postgres::operations::event_record::emit_event;
+    use crate::storage::postgres::prelude::*;
     use crate::storage::postgres::{PostgresPoolSettings, init_postgres_pool, with_transaction};
     use crate::tests::test_scope;
 
     use super::*;
 
-    const TEST_CHANNEL: NotificationChannel =
-        NotificationChannel::new("hubuum_shutdown_listener_test");
     static LISTENER_READY: AtomicUsize = AtomicUsize::new(0);
     static NEXT_TASK_NOTIFICATION_ID: AtomicI32 = AtomicI32::new(1);
 
@@ -233,7 +89,10 @@ mod tests {
     async fn fanout_trigger_notifies_only_after_commit(#[case] commit: bool) {
         let scope = test_scope();
         let mut listener = scope.pool.get().await.expect("listener connection");
-        diesel::sql_query(format!("LISTEN {}", EVENT_FANOUT_CHANNEL.as_str()))
+        let channel = hubuum_storage_postgres::worker_notifications::channel_name(
+            StorageNotification::EventFanout,
+        );
+        diesel::sql_query(format!("LISTEN {channel}"))
             .execute(&mut listener)
             .await
             .expect("listen on fanout channel");
@@ -267,9 +126,7 @@ mod tests {
         let received = tokio::time::timeout(Duration::from_millis(500), async {
             while let Some(notification) = notifications.next().await {
                 let notification = notification.expect("fanout notification");
-                if notification.channel == EVENT_FANOUT_CHANNEL.as_str()
-                    && notification.payload == target_payload
-                {
+                if notification.channel == channel && notification.payload == target_payload {
                     return true;
                 }
             }
@@ -287,7 +144,10 @@ mod tests {
     async fn task_queue_notification_is_delivered_only_after_commit(#[case] commit: bool) {
         let scope = test_scope();
         let mut listener = scope.pool.get().await.expect("listener connection");
-        diesel::sql_query(format!("LISTEN {}", TASK_QUEUE_CHANNEL.as_str()))
+        let channel = hubuum_storage_postgres::worker_notifications::channel_name(
+            StorageNotification::TaskQueue,
+        );
+        diesel::sql_query(format!("LISTEN {channel}"))
             .execute(&mut listener)
             .await
             .expect("listen on task queue channel");
@@ -311,9 +171,7 @@ mod tests {
         let received = tokio::time::timeout(Duration::from_millis(500), async {
             while let Some(notification) = notifications.next().await {
                 let notification = notification.expect("task queue notification");
-                if notification.channel == TASK_QUEUE_CHANNEL.as_str()
-                    && notification.payload == task_id.to_string()
-                {
+                if notification.channel == channel && notification.payload == task_id.to_string() {
                     return true;
                 }
             }
@@ -330,12 +188,13 @@ mod tests {
         let config = get_config().expect("test requires database configuration");
         let listener_pool = init_postgres_pool(&config.database_url, 1);
         let shutdown = ShutdownSignal::new();
-        let listener = actix_rt::spawn(listen_loop(
+        let listener_shutdown = shutdown.clone();
+        let listener = actix_rt::spawn(hubuum_storage_postgres::worker_notifications::listen(
             listener_pool.clone(),
-            TEST_CHANNEL,
+            StorageNotification::TaskQueue,
             || {},
             mark_listener_ready,
-            shutdown.clone(),
+            async move { listener_shutdown.requested().await },
         ));
 
         tokio::time::timeout(Duration::from_secs(1), async {

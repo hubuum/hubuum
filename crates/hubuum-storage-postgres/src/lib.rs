@@ -19,6 +19,7 @@ mod revision;
 mod runtime;
 #[doc(hidden)]
 pub mod schema;
+pub mod worker_notifications;
 
 pub use error::PostgresStorageError;
 #[doc(hidden)]
