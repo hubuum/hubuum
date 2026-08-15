@@ -22,7 +22,6 @@ pub mod relations;
 pub mod remote_target;
 pub(in crate::storage::postgres) mod resource_rows;
 pub(crate) mod resource_scope;
-pub mod restore;
 pub mod search;
 pub mod service_account;
 pub mod task;

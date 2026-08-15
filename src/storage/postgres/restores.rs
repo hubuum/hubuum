@@ -9,8 +9,6 @@ use crate::storage::{
 };
 
 use super::PostgresStorage;
-use super::error::map_postgres_error;
-use super::operations::restore::apply_restore_db;
 
 #[async_trait]
 impl RestoreStorage for PostgresStorage {
@@ -66,10 +64,12 @@ impl RestoreStorage for PostgresStorage {
         &self,
         request: StorageRestoreApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
-        let (job_id, document) = request.into_parts();
-        apply_restore_db(self.pool(), job_id, document)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::restore_lifecycle::apply_restore(
+            self.runtime(),
+            request,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn fail_restore_and_resume(

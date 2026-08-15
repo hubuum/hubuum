@@ -2000,6 +2000,28 @@ fn restore_consumers_use_only_the_mandatory_storage_contract() {
         source.contains("RestoreStorage"),
         "restore application code must depend on the mandatory storage contract"
     );
+
+    let facade_path = root.join("src/storage/postgres/restores.rs");
+    let facade = read_source(&facade_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
+    let implementation = item_body(&facade, "impl", "RestoreStorage for PostgresStorage");
+    let apply = item_body(implementation, "fn", "apply_restore");
+    assert!(
+        apply.contains("restore_lifecycle::apply_restore"),
+        "the destructive restore implementation must delegate into the adapter crate"
+    );
+    for forbidden in ["self.pool", "apply_restore_db", "map_postgres_error"] {
+        assert!(
+            !apply.contains(forbidden),
+            "the destructive restore facade retains application detail {forbidden}"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/restore.rs");
+    assert!(
+        !legacy_path.exists(),
+        "the application-owned destructive restore implementation still exists"
+    );
 }
 
 #[test]

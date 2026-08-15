@@ -1,24 +1,104 @@
 //! PostgreSQL-owned restore staging and coordinator lifecycle.
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use diesel::NullableExpressionMethods;
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::Timestamp;
+use diesel::sql_types::{Jsonb, Timestamp};
 use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::MaintenanceState;
+use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
 use hubuum_storage_core::{
-    StorageCallSite, StorageRestoreArtifactSummary, StorageRestoreCoordinatorSnapshot,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
-    StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
-    StorageRestoreStageCreate, StorageRestoreStatus, StorageRestoreTimestamps,
+    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
+    StorageCallSite, StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
+    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus,
+    StorageRestoreJobSummary, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageRestoreTimestamps,
 };
+use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{PostgresRuntime, PostgresStorageError, with_storage_call_site};
+use crate::operations::computed_lifecycle::enqueue_restored_computed_rebuilds_on_connection;
+use crate::operations::event_record::append_event;
+use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError, with_storage_call_site};
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
+
+const TRUNCATE_TABLES: &[&str] = &[
+    "object_computed_data",
+    "class_computation_state",
+    "computed_field_definitions",
+    "event_deliveries",
+    "events",
+    "backup_task_outputs",
+    "export_task_outputs",
+    "remote_call_results",
+    "import_task_results",
+    "tasks",
+    "token_scopes",
+    "tokens",
+    "event_subscriptions",
+    "event_sinks",
+    "remote_targets_history",
+    "remote_targets",
+    "export_templates_history",
+    "export_templates",
+    "permissions",
+    "collection_authorization_state",
+    "hubuumobject_relation_history",
+    "hubuumobject_relation",
+    "hubuumobject_history",
+    "hubuumobject",
+    "hubuumclass_relation_history",
+    "hubuumclass_relation",
+    "hubuumclass_reachability",
+    "hubuumclass_history",
+    "hubuumclass",
+    "collection_closure",
+    "collections_history",
+    "collections",
+    "group_membership_sources",
+    "group_memberships",
+    "service_accounts",
+    "users",
+    "principals",
+    "groups",
+    "identity_scopes",
+];
+
+const SERIAL_ID_TABLES: &[&str] = &[
+    "identity_scopes",
+    "groups",
+    "principals",
+    "collections",
+    "permissions",
+    "hubuumclass",
+    "computed_field_definitions",
+    "hubuumclass_relation",
+    "hubuumobject",
+    "hubuumobject_relation",
+    "export_templates",
+    "remote_targets",
+    "event_sinks",
+    "event_subscriptions",
+    "tokens",
+    "tasks",
+    "import_task_results",
+    "export_task_outputs",
+    "remote_call_results",
+];
+
+const HISTORY_SEQUENCE_TABLES: &[&str] = &[
+    "collections_history",
+    "hubuumclass_history",
+    "hubuumclass_relation_history",
+    "hubuumobject_history",
+    "hubuumobject_relation_history",
+    "export_templates_history",
+    "remote_targets_history",
+];
 
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::restore_jobs)]
@@ -73,6 +153,17 @@ struct RestoreJobStatusRow {
     finished_at: Option<NaiveDateTime>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
+}
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = crate::schema::restore_jobs)]
+struct RestoreApplyRow {
+    id: i64,
+    status: String,
+    requested_by: Option<i32>,
+    requested_by_identity_scope: String,
+    requested_by_name: String,
+    sha256: String,
 }
 
 #[derive(Clone, Queryable, Selectable, Insertable)]
@@ -335,6 +426,240 @@ pub async fn start_restore_draining(
         .await
 }
 
+/// Replace the complete durable backend state with one validated backup.
+pub async fn apply_restore(
+    runtime: &PostgresRuntime,
+    request: StorageRestoreApply,
+) -> Result<StorageRestoreCompletion, PostgresStorageError> {
+    let (job_id, document) = request.into_parts();
+    let (metadata, snapshot) = document.into_parts();
+    let (backup_version, backup_created_at, backup_source_version) = metadata.into_parts();
+    let (state_sections, history_sections) = snapshot.into_parts();
+    let includes_history = history_sections.is_some();
+
+    runtime
+        .with_transaction(
+            async move |connection| -> Result<StorageRestoreCompletion, PostgresStorageError> {
+                diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
+                    .execute(connection)
+                    .await?;
+
+                let job = crate::schema::restore_jobs::table
+                    .filter(crate::schema::restore_jobs::id.eq(job_id))
+                    .for_update()
+                    .select(RestoreApplyRow::as_select())
+                    .first::<RestoreApplyRow>(connection)
+                    .await?;
+                let (maintenance_state_value, maintenance_restore_job_id) =
+                    crate::schema::system_maintenance::table
+                        .filter(crate::schema::system_maintenance::id.eq(1_i16))
+                        .select((
+                            crate::schema::system_maintenance::state,
+                            crate::schema::system_maintenance::restore_job_id,
+                        ))
+                        .first::<(String, Option<i64>)>(connection)
+                        .await?;
+                let maintenance_state = MaintenanceState::try_from(
+                    maintenance_state_value.as_str(),
+                )
+                .map_err(|error| {
+                    PostgresStorageError::database(format!(
+                        "Invalid persisted maintenance state: {error}"
+                    ))
+                })?;
+                if job.status != StorageRestoreJobStatus::Confirmed.as_str()
+                    || maintenance_state != MaintenanceState::Draining
+                    || maintenance_restore_job_id != Some(job.id)
+                {
+                    return Err(PostgresStorageError::conflict(format!(
+                        "Restore stage {} is no longer confirmed and draining",
+                        job.id
+                    )));
+                }
+
+                let started_at = Utc::now().naive_utc();
+                enable_restore_session_settings(connection).await?;
+                replace_backend_state(connection, &state_sections, history_sections.as_ref())
+                    .await?;
+                enqueue_restored_computed_rebuilds_on_connection(connection).await?;
+
+                // Restored event rows must not fan out while they are inserted.
+                // This is the one deliberate post-restore provenance event.
+                diesel::sql_query("SELECT set_config('hubuum.restore_events', 'off', true)")
+                    .execute(connection)
+                    .await?;
+                let provenance = NewEvent::new(
+                    EntityType::Restore,
+                    Action::Succeeded,
+                    ActorKind::System,
+                    "System restore completed",
+                )
+                .map_err(|error| PostgresStorageError::internal(error.to_string()))?
+                .with_entity_name(job.sha256.clone())
+                .with_metadata(serde_json::json!({
+                    "restore_job_id": job.id,
+                    "backup_sha256": job.sha256,
+                    "backup_version": backup_version,
+                    "backup_source_version": backup_source_version,
+                    "backup_created_at": backup_created_at,
+                    "includes_history": includes_history,
+                    "initiated_by": {
+                        "principal_id": job.requested_by,
+                        "identity_scope": job.requested_by_identity_scope,
+                        "name": job.requested_by_name,
+                    },
+                }));
+                append_event(connection, &provenance).await?;
+
+                let finished_at = Utc::now().naive_utc();
+                finish_restore(connection, finished_at).await?;
+                Ok(StorageRestoreCompletion::new(started_at, finished_at))
+            },
+        )
+        .await
+}
+
+async fn enable_restore_session_settings(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    for setting in [
+        "hubuum.restore_history",
+        "hubuum.restore_events",
+        "hubuum.restore_revisions",
+    ] {
+        diesel::sql_query("SELECT set_config($1, 'on', true)")
+            .bind::<diesel::sql_types::Text, _>(setting)
+            .execute(connection)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn replace_backend_state(
+    connection: &mut PostgresConnection,
+    state_sections: &hubuum_storage_core::StorageBackupSections,
+    history_sections: Option<&hubuum_storage_core::StorageBackupSections>,
+) -> Result<(), PostgresStorageError> {
+    for table in TRUNCATE_TABLES {
+        validate_restore_identifier(table, None)?;
+    }
+    let lock_tables = TRUNCATE_TABLES.join(", ");
+    diesel::sql_query(format!("LOCK TABLE {lock_tables} IN ACCESS EXCLUSIVE MODE"))
+        .execute(connection)
+        .await?;
+    diesel::sql_query(format!(
+        "TRUNCATE TABLE {lock_tables} RESTART IDENTITY CASCADE"
+    ))
+    .execute(connection)
+    .await?;
+
+    for table in BACKUP_STATE_SECTIONS {
+        let rows = state_sections.get(*table).map(Vec::as_slice).unwrap_or(&[]);
+        insert_restore_rows(connection, table, rows).await?;
+    }
+    if let Some(history_sections) = history_sections {
+        for table in BACKUP_TEMPORAL_HISTORY_SECTIONS
+            .iter()
+            .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
+        {
+            let rows = history_sections
+                .get(*table)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            insert_restore_rows(connection, table, rows).await?;
+        }
+    }
+
+    for table in SERIAL_ID_TABLES {
+        reset_restore_sequence(connection, table, "id").await?;
+    }
+    reset_restore_sequence(connection, "events", "id").await?;
+    reset_restore_sequence(connection, "event_deliveries", "id").await?;
+    for table in HISTORY_SEQUENCE_TABLES {
+        reset_restore_sequence(connection, table, "history_id").await?;
+    }
+    Ok(())
+}
+
+async fn insert_restore_rows(
+    connection: &mut PostgresConnection,
+    table: &str,
+    rows: &[Value],
+) -> Result<(), PostgresStorageError> {
+    validate_restore_identifier(table, None)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let query = format!(
+        "INSERT INTO {table} SELECT * FROM jsonb_populate_recordset(NULL::{table}, $1::jsonb)"
+    );
+    diesel::sql_query(query)
+        .bind::<Jsonb, _>(Value::Array(rows.to_vec()))
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+async fn reset_restore_sequence(
+    connection: &mut PostgresConnection,
+    table: &str,
+    column: &str,
+) -> Result<(), PostgresStorageError> {
+    validate_restore_identifier(table, Some(column))?;
+    let query = format!(
+        "SELECT setval(pg_get_serial_sequence('{table}', '{column}'), \
+         COALESCE((SELECT MAX({column}) FROM {table}), 1), \
+         (SELECT MAX({column}) IS NOT NULL FROM {table}))"
+    );
+    diesel::sql_query(query).execute(connection).await?;
+    Ok(())
+}
+
+fn validate_restore_identifier(
+    table: &str,
+    column: Option<&str>,
+) -> Result<(), PostgresStorageError> {
+    let known_table = BACKUP_STATE_SECTIONS
+        .iter()
+        .chain(BACKUP_TEMPORAL_HISTORY_SECTIONS)
+        .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
+        .chain(TRUNCATE_TABLES)
+        .any(|known| *known == table);
+    let known_column = column.is_none_or(|value| matches!(value, "id" | "history_id"));
+    if known_table && known_column {
+        Ok(())
+    } else {
+        Err(PostgresStorageError::internal(
+            "Refused an unsafe restore SQL identifier",
+        ))
+    }
+}
+
+async fn finish_restore(
+    connection: &mut PostgresConnection,
+    finished_at: NaiveDateTime,
+) -> Result<(), PostgresStorageError> {
+    diesel::sql_query(
+        "UPDATE system_maintenance \
+         SET generation=0, state='normal', restore_job_id=NULL, \
+             entered_at=NULL, updated_at=$1 \
+         WHERE id=1",
+    )
+    .bind::<Timestamp, _>(finished_at)
+    .execute(connection)
+    .await?;
+    diesel::sql_query("DELETE FROM restore_jobs")
+        .execute(connection)
+        .await?;
+    diesel::sql_query("DELETE FROM server_instances")
+        .execute(connection)
+        .await?;
+    diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
 /// Mark a restore failed and atomically return to normal operation.
 pub async fn fail_restore_and_resume(
     runtime: &PostgresRuntime,
@@ -557,8 +882,9 @@ pub async fn remove_restore_instance(
 mod tests {
     use diesel::SelectableHelper;
     use diesel::prelude::{ExpressionMethods, QueryDsl};
+    use rstest::rstest;
 
-    use super::RestoreJobStatusRow;
+    use super::{RestoreJobStatusRow, validate_restore_identifier};
 
     #[test]
     fn restore_status_projection_excludes_document() {
@@ -569,5 +895,20 @@ mod tests {
 
         assert!(!sql.contains("\"restore_jobs\".\"document\""));
         assert!(sql.contains("\"restore_jobs\".\"capability_hash\""));
+    }
+
+    #[rstest]
+    #[case::known("collections", Some("id"), true)]
+    #[case::unknown_table("collections; DROP TABLE users", None, false)]
+    #[case::unknown_column("collections", Some("id DESC"), false)]
+    fn restore_sql_identifiers_come_from_closed_lists(
+        #[case] table: &str,
+        #[case] column: Option<&str>,
+        #[case] expected_valid: bool,
+    ) {
+        assert_eq!(
+            validate_restore_identifier(table, column).is_ok(),
+            expected_valid
+        );
     }
 }
