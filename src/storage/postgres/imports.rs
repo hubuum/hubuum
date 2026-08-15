@@ -12,10 +12,7 @@ use crate::models::{
     ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
     NewHubuumClassRelation, ObjectKey, PrincipalKey,
 };
-use crate::services::import_boundary::{
-    collection_key_from_storage, import_mode_from_storage, import_operation_from_storage,
-};
-use crate::storage::postgres::operations::task_rows::NewImportTaskResultRow as NewImportTaskResultRecord;
+use crate::services::import_boundary::{import_mode_from_storage, import_operation_from_storage};
 use crate::storage::{
     ApplicationImportOperation as StorageImportOperation, ImportStorage, StorageClassRecord,
     StorageCollection, StorageError, StorageImportApply, StorageImportApplyItem,
@@ -25,23 +22,15 @@ use crate::storage::{
 };
 
 use super::error::map_postgres_error;
-use super::operations::resource_rows::{
-    class_record_to_storage, collection_to_storage, object_to_storage,
-};
-use super::operations::task::insert_import_results;
 use super::operations::task_import::{
     apply_permissions_db, check_class_relation_import_condition_db,
     check_object_relation_import_condition_db, create_class_db, create_class_relation_db,
     create_collection_db, create_object_db, create_object_relation_db,
-    load_export_template_sources_db, lookup_class_by_collection_and_name,
-    lookup_class_by_collection_and_name_db, lookup_classes_by_collection_and_names,
-    lookup_collection_by_id, lookup_collection_by_key, lookup_collection_by_key_db,
-    lookup_collection_child_by_name_db, lookup_collections_by_name, lookup_direct_class_relation,
-    lookup_event_sink_id_by_name_db, lookup_group_by_name, lookup_group_by_name_db,
-    lookup_identity_scope_id_by_name_db, lookup_object_by_class_and_name,
-    lookup_object_by_class_and_name_db, lookup_object_relation, lookup_objects_by_class_and_names,
-    lookup_principal_id_by_name_db, lookup_root_collection, lookup_root_collection_db,
-    update_class_db, update_class_relation_timestamps_db, update_collection_db, update_object_db,
+    load_export_template_sources_db, lookup_class_by_collection_and_name_db,
+    lookup_collection_by_key_db, lookup_event_sink_id_by_name_db, lookup_group_by_name_db,
+    lookup_identity_scope_id_by_name_db, lookup_object_by_class_and_name_db,
+    lookup_principal_id_by_name_db, lookup_root_collection_db, update_class_db,
+    update_class_relation_timestamps_db, update_collection_db, update_object_db,
     update_object_relation_timestamps_db, upsert_computed_field_db, upsert_event_sink_db,
     upsert_event_subscription_db, upsert_export_template_db, upsert_group_db,
     upsert_group_membership_db, upsert_identity_scope_db, upsert_principal_db,
@@ -1067,41 +1056,42 @@ fn should_abort_best_effort(error: &ApiError, mode: &ImportMode) -> bool {
 #[async_trait]
 impl ImportStorage for PostgresStorage {
     async fn import_root_collection(&self) -> Result<StorageCollection, StorageError> {
-        lookup_root_collection(self.pool())
+        hubuum_storage_postgres::operations::import_workflow::root_collection(self.runtime())
             .await
-            .map(collection_to_storage)
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn import_collection_by_id(
         &self,
         collection_id: i32,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        lookup_collection_by_id(self.pool(), collection_id)
-            .await
-            .map(|collection| collection.map(collection_to_storage))
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::collection_by_id(
+            self.runtime(),
+            collection_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_collection_by_key(
         &self,
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        let key = collection_key_from_storage(key.clone());
-        lookup_collection_by_key(self.pool(), &key)
+        hubuum_storage_postgres::operations::import_workflow::collection_by_key(self.runtime(), key)
             .await
-            .map(|collection| collection.map(collection_to_storage))
-            .map_err(map_postgres_error)
+            .map_err(StorageError::from)
     }
 
     async fn import_collections_by_name(
         &self,
         name: &str,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        lookup_collections_by_name(self.pool(), name)
-            .await
-            .map(|collections| collections.into_iter().map(collection_to_storage).collect())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::collections_by_name(
+            self.runtime(),
+            name,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_collection_child_by_name(
@@ -1109,12 +1099,13 @@ impl ImportStorage for PostgresStorage {
         parent_collection_id: i32,
         name: &str,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        with_connection(self.pool(), async |conn| {
-            lookup_collection_child_by_name_db(conn, parent_collection_id, name).await
-        })
+        hubuum_storage_postgres::operations::import_workflow::collection_child_by_name(
+            self.runtime(),
+            parent_collection_id,
+            name,
+        )
         .await
-        .map(|collection| collection.map(collection_to_storage))
-        .map_err(map_postgres_error)
+        .map_err(StorageError::from)
     }
 
     async fn import_class_by_name(
@@ -1122,10 +1113,13 @@ impl ImportStorage for PostgresStorage {
         collection_id: i32,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError> {
-        lookup_class_by_collection_and_name(self.pool(), collection_id, name)
-            .await
-            .map(|class| class.map(class_record_to_storage))
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::class_by_name(
+            self.runtime(),
+            collection_id,
+            name,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_classes_by_names(
@@ -1133,10 +1127,13 @@ impl ImportStorage for PostgresStorage {
         collection_id: i32,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError> {
-        lookup_classes_by_collection_and_names(self.pool(), collection_id, names)
-            .await
-            .map(|classes| classes.into_iter().map(class_record_to_storage).collect())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::classes_by_names(
+            self.runtime(),
+            collection_id,
+            names,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_object_by_name(
@@ -1144,10 +1141,13 @@ impl ImportStorage for PostgresStorage {
         class_id: i32,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError> {
-        lookup_object_by_class_and_name(self.pool(), class_id, name)
-            .await
-            .map(|object| object.map(object_to_storage))
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::object_by_name(
+            self.runtime(),
+            class_id,
+            name,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_objects_by_names(
@@ -1155,10 +1155,13 @@ impl ImportStorage for PostgresStorage {
         class_id: i32,
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError> {
-        lookup_objects_by_class_and_names(self.pool(), class_id, names)
-            .await
-            .map(|objects| objects.into_iter().map(object_to_storage).collect())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::objects_by_names(
+            self.runtime(),
+            class_id,
+            names,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_class_relation_exists(
@@ -1166,10 +1169,13 @@ impl ImportStorage for PostgresStorage {
         left_class_id: i32,
         right_class_id: i32,
     ) -> Result<bool, StorageError> {
-        lookup_direct_class_relation(self.pool(), left_class_id, right_class_id)
-            .await
-            .map(|relation| relation.is_some())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::class_relation_exists(
+            self.runtime(),
+            left_class_id,
+            right_class_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_object_relation_exists(
@@ -1177,10 +1183,13 @@ impl ImportStorage for PostgresStorage {
         left_object_id: i32,
         right_object_id: i32,
     ) -> Result<bool, StorageError> {
-        lookup_object_relation(self.pool(), left_object_id, right_object_id)
-            .await
-            .map(|relation| relation.is_some())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::object_relation_exists(
+            self.runtime(),
+            left_object_id,
+            right_object_id,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_group_exists(
@@ -1188,10 +1197,13 @@ impl ImportStorage for PostgresStorage {
         identity_scope: &str,
         group_name: &str,
     ) -> Result<bool, StorageError> {
-        lookup_group_by_name(self.pool(), identity_scope, group_name)
-            .await
-            .map(|group| group.is_some())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::group_exists(
+            self.runtime(),
+            identity_scope,
+            group_name,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn preflight_import(
@@ -1313,26 +1325,11 @@ impl ImportStorage for PostgresStorage {
         &self,
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
-        let results = results
-            .into_iter()
-            .map(|result| {
-                let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
-                    result.into_parts();
-                NewImportTaskResultRecord {
-                    task_id,
-                    item_ref,
-                    entity_kind,
-                    action,
-                    identifier,
-                    outcome,
-                    error,
-                    details,
-                }
-            })
-            .collect::<Vec<_>>();
-        insert_import_results(self.pool(), &results)
-            .await
-            .map(|_| ())
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::import_workflow::record_results(
+            self.runtime(),
+            results,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }

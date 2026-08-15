@@ -37,6 +37,8 @@ use crate::tasks::TaskLeaseDuration;
 
 #[cfg(test)]
 use super::remote_target::NewRemoteCallResultRow;
+#[cfg(test)]
+use super::task_rows::NewImportTaskResultRow as NewImportTaskResultRecord;
 use super::task_rows::{
     BackupTaskOutputRow as BackupTaskOutputRecord,
     BackupTaskOutputSummaryRow as BackupTaskOutputSummaryRecord,
@@ -44,8 +46,7 @@ use super::task_rows::{
     ExportTaskOutputSummaryRow as ExportTaskOutputSummaryRecord,
     ImportTaskResultRow as ImportTaskResultRecord,
     NewBackupTaskOutputRow as NewBackupTaskOutputRecord,
-    NewExportTaskOutputRow as NewExportTaskOutputRecord,
-    NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
+    NewExportTaskOutputRow as NewExportTaskOutputRecord, NewTaskRow as NewTaskRecord,
     TaskRow as TaskRecord,
 };
 
@@ -1078,6 +1079,7 @@ impl NewTaskEventRecord {
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn insert_import_results(
     pool: &crate::storage::postgres::PostgresPool,
     entries: &[NewImportTaskResultRecord],

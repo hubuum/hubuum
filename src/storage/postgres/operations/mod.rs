@@ -20,7 +20,6 @@ pub mod principal;
 pub(in crate::storage::postgres) mod relation_rows;
 pub mod relations;
 pub mod remote_target;
-pub(in crate::storage::postgres) mod resource_rows;
 pub(crate) mod resource_scope;
 pub mod search;
 pub mod service_account;

@@ -27,6 +27,7 @@ pub mod history;
 pub mod identity_credentials;
 pub mod identity_principals;
 pub mod identity_scope;
+pub mod import_workflow;
 pub mod inventory;
 pub(crate) mod json_filter;
 pub mod maintenance;

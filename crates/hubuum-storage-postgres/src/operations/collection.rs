@@ -21,7 +21,7 @@ use crate::{
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::collections)]
-struct CollectionRow {
+pub(crate) struct CollectionRow {
     id: i32,
     name: String,
     description: String,
@@ -32,7 +32,7 @@ struct CollectionRow {
 }
 
 impl CollectionRow {
-    fn into_storage(self) -> StorageCollection {
+    pub(crate) fn into_storage(self) -> StorageCollection {
         StorageCollection::new(
             StorageRecordMetadata::new(
                 self.id,
