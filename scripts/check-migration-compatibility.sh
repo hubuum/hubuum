@@ -87,8 +87,22 @@ while IFS= read -r file; do
     fi
   done < <(sql_statements "$repository_root/$file")
 done < <(
-  git -C "$repository_root" diff --diff-filter=AM --name-only "$base_ref"...HEAD -- \
-    'crates/hubuum-storage-postgres/migrations/*/up.sql'
+  git -C "$repository_root" diff --find-renames --diff-filter=AMR --name-status \
+    "$base_ref"...HEAD -- \
+    'migrations/*/up.sql' \
+    'crates/hubuum-storage-postgres/migrations/*/up.sql' \
+    | while IFS=$'\t' read -r status source_path destination_path; do
+      if [[ "$status" == "A" || "$status" == "M" ]]; then
+        printf '%s\n' "$source_path"
+      elif [[ "$status" == "R100" ]]; then
+        # Moving an unchanged historical migration into the adapter crate does
+        # not make it a new migration. Git has already proved byte equality.
+        :
+      elif [[ "$status" == R* ]]; then
+        # A renamed migration with changed contents still needs review.
+        printf '%s\n' "$destination_path"
+      fi
+    done
 )
 
 if ((failures > 0)); then
