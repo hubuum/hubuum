@@ -61,6 +61,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   HTTP request and response shapes are unchanged; the deprecated administrator
   configuration field `exports.database_statement_timeout_ms` remains as an
   alias for `exports.storage_query_budget_ms`.
+  No client migration is required because the token-resource and
+  remote-invocation `oneOf` variants are schema-identical to v0.0.9.
 - Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;
   PostgreSQL pool statistics are converted into private, structured contract
   values at the adapter boundary rather than being represented by root-owned

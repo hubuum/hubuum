@@ -140,6 +140,22 @@
         "916f4ec01c6f",
         "e0c16243d888"
       ]
+    },
+    {
+      "id": "v0.0.9-equivalent-oneof-directionality",
+      "baseline": "v0.0.9",
+      "expires": "2027-01-31",
+      "reason": "Oasdiff 1.16 reports request/response directionality changes for reused tagged-enum components even though the TokenResourceScope and RemoteInvocationSubject component schemas are structurally identical to v0.0.9.",
+      "migration": "No client migration is required because the token-resource and remote-invocation `oneOf` variants are schema-identical to v0.0.9.",
+      "changelog_entry": "Public HTTP request and response shapes are unchanged",
+      "fingerprints": [
+        "30246da623ca",
+        "307dd5314ce6",
+        "45d82ecde9f5",
+        "8dec078244f5",
+        "93610e75d7a4",
+        "df42b18ec136"
+      ]
     }
   ]
 }
