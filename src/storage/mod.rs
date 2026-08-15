@@ -26,6 +26,8 @@ pub use execution::{
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::run_storage_migrations;
 pub(crate) use factory::{StorageSettings, initialize_storage};
+#[cfg(test)]
+pub(crate) use hubuum_storage_core::StorageTaskClaimToken;
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationAttempt, AuthenticationCredential, AuthenticationHuman,
     AuthenticationIdentity, AuthenticationPrincipal, AuthenticationResourceScope,
@@ -102,14 +104,14 @@ pub(crate) use hubuum_storage_core::{
     StorageResolvedObject, StorageResolvedObjectRelation, StorageResourceScope,
     StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
     StorageRestoreCoordinatorSnapshot, StorageRestoreDocument, StorageRestoreDocumentMetadata,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
-    StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
-    StorageRestoreStageCreate, StorageRestoreStatus, StorageRestoreTimestamps,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJob,
+    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
-    StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
     StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskDurations,
     StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskEventPage,
     StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,

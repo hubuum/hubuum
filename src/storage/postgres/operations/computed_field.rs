@@ -43,7 +43,7 @@ pub(crate) use materialization::{evaluate_definitions, materialize_object_in_tra
 use materialization::{shared_definitions_conn, upsert_materialized};
 pub(crate) use rebuild::{
     enqueue_restored_computed_rebuilds, execute_computed_reindex_task_row,
-    mark_computed_reindex_failed_conn, mark_recovered_computed_reindex_failed,
+    mark_recovered_computed_reindex_failed,
 };
 pub use rebuild::{execute_computed_reindex_task, request_class_rebuild};
 

@@ -11,6 +11,7 @@ mod worker;
 pub use helpers::{idempotency_key_from_headers, request_hash};
 #[cfg(feature = "integration-test-support")]
 pub(crate) use remote_call::{enter_local_remote_target_test, exit_local_remote_target_test};
+#[cfg(test)]
 pub(crate) use settings::TaskLeaseDuration;
 pub use settings::{TaskWorkerSettings, TaskWorkerSettingsBuilder};
 pub use worker::{

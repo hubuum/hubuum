@@ -257,39 +257,6 @@ pub async fn execute_computed_reindex_task(
     execute_computed_reindex_task_row(pool, &task.clone().into()).await
 }
 
-pub(crate) async fn mark_computed_reindex_failed_conn(
-    conn: &mut PostgresConnection,
-    task: &TaskRecord,
-    stored_error: &str,
-) -> Result<(), ApiError> {
-    let Some(payload) = task
-        .request_payload
-        .clone()
-        .and_then(|value| serde_json::from_value::<ComputedReindexPayload>(value).ok())
-    else {
-        return Ok(());
-    };
-    use crate::schema::class_computation_state::dsl::{
-        active_task_id, class_computation_state, class_id, evaluation_revision, last_error,
-        rebuild_status, updated_at,
-    };
-    diesel::update(
-        class_computation_state
-            .filter(class_id.eq(payload.class_id))
-            .filter(evaluation_revision.eq(payload.target_revision))
-            .filter(active_task_id.eq(Some(task.id))),
-    )
-    .set((
-        rebuild_status.eq("failed"),
-        active_task_id.eq::<Option<i32>>(None),
-        last_error.eq(Some(stored_error.chars().take(512).collect::<String>())),
-        updated_at.eq(diesel::dsl::now),
-    ))
-    .execute(conn)
-    .await?;
-    Ok(())
-}
-
 pub(crate) async fn mark_recovered_computed_reindex_failed(
     conn: &mut PostgresConnection,
     task_id: i32,

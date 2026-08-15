@@ -189,13 +189,13 @@ impl StorageHandle {
         Self::from_postgres_backend(PostgresStorage::new(pool))
     }
 
-    pub(crate) fn postgres_with_notification_pool_settings(
+    pub(crate) fn postgres_with_operational_pool_settings(
         pool: PostgresPool,
-        notification_pool_settings: PostgresPoolSettings,
+        operational_pool_settings: PostgresPoolSettings,
     ) -> Self {
-        Self::from_postgres_backend(PostgresStorage::with_notification_pool_settings(
+        Self::from_postgres_backend(PostgresStorage::with_operational_pool_settings(
             pool,
-            notification_pool_settings,
+            operational_pool_settings,
         ))
     }
 

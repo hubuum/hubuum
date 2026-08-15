@@ -37,13 +37,13 @@ pub fn app_context_with_permission_backend(
 fn test_storage_handle(pool: PostgresPool) -> StorageHandle {
     let config = crate::tests::integration_test_config()
         .expect("integration test configuration must be valid");
-    let notification_pool_settings = PostgresPoolSettings::builder(config.database_url.clone())
+    let operational_pool_settings = PostgresPoolSettings::builder(config.database_url.clone())
         .max_size(1)
         .statement_timeout_ms(config.db_statement_timeout_ms)
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
         .expect("test notification listener settings must be valid");
-    StorageHandle::postgres_with_notification_pool_settings(pool, notification_pool_settings)
+    StorageHandle::postgres_with_operational_pool_settings(pool, operational_pool_settings)
 }
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {

@@ -4,19 +4,25 @@
 //! result projection remains here only until the task-execution family moves
 //! into the adapter crate.
 
+#[cfg(test)]
 use std::fmt;
 
+#[cfg(test)]
 use diesel::Insertable;
+#[cfg(any(test, feature = "integration-test-support"))]
 use diesel::prelude::ExpressionMethods;
 #[cfg(feature = "integration-test-support")]
 use diesel::prelude::QueryDsl;
 #[cfg(feature = "integration-test-support")]
 use diesel::{Queryable, Selectable};
+#[cfg(any(test, feature = "integration-test-support"))]
 use diesel_async::RunQueryDsl;
 
+#[cfg(any(test, feature = "integration-test-support"))]
 use crate::errors::ApiError;
 #[cfg(feature = "integration-test-support")]
 use crate::models::remote_target::RemoteCallResult;
+#[cfg(test)]
 use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 #[cfg(feature = "integration-test-support")]
 use crate::storage::postgres::with_connection;
@@ -41,6 +47,7 @@ struct RemoteCallResultRow {
     created_at: chrono::NaiveDateTime,
 }
 
+#[cfg(test)]
 #[derive(Clone, Insertable)]
 #[diesel(table_name = crate::schema::remote_call_results)]
 pub(crate) struct NewRemoteCallResultRow {
@@ -58,6 +65,7 @@ pub(crate) struct NewRemoteCallResultRow {
     pub(crate) error: Option<String>,
 }
 
+#[cfg(test)]
 impl fmt::Debug for NewRemoteCallResultRow {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -78,6 +86,7 @@ impl fmt::Debug for NewRemoteCallResultRow {
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn upsert_remote_call_result_conn(
     conn: &mut crate::storage::postgres::PostgresConnection,
     entry: NewRemoteCallResultRow,

@@ -173,6 +173,7 @@ impl TaskLeaseDuration {
         self.duration
     }
 
+    #[cfg(test)]
     pub(crate) const fn database_milliseconds(self) -> i64 {
         self.database_milliseconds
     }

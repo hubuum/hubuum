@@ -242,7 +242,7 @@ mod tests {
             .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
             .build()
             .expect("listener settings should be valid");
-        let backend = PostgresStorage::with_notification_pool_settings(
+        let backend = PostgresStorage::with_operational_pool_settings(
             execution_pool.clone(),
             listener_settings,
         );

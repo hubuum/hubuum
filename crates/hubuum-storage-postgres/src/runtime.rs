@@ -44,6 +44,16 @@ pub trait PostgresTelemetry: Send + Sync {
     fn computed_live_fallback(&self) {}
 
     fn computed_read_repair(&self, _outcome: &'static str) {}
+
+    fn task_completed(
+        &self,
+        _kind: &'static str,
+        _status: &'static str,
+        _duration: Option<Duration>,
+    ) {
+    }
+
+    fn computed_rebuild_finished(&self, _outcome: &'static str, _duration: Duration) {}
 }
 
 #[derive(Debug, Default)]
@@ -55,6 +65,7 @@ impl PostgresTelemetry for NoopPostgresTelemetry {}
 #[derive(Clone)]
 pub struct PostgresRuntime {
     pool: PostgresPool,
+    task_lease_pool: PostgresPool,
     telemetry: Arc<dyn PostgresTelemetry>,
 }
 
@@ -63,6 +74,7 @@ impl fmt::Debug for PostgresRuntime {
         formatter
             .debug_struct("PostgresRuntime")
             .field("pool", &"<postgresql pool>")
+            .field("task_lease_pool", &"<postgresql pool>")
             .field("telemetry", &"<postgresql telemetry>")
             .finish()
     }
@@ -72,9 +84,21 @@ impl PostgresRuntime {
     #[must_use]
     pub fn new(pool: PostgresPool) -> Self {
         Self {
+            task_lease_pool: pool.clone(),
             pool,
             telemetry: Arc::new(NoopPostgresTelemetry),
         }
+    }
+
+    /// Use a small isolated pool for lease heartbeats.
+    ///
+    /// A worker may hold a connection from the execution pool while it renews
+    /// its lease. Keeping renewal on a separate pool prevents that safety path
+    /// from deadlocking behind the work it is protecting.
+    #[must_use]
+    pub fn with_task_lease_pool(mut self, task_lease_pool: PostgresPool) -> Self {
+        self.task_lease_pool = task_lease_pool;
+        self
     }
 
     #[must_use]
@@ -88,12 +112,18 @@ impl PostgresRuntime {
         &self.pool
     }
 
-    async fn acquire_connection(
+    #[doc(hidden)]
+    pub fn task_lease_pool(&self) -> &PostgresPool {
+        &self.task_lease_pool
+    }
+
+    async fn acquire_connection_from<'pool>(
         &self,
-    ) -> Result<PostgresPooledConnection<'_>, PostgresStorageError> {
+        pool: &'pool PostgresPool,
+    ) -> Result<PostgresPooledConnection<'pool>, PostgresStorageError> {
         let started_at = Instant::now();
         let call_site = ambient_storage_call_site();
-        match self.pool.get().await {
+        match pool.get().await {
             Ok(connection) => {
                 #[cfg(feature = "query-capture")]
                 let mut connection = connection;
@@ -123,6 +153,12 @@ impl PostgresRuntime {
                 Err(error.into())
             }
         }
+    }
+
+    async fn acquire_connection(
+        &self,
+    ) -> Result<PostgresPooledConnection<'_>, PostgresStorageError> {
+        self.acquire_connection_from(&self.pool).await
     }
 
     pub async fn with_connection<F, R, E>(&self, operation: F) -> Result<R, PostgresStorageError>
@@ -155,6 +191,47 @@ impl PostgresRuntime {
                 .await
         };
         self.record_completion("connection", started_at, &result);
+        result
+    }
+
+    /// Run a lease heartbeat through the isolated task-lease pool.
+    ///
+    /// This keeps lease safety independent from connections held by task work
+    /// while retaining the runtime's call-site attribution, logging, and
+    /// telemetry implementation.
+    pub async fn with_task_lease_connection<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let context = TransactionLocalContext::ambient();
+        let mut connection = self.acquire_connection_from(&self.task_lease_pool).await?;
+        let started_at = Instant::now();
+        let result = if context.is_empty() {
+            operation(&mut connection)
+                .await
+                .map_err(PostgresStorageError::from)
+        } else {
+            connection
+                .transaction::<R, PostgresStorageError, _>(async move |connection| {
+                    context.apply(connection).await?;
+                    operation(connection)
+                        .await
+                        .map_err(PostgresStorageError::from)
+                })
+                .await
+        };
+        self.record_completion("task_lease_connection", started_at, &result);
         result
     }
 
@@ -252,6 +329,23 @@ impl PostgresRuntime {
 
     pub(crate) fn record_computed_read_repair(&self, outcome: &'static str) {
         self.telemetry.computed_read_repair(outcome);
+    }
+
+    pub(crate) fn record_task_completed(
+        &self,
+        kind: &'static str,
+        status: &'static str,
+        duration: Option<Duration>,
+    ) {
+        self.telemetry.task_completed(kind, status, duration);
+    }
+
+    pub(crate) fn record_computed_rebuild_finished(
+        &self,
+        outcome: &'static str,
+        duration: Duration,
+    ) {
+        self.telemetry.computed_rebuild_finished(outcome, duration);
     }
 }
 

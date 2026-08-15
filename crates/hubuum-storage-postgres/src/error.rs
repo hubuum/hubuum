@@ -70,6 +70,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::TooManyRequests, message, None)
+    }
+
+    #[must_use]
     pub fn validation(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Validation, message, None)
     }

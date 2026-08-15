@@ -3,14 +3,17 @@ use crate::storage::postgres::prelude::*;
 use chrono::{NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
-use diesel::sql_types::{Array, BigInt, Bool, Integer, Nullable, Text, Timestamp};
+#[cfg(test)]
+use diesel::sql_types::{Array, Integer, Text};
+use diesel::sql_types::{BigInt, Bool, Nullable, Timestamp};
 use hubuum_task_core::IdempotencyKey;
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::apply_query_options;
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, Event, MutationProvenance, NewEvent};
@@ -26,10 +29,13 @@ use crate::storage::postgres::operations::event_record::EventRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 #[cfg(test)]
 use crate::storage::postgres::operations::history::resolve_principal_names;
+#[cfg(test)]
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::{with_connection, with_transaction};
+#[cfg(test)]
 use crate::tasks::TaskLeaseDuration;
 
+#[cfg(test)]
 use super::remote_target::NewRemoteCallResultRow;
 use super::task_rows::{
     BackupTaskOutputRow as BackupTaskOutputRecord,
@@ -45,7 +51,9 @@ use super::task_rows::{
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
+#[cfg(test)]
 const DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX: &str = "((clock_timestamp() AT TIME ZONE 'UTC') + (";
+#[cfg(test)]
 const DATABASE_LEASE_EXPIRY_SQL_SUFFIX: &str = " * INTERVAL '1 millisecond'))";
 
 pub struct TaskStateUpdate {
@@ -135,18 +143,6 @@ impl TaskScopeSnapshot {
 
     pub fn unscoped() -> Self {
         Self::from_request(None, None)
-    }
-
-    pub(in crate::storage::postgres) fn from_persisted(
-        token_id: Option<i32>,
-        scoped: bool,
-        scopes: serde_json::Value,
-    ) -> Result<Self, ApiError> {
-        Ok(Self {
-            token_id: token_id.map(TokenID::new).transpose()?,
-            scoped,
-            scopes,
-        })
     }
 }
 
@@ -782,6 +778,7 @@ pub trait TaskBackend: TaskIdentifier {
 
 impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
 
+#[cfg(test)]
 pub(crate) trait RemoteCallTaskBackend: TaskIdentifier {
     async fn finalize_remote_call_with_result(
         &self,
@@ -803,6 +800,7 @@ pub(crate) trait RemoteCallTaskBackend: TaskIdentifier {
     }
 }
 
+#[cfg(test)]
 impl<T: TaskIdentifier + ?Sized> RemoteCallTaskBackend for T {}
 
 pub(crate) async fn finalize_terminal_conn(
@@ -951,58 +949,6 @@ impl TaskRecord {
     }
 }
 
-fn build_task_query<'a>(
-    submitted_by_filter: Option<i32>,
-    kind_filter: Option<&'a str>,
-    status_filter: Option<&'a str>,
-) -> crate::schema::tasks::BoxedQuery<'a, diesel::pg::Pg> {
-    use crate::schema::tasks::dsl::{kind, status, submitted_by, tasks};
-
-    let mut query = tasks.into_boxed();
-
-    if let Some(submitter_id) = submitted_by_filter {
-        query = query.filter(submitted_by.eq(Some(submitter_id)));
-    }
-
-    if let Some(task_kind) = kind_filter {
-        query = query.filter(kind.eq(task_kind));
-    }
-
-    if let Some(task_status) = status_filter {
-        query = query.filter(status.eq(task_status));
-    }
-
-    query
-}
-
-pub(crate) async fn list_tasks_with_total_count(
-    pool: &crate::storage::postgres::PostgresPool,
-    submitted_by_filter: Option<i32>,
-    kind_filter: Option<&str>,
-    status_filter: Option<&str>,
-    query_options: &QueryOptions,
-) -> Result<(Vec<TaskRecord>, i64), ApiError> {
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
-        with_connection(pool, async |conn| {
-            build_task_query(submitted_by_filter, kind_filter, status_filter)
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
-        .await
-    })
-    .await?;
-
-    let items = with_connection(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
-        let mut query = build_task_query(submitted_by_filter, kind_filter, status_filter);
-        apply_query_options!(query, query_options, TaskRecord);
-        Ok(query.load::<TaskRecord>(conn).await?)
-    })
-    .await?;
-
-    Ok((items, total_count))
-}
-
 /// Enrich one task-event page with legacy queued-event initiators and one
 /// batched principal-name lookup.
 #[cfg(test)]
@@ -1025,7 +971,8 @@ pub(crate) async fn task_event_responses(
         .collect())
 }
 
-pub(crate) async fn enrich_legacy_task_event_initiators(
+#[cfg(test)]
+async fn enrich_legacy_task_event_initiators(
     pool: &crate::storage::postgres::PostgresPool,
     mut records: Vec<TaskEventRecord>,
 ) -> Result<Vec<TaskEventRecord>, ApiError> {
@@ -1067,49 +1014,6 @@ pub(crate) async fn enrich_legacy_task_event_initiators(
     }
 
     Ok(records)
-}
-
-pub(crate) async fn list_export_task_output_summaries(
-    pool: &crate::storage::postgres::PostgresPool,
-    task_ids: &[i32],
-) -> Result<Vec<ExportTaskOutputSummaryRecord>, ApiError> {
-    use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
-
-    if task_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Return expired-but-present rows too; the caller classifies each against `now` so the
-    // `output_expired` flag is consistent with the single-task lookups rather than silently
-    // collapsing expired rows into "no output" on the task-list endpoint.
-    with_connection(pool, async |conn| {
-        export_task_outputs
-            .filter(task_id.eq_any(task_ids))
-            .select(ExportTaskOutputSummaryRecord::as_select())
-            .load(conn)
-            .await
-    })
-    .await
-}
-
-pub(crate) async fn list_backup_task_output_summaries(
-    pool: &crate::storage::postgres::PostgresPool,
-    task_ids: &[i32],
-) -> Result<Vec<BackupTaskOutputSummaryRecord>, ApiError> {
-    use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
-
-    if task_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    with_connection(pool, async |conn| {
-        backup_task_outputs
-            .filter(task_id.eq_any(task_ids))
-            .select(BackupTaskOutputSummaryRecord::as_select())
-            .load(conn)
-            .await
-    })
-    .await
 }
 
 pub async fn purge_expired_export_outputs(
@@ -1166,44 +1070,6 @@ pub async fn purge_expired_export_outputs(
     }
 
     Ok(expired_task_ids)
-}
-
-pub(crate) async fn purge_expired_backup_outputs(
-    pool: &crate::storage::postgres::PostgresPool,
-) -> Result<Vec<i32>, ApiError> {
-    use crate::schema::backup_task_outputs::dsl::{
-        backup_task_outputs, output_expires_at, task_id,
-    };
-
-    let now = Utc::now().naive_utc();
-    with_transaction(pool, async |conn| -> Result<Vec<i32>, ApiError> {
-        let expired_task_ids =
-            diesel::delete(backup_task_outputs.filter(output_expires_at.le(now)))
-                .returning(task_id)
-                .get_results::<i32>(conn)
-                .await?;
-        use crate::schema::tasks::dsl as task_rows;
-        let expired_tasks = task_rows::tasks
-            .filter(task_rows::id.eq_any(&expired_task_ids))
-            .load::<TaskRecord>(conn)
-            .await?;
-        for task in &expired_tasks {
-            emit_task_lifecycle_event(
-                conn,
-                task,
-                &NewTaskEventRecord {
-                    task_id: task.id,
-                    event_type: "cleanup".to_string(),
-                    message: "Stored backup output expired and was cleaned up".to_string(),
-                    data: Some(serde_json::json!({ "cleaned_at": now })),
-                },
-                &task.system_provenance(),
-            )
-            .await?;
-        }
-        Ok(expired_task_ids)
-    })
-    .await
 }
 
 fn decode_task_event_cursor_id(query_options: &QueryOptions) -> Result<Option<i64>, ApiError> {
@@ -1302,33 +1168,6 @@ impl NewTaskEventRecord {
     }
 }
 
-/// Append an in-flight lifecycle event only while the supplied worker still
-/// owns the task's live lease.
-pub(crate) async fn append_task_event_while_claimed(
-    pool: &crate::storage::postgres::PostgresPool,
-    task_id_value: i32,
-    claim_token: Uuid,
-    event: NewTaskEventRecord,
-) -> Result<TaskEventRecord, ApiError> {
-    with_transaction(pool, async |conn| -> Result<TaskEventRecord, ApiError> {
-        use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
-
-        let active_statuses = TaskStatus::ACTIVE.map(TaskStatus::as_str);
-        let task = tasks
-            .filter(id.eq(task_id_value))
-            .filter(lease_token.eq(Some(claim_token)))
-            .filter(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
-            .filter(status.eq_any(active_statuses))
-            .for_update()
-            .first::<TaskRecord>(conn)
-            .await?;
-        emit_task_lifecycle_event(conn, &task, &event, &task.worker_provenance())
-            .await?
-            .try_into()
-    })
-    .await
-}
-
 pub(crate) async fn insert_import_results(
     pool: &crate::storage::postgres::PostgresPool,
     entries: &[NewImportTaskResultRecord],
@@ -1348,12 +1187,15 @@ pub(crate) async fn insert_import_results(
     .await
 }
 
+#[cfg(test)]
 pub(crate) fn executable_task_kind_values() -> [&'static str; TaskKind::ALL.len()] {
     TaskKind::ALL.map(TaskKind::as_str)
 }
 
+#[cfg(test)]
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(test)]
 const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
     SELECT candidate.id \
     FROM unnest($2::text[]) WITH ORDINALITY AS claim_order(kind, priority) \
@@ -1369,17 +1211,20 @@ const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
     ORDER BY claim_order.priority \
     LIMIT 1";
 
+#[cfg(test)]
 #[derive(QueryableByName)]
 struct ClaimableTaskId {
     #[diesel(sql_type = Integer)]
     id: i32,
 }
 
+#[cfg(test)]
 fn task_kind_claim_order(start: usize) -> [&'static str; TaskKind::ALL.len()] {
     let kinds = executable_task_kind_values();
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
 
+#[cfg(test)]
 pub(crate) async fn claim_next_queued_task(
     pool: &crate::storage::postgres::PostgresPool,
     lease_duration: TaskLeaseDuration,
@@ -1492,6 +1337,7 @@ pub async fn claim_task_for_backend_test(
 }
 
 /// Extend an active task lease if this worker still owns it.
+#[cfg(test)]
 pub(crate) async fn renew_task_lease(
     pool: &crate::storage::postgres::PostgresPool,
     task_id_value: i32,

@@ -1,22 +1,18 @@
-use chrono::{NaiveDateTime, Utc};
-use diesel::dsl::sql;
-use diesel::sql_types::{Jsonb, Timestamp};
+use chrono::Utc;
+use diesel::sql_types::Jsonb;
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, NewEvent};
+use crate::models::MaintenanceState;
 use crate::models::backup::{
     BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
     backup_history_sections,
 };
-use crate::models::{MaintenanceState, RestoreJobStatus};
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
-use crate::storage::{
-    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDocument,
-};
+use crate::storage::postgres::{PostgresConnection, with_transaction};
+use crate::storage::{StorageRestoreCompletion, StorageRestoreDocument, StorageRestoreJobStatus};
 
 const TRUNCATE_TABLES: &[&str] = &[
     "object_computed_data",
@@ -92,71 +88,15 @@ const HISTORY_SEQUENCE_TABLES: &[&str] = &[
     "remote_targets_history",
 ];
 
-const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
-
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::restore_jobs)]
-pub(crate) struct RestoreJobRow {
+struct RestoreApplyRow {
     pub(crate) id: i64,
     pub(crate) status: String,
     pub(crate) requested_by: Option<i32>,
     pub(crate) requested_by_identity_scope: String,
     pub(crate) requested_by_name: String,
-    pub(crate) document: Vec<u8>,
-    pub(crate) byte_size: i64,
     pub(crate) sha256: String,
-    pub(crate) capability_hash: String,
-    pub(crate) error: Option<String>,
-    pub(crate) expires_at: NaiveDateTime,
-    pub(crate) confirmed_at: Option<NaiveDateTime>,
-    pub(crate) finished_at: Option<NaiveDateTime>,
-    pub(crate) created_at: NaiveDateTime,
-    pub(crate) updated_at: NaiveDateTime,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::schema::restore_jobs)]
-pub(crate) struct NewRestoreJobRow {
-    pub(crate) status: String,
-    pub(crate) requested_by: Option<i32>,
-    pub(crate) requested_by_identity_scope: String,
-    pub(crate) requested_by_name: String,
-    pub(crate) document: Vec<u8>,
-    pub(crate) byte_size: i64,
-    pub(crate) sha256: String,
-    pub(crate) capability_hash: String,
-    pub(crate) validation_summary: serde_json::Value,
-    pub(crate) expires_at: NaiveDateTime,
-}
-
-#[derive(Clone, Queryable, Selectable, Insertable)]
-#[diesel(table_name = crate::schema::server_instances)]
-pub(crate) struct ServerInstanceRow {
-    pub(crate) instance_id: Uuid,
-    pub(crate) maintenance_generation: i64,
-    pub(crate) drained: bool,
-    pub(crate) last_heartbeat_at: NaiveDateTime,
-    pub(crate) started_at: NaiveDateTime,
-}
-
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = crate::schema::restore_jobs)]
-pub(crate) struct RestoreJobStatusRecord {
-    pub(crate) id: i64,
-    pub(crate) status: String,
-    pub(crate) requested_by: Option<i32>,
-    pub(crate) requested_by_identity_scope: String,
-    pub(crate) requested_by_name: String,
-    pub(crate) byte_size: i64,
-    pub(crate) sha256: String,
-    pub(crate) capability_hash: String,
-    pub(crate) validation_summary: serde_json::Value,
-    pub(crate) error: Option<String>,
-    pub(crate) expires_at: NaiveDateTime,
-    pub(crate) confirmed_at: Option<NaiveDateTime>,
-    pub(crate) finished_at: Option<NaiveDateTime>,
-    pub(crate) created_at: NaiveDateTime,
-    pub(crate) updated_at: NaiveDateTime,
 }
 
 fn validate_restore_identifier(table: &str, column: Option<&str>) -> Result<(), ApiError> {
@@ -210,129 +150,6 @@ async fn reset_sequence(
     Ok(())
 }
 
-pub(crate) async fn insert_restore_job_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    input: NewRestoreJobRow,
-) -> Result<RestoreJobRow, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::restore_jobs::dsl::restore_jobs;
-
-        diesel::insert_into(restore_jobs)
-            .values(input)
-            .returning(RestoreJobRow::as_returning())
-            .get_result::<RestoreJobRow>(conn)
-            .await
-    })
-    .await
-}
-
-pub(crate) async fn load_restore_job_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    job_id: i64,
-) -> Result<RestoreJobRow, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::restore_jobs::dsl::{id, restore_jobs};
-
-        restore_jobs
-            .filter(id.eq(job_id))
-            .select(RestoreJobRow::as_select())
-            .first::<RestoreJobRow>(conn)
-            .await
-            .optional()
-    })
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("Restore stage {job_id} was not found")))
-}
-
-pub(crate) async fn load_restore_status_job_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    job_id: i64,
-) -> Result<RestoreJobStatusRecord, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::restore_jobs::dsl::{id, restore_jobs};
-
-        restore_jobs
-            .filter(id.eq(job_id))
-            .select(RestoreJobStatusRecord::as_select())
-            .first::<RestoreJobStatusRecord>(conn)
-            .await
-            .optional()
-    })
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("Restore stage {job_id} was not found")))
-}
-
-pub(crate) async fn expire_restore_stage_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    job_id: i64,
-) -> Result<usize, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::restore_jobs::dsl::{document, id, restore_jobs, status};
-
-        diesel::update(
-            restore_jobs
-                .filter(id.eq(job_id))
-                .filter(status.eq(RestoreJobStatus::Validated.as_str())),
-        )
-        .set((
-            status.eq(RestoreJobStatus::Expired.as_str()),
-            document.eq(Vec::<u8>::new()),
-        ))
-        .execute(conn)
-        .await
-    })
-    .await
-}
-
-pub(crate) async fn start_restore_draining_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    job_id: i64,
-) -> Result<NaiveDateTime, ApiError> {
-    with_transaction(pool, async |conn| -> Result<NaiveDateTime, ApiError> {
-        diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
-            .execute(conn)
-            .await?;
-        use crate::schema::restore_jobs::dsl::{confirmed_at, error, id, restore_jobs, status};
-        let confirmation_time = diesel::update(
-            restore_jobs
-                .filter(id.eq(job_id))
-                .filter(status.eq(RestoreJobStatus::Validated.as_str())),
-        )
-        .set((
-            status.eq(RestoreJobStatus::Confirmed.as_str()),
-            confirmed_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL).nullable()),
-            error.eq::<Option<String>>(None),
-        ))
-        .returning(confirmed_at)
-        .get_result::<Option<NaiveDateTime>>(conn)
-        .await
-        .optional()?
-        .flatten()
-        .ok_or_else(|| {
-            ApiError::Conflict("Restore stage was confirmed concurrently".to_string())
-        })?;
-        let maintenance_changed = diesel::sql_query(
-            "UPDATE system_maintenance \
-             SET generation=generation+1, state='draining', restore_job_id=$1, \
-                 entered_at=now(), updated_at=now() \
-             WHERE id=1 AND state='normal'",
-        )
-        .bind::<diesel::sql_types::BigInt, _>(job_id)
-        .execute(conn)
-        .await?;
-        if maintenance_changed != 1 {
-            return Err(ApiError::Conflict(
-                "Another maintenance operation is already active".to_string(),
-            ));
-        }
-        diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'draining')")
-            .execute(conn)
-            .await?;
-        Ok(confirmation_time)
-    })
-    .await
-}
-
 pub(crate) async fn apply_restore_db(
     pool: &crate::storage::postgres::PostgresPool,
     job_id: i64,
@@ -354,8 +171,8 @@ pub(crate) async fn apply_restore_db(
         let job = restore_jobs
             .filter(restore_id.eq(job_id))
             .for_update()
-            .select(RestoreJobRow::as_select())
-            .first::<RestoreJobRow>(conn)
+            .select(RestoreApplyRow::as_select())
+            .first::<RestoreApplyRow>(conn)
             .await?;
         let (maintenance_state_value, maintenance_restore_job_id) = system_maintenance
             .filter(maintenance_id.eq(1_i16))
@@ -364,7 +181,7 @@ pub(crate) async fn apply_restore_db(
             .await?;
         let maintenance_state = MaintenanceState::try_from(maintenance_state_value.as_str())
             .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-        if job.status != RestoreJobStatus::Confirmed.as_str()
+        if job.status != StorageRestoreJobStatus::Confirmed.as_str()
             || maintenance_state != MaintenanceState::Draining
             || maintenance_restore_job_id != Some(job.id)
         {
@@ -481,273 +298,11 @@ pub(crate) async fn apply_restore_db(
     .await
 }
 
-pub(crate) async fn fail_restore_and_resume_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    job_id: i64,
-    stored_error: &str,
-) -> Result<(), ApiError> {
-    with_transaction(pool, async |conn| -> Result<(), ApiError> {
-        diesel::sql_query(
-            "UPDATE restore_jobs \
-             SET status='failed', error=$2, finished_at=now(), document=''::bytea \
-             WHERE id=$1 AND status IN ('validated', 'confirmed')",
-        )
-        .bind::<diesel::sql_types::BigInt, _>(job_id)
-        .bind::<diesel::sql_types::Text, _>(stored_error)
-        .execute(conn)
-        .await?;
-        diesel::sql_query(
-            "UPDATE system_maintenance \
-             SET state='normal', restore_job_id=NULL, entered_at=NULL, updated_at=now() \
-             WHERE id=1 AND restore_job_id=$1 AND state='draining'",
-        )
-        .bind::<diesel::sql_types::BigInt, _>(job_id)
-        .execute(conn)
-        .await?;
-        diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
-            .execute(conn)
-            .await?;
-        Ok(())
-    })
-    .await
-}
-
-pub(crate) async fn load_restore_coordinator_snapshot_db(
-    pool: &crate::storage::postgres::PostgresPool,
-) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::system_maintenance::dsl::{
-            id, restore_job_id, state, system_maintenance,
-        };
-
-        let (maintenance_state_value, restore_job_id_value, database_now) = system_maintenance
-            .filter(id.eq(1_i16))
-            .select((
-                state,
-                restore_job_id,
-                sql::<Timestamp>(DATABASE_UTC_NOW_SQL),
-            ))
-            .first::<(String, Option<i64>, NaiveDateTime)>(conn)
-            .await?;
-        Ok::<_, ApiError>(StorageRestoreCoordinatorSnapshot::new(
-            MaintenanceState::try_from(maintenance_state_value.as_str())
-                .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
-            restore_job_id_value,
-            database_now,
-        ))
-    })
-    .await
-}
-
-pub(crate) async fn resume_maintenance_without_job_db(
-    pool: &crate::storage::postgres::PostgresPool,
-) -> Result<(), ApiError> {
-    with_transaction(pool, async |conn| -> Result<(), ApiError> {
-        diesel::sql_query(
-            "UPDATE system_maintenance \
-             SET state='normal', entered_at=NULL, updated_at=now() \
-             WHERE id=1 AND restore_job_id IS NULL AND state='draining'",
-        )
-        .execute(conn)
-        .await?;
-        diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
-            .execute(conn)
-            .await?;
-        Ok(())
-    })
-    .await
-}
-
-pub(crate) async fn resume_terminal_restore_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    job_id: i64,
-) -> Result<(), ApiError> {
-    with_transaction(pool, async |conn| -> Result<(), ApiError> {
-        diesel::sql_query(
-            "UPDATE system_maintenance \
-             SET state='normal', restore_job_id=NULL, entered_at=NULL, updated_at=now() \
-             WHERE id=1 AND restore_job_id=$1 AND state='draining'",
-        )
-        .bind::<diesel::sql_types::BigInt, _>(job_id)
-        .execute(conn)
-        .await?;
-        diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
-            .execute(conn)
-            .await?;
-        Ok(())
-    })
-    .await
-}
-
-pub(crate) async fn restore_coordinator_tick_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    instance_id_value: Uuid,
-    local_work_is_idle: impl FnOnce() -> bool + Send,
-    expire_validated_jobs: bool,
-) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
-    with_transaction(pool, async move |conn| -> Result<_, ApiError> {
-        if expire_validated_jobs {
-            diesel::sql_query(
-                "UPDATE restore_jobs \
-                 SET status='expired', document=''::bytea \
-                 WHERE status='validated' AND expires_at <= now()",
-            )
-            .execute(conn)
-            .await?;
-        }
-
-        use crate::schema::system_maintenance::dsl::{
-            generation, id, restore_job_id, state, system_maintenance,
-        };
-        let (generation_value, state_value, restore_job_id_value, database_now) =
-            system_maintenance
-                .filter(id.eq(1_i16))
-                .select((
-                    generation,
-                    state,
-                    restore_job_id,
-                    sql::<Timestamp>(DATABASE_UTC_NOW_SQL),
-                ))
-                .first::<(i64, String, Option<i64>, NaiveDateTime)>(conn)
-                .await?;
-
-        // Do not sample local activity until this transaction has observed
-        // the maintenance generation. Work that began while the state was
-        // still normal has already installed its guard by this point.
-        let maintenance_state = MaintenanceState::try_from(state_value.as_str())
-            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-        let drained_value = !maintenance_state.is_normal() && local_work_is_idle();
-        let record = ServerInstanceRow {
-            instance_id: instance_id_value,
-            maintenance_generation: generation_value,
-            drained: drained_value,
-            last_heartbeat_at: database_now,
-            started_at: database_now,
-        };
-        use crate::schema::server_instances::dsl::{
-            drained, instance_id as row_id, last_heartbeat_at, maintenance_generation,
-            server_instances,
-        };
-
-        diesel::insert_into(server_instances)
-            .values(&record)
-            .on_conflict(row_id)
-            .do_update()
-            .set((
-                maintenance_generation.eq(record.maintenance_generation),
-                drained.eq(record.drained),
-                last_heartbeat_at.eq(record.last_heartbeat_at),
-            ))
-            .execute(conn)
-            .await?;
-
-        Ok(StorageRestoreCoordinatorSnapshot::new(
-            maintenance_state,
-            restore_job_id_value,
-            database_now,
-        ))
-    })
-    .await
-}
-
-pub(crate) async fn maintenance_generation_and_instances_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    heartbeat_cutoff: NaiveDateTime,
-) -> Result<(i64, Vec<ServerInstanceRow>), ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::server_instances::dsl::{last_heartbeat_at, server_instances};
-        use crate::schema::system_maintenance::dsl::{
-            generation as generation_column, id, system_maintenance,
-        };
-
-        let current_generation = system_maintenance
-            .filter(id.eq(1_i16))
-            .select(generation_column)
-            .first::<i64>(conn)
-            .await?;
-        let instances = server_instances
-            .filter(last_heartbeat_at.gt(heartbeat_cutoff))
-            .load::<ServerInstanceRow>(conn)
-            .await?;
-        Ok::<_, diesel::result::Error>((current_generation, instances))
-    })
-    .await
-}
-
-pub(crate) async fn delete_server_instance_db(
-    pool: &crate::storage::postgres::PostgresPool,
-    instance_id: Uuid,
-) -> Result<(), ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::server_instances::dsl::{instance_id as row_id, server_instances};
-
-        diesel::delete(server_instances.filter(row_id.eq(instance_id)))
-            .execute(conn)
-            .await
-    })
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use diesel::prelude::*;
     use rstest::rstest;
-    use uuid::Uuid;
 
-    use crate::models::MaintenanceState;
-    use crate::storage::postgres::capture_queries;
-    use crate::tests::get_test_pool;
-
-    use super::{
-        RestoreJobStatusRecord, delete_server_instance_db, restore_coordinator_tick_db,
-        validate_restore_identifier,
-    };
-
-    #[actix_rt::test]
-    async fn restore_coordinator_tick_uses_one_pool_checkout() {
-        let pool = get_test_pool();
-        let instance_id = Uuid::new_v4();
-
-        let (snapshot, queries) = capture_queries(restore_coordinator_tick_db(
-            &pool,
-            instance_id,
-            || true,
-            false,
-        ))
-        .await;
-
-        assert!(snapshot.is_ok());
-        assert_eq!(queries.connection_checkouts(), 1);
-        delete_server_instance_db(&pool, instance_id).await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn restore_coordinator_does_not_sample_activity_before_observing_draining() {
-        let pool = get_test_pool();
-        let instance_id = Uuid::new_v4();
-        let sampled = Arc::new(AtomicBool::new(false));
-        let sampled_by_tick = sampled.clone();
-
-        let snapshot = restore_coordinator_tick_db(
-            &pool,
-            instance_id,
-            move || {
-                sampled_by_tick.store(true, Ordering::Release);
-                true
-            },
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(snapshot.maintenance_state(), MaintenanceState::Normal);
-        assert!(!sampled.load(Ordering::Acquire));
-        delete_server_instance_db(&pool, instance_id).await.unwrap();
-    }
+    use super::validate_restore_identifier;
 
     #[rstest]
     #[case::known("collections", Some("id"), true)]
@@ -762,19 +317,5 @@ mod tests {
             validate_restore_identifier(table, column).is_ok(),
             expected_valid
         );
-    }
-
-    #[rstest]
-    #[case::document("\"restore_jobs\".\"document\"", false)]
-    #[case::capability_hash("\"restore_jobs\".\"capability_hash\"", true)]
-    fn restore_status_projection_fields(#[case] field: &str, #[case] expected: bool) {
-        use crate::schema::restore_jobs::dsl::{id, restore_jobs};
-
-        let query = restore_jobs
-            .filter(id.eq(42_i64))
-            .select(RestoreJobStatusRecord::as_select());
-        let sql = diesel::debug_query::<diesel::pg::Pg, _>(&query).to_string();
-
-        assert_eq!(sql.contains(field), expected);
     }
 }

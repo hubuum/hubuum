@@ -1,8 +1,13 @@
+#[cfg(test)]
 use crate::errors::ApiError;
+#[cfg(test)]
 use crate::models::MaintenanceState;
+#[cfg(test)]
 use crate::storage::StorageError;
+#[cfg(test)]
 use crate::storage::postgres::PostgresConnection;
 
+#[cfg(test)]
 pub(crate) async fn maintenance_state_conn(
     connection: &mut PostgresConnection,
 ) -> Result<MaintenanceState, ApiError> {
