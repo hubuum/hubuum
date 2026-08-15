@@ -14,6 +14,10 @@ use crate::operations::collection::CollectionRow;
 use crate::operations::object::ObjectRow;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
+pub use super::import_execution::{
+    apply_import_best_effort, apply_import_strict, preflight_import,
+};
+
 #[derive(Insertable)]
 #[diesel(table_name = crate::schema::import_task_results)]
 struct NewImportResultRow {

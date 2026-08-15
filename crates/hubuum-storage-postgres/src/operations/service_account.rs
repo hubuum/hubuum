@@ -75,16 +75,16 @@ macro_rules! apply_service_account_filters {
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::service_accounts)]
-struct ServiceAccountRow {
-    id: i32,
+pub(crate) struct ServiceAccountRow {
+    pub(crate) id: i32,
     #[diesel(column_name = kind)]
-    _kind: String,
-    description: String,
-    owner_group_id: i32,
-    created_by: Option<i32>,
-    disabled_at: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    pub(crate) _kind: String,
+    pub(crate) description: String,
+    pub(crate) owner_group_id: i32,
+    pub(crate) created_by: Option<i32>,
+    pub(crate) disabled_at: Option<NaiveDateTime>,
+    pub(crate) created_at: NaiveDateTime,
+    pub(crate) updated_at: NaiveDateTime,
 }
 
 impl ServiceAccountRow {

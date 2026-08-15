@@ -123,7 +123,7 @@ mod mutations;
 mod queries;
 mod rows;
 
-pub(crate) use mutations::insert_full_collection_grant;
+pub(crate) use mutations::{NewPermission, UpdatePermission, insert_full_collection_grant};
 pub use mutations::{
     apply_local_collection_grant, revoke_all_local_collection_grants, revoke_local_collection_grant,
 };

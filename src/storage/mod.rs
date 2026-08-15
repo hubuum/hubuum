@@ -138,9 +138,8 @@ pub(crate) use hubuum_storage_core::{
     TaskGaugeSnapshot,
 };
 pub(crate) use hubuum_storage_core::{
-    ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportCollectionKey,
-    StorageImportMode, StorageImportOperation, StorageImportPlanItem, StorageImportPreflight,
-    StorageImportPreflightItem, StorageImportResult,
+    ImportStorage, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
+    StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
 };
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 pub(crate) use imports::ApplicationImportOperation;

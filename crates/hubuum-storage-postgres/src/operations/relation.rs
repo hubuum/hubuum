@@ -644,7 +644,7 @@ pub async fn delete_object_relation_by_id(
         .await
 }
 
-fn normalize_class_relation_create(
+pub(crate) fn normalize_class_relation_create(
     command: StorageClassRelationCreate,
 ) -> Result<StorageClassRelationCreate, PostgresStorageError> {
     validate_positive_id(command.from_class_id(), "from class id")?;

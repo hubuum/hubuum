@@ -54,10 +54,8 @@ use crate::storage::postgres::operations::task_import::{
 use crate::storage::postgres::operations::task_rows::{
     NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
 };
-use crate::storage::postgres::{
-    RuntimeState, execute_application_planned_item, execute_planned_item, resolve_object_runtime,
-};
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
+use crate::storage::{ImportStorage, PostgresStorage, StorageImportPlanItem};
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
 
@@ -1131,15 +1129,12 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
     let execution =
         crate::services::import_boundary::import_operation_to_storage(execution).unwrap();
 
-    let result = with_connection(&context.pool, async |conn| {
-        execute_planned_item(conn, &mut RuntimeState::default(), &execution).await
-    })
-    .await;
+    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let result = backend
+        .apply_import_strict(vec![StorageImportPlanItem::new(0, execution)])
+        .await;
 
-    assert!(matches!(
-        result,
-        Err(ApiError::BadRequest(message)) if message.contains("not target collection")
-    ));
+    assert!(result.is_err_and(|error| error.to_string().contains("not target collection")));
 }
 
 #[rstest]
@@ -1189,27 +1184,32 @@ async fn imported_templates_use_effective_collection_loader(
         ..fragment.clone()
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        if matches!(dependency, TemplateDependency::Existing) {
-            upsert_export_template_db(conn, &fragment, fixture.collection.id, None, false).await?;
-        }
-        let import_export_templates = match dependency {
-            TemplateDependency::SameImport => vec![export.clone(), fragment],
-            TemplateDependency::Existing | TemplateDependency::Missing => vec![export.clone()],
-        };
-        let mut runtime = RuntimeState {
-            import_export_templates,
-            ..RuntimeState::default()
-        };
-        let execution = crate::services::import_boundary::import_operation_to_storage(
+    if matches!(dependency, TemplateDependency::Existing) {
+        with_connection(&context.pool, async |conn| {
+            upsert_export_template_db(conn, &fragment, fixture.collection.id, None, false).await
+        })
+        .await
+        .unwrap();
+    }
+    let executions = match dependency {
+        TemplateDependency::SameImport => vec![export.clone(), fragment],
+        TemplateDependency::Existing | TemplateDependency::Missing => vec![export.clone()],
+    }
+    .into_iter()
+    .enumerate()
+    .map(|(index, input)| {
+        crate::services::import_boundary::import_operation_to_storage(
             PlannedExecution::UpsertExportTemplate {
-                input: export,
+                input,
                 overwrite: false,
             },
-        )?;
-        execute_planned_item(conn, &mut runtime, &execution).await
+        )
+        .map(|operation| StorageImportPlanItem::new(index, operation))
     })
-    .await;
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let result = backend.apply_import_strict(executions).await;
 
     assert_eq!(result.is_ok(), expected_valid);
 }
@@ -2460,28 +2460,25 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         collection_key: None,
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        let mut runtime = RuntimeState::default();
-        execute_application_planned_item(conn, &mut runtime, &execution).await?;
-        execute_application_planned_item(
-            conn,
-            &mut runtime,
-            &PlannedExecution::CreateClass(class_input.clone()),
-        )
-        .await?;
-        Ok::<_, ApiError>(
-            runtime
-                .collections_by_ref
-                .get("collection:existing")
-                .cloned(),
-        )
-    })
-    .await
-    .unwrap();
+    let operations = [execution, PlannedExecution::CreateClass(class_input)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            crate::services::import_boundary::import_operation_to_storage(operation)
+                .map(|operation| StorageImportPlanItem::new(index, operation))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    backend.apply_import_strict(operations).await.unwrap();
+    let collection = backend
+        .import_collection_by_id(fixture.collection.id)
+        .await
+        .unwrap();
 
-    let collection = result.expect("collection ref should be available after update");
-    assert_eq!(collection.id, fixture.collection.id);
-    assert_eq!(collection.description, updated_description);
+    let collection = collection.expect("collection should remain available after update");
+    assert_eq!(collection.id(), fixture.collection.id);
+    assert_eq!(collection.description(), updated_description);
 }
 
 #[tokio::test]
@@ -2542,23 +2539,25 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
         class_key: None,
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        let mut runtime = RuntimeState::default();
-        execute_application_planned_item(conn, &mut runtime, &execution).await?;
-        execute_application_planned_item(
-            conn,
-            &mut runtime,
-            &PlannedExecution::CreateObject(object_input.clone()),
-        )
-        .await?;
-        Ok::<_, ApiError>(runtime.classes_by_ref.get("class:existing").cloned())
-    })
-    .await
-    .unwrap();
+    let operations = [execution, PlannedExecution::CreateObject(object_input)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            crate::services::import_boundary::import_operation_to_storage(operation)
+                .map(|operation| StorageImportPlanItem::new(index, operation))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    backend.apply_import_strict(operations).await.unwrap();
+    let updated = backend
+        .import_class_by_name(fixture.collection.id, &class.name)
+        .await
+        .unwrap();
 
-    let updated = result.expect("class ref should be available after update");
-    assert_eq!(updated.id, class.id);
-    assert_eq!(updated.name, class.name);
+    let updated = updated.expect("class should remain available after update");
+    assert_eq!(updated.id(), class.id);
+    assert_eq!(updated.name(), class.name);
 }
 
 #[tokio::test]
@@ -2736,16 +2735,19 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
         },
     };
 
-    let resolved = with_connection(&context.pool, async |conn| {
-        let mut runtime = RuntimeState::default();
-        execute_application_planned_item(conn, &mut runtime, &execution).await?;
-        resolve_object_runtime(conn, &runtime, Some("object:existing"), None::<&ObjectKey>).await
-    })
-    .await
-    .unwrap();
+    let operation = crate::services::import_boundary::import_operation_to_storage(execution)
+        .map(|operation| StorageImportPlanItem::new(0, operation))
+        .unwrap();
+    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    backend.apply_import_strict(vec![operation]).await.unwrap();
+    let resolved = backend
+        .import_object_by_name(class.id, &object.name)
+        .await
+        .unwrap()
+        .expect("updated object should remain addressable by name");
 
-    assert_eq!(resolved.id, object.id);
-    assert_eq!(resolved.description, "updated object");
+    assert_eq!(resolved.id(), object.id);
+    assert_eq!(resolved.description(), "updated object");
 }
 
 #[test]

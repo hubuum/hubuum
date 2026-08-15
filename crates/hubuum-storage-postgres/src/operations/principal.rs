@@ -19,18 +19,18 @@ const SERVICE_ACCOUNT_PRINCIPAL_KIND: &str = "service_account";
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::principals)]
 pub(crate) struct PrincipalRow {
-    id: i32,
-    kind: String,
-    name: String,
-    created_at: chrono::NaiveDateTime,
-    updated_at: chrono::NaiveDateTime,
-    identity_scope_id: i32,
-    provider_managed: bool,
-    settings: Value,
-    external_subject: Option<String>,
-    last_sync_attempted_at: Option<chrono::NaiveDateTime>,
-    last_sync_success_at: Option<chrono::NaiveDateTime>,
-    revision: PostgresRevision,
+    pub(crate) id: i32,
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) created_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
+    pub(crate) identity_scope_id: i32,
+    pub(crate) provider_managed: bool,
+    pub(crate) settings: Value,
+    pub(crate) external_subject: Option<String>,
+    pub(crate) last_sync_attempted_at: Option<chrono::NaiveDateTime>,
+    pub(crate) last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl PrincipalRow {

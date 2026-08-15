@@ -75,16 +75,16 @@ macro_rules! apply_user_filters {
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::users)]
-struct UserRow {
-    id: i32,
+pub(crate) struct UserRow {
+    pub(crate) id: i32,
     #[diesel(column_name = kind)]
-    _kind: String,
-    password: Option<String>,
-    proper_name: Option<String>,
-    email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    anonymized_at: Option<NaiveDateTime>,
+    pub(crate) _kind: String,
+    pub(crate) password: Option<String>,
+    pub(crate) proper_name: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) created_at: NaiveDateTime,
+    pub(crate) updated_at: NaiveDateTime,
+    pub(crate) anonymized_at: Option<NaiveDateTime>,
 }
 
 impl UserRow {

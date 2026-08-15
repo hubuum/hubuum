@@ -12,16 +12,69 @@
 //! provide an optional missing-value recorder callback when they need
 //! app-specific warning collection.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Write};
+use std::sync::Arc;
 
 use minijinja::value::Value;
-use minijinja::{Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State};
+use minijinja::{
+    AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
+    UndefinedBehavior,
+};
 
 pub type MissingValueRecorder = fn(MissingValue);
 
 pub fn prepare_template(source: &str) -> PreparedTemplate<'_> {
     PreparedTemplate::new(source)
+}
+
+/// Auto-escaping policy used while validating a composed template set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemplateAutoEscape {
+    None,
+    Html,
+}
+
+/// Validate one named template together with every source it may include.
+///
+/// The loader deliberately rejects path-like names. Hubuum fragments are
+/// collection-local names, not filesystem paths or namespace lookups.
+pub fn validate_template_composition(
+    template_name: &str,
+    template_source: &str,
+    sources: &[(String, String)],
+    context: &serde_json::Value,
+    auto_escape: TemplateAutoEscape,
+    limits: TemplateLimits,
+) -> Result<(), TemplateError> {
+    let mut source_map = sources.iter().cloned().collect::<HashMap<_, _>>();
+    source_map.insert(template_name.to_string(), template_source.to_string());
+    let source_map = Arc::new(source_map);
+    let mut environment = Environment::new();
+    environment.set_keep_trailing_newline(true);
+    environment.set_undefined_behavior(UndefinedBehavior::Chainable);
+    environment.set_recursion_limit(limits.recursion_limit());
+    environment.set_fuel(Some(limits.fuel()));
+    environment.set_auto_escape_callback(move |_| match auto_escape {
+        TemplateAutoEscape::None => AutoEscape::None,
+        TemplateAutoEscape::Html => AutoEscape::Html,
+    });
+    environment.set_loader(move |name| {
+        if name.contains('/') || name.contains("::") {
+            return Ok(None);
+        }
+        Ok(source_map.get(name).cloned())
+    });
+    register_curated_helpers(&mut environment, None);
+    environment
+        .add_template_owned(template_name.to_string(), template_source.to_string())
+        .map_err(TemplateError::validation)?;
+    environment
+        .get_template(template_name)
+        .and_then(|template| template.render(json_value_to_template_value(context)))
+        .map(|_| ())
+        .map_err(TemplateError::validation)
 }
 
 /// Converts JSON into a MiniJinja value without exposing serde_json's internal
@@ -549,5 +602,35 @@ mod tests {
                 || error.to_string().contains("operation")
                 || error.to_string().contains("limit")
         );
+    }
+
+    #[test]
+    fn composed_template_resolves_named_fragment() {
+        let sources = vec![("fragment.txt".to_string(), "fragment".to_string())];
+
+        validate_template_composition(
+            "export.txt",
+            "{% include \"fragment.txt\" %}",
+            &sources,
+            &serde_json::json!({}),
+            TemplateAutoEscape::None,
+            TemplateLimits::new(64, 50_000),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn composed_template_rejects_missing_fragment() {
+        let error = validate_template_composition(
+            "export.txt",
+            "{% include \"missing.txt\" %}",
+            &[],
+            &serde_json::json!({}),
+            TemplateAutoEscape::None,
+            TemplateLimits::new(64, 50_000),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing.txt"));
     }
 }

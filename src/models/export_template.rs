@@ -23,9 +23,7 @@ use crate::traits::accessors::{
     CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter, SelfAccessors,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
-use crate::utilities::exporting::{
-    validate_template, validate_template_sources, validate_template_syntax,
-};
+use crate::utilities::exporting::{validate_template, validate_template_syntax};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -804,19 +802,6 @@ pub(crate) fn validate_import_export_template(
         default_limits: default_limits.as_ref(),
     })?;
     validate_template_syntax(input.name, input.template)
-}
-
-pub(crate) fn validate_import_export_template_composition(
-    input: ExportTemplateImportRef<'_>,
-    collection_templates: &[(String, String)],
-) -> Result<(), ApiError> {
-    validate_import_export_template(input)?;
-    validate_template_sources(
-        input.name,
-        input.template,
-        collection_templates,
-        input.content_type,
-    )
 }
 
 async fn validate_export_profile(

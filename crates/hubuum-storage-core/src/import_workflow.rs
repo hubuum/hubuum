@@ -73,6 +73,21 @@ pub enum StorageImportWriteCondition {
     IfRevision(StorageImportRevision),
 }
 
+impl StorageImportWriteCondition {
+    #[must_use]
+    pub const fn expected_revision(self) -> Option<i64> {
+        match self {
+            Self::IfRevision(revision) => Some(revision.get()),
+            Self::CreateOnly | Self::Overwrite => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn requires_existing(self) -> bool {
+        matches!(self, Self::IfRevision(_))
+    }
+}
+
 /// Transaction behavior for one import request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageImportAtomicity {
@@ -130,6 +145,21 @@ impl StorageImportMode {
             self.permission_policy,
         )
     }
+
+    #[must_use]
+    pub const fn atomicity(&self) -> Option<StorageImportAtomicity> {
+        self.atomicity
+    }
+
+    #[must_use]
+    pub const fn collision_policy(&self) -> Option<StorageImportCollisionPolicy> {
+        self.collision_policy
+    }
+
+    #[must_use]
+    pub const fn permission_policy(&self) -> Option<StorageImportPermissionPolicy> {
+        self.permission_policy
+    }
 }
 
 /// Validated imported creation and update timestamps.
@@ -154,6 +184,11 @@ impl StorageImportTimestamps {
 
     #[must_use]
     pub const fn into_parts(self) -> (NaiveDateTime, NaiveDateTime) {
+        (self.created_at, self.updated_at)
+    }
+
+    #[must_use]
+    pub const fn as_pair(self) -> (NaiveDateTime, NaiveDateTime) {
         (self.created_at, self.updated_at)
     }
 }
@@ -668,6 +703,11 @@ impl StorageImportPlanItem {
     pub const fn operation(&self) -> &StorageImportOperation {
         &self.operation
     }
+
+    #[must_use]
+    pub fn into_parts(self) -> (usize, StorageImportOperation) {
+        (self.index, self.operation)
+    }
 }
 
 /// Per-item dry-run result from a rollback-only backend transaction.
@@ -1018,6 +1058,15 @@ mod tests {
             .unwrap();
 
         assert!(StorageImportTimestamps::new(created_at, updated_at).is_err());
+    }
+
+    #[test]
+    fn overwrite_condition_allows_create_or_update() {
+        assert!(!StorageImportWriteCondition::Overwrite.requires_existing());
+        assert!(
+            StorageImportWriteCondition::IfRevision(StorageImportRevision::new(1).unwrap())
+                .requires_existing()
+        );
     }
 
     #[test]

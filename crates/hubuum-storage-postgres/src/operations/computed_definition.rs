@@ -90,6 +90,14 @@ impl ComputedDefinitionRow {
         self.revision
     }
 
+    pub(crate) const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    pub(crate) const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
     pub(crate) fn is_shared(&self) -> bool {
         self.visibility == SHARED_VISIBILITY
     }

@@ -1,12 +1,9 @@
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
-use hubuum_storage_postgres::PostgresStorageError;
 use tracing::{debug, error};
 
 use crate::errors::ApiError;
 use crate::observability::metrics;
-
-use super::super::{StorageError, StorageErrorKind};
 
 const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
 
@@ -75,81 +72,9 @@ impl From<DieselError> for ApiError {
     }
 }
 
-fn postgres_error_from_api(error: ApiError) -> PostgresStorageError {
-    let (kind, message, current_etag) = match error {
-        ApiError::PermissionBackendUnavailable(message) => {
-            (StorageErrorKind::AuthorizationUnavailable, message, None)
-        }
-        ApiError::BadRequest(message)
-        | ApiError::InvalidIntegerRange(message)
-        | ApiError::OperatorMismatch(message) => (StorageErrorKind::BadRequest, message, None),
-        ApiError::NotAcceptable(message) => (StorageErrorKind::NotAcceptable, message, None),
-        ApiError::ValidationError(message) => (StorageErrorKind::Validation, message, None),
-        ApiError::PayloadTooLarge(message) => (StorageErrorKind::PayloadTooLarge, message, None),
-        ApiError::Conflict(message) => (StorageErrorKind::Conflict, message, None),
-        ApiError::Forbidden(message) => (StorageErrorKind::Forbidden, message, None),
-        ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
-            (StorageErrorKind::Database, message, None)
-        }
-        ApiError::NotFound(message) | ApiError::Gone(message) => {
-            (StorageErrorKind::NotFound, message, None)
-        }
-        ApiError::PreconditionFailed(message, current_etag) => {
-            (StorageErrorKind::PreconditionFailed, message, current_etag)
-        }
-        ApiError::TooManyRequests(message) => (StorageErrorKind::TooManyRequests, message, None),
-        ApiError::ServiceUnavailable(message) => (StorageErrorKind::Unavailable, message, None),
-        ApiError::Unauthorized(message) => (StorageErrorKind::Unauthorized, message, None),
-        error => (
-            StorageErrorKind::Internal,
-            format!(
-                "unexpected PostgreSQL storage adapter error ({}): {error}",
-                error.class()
-            ),
-            None,
-        ),
-    };
-    PostgresStorageError::new(kind, message, current_etag)
-}
-
-pub(super) fn map_postgres_error(error: impl Into<ApiError>) -> StorageError {
-    postgres_error_from_api(error.into()).into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn postgres_errors_are_classified_before_crossing_the_storage_boundary() {
-        assert_eq!(
-            map_postgres_error(ApiError::DatabaseError("query failed".to_string())).kind(),
-            StorageErrorKind::Database
-        );
-        assert_eq!(
-            map_postgres_error(ApiError::NotFound("missing".to_string())).kind(),
-            StorageErrorKind::NotFound
-        );
-        assert_eq!(
-            map_postgres_error(ApiError::PermissionBackendUnavailable(
-                "policy unavailable".to_string()
-            ))
-            .kind(),
-            StorageErrorKind::AuthorizationUnavailable
-        );
-        assert_eq!(
-            map_postgres_error(ApiError::TooManyRequests("capacity reached".to_string())).kind(),
-            StorageErrorKind::TooManyRequests
-        );
-        assert_eq!(
-            map_postgres_error(ApiError::Forbidden("access denied".to_string())).kind(),
-            StorageErrorKind::Forbidden
-        );
-        assert_eq!(
-            map_postgres_error(ApiError::Unauthorized("login required".to_string())).kind(),
-            StorageErrorKind::Unauthorized
-        );
-    }
 
     #[test]
     fn diesel_not_found_is_translated_inside_the_postgres_adapter() {

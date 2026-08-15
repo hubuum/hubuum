@@ -17,7 +17,7 @@ use super::rows::PermissionRow;
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::schema::permissions)]
-struct NewPermission {
+pub(crate) struct NewPermission {
     collection_id: i32,
     group_id: i32,
     has_read_collection: bool,
@@ -54,7 +54,11 @@ struct NewPermission {
 }
 
 impl NewPermission {
-    fn new(collection_id: i32, group_id: i32, permissions: &[AuthorizationPermission]) -> Self {
+    pub(crate) fn new(
+        collection_id: i32,
+        group_id: i32,
+        permissions: &[AuthorizationPermission],
+    ) -> Self {
         let has = |permission| permissions.contains(&permission);
         Self {
             collection_id,
@@ -96,7 +100,7 @@ impl NewPermission {
 
 #[derive(AsChangeset, Default)]
 #[diesel(table_name = crate::schema::permissions)]
-struct UpdatePermission {
+pub(crate) struct UpdatePermission {
     has_read_collection: Option<bool>,
     has_update_collection: Option<bool>,
     has_delete_collection: Option<bool>,
@@ -131,7 +135,7 @@ struct UpdatePermission {
 }
 
 impl UpdatePermission {
-    fn grant(permissions: &[AuthorizationPermission], replace_existing: bool) -> Self {
+    pub(crate) fn grant(permissions: &[AuthorizationPermission], replace_existing: bool) -> Self {
         let value = |permission| {
             let requested = permissions.contains(&permission);
             if replace_existing {

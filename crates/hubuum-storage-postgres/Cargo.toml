@@ -11,6 +11,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+argon2 = "0.6.0-rc.8"
 chrono = "0.4"
 diesel = { version = "2", features = [
     "postgres",
@@ -27,6 +28,7 @@ hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
 hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
 hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
 hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+hubuum-templates = { version = "0.0.1", path = "../hubuum-templates" }
 ipnet = "2.12"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 rustls-platform-verifier = "0.7"

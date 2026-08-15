@@ -2315,6 +2315,7 @@ dependencies = [
 name = "hubuum-storage-postgres"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "chrono",
  "diesel",
  "diesel-async",
@@ -2325,6 +2326,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-storage-core",
+ "hubuum-templates",
  "ipnet",
  "pq-sys",
  "rstest",

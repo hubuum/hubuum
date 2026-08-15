@@ -88,18 +88,18 @@ type GroupMemberQuery<'query> = diesel::dsl::IntoBoxed<
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::groups)]
-struct GroupRow {
-    id: i32,
-    groupname: String,
-    description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    identity_scope_id: i32,
-    managed_by: String,
-    external_key: Option<String>,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
-    revision: PostgresRevision,
+pub(crate) struct GroupRow {
+    pub(crate) id: i32,
+    pub(crate) groupname: String,
+    pub(crate) description: String,
+    pub(crate) created_at: NaiveDateTime,
+    pub(crate) updated_at: NaiveDateTime,
+    pub(crate) identity_scope_id: i32,
+    pub(crate) managed_by: String,
+    pub(crate) external_key: Option<String>,
+    pub(crate) last_sync_attempted_at: Option<NaiveDateTime>,
+    pub(crate) last_sync_success_at: Option<NaiveDateTime>,
+    pub(crate) revision: PostgresRevision,
 }
 
 impl GroupRow {

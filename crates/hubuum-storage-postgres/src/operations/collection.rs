@@ -408,7 +408,7 @@ async fn insert_collection(
         .map_err(PostgresStorageError::from)
 }
 
-async fn insert_collection_closure_rows(
+pub(crate) async fn insert_collection_closure_rows(
     connection: &mut PostgresConnection,
     collection_id: i32,
     parent_id: i32,

@@ -6,10 +6,6 @@ mod export_templates;
 mod failpoints;
 mod imports;
 mod notifications;
-#[cfg(test)]
-pub(crate) use imports::{
-    RuntimeState, execute_application_planned_item, execute_planned_item, resolve_object_runtime,
-};
 #[doc(hidden)]
 pub mod operations;
 mod remote_targets;
@@ -194,10 +190,6 @@ impl PostgresStorage {
             .with_task_lease_pool(task_lease_pool);
         backend.operational_pool_settings = Some(Arc::new(operational_pool_settings));
         backend
-    }
-
-    pub(crate) fn pool(&self) -> &PostgresPool {
-        &self.pool
     }
 
     fn runtime(&self) -> &PostgresRuntime {
