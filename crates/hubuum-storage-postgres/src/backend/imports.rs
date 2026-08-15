@@ -1,9 +1,9 @@
+use crate::operations::import_workflow;
 use async_trait::async_trait;
-use hubuum_storage_postgres::operations::import_workflow;
 
-use crate::storage::{
+use hubuum_storage_core::{
     ImportStorage, StorageClassRecord, StorageCollection, StorageError, StorageImportApply,
-    StorageImportCollectionKey, StorageImportMode, StorageImportPlanItem, StorageImportPreflight,
+    StorageImportCollectionKey, StorageImportMode, StorageImportPlan, StorageImportPreflight,
     StorageImportResult, StorageObject,
 };
 
@@ -126,29 +126,26 @@ impl ImportStorage for PostgresStorage {
 
     async fn preflight_import(
         &self,
-        items: Vec<StorageImportPlanItem>,
+        plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
-        import_workflow::preflight_import(self.runtime(), items, mode)
+        import_workflow::preflight_import(self.runtime(), plan, mode)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn apply_import_strict(
-        &self,
-        items: Vec<StorageImportPlanItem>,
-    ) -> Result<(), StorageError> {
-        import_workflow::apply_import_strict(self.runtime(), items)
+    async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
+        import_workflow::apply_import_strict(self.runtime(), plan)
             .await
             .map_err(StorageError::from)
     }
 
     async fn apply_import_best_effort(
         &self,
-        items: Vec<StorageImportPlanItem>,
+        plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportApply, StorageError> {
-        import_workflow::apply_import_best_effort(self.runtime(), items, mode)
+        import_workflow::apply_import_best_effort(self.runtime(), plan, mode)
             .await
             .map_err(StorageError::from)
     }

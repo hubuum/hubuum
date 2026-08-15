@@ -354,35 +354,32 @@ impl ImportStorage for StorageHandle {
 
     async fn preflight_import(
         &self,
-        items: Vec<StorageImportPlanItem>,
+        plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "preflight", async {
             dispatch_backend!(self, |backend| {
-                backend.preflight_import(items, mode).await
+                backend.preflight_import(plan, mode).await
             })
         })
         .await
     }
 
-    async fn apply_import_strict(
-        &self,
-        items: Vec<StorageImportPlanItem>,
-    ) -> Result<(), StorageError> {
+    async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "imports", "apply_strict", async {
-            dispatch_backend!(self, |backend| { backend.apply_import_strict(items).await })
+            dispatch_backend!(self, |backend| { backend.apply_import_strict(plan).await })
         })
         .await
     }
 
     async fn apply_import_best_effort(
         &self,
-        items: Vec<StorageImportPlanItem>,
+        plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportApply, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "apply_best_effort", async {
             dispatch_backend!(self, |backend| {
-                backend.apply_import_best_effort(items, mode).await
+                backend.apply_import_best_effort(plan, mode).await
             })
         })
         .await

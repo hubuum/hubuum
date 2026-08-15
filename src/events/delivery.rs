@@ -23,7 +23,7 @@ use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
     EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
-    StorageHandle, StorageNotification, WorkerNotificationStorage, storage_handle,
+    StorageHandle, StorageNotification, spawn_storage_notification_listener, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
@@ -293,7 +293,8 @@ where
     };
 
     EVENT_DELIVERY_LISTENER.call_once(|| {
-        pool.spawn_worker_notification_listener(
+        spawn_storage_notification_listener(
+            pool.clone(),
             StorageNotification::EventDelivery,
             "event-delivery-storage-listener",
             wake_event_delivery_worker_from_storage,

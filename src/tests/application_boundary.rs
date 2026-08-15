@@ -736,6 +736,21 @@ fn application_consumers_do_not_import_database_implementation_details() {
 }
 
 #[test]
+fn legacy_root_postgres_operations_are_test_only() {
+    let root = repository_root();
+    let path = root.join("src/storage/postgres/mod.rs");
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+
+    assert!(
+        source.contains(
+            "#[cfg(any(test, feature = \"integration-test-support\"))]\n#[doc(hidden)]\npub mod operations;"
+        ),
+        "the legacy root PostgreSQL operation tree must not compile into production builds"
+    );
+}
+
+#[test]
 fn backend_neutral_layers_do_not_import_database_implementation_details() {
     let root = repository_root();
     let mut violations = Vec::new();
@@ -809,11 +824,11 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
         }
     }
 
-    let transitional_adapter_path = root.join("src/storage/postgres/operations/group.rs");
-    let transitional_adapter = read_source(&transitional_adapter_path).unwrap_or_else(|error| {
+    let legacy_test_harness_path = root.join("src/storage/postgres/operations/group.rs");
+    let legacy_test_harness = read_source(&legacy_test_harness_path).unwrap_or_else(|error| {
         panic!(
             "could not read {}: {error}",
-            transitional_adapter_path.display()
+            legacy_test_harness_path.display()
         )
     });
     for required in [
@@ -822,8 +837,8 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
         "impl CursorSqlMapping for GroupRow",
     ] {
         assert!(
-            transitional_adapter.contains(required),
-            "transitional PostgreSQL group projection is missing {required}"
+            legacy_test_harness.contains(required),
+            "legacy PostgreSQL group test projection is missing {required}"
         );
     }
 
@@ -871,11 +886,11 @@ fn principal_domain_types_are_free_of_persistence_implementation_details() {
     .filter(|forbidden| production_source.contains(forbidden))
     .collect::<Vec<_>>();
 
-    let transitional_adapter_path = root.join("src/storage/postgres/operations/principal.rs");
-    let transitional_adapter = read_source(&transitional_adapter_path).unwrap_or_else(|error| {
+    let legacy_test_harness_path = root.join("src/storage/postgres/operations/principal.rs");
+    let legacy_test_harness = read_source(&legacy_test_harness_path).unwrap_or_else(|error| {
         panic!(
             "could not read {}: {error}",
-            transitional_adapter_path.display()
+            legacy_test_harness_path.display()
         )
     });
     for required in [
@@ -884,8 +899,8 @@ fn principal_domain_types_are_free_of_persistence_implementation_details() {
         "impl CursorSqlMapping for PrincipalRow",
     ] {
         assert!(
-            transitional_adapter.contains(required),
-            "transitional PostgreSQL principal projection is missing {required}"
+            legacy_test_harness.contains(required),
+            "legacy PostgreSQL principal test projection is missing {required}"
         );
     }
 
@@ -1251,11 +1266,11 @@ fn relation_domain_types_are_free_of_persistence_implementation_details() {
         }
     }
 
-    let transitional_adapter_path = root.join("src/storage/postgres/operations/relation_rows.rs");
-    let transitional_adapter = read_source(&transitional_adapter_path).unwrap_or_else(|error| {
+    let legacy_test_harness_path = root.join("src/storage/postgres/operations/relation_rows.rs");
+    let legacy_test_harness = read_source(&legacy_test_harness_path).unwrap_or_else(|error| {
         panic!(
             "could not read {}: {error}",
-            transitional_adapter_path.display()
+            legacy_test_harness_path.display()
         )
     });
     for required in [
@@ -1269,8 +1284,8 @@ fn relation_domain_types_are_free_of_persistence_implementation_details() {
         "impl CursorSqlMapping for HubuumClassRelationTransitiveRow",
     ] {
         assert!(
-            transitional_adapter.contains(required),
-            "transitional PostgreSQL relation projection is missing {required}"
+            legacy_test_harness.contains(required),
+            "legacy PostgreSQL relation test projection is missing {required}"
         );
     }
 
@@ -1537,12 +1552,13 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     let contract_path = root.join("crates/hubuum-storage-core/src/backend.rs");
     let contract_source = read_source(&contract_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
-    let composition_path = root.join("src/storage/contract.rs");
-    let composition_source = read_source(&composition_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", composition_path.display()));
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/backend/mod.rs");
+    let adapter_source = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     let context_path = root.join("src/storage/context");
     let context_source = read_rust_module_tree(&context_path);
-    let notification_adapter_path = root.join("src/storage/postgres/notifications.rs");
+    let notification_adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/notifications.rs");
     let notification_adapter_source =
         read_source(&notification_adapter_path).unwrap_or_else(|error| {
             panic!(
@@ -1563,11 +1579,11 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     assert!(
-        composition_source.contains("impl StorageBackend for PostgresStorage {}"),
+        adapter_source.contains("impl StorageBackend for PostgresStorage {}"),
         "PostgreSQL must explicitly opt into the complete storage contract"
     );
     assert!(
-        !composition_source.contains("StorageBackend for MemoryStorageModel"),
+        !adapter_source.contains("StorageBackend for MemoryStorageModel"),
         "the focused memory contract model must not be selectable as a full backend"
     );
     for forbidden_marker in ["WorkflowStorage", "OperationalStorage"] {
@@ -1890,7 +1906,8 @@ fn export_template_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/export_templates.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/export_templates.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -1909,7 +1926,7 @@ fn export_template_lifecycle_is_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::export_template"),
+            method_body.contains("crate::operations::export_template"),
             "the {method} export-template implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2001,7 +2018,7 @@ fn restore_consumers_use_only_the_mandatory_storage_contract() {
         "restore application code must depend on the mandatory storage contract"
     );
 
-    let facade_path = root.join("src/storage/postgres/restores.rs");
+    let facade_path = root.join("crates/hubuum-storage-postgres/src/backend/restores.rs");
     let facade = read_source(&facade_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
     let implementation = item_body(&facade, "impl", "RestoreStorage for PostgresStorage");
@@ -2072,6 +2089,64 @@ fn storage_error_translation_has_one_way_dependency_direction() {
 }
 
 #[test]
+fn import_execution_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/import_execution.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+        "get_config",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "the PostgreSQL import executor depends on application detail {forbidden}"
+        );
+    }
+    for required in [
+        "pub async fn preflight_import",
+        "pub async fn apply_import_strict",
+        "pub async fn apply_import_best_effort",
+        "execute_operation",
+    ] {
+        assert!(
+            adapter.contains(required),
+            "the PostgreSQL import executor is missing {required}"
+        );
+    }
+
+    let facade_path = root.join("crates/hubuum-storage-postgres/src/backend/imports.rs");
+    let facade = read_source(&facade_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
+    let implementation = item_body(&facade, "impl", "ImportStorage for PostgresStorage");
+    for method in [
+        "preflight_import",
+        "apply_import_strict",
+        "apply_import_best_effort",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains(&format!("import_workflow::{method}")),
+            "the {method} import implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("self.pool"),
+            "the {method} import implementation leaks the PostgreSQL pool"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/task_import.rs");
+    assert!(
+        !legacy_path.exists(),
+        "the application-owned PostgreSQL import executor still exists"
+    );
+}
+
+#[test]
 fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/collection.rs");
@@ -2090,12 +2165,13 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "CollectionStore for PostgresStorage");
     assert!(
-        implementation.contains("hubuum_storage_postgres::operations::collection"),
+        implementation.contains("crate::operations::collection"),
         "the collection trait implementation must delegate into the adapter crate"
     );
     for forbidden in [
@@ -2132,14 +2208,15 @@ fn catalog_queries_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "CatalogStorage for PostgresStorage");
     for method in ["list_collections", "list_classes", "list_objects"] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::catalog"),
+            method_body.contains("crate::operations::catalog"),
             "the {method} catalog implementation must delegate into the adapter crate"
         );
         for forbidden in ["&self.pool", "UserSearchBackend", "_to_storage"] {
@@ -2190,7 +2267,8 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
         "computed resolution, selection, and enrichment must share the adapter snapshot"
     );
 
-    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -2201,7 +2279,7 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
     for method in ["list_computed_objects", "enrich_objects_with_computed"] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::computed_objects"),
+            method_body.contains("crate::operations::computed_objects"),
             "the {method} computed-object implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2256,7 +2334,7 @@ fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let facade_path = root.join("src/storage/postgres/computed_fields.rs");
+    let facade_path = root.join("crates/hubuum-storage-postgres/src/backend/computed_fields.rs");
     let facade = read_source(&facade_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
     let implementation = item_body(
@@ -2314,7 +2392,8 @@ fn object_aggregate_queries_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -2324,7 +2403,7 @@ fn object_aggregate_queries_are_owned_by_the_postgres_adapter() {
     );
     let method = item_body(implementation, "fn", "aggregate_objects");
     assert!(
-        method.contains("hubuum_storage_postgres::operations::object_aggregate"),
+        method.contains("crate::operations::object_aggregate"),
         "object aggregation must delegate into the PostgreSQL adapter crate"
     );
     assert!(
@@ -2365,21 +2444,27 @@ fn worker_notification_io_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let composition_path = root.join("src/storage/postgres/notifications.rs");
-    let composition = read_source(&composition_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", composition_path.display()));
-    let production = composition
-        .split("#[cfg(test)]")
-        .next()
-        .unwrap_or(&composition);
+    let backend_path = root.join("crates/hubuum-storage-postgres/src/backend/notifications.rs");
+    let backend = read_source(&backend_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", backend_path.display()));
     assert!(
-        production.contains("hubuum_storage_postgres::worker_notifications::listen"),
-        "application lifecycle composition must delegate native listening to the adapter crate"
+        backend.contains("crate::worker_notifications::listen"),
+        "the PostgreSQL backend contract must delegate native listening within the adapter crate"
     );
     for forbidden in ["LISTEN", "UNLISTEN", "pg_notify", "notifications_stream"] {
         assert!(
-            !production.contains(forbidden),
-            "application lifecycle composition still owns PostgreSQL notification behavior {forbidden}"
+            !backend.contains(forbidden),
+            "the backend contract implementation owns native notification detail {forbidden}"
+        );
+    }
+
+    let composition_path = root.join("src/storage/notifications.rs");
+    let composition = read_source(&composition_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", composition_path.display()));
+    for forbidden in ["hubuum_storage_postgres", "PostgresStorage", "PostgresPool"] {
+        assert!(
+            !composition.contains(forbidden),
+            "application notification lifecycle depends on PostgreSQL detail {forbidden}"
         );
     }
 }
@@ -2405,7 +2490,8 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -2429,7 +2515,7 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::authorization"),
+            method_body.contains("crate::operations::authorization"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2458,12 +2544,13 @@ fn class_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "ClassStore for PostgresStorage");
     assert!(
-        implementation.contains("hubuum_storage_postgres::operations::class"),
+        implementation.contains("crate::operations::class"),
         "the class trait implementation must delegate into the adapter crate"
     );
     for forbidden in [
@@ -2502,12 +2589,13 @@ fn object_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "ObjectStore for PostgresStorage");
     assert!(
-        implementation.contains("hubuum_storage_postgres::operations::object"),
+        implementation.contains("crate::operations::object"),
         "the object trait implementation must delegate into the adapter crate"
     );
     for forbidden in [
@@ -2563,7 +2651,8 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     for contract in [
@@ -2572,7 +2661,7 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
     ] {
         let implementation = item_body(&capability, "impl", contract);
         assert!(
-            implementation.contains("hubuum_storage_postgres::operations::relation"),
+            implementation.contains("crate::operations::relation"),
             "the {contract} implementation must delegate into the adapter crate"
         );
         for forbidden in [
@@ -2627,7 +2716,8 @@ fn relation_queries_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -2651,7 +2741,7 @@ fn relation_queries_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::relation_query"),
+            method_body.contains("crate::operations::relation_query"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2700,7 +2790,8 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
@@ -2711,7 +2802,7 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::identity_principals"),
+            method_body.contains("crate::operations::identity_principals"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2741,7 +2832,8 @@ fn service_account_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
@@ -2756,7 +2848,7 @@ fn service_account_resources_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::service_account"),
+            method_body.contains("crate::operations::service_account"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2787,7 +2879,8 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
@@ -2798,7 +2891,7 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::external_identity"),
+            method_body.contains("crate::operations::external_identity"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2834,7 +2927,8 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "PrincipalStorage for PostgresStorage");
@@ -2845,7 +2939,7 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::principal"),
+            method_body.contains("crate::operations::principal"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2889,7 +2983,8 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/resources.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "GroupStorage for PostgresStorage");
@@ -2908,7 +3003,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::group"),
+            method_body.contains("crate::operations::group"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2917,7 +3012,8 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let identity_capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let identity_capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let identity_capability = read_source(&identity_capability_path).unwrap_or_else(|error| {
         panic!(
             "could not read {}: {error}",
@@ -2932,7 +3028,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     for method in ["list_principal_groups", "list_groups"] {
         let method_body = item_body(identity_implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::group"),
+            method_body.contains("crate::operations::group"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -2982,7 +3078,8 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "UserStorage for PostgresStorage");
@@ -2999,7 +3096,7 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::user"),
+            method_body.contains("crate::operations::user"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -3048,7 +3145,8 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let token_implementation = item_body(&capability, "impl", "TokenStorage for PostgresStorage");
@@ -3063,7 +3161,7 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(token_implementation, "fn", method);
         assert!(
-            method_body.contains("hubuum_storage_postgres::operations::token"),
+            method_body.contains("crate::operations::token"),
             "the {method} implementation must delegate into the adapter crate"
         );
         assert!(
@@ -3075,7 +3173,7 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
     let identity_implementation =
         item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
     let list_body = item_body(identity_implementation, "fn", "list_retained_tokens");
-    assert!(list_body.contains("hubuum_storage_postgres::operations::token"));
+    assert!(list_body.contains("crate::operations::token"));
     assert!(!list_body.contains("&self.pool"));
 
     let facade_path = root.join("src/storage/postgres/operations/identity_operations.rs");
@@ -3154,12 +3252,13 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                 !old_path.exists(),
                 "the obsolete application authorization adapter shim still exists"
             );
-            let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
+            let capability_path =
+                root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
             let capability = read_source(&capability_path).unwrap_or_else(|error| {
                 panic!("could not read {}: {error}", capability_path.display())
             });
             assert!(
-                capability.contains("hubuum_storage_postgres::operations::authorization"),
+                capability.contains("crate::operations::authorization"),
                 "the authorization trait implementation must delegate into the adapter crate"
             );
         } else if operation == "event_delivery" {
@@ -3210,7 +3309,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                 );
             }
         } else if operation == "remote_target" {
-            let transitional_task_result = read_source(&old_path)
+            let legacy_test_harness = read_source(&old_path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
             for moved_lifecycle_detail in [
                 "struct RemoteTargetRow",
@@ -3224,17 +3323,18 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
                 "schema::remote_targets",
             ] {
                 assert!(
-                    !transitional_task_result.contains(moved_lifecycle_detail),
+                    !legacy_test_harness.contains(moved_lifecycle_detail),
                     "{} retains remote-target lifecycle detail {moved_lifecycle_detail}",
                     old_path.display()
                 );
             }
-            let facade_path = root.join("src/storage/postgres/remote_targets.rs");
+            let facade_path =
+                root.join("crates/hubuum-storage-postgres/src/backend/remote_targets.rs");
             let facade = read_source(&facade_path).unwrap_or_else(|error| {
                 panic!("could not read {}: {error}", facade_path.display())
             });
             assert!(
-                facade.contains("hubuum_storage_postgres::operations::remote_target"),
+                facade.contains("crate::operations::remote_target"),
                 "the remote-target trait implementation must delegate into the adapter crate"
             );
             for forbidden in ["diesel::", "crate::schema", "ApiError"] {
@@ -3263,7 +3363,8 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         }
     }
 
-    let capability_path = root.join("src/storage/postgres/capabilities/operations.rs");
+    let capability_path =
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/operations.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -3272,7 +3373,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "TokenRetentionStorage for PostgresStorage",
     );
     assert!(
-        implementation.contains("hubuum_storage_postgres::operations::token_retention"),
+        implementation.contains("crate::operations::token_retention"),
         "the token-retention trait implementation must delegate into the adapter crate"
     );
     assert!(

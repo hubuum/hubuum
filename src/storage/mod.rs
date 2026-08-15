@@ -5,6 +5,7 @@ mod factory;
 mod imports;
 #[cfg(test)]
 mod memory;
+mod notifications;
 mod observed;
 mod operational;
 #[doc(hidden)]
@@ -26,7 +27,7 @@ pub use execution::{
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::run_storage_migrations;
 pub(crate) use factory::{StorageSettings, initialize_storage};
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) use hubuum_storage_core::StorageTaskClaimToken;
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationAttempt, AuthenticationCredential, AuthenticationHuman,
@@ -79,16 +80,17 @@ pub(crate) use hubuum_storage_core::{
     StorageGraphClass, StorageGraphObject, StorageGroupCreate, StorageGroupListQuery,
     StorageGroupUpdate, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageInventoryCounts, StorageLocalPasswordReset,
-    StorageNotification, StorageObject, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateDimension,
-    StorageObjectAggregateMeasure, StorageObjectAggregateMeasureField,
-    StorageObjectAggregateMeasureOperation, StorageObjectAggregateMeasureState,
-    StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateScalarField,
-    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectGraphRow, StorageObjectRelation,
-    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StorageObjectSelector,
-    StorageObjectUpdate, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StorageNotification, StorageNotificationListener, StorageNotificationShutdown, StorageObject,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateDimension, StorageObjectAggregateMeasure,
+    StorageObjectAggregateMeasureField, StorageObjectAggregateMeasureOperation,
+    StorageObjectAggregateMeasureState, StorageObjectAggregatePage, StorageObjectAggregateRow,
+    StorageObjectAggregateScalarField, StorageObjectAggregateSort, StorageObjectAggregateSpec,
+    StorageObjectAggregateTarget, StorageObjectCreate, StorageObjectDataPatch,
+    StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
+    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
     StoragePreparedClassRelation, StoragePreparedObjectRelation, StoragePrincipal,
     StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalSettings,
@@ -139,12 +141,13 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{
     ImportStorage, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
-    StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
+    StorageImportPlan, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
 };
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 pub(crate) use imports::ApplicationImportOperation;
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
+pub(crate) use notifications::spawn_storage_notification_listener;
 #[cfg(test)]
 pub(crate) use observed::ObservedStorage;
 pub(crate) use operational::{

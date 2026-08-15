@@ -6,19 +6,16 @@ impl HistoryStorage for PostgresStorage {
         &self,
         principal_ids: Vec<i32>,
     ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
-        hubuum_storage_postgres::operations::history::resolve_principal_names(
-            self.runtime(),
-            principal_ids,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::history::resolve_principal_names(self.runtime(), principal_ids)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_collection_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<CollectionHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::list_collection_history(self.runtime(), query)
+        crate::operations::history::list_collection_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -27,19 +24,16 @@ impl HistoryStorage for PostgresStorage {
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::collection_history_as_of(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::history::collection_history_as_of(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_class_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<ClassHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::list_class_history(self.runtime(), query)
+        crate::operations::history::list_class_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -48,7 +42,7 @@ impl HistoryStorage for PostgresStorage {
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ClassHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::class_history_as_of(self.runtime(), query)
+        crate::operations::history::class_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -57,7 +51,7 @@ impl HistoryStorage for PostgresStorage {
         &self,
         query: ObjectHistoryListQuery,
     ) -> Result<HistoryPage<ObjectHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::list_object_history(self.runtime(), query)
+        crate::operations::history::list_object_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -66,7 +60,7 @@ impl HistoryStorage for PostgresStorage {
         &self,
         query: ObjectHistoryAsOfQuery,
     ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::object_history_as_of(self.runtime(), query)
+        crate::operations::history::object_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -75,48 +69,36 @@ impl HistoryStorage for PostgresStorage {
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<ExportTemplateHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::list_export_template_history(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::history::list_export_template_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn export_template_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::export_template_history_as_of(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::history::export_template_history_as_of(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_remote_target_history(
         &self,
         query: HistoryListQuery,
     ) -> Result<HistoryPage<RemoteTargetHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::list_remote_target_history(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::history::list_remote_target_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn remote_target_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError> {
-        hubuum_storage_postgres::operations::history::remote_target_history_as_of(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::history::remote_target_history_as_of(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
@@ -126,7 +108,7 @@ impl CatalogStorage for PostgresStorage {
         &self,
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageCollection>, StorageError> {
-        hubuum_storage_postgres::operations::catalog::list_collections(self.runtime(), query)
+        crate::operations::catalog::list_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -135,7 +117,7 @@ impl CatalogStorage for PostgresStorage {
         &self,
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageClass>, StorageError> {
-        hubuum_storage_postgres::operations::catalog::list_classes(self.runtime(), query)
+        crate::operations::catalog::list_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -144,7 +126,7 @@ impl CatalogStorage for PostgresStorage {
         &self,
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageObject>, StorageError> {
-        hubuum_storage_postgres::operations::catalog::list_objects(self.runtime(), query)
+        crate::operations::catalog::list_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -156,24 +138,18 @@ impl ComputedObjectStorage for PostgresStorage {
         &self,
         query: ComputedObjectListQuery,
     ) -> Result<ComputedObjectPage, StorageError> {
-        hubuum_storage_postgres::operations::computed_objects::list_computed_objects(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::computed_objects::list_computed_objects(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn enrich_objects_with_computed(
         &self,
         query: ComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
-        hubuum_storage_postgres::operations::computed_objects::enrich_objects_with_computed(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::computed_objects::enrich_objects_with_computed(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
@@ -184,13 +160,9 @@ impl ObjectAggregateStorage for PostgresStorage {
         query: ObjectAggregateStorageQuery,
         authorizer: Option<&dyn ObjectAggregateAuthorizer>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
-        hubuum_storage_postgres::operations::object_aggregate::aggregate_objects(
-            self.runtime(),
-            query,
-            authorizer,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::object_aggregate::aggregate_objects(self.runtime(), query, authorizer)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
@@ -200,103 +172,79 @@ impl RelationQueryStorage for PostgresStorage {
         &self,
         query: RelationListQuery,
     ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::list_class_relations(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::list_class_relations(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_object_relations(
         &self,
         query: RelationListQuery,
     ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::list_object_relations(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::list_object_relations(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_class_relations_touching(
         &self,
         query: RelationTouchingQuery,
     ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::list_class_relations_touching(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::list_class_relations_touching(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_object_relations_touching(
         &self,
         query: RelationTouchingQuery,
     ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::list_object_relations_touching(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::list_object_relations_touching(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn class_relations_touching_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::class_relations_touching_ids(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::class_relations_touching_ids(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn class_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::class_relations_between_ids(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::class_relations_between_ids(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn object_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::object_relations_between_ids(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::object_relations_between_ids(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn object_relations_touching_ids(
         &self,
         query: ObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::object_relations_touching_ids(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::object_relations_touching_ids(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn related_classes(
         &self,
         query: RelationGraphQuery,
     ) -> Result<RelationPage<StorageClassGraphRow>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::related_classes(self.runtime(), query)
+        crate::operations::relation_query::related_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -305,7 +253,7 @@ impl RelationQueryStorage for PostgresStorage {
         &self,
         query: RelationGraphQuery,
     ) -> Result<RelationPage<StorageObjectGraphRow>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::related_objects(self.runtime(), query)
+        crate::operations::relation_query::related_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -314,24 +262,21 @@ impl RelationQueryStorage for PostgresStorage {
         &self,
         query: RelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::related_objects_for_roots(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation_query::related_objects_for_roots(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn bidirectionally_related_objects_for_roots(
         &self,
         query: BidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
-        hubuum_storage_postgres::operations::relation_query::bidirectionally_related_objects_for_roots(
+        crate::operations::relation_query::bidirectionally_related_objects_for_roots(
             self.runtime(),
             query,
         )
-            .await
-            .map_err(StorageError::from)
+        .await
+        .map_err(StorageError::from)
     }
 }
 
@@ -341,19 +286,16 @@ impl UnifiedSearchStorage for PostgresStorage {
         &self,
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchCollection>, StorageError> {
-        hubuum_storage_postgres::operations::unified_search::search_collections(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::unified_search::search_collections(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn search_unified_classes(
         &self,
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchClass>, StorageError> {
-        hubuum_storage_postgres::operations::unified_search::search_classes(self.runtime(), query)
+        crate::operations::unified_search::search_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -362,7 +304,7 @@ impl UnifiedSearchStorage for PostgresStorage {
         &self,
         query: UnifiedSearchQuery,
     ) -> Result<Vec<UnifiedSearchObject>, StorageError> {
-        hubuum_storage_postgres::operations::unified_search::search_objects(self.runtime(), query)
+        crate::operations::unified_search::search_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }

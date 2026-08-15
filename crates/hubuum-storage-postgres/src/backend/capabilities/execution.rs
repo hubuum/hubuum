@@ -16,10 +16,7 @@ impl ExportQueryStorage for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_export_query_budget_scope(
-            budget,
-            hubuum_storage_postgres::with_query_budget(budget, future),
-        ))
+        Box::pin(crate::with_query_budget(budget, future))
     }
 }
 
@@ -33,10 +30,7 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_storage_call_site_scope(
-            call_site,
-            hubuum_storage_postgres::with_storage_call_site(call_site, future),
-        ))
+        Box::pin(crate::with_storage_call_site(call_site, future))
     }
 
     fn run_with_call_site_send<'a, F, R>(
@@ -48,10 +42,7 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        Box::pin(runtime::with_storage_call_site_scope(
-            call_site,
-            hubuum_storage_postgres::with_storage_call_site(call_site, future),
-        ))
+        Box::pin(crate::with_storage_call_site(call_site, future))
     }
 
     fn run_with_mutation_provenance<'a, F, R>(
@@ -63,10 +54,7 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_mutation_provenance_scope(
-            provenance.clone(),
-            hubuum_storage_postgres::with_mutation_provenance(provenance, future),
-        ))
+        Box::pin(crate::with_mutation_provenance(provenance, future))
     }
 
     fn run_with_revision_precondition<'a, F, R>(
@@ -78,9 +66,6 @@ impl StorageExecution for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        Box::pin(runtime::with_revision_precondition_scope(
-            precondition.clone(),
-            hubuum_storage_postgres::with_revision_precondition(precondition, future),
-        ))
+        Box::pin(crate::with_revision_precondition(precondition, future))
     }
 }

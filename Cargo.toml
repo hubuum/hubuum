@@ -210,6 +210,11 @@ name = "restore_roundtrip"
 path = "tests/restore_roundtrip.rs"
 required-features = ["integration-test-support"]
 
+[[test]]
+name = "admin_cli"
+path = "tests/admin_cli.rs"
+required-features = ["integration-test-support"]
+
 [[bench]]
 name = "json_predicate_construction_callgrind"
 harness = false

@@ -42,6 +42,7 @@ pub struct UpdateHubuumClass {
 
 impl UpdateHubuumClass {
     /// Validate the schema state that would result from applying this update to `current`.
+    #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn validate_schema_update(&self, current: &HubuumClass) -> Result<(), ApiError> {
         if self.json_schema.is_none() && self.validate_schema.is_none() {
             return Ok(());
@@ -57,6 +58,7 @@ impl UpdateHubuumClass {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn has_changes(&self, current: &HubuumClass) -> bool {
         self.name
             .as_ref()

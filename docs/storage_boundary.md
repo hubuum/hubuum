@@ -132,17 +132,17 @@ hubuum application
 
 - `hubuum-domain` owns backend-independent validated domain values extracted from the root application.
 - `hubuum-storage-core` owns the complete storage contract, DTOs, errors, cursors, and backend identity. It has no Actix, Diesel, global configuration, or `ApiError` dependency.
-- `hubuum-storage-postgres` owns the native pool, TLS, endpoint diagnostics, generated schema, migrations, JSONB validation, query instrumentation, and the contract-facing PostgreSQL operations already extracted from the root.
-- The root crate owns application services and composition. Its PostgreSQL capability implementations are thin delegates into the adapter crate.
-- Transitional root PostgreSQL modules still contain legacy model and workflow implementations that have not yet been physically extracted. They are adapter-private and must not be imported by application consumers.
+- `hubuum-storage-postgres` owns the native pool, TLS, endpoint diagnostics, generated schema, migrations, JSONB validation, query instrumentation, and all production PostgreSQL operations.
+- The root crate owns application services and static composition. It constructs the PostgreSQL adapter with telemetry and dedicated operational pools, then places it behind the opaque handle.
+- The root crate retains a legacy PostgreSQL row-and-SQL harness for old tests. It is compiled only for unit tests or the explicit `integration-test-support` feature and is not part of a production build.
 
-The behavioral boundary is enforced even where physical extraction is incomplete. The intended destination is stricter: neutral contracts in publishable boundary crates, all native PostgreSQL implementation in `hubuum-storage-postgres`, and backend registration in the application composition root.
+The backend-neutral contracts needed by an out-of-tree adapter are publishable crates. Backend registration remains explicit, exhaustive, and application-owned. An adapter may therefore be supplied by a crates.io, Git, or path dependency. Hubuum does not load storage plugins dynamically.
 
 Moving a file does not by itself improve the boundary. Dependencies must continue to point from the application to contracts and from adapters to contracts, never from a contract or adapter back into the application.
 
 ## Current Confidence
 
-The PostgreSQL path is exercised against a real migrated database by shared backend contracts, PostgreSQL-specific tests, service tests, HTTP integration tests, destructive restore tests, query-budget tests, platform and feature builds, production-container tests, and benchmarks.
+The PostgreSQL path is exercised against a real migrated database by shared backend contracts, PostgreSQL-specific tests, service tests, HTTP integration tests, destructive restore tests, query-budget tests, platform and feature builds, production-container tests, and benchmarks. CI also migrates representative data from the adjacent stable release, starts the new application, and restarts the previous application against the migrated schema.
 
 The contract's methods and selected input variants are inventoried mechanically. Every registered backend runs compact service, readiness, and authenticated HTTP point/list scenarios. Adapter-private deterministic failpoints prove rollback at representative compound-write and task-state-machine seams.
 

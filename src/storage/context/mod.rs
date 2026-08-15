@@ -65,10 +65,11 @@ use crate::storage::{
     StorageExternalUserSync, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
     StorageIdentity, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
-    StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
-    StorageImportTaskResultPage, StorageInventoryCounts, StorageLocalPasswordReset,
-    StorageNotification, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StorageImportPlan, StorageImportPreflight, StorageImportResult, StorageImportTaskResultPage,
+    StorageInventoryCounts, StorageLocalPasswordReset, StorageNotification,
+    StorageNotificationListener, StorageNotificationShutdown, StorageObject,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StoragePrincipal, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
     StoragePrincipalSettings, StoragePrincipalSettingsMutation, StorageQueryBudget,
@@ -186,17 +187,19 @@ pub(crate) use api::storage_handle;
 impl StorageHandle {
     #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
     pub(crate) fn postgres(pool: PostgresPool) -> Self {
-        Self::from_postgres_backend(PostgresStorage::new(pool))
+        Self::from_postgres_backend(super::postgres::configured_postgres_storage(pool))
     }
 
     pub(crate) fn postgres_with_operational_pool_settings(
         pool: PostgresPool,
         operational_pool_settings: PostgresPoolSettings,
     ) -> Self {
-        Self::from_postgres_backend(PostgresStorage::with_operational_pool_settings(
-            pool,
-            operational_pool_settings,
-        ))
+        Self::from_postgres_backend(
+            super::postgres::configured_postgres_storage_with_operational_pools(
+                pool,
+                &operational_pool_settings,
+            ),
+        )
     }
 
     fn from_postgres_backend(backend: PostgresStorage) -> Self {

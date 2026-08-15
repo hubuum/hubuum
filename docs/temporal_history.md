@@ -135,8 +135,8 @@ in an audit/event stream rather than in the row's temporal state.
 
 ### Ambient Mutation-Provenance Task-Local
 
-In `src/storage/postgres/runtime.rs`, an async task-local (`tokio::task_local!`) variable stores
-typed mutation provenance:
+In `crates/hubuum-storage-postgres/src/runtime.rs`, an async task-local
+(`tokio::task_local!`) variable stores typed mutation provenance:
 
 ```rust
 tokio::task_local! {
@@ -153,16 +153,16 @@ tokio::task_local! {
 
 ### Setting the Provenance Scope
 
-The `with_mutation_provenance_scope()` helper establishes provenance for the
+The `with_mutation_provenance()` helper establishes provenance for the
 duration of a future:
 
 ```rust
-pub async fn with_mutation_provenance_scope<F, R>(
+pub async fn with_mutation_provenance<F>(
     provenance: Option<MutationProvenance>,
     future: F,
-) -> R
+) -> F::Output
 where
-    F: std::future::Future<Output = R>,
+    F: Future,
 {
     AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
 }
@@ -170,9 +170,10 @@ where
 
 ### Applying to Database Connections
 
-Both `with_connection_timeout()` and `with_transaction()` apply all four
-values as transaction-local settings with bound parameters. The equivalent
-database operation is:
+Both `PostgresRuntime::with_connection()` and
+`PostgresRuntime::with_transaction()` apply all four values as
+transaction-local settings with bound parameters. The equivalent database
+operation is:
 
 ```sql
 SELECT

@@ -1,99 +1,29 @@
-mod backup_snapshot;
-mod capabilities;
-mod computed_fields;
+#[cfg(test)]
+mod backend_tests;
 mod error;
-mod export_templates;
+#[cfg(any(test, feature = "integration-test-support"))]
 mod failpoints;
-mod imports;
+#[cfg(any(test, feature = "integration-test-support"))]
 mod notifications;
+// Legacy row fixtures and SQL assertions used by the root crate's unit and
+// integration tests. Production storage operations live in the adapter crate.
+#[cfg(any(test, feature = "integration-test-support"))]
 #[doc(hidden)]
 pub mod operations;
-mod remote_targets;
-mod restores;
 mod runtime;
-mod task_execution;
-mod task_queue;
 
 #[cfg(test)]
 pub(crate) use failpoints::{PostgresFailpoint, with_failpoint};
 pub use runtime::*;
 
-use async_trait::async_trait;
-use std::future::Future;
 use std::num::NonZeroUsize;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hubuum_storage_core::StorageErrorKind;
-use hubuum_storage_postgres::{PostgresRuntime, PostgresTelemetry};
+use hubuum_storage_core::{StorageCallSite, StorageErrorKind};
+pub(crate) use hubuum_storage_postgres::PostgresStorage;
+use hubuum_storage_postgres::PostgresTelemetry;
 
-use super::{
-    AuditEventStorage, AuthenticatedToken, AuthenticationAttempt, AuthenticationIdentity,
-    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
-    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
-    AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
-    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery,
-    AuthorizationEffectiveGroupGrant, AuthorizationGrant, AuthorizationGrantDelete,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
-    AuthorizationGroupCollectionQuery, AuthorizationGroupGrant, AuthorizationGroupGrantPage,
-    AuthorizationGroupMembershipQuery, AuthorizationGroupPage, AuthorizationObjectResource,
-    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, AuthorizationStorage,
-    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage, CatalogStorage,
-    ClassRelationStore, ClassStore, CollectionAuthorizationStorage, CollectionStore,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
-    ComputedObjectStorage, EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateHistoryRecord, GroupStorage,
-    HistoryAsOfQuery, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    IdentityStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
-    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalExportTemplateAuditEntry,
-    OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
-    OperationalTaskQueueSnapshot, PrincipalStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
-    RelationTouchingQuery, RemoteTargetHistoryRecord, StorageAuditEvent,
-    StorageAuditEventListQuery, StorageCallSite, StorageClass, StorageClassCreate,
-    StorageClassGraphRow, StorageClassRecord, StorageClassRelation, StorageClassRelationCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageComputedObject, StorageDefaultAdminBootstrap, StorageError,
-    StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink,
-    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecution, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
-    StorageIdentity, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageInventoryCounts, StorageLocalPasswordReset, StorageObject,
-    StorageObjectAggregatePage, StorageObjectCreate, StorageObjectDataPatch, StorageObjectGraphRow,
-    StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate, StoragePoolState,
-    StoragePreparedClassRelation, StoragePreparedObjectRelation, StoragePrincipal,
-    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation, StorageQueryBudget, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageResolvedClass, StorageResolvedClassRelation,
-    StorageResolvedObject, StorageResolvedObjectRelation, StorageRevisionPrecondition,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate, TaskGaugeSnapshot, TokenRetentionStorage, TokenStorage,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage,
-};
-use super::{ClassHistoryRecord, CollectionHistoryRecord};
-use crate::events::{
-    EventContext, EventFanoutSettings, EventRetentionSettings, MutationProvenance,
-};
-use crate::models::search::QueryOptions;
-use crate::models::{MaintenanceState, TokenRetentionSettings};
 #[derive(Debug)]
 struct ApplicationPostgresTelemetry;
 
@@ -136,6 +66,10 @@ impl PostgresTelemetry for ApplicationPostgresTelemetry {
         crate::observability::metrics::computed_read_repair(outcome);
     }
 
+    fn revision_condition(&self, outcome: &'static str) {
+        crate::observability::metrics::revision_condition(outcome);
+    }
+
     fn task_completed(&self, kind: &'static str, status: &'static str, duration: Option<Duration>) {
         crate::observability::metrics::task_completed(kind, status, duration);
     }
@@ -149,57 +83,27 @@ impl PostgresTelemetry for ApplicationPostgresTelemetry {
     }
 }
 
-/// Canonical production storage adapter.
-#[derive(Clone)]
-pub(crate) struct PostgresStorage {
-    pool: PostgresPool,
-    runtime: PostgresRuntime,
-    operational_pool_settings: Option<Arc<PostgresPoolSettings>>,
-}
-
 #[cfg(feature = "embedded-migrations")]
 pub(in crate::storage) use hubuum_storage_postgres::run_embedded_migrations;
 
-impl PostgresStorage {
-    pub(crate) fn new(pool: PostgresPool) -> Self {
-        let computed_reindex_batch_size = crate::config::get_config()
-            .ok()
-            .and_then(|config| NonZeroUsize::new(config.computed_reindex_batch_size))
-            .unwrap_or(hubuum_storage_postgres::DEFAULT_COMPUTED_REINDEX_BATCH_SIZE);
-        let runtime = PostgresRuntime::new(pool.clone())
-            .with_computed_reindex_batch_size(computed_reindex_batch_size)
-            .with_telemetry(Arc::new(ApplicationPostgresTelemetry));
-        Self {
-            pool,
-            runtime,
-            operational_pool_settings: None,
-        }
-    }
+pub(crate) fn configured_postgres_storage(pool: PostgresPool) -> PostgresStorage {
+    let computed_reindex_batch_size = crate::config::get_config()
+        .ok()
+        .and_then(|config| NonZeroUsize::new(config.computed_reindex_batch_size))
+        .unwrap_or(hubuum_storage_postgres::DEFAULT_COMPUTED_REINDEX_BATCH_SIZE);
+    PostgresStorage::new(pool)
+        .with_computed_reindex_batch_size(computed_reindex_batch_size)
+        .with_telemetry(Arc::new(ApplicationPostgresTelemetry))
+}
 
-    /// Configure independent one-connection pools for operational control
-    /// paths such as task lease heartbeats and PostgreSQL notifications.
-    pub(crate) fn with_operational_pool_settings(
-        pool: PostgresPool,
-        operational_pool_settings: PostgresPoolSettings,
-    ) -> Self {
-        let mut backend = Self::new(pool);
-        let task_lease_pool = runtime::init_postgres_pool_with_settings(&operational_pool_settings);
-        backend.runtime = backend
-            .runtime
-            .clone()
-            .with_task_lease_pool(task_lease_pool);
-        backend.operational_pool_settings = Some(Arc::new(operational_pool_settings));
-        backend
-    }
-
-    fn runtime(&self) -> &PostgresRuntime {
-        &self.runtime
-    }
-
-    fn notification_listener_pool(&self) -> PostgresPool {
-        self.operational_pool_settings
-            .as_deref()
-            .map(runtime::init_postgres_pool_with_settings)
-            .unwrap_or_else(|| self.pool.clone())
-    }
+pub(crate) fn configured_postgres_storage_with_operational_pools(
+    pool: PostgresPool,
+    operational_pool_settings: &PostgresPoolSettings,
+) -> PostgresStorage {
+    let task_lease_pool = runtime::init_postgres_pool_with_settings(operational_pool_settings);
+    let notification_listener_pool =
+        runtime::init_postgres_pool_with_settings(operational_pool_settings);
+    configured_postgres_storage(pool)
+        .with_task_lease_pool(task_lease_pool)
+        .with_notification_listener_pool(notification_listener_pool)
 }

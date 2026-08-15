@@ -48,6 +48,7 @@ pub struct UpdateCollection {
 }
 
 impl UpdateCollection {
+    #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn has_changes(&self, current: &Collection) -> bool {
         self.name
             .as_ref()

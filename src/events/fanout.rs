@@ -19,7 +19,7 @@ use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
     EventFanoutStorage, StorageError, StorageHandle, StorageNotification,
-    WorkerNotificationStorage, storage_handle,
+    spawn_storage_notification_listener, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
@@ -167,7 +167,8 @@ where
     };
 
     EVENT_FANOUT_LISTENER.call_once(|| {
-        pool.spawn_worker_notification_listener(
+        spawn_storage_notification_listener(
+            pool.clone(),
             StorageNotification::EventFanout,
             "event-fanout-storage-listener",
             wake_event_fanout_worker_from_storage,

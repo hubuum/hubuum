@@ -210,7 +210,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.WorkerNotificationStorage]
 source = "crates/hubuum-storage-core/src/worker_notifications.rs"
-methods = ["spawn_worker_notification_listener"]
+methods = ["worker_notification_listener"]
 native_scenarios = ["src/storage/postgres/notifications.rs::fanout_trigger_notifies_only_after_commit", "src/storage/postgres/notifications.rs::task_queue_notification_is_delivered_only_after_commit", "src/storage/postgres/notifications.rs::shutdown_releases_postgres_notification_listener"]
 
 [traits.StorageExecution]

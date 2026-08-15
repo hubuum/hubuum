@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "integration-test-support"))]
+pub use hubuum_storage_postgres::PostgresRuntime;
 pub use hubuum_storage_postgres::{
     PostgresConnection, PostgresPool, PostgresPoolSettings, PostgresRevision,
     REQUIRED_DATABASE_MIGRATION_VERSION,
@@ -202,17 +204,6 @@ fn ambient_db_call_site() -> StorageCallSite {
         .unwrap_or_default()
 }
 
-/// Run `future` with bounded database metrics attribution.
-pub(super) async fn with_storage_call_site_scope<F>(
-    call_site: StorageCallSite,
-    future: F,
-) -> F::Output
-where
-    F: Future,
-{
-    AMBIENT_DB_CALL_SITE.scope(call_site, future).await
-}
-
 /// Run `future` with an ambient per-query `statement_timeout` in effect.
 ///
 /// While the future is being polled, every [`with_connection`] /
@@ -221,6 +212,7 @@ where
 /// This is how the export execution path bounds its queries independently of
 /// the pool-global `db_statement_timeout_ms`, without threading the timeout
 /// through the search layer. A `statement_timeout` of `None` is a no-op scope.
+#[cfg(test)]
 pub(super) async fn with_export_query_budget_scope<F, R>(
     statement_timeout: Option<StorageQueryBudget>,
     future: F,
@@ -242,37 +234,11 @@ fn ambient_statement_timeout() -> Option<StorageQueryBudget> {
         .unwrap_or(None)
 }
 
-/// Run `future` with typed mutation provenance in effect.
-pub(super) async fn with_mutation_provenance_scope<F, R>(
-    provenance: Option<MutationProvenance>,
-    future: F,
-) -> R
-where
-    F: std::future::Future<Output = R>,
-{
-    AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
-}
-
 /// The ambient mutation provenance, or `None` outside any scope.
 fn ambient_mutation_provenance() -> Option<MutationProvenance> {
     AMBIENT_MUTATION_PROVENANCE
         .try_with(Clone::clone)
         .unwrap_or(None)
-}
-
-/// Run `future` with a conditional-mutation assertion in effect. The
-/// condition is applied transaction-locally by every database helper used
-/// inside the scope and therefore cannot leak through the connection pool.
-pub(super) async fn with_revision_precondition_scope<F, R>(
-    precondition: Option<StorageRevisionPrecondition>,
-    future: F,
-) -> R
-where
-    F: std::future::Future<Output = R>,
-{
-    AMBIENT_REVISION_PRECONDITION
-        .scope(precondition, future)
-        .await
 }
 
 fn ambient_revision_precondition() -> Option<StorageRevisionPrecondition> {
@@ -308,6 +274,7 @@ async fn set_local_revision_precondition(
 /// Evaluate the ambient condition immediately after a caller has locked an
 /// authoritative row. Mutation triggers repeat this defensively, but callers
 /// such as JSON Patch need stale detection before interpreting the payload.
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) async fn assert_locked_revision_precondition(
     conn: &mut PostgresConnection,
     owner_key: &str,
@@ -326,6 +293,7 @@ pub(crate) async fn assert_locked_revision_precondition(
 /// before it could be locked. `If-Match` (including `*`) requires the selected
 /// resource to still exist; unconditional callers retain their ordinary
 /// missing-target behavior.
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) fn assert_revision_precondition_allows_missing_target(
     owner_key: &str,
 ) -> Result<(), crate::errors::ApiError> {
@@ -345,6 +313,7 @@ pub(crate) fn assert_revision_precondition_allows_missing_target(
 /// mutation transaction. If a matching conditional request lost the row
 /// before it could be locked, report a stale resource instead of an ordinary
 /// not-found response.
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) fn require_existing_revision_target<T>(
     target: Option<T>,
     owner_key: &str,

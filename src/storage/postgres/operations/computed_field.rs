@@ -1,10 +1,9 @@
-//! Transitional PostgreSQL computed materialization hook.
-//!
-//! Definition lifecycle and rebuild execution live in
-//! `hubuum-storage-postgres`. This module remains only for the PostgreSQL
-//! import workflow until that workflow moves into the adapter crate.
+//! Transitional test helper for PostgreSQL computed materialization.
 
-mod materialization;
+use crate::errors::ApiError;
 
-pub(crate) use materialization::materialize_object_in_transaction;
-pub use materialization::source_data_sha256;
+pub fn source_data_sha256(data: &serde_json::Value) -> Result<String, ApiError> {
+    hubuum_storage_postgres::operations::computed_materialization::source_data_sha256(data)
+        .map_err(crate::storage::StorageError::from)
+        .map_err(ApiError::from)
+}

@@ -24,7 +24,6 @@ pub(crate) mod resource_scope;
 pub mod search;
 pub mod service_account;
 pub mod task;
-pub mod task_import;
 pub mod task_rows;
 pub mod token;
 pub mod token_retention;

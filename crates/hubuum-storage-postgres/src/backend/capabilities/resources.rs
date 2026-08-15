@@ -3,18 +3,15 @@ use super::super::*;
 #[async_trait]
 impl GroupStorage for PostgresStorage {
     async fn load_group(&self, group_id: i32) -> Result<StorageIdentityGroup, StorageError> {
-        hubuum_storage_postgres::operations::group::load_group(self.runtime(), group_id)
+        crate::operations::group::load_group(self.runtime(), group_id)
             .await
             .map_err(StorageError::from)
     }
 
     async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError> {
-        hubuum_storage_postgres::operations::group::group_identity_scope_name(
-            self.runtime(),
-            group_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::group::group_identity_scope_name(self.runtime(), group_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn create_group(
@@ -22,7 +19,7 @@ impl GroupStorage for PostgresStorage {
         command: StorageGroupCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageIdentityGroup, StorageError> {
-        hubuum_storage_postgres::operations::group::create_group(self.runtime(), command, context)
+        crate::operations::group::create_group(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
     }
@@ -33,14 +30,9 @@ impl GroupStorage for PostgresStorage {
         update: StorageGroupUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageIdentityGroup, StorageError> {
-        hubuum_storage_postgres::operations::group::update_group(
-            self.runtime(),
-            group_id,
-            update,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::group::update_group(self.runtime(), group_id, update, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_group(
@@ -48,13 +40,13 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::group::delete_group(self.runtime(), group_id, context)
+        crate::operations::group::delete_group(self.runtime(), group_id, context)
             .await
             .map_err(StorageError::from)
     }
 
     async fn group_members(&self, group_id: i32) -> Result<Vec<StoragePrincipal>, StorageError> {
-        hubuum_storage_postgres::operations::group::group_members(self.runtime(), group_id)
+        crate::operations::group::group_members(self.runtime(), group_id)
             .await
             .map_err(StorageError::from)
     }
@@ -64,13 +56,9 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         query_options: QueryOptions,
     ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError> {
-        hubuum_storage_postgres::operations::group::group_members_page(
-            self.runtime(),
-            group_id,
-            query_options,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::group::group_members_page(self.runtime(), group_id, query_options)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn count_group_members(
@@ -78,25 +66,18 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         query_options: QueryOptions,
     ) -> Result<i64, StorageError> {
-        hubuum_storage_postgres::operations::group::count_group_members(
-            self.runtime(),
-            group_id,
-            query_options,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::group::count_group_members(self.runtime(), group_id, query_options)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn group_member_principal(
         &self,
         principal_id: i32,
     ) -> Result<StoragePrincipal, StorageError> {
-        hubuum_storage_postgres::operations::group::group_member_principal(
-            self.runtime(),
-            principal_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::group::group_member_principal(self.runtime(), principal_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn add_group_member(
@@ -105,14 +86,9 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<StoragePrincipalGroup, StorageError> {
-        hubuum_storage_postgres::operations::group::add_group_member(
-            self.runtime(),
-            principal_id,
-            group_id,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::group::add_group_member(self.runtime(), principal_id, group_id, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn remove_group_member(
@@ -121,7 +97,7 @@ impl GroupStorage for PostgresStorage {
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::group::remove_group_member(
+        crate::operations::group::remove_group_member(
             self.runtime(),
             principal_id,
             group_id,
@@ -135,7 +111,7 @@ impl GroupStorage for PostgresStorage {
 #[async_trait]
 impl PrincipalStorage for PostgresStorage {
     async fn load_principal(&self, principal_id: i32) -> Result<StoragePrincipal, StorageError> {
-        hubuum_storage_postgres::operations::principal::load_principal(self.runtime(), principal_id)
+        crate::operations::principal::load_principal(self.runtime(), principal_id)
             .await
             .map_err(StorageError::from)
     }
@@ -144,12 +120,9 @@ impl PrincipalStorage for PostgresStorage {
         &self,
         principal_id: i32,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        hubuum_storage_postgres::operations::principal::load_principal_settings(
-            self.runtime(),
-            principal_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::principal::load_principal_settings(self.runtime(), principal_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn mutate_principal_settings(
@@ -158,7 +131,7 @@ impl PrincipalStorage for PostgresStorage {
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        hubuum_storage_postgres::operations::principal::mutate_principal_settings(
+        crate::operations::principal::mutate_principal_settings(
             self.runtime(),
             principal_id,
             mutation,
@@ -175,19 +148,16 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::principal_collection_permissions(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::principal_collection_permissions(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn principal_all_collection_permissions(
         &self,
         principal_id: i32,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::principal_all_collection_permissions(
+        crate::operations::authorization::principal_all_collection_permissions(
             self.runtime(),
             principal_id,
         )
@@ -199,7 +169,7 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        hubuum_storage_postgres::operations::authorization::principal_collection_permissions_page(
+        crate::operations::authorization::principal_collection_permissions_page(
             self.runtime(),
             query,
         )
@@ -211,7 +181,7 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::effective_principal_collection_permissions(
+        crate::operations::authorization::effective_principal_collection_permissions(
             self.runtime(),
             query,
         )
@@ -223,24 +193,18 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationCollectionVisibilityQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::visible_collections(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::visible_collections(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn group_has_collection_permission(
         &self,
         query: AuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::authorization::group_has_collection_permission(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::group_has_collection_permission(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn effective_group_collection_permissions(
@@ -248,7 +212,7 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         collection_id: i32,
         group_id: i32,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::effective_group_collection_permissions(
+        crate::operations::authorization::effective_group_collection_permissions(
             self.runtime(),
             collection_id,
             group_id,
@@ -261,19 +225,16 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::groups_with_collection_permission(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::groups_with_collection_permission(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn groups_with_collection_permission_page(
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
     ) -> Result<AuthorizationGroupPage, StorageError> {
-        hubuum_storage_postgres::operations::authorization::groups_with_collection_permission_page(
+        crate::operations::authorization::groups_with_collection_permission_page(
             self.runtime(),
             query,
         )
@@ -286,13 +247,10 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
         let (rows, _) =
-            hubuum_storage_postgres::operations::authorization::list_local_collection_grants(
-                self.runtime(),
-                query,
-            )
-            .await
-            .map_err(StorageError::from)?
-            .into_parts();
+            crate::operations::authorization::list_local_collection_grants(self.runtime(), query)
+                .await
+                .map_err(StorageError::from)?
+                .into_parts();
         Ok(rows)
     }
 
@@ -300,12 +258,9 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        hubuum_storage_postgres::operations::authorization::list_local_collection_grants(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::list_local_collection_grants(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn collection_group_permission(
@@ -313,7 +268,7 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         collection_id: i32,
         group_id: i32,
     ) -> Result<AuthorizationGrant, StorageError> {
-        hubuum_storage_postgres::operations::authorization::collection_group_permission(
+        crate::operations::authorization::collection_group_permission(
             self.runtime(),
             collection_id,
             group_id,
@@ -326,7 +281,7 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 #[async_trait]
 impl CollectionStore for PostgresStorage {
     async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
-        hubuum_storage_postgres::operations::collection::get_collection(self.runtime(), id)
+        crate::operations::collection::get_collection(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
@@ -336,13 +291,9 @@ impl CollectionStore for PostgresStorage {
         command: StorageCollectionCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        hubuum_storage_postgres::operations::collection::create_collection(
-            self.runtime(),
-            command,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::collection::create_collection(self.runtime(), command, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn update_collection(
@@ -351,14 +302,9 @@ impl CollectionStore for PostgresStorage {
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        hubuum_storage_postgres::operations::collection::update_collection(
-            self.runtime(),
-            id,
-            changes,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::collection::update_collection(self.runtime(), id, changes, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_collection(
@@ -366,23 +312,19 @@ impl CollectionStore for PostgresStorage {
         id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::collection::delete_collection(
-            self.runtime(),
-            id,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::collection::delete_collection(self.runtime(), id, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        hubuum_storage_postgres::operations::collection::collection_children(self.runtime(), id)
+        crate::operations::collection::collection_children(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
 
     async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        hubuum_storage_postgres::operations::collection::collection_ancestors(self.runtime(), id)
+        crate::operations::collection::collection_ancestors(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
@@ -393,14 +335,9 @@ impl CollectionStore for PostgresStorage {
         new_parent_id: i32,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        hubuum_storage_postgres::operations::collection::move_collection(
-            self.runtime(),
-            id,
-            new_parent_id,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::collection::move_collection(self.runtime(), id, new_parent_id, context)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
@@ -410,7 +347,7 @@ impl ClassStore for PostgresStorage {
         &self,
         selector: StorageClassSelector,
     ) -> Result<StorageResolvedClass, StorageError> {
-        hubuum_storage_postgres::operations::class::resolve_class(self.runtime(), selector)
+        crate::operations::class::resolve_class(self.runtime(), selector)
             .await
             .map_err(StorageError::from)
     }
@@ -420,7 +357,7 @@ impl ClassStore for PostgresStorage {
         command: StorageClassCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRecord, StorageError> {
-        hubuum_storage_postgres::operations::class::create_class(self.runtime(), command, context)
+        crate::operations::class::create_class(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
     }
@@ -431,14 +368,9 @@ impl ClassStore for PostgresStorage {
         changes: StorageClassUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRecord, StorageError> {
-        hubuum_storage_postgres::operations::class::update_class(
-            self.runtime(),
-            target,
-            changes,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::class::update_class(self.runtime(), target, changes, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_class(
@@ -446,13 +378,13 @@ impl ClassStore for PostgresStorage {
         target: &StorageResolvedClass,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::class::delete_class(self.runtime(), target, context)
+        crate::operations::class::delete_class(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
     }
 
     async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
-        hubuum_storage_postgres::operations::class::class_names(self.runtime(), class_ids)
+        crate::operations::class::class_names(self.runtime(), class_ids)
             .await
             .map_err(StorageError::from)
     }
@@ -464,19 +396,16 @@ impl ClassRelationStore for PostgresStorage {
         &self,
         command: StorageClassRelationCreate,
     ) -> Result<StoragePreparedClassRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::prepare_class_relation(
-            self.runtime(),
-            command,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::prepare_class_relation(self.runtime(), command)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn resolve_class_relation(
         &self,
         id: i32,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::resolve_class_relation(self.runtime(), id)
+        crate::operations::relation::resolve_class_relation(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
@@ -486,13 +415,9 @@ impl ClassRelationStore for PostgresStorage {
         prepared: &StoragePreparedClassRelation,
         context: Option<&EventContext>,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::create_class_relation(
-            self.runtime(),
-            prepared,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::create_class_relation(self.runtime(), prepared, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_class_relation(
@@ -500,13 +425,9 @@ impl ClassRelationStore for PostgresStorage {
         target: &StorageResolvedClassRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::relation::delete_class_relation(
-            self.runtime(),
-            target,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::delete_class_relation(self.runtime(), target, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn create_class_relation_from_command(
@@ -514,7 +435,7 @@ impl ClassRelationStore for PostgresStorage {
         command: StorageClassRelationCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageClassRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::create_class_relation_from_command(
+        crate::operations::relation::create_class_relation_from_command(
             self.runtime(),
             command,
             context,
@@ -528,13 +449,9 @@ impl ClassRelationStore for PostgresStorage {
         id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::relation::delete_class_relation_by_id(
-            self.runtime(),
-            id,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::delete_class_relation_by_id(self.runtime(), id, context)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
@@ -544,24 +461,18 @@ impl ObjectRelationStore for PostgresStorage {
         &self,
         selector: StorageObjectRelationCreateSelector,
     ) -> Result<StoragePreparedObjectRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::prepare_object_relation(
-            self.runtime(),
-            selector,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::prepare_object_relation(self.runtime(), selector)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn resolve_object_relation(
         &self,
         selector: StorageObjectRelationSelector,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::resolve_object_relation(
-            self.runtime(),
-            selector,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::resolve_object_relation(self.runtime(), selector)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn create_object_relation(
@@ -569,13 +480,9 @@ impl ObjectRelationStore for PostgresStorage {
         prepared: &StoragePreparedObjectRelation,
         context: Option<&EventContext>,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::create_object_relation(
-            self.runtime(),
-            prepared,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::create_object_relation(self.runtime(), prepared, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_object_relation(
@@ -583,13 +490,9 @@ impl ObjectRelationStore for PostgresStorage {
         target: &StorageResolvedObjectRelation,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::relation::delete_object_relation(
-            self.runtime(),
-            target,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::delete_object_relation(self.runtime(), target, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn create_object_relation_from_command(
@@ -597,7 +500,7 @@ impl ObjectRelationStore for PostgresStorage {
         command: StorageObjectRelationCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageObjectRelation, StorageError> {
-        hubuum_storage_postgres::operations::relation::create_object_relation_from_command(
+        crate::operations::relation::create_object_relation_from_command(
             self.runtime(),
             command,
             context,
@@ -611,20 +514,16 @@ impl ObjectRelationStore for PostgresStorage {
         id: i32,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::relation::delete_object_relation_by_id(
-            self.runtime(),
-            id,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::relation::delete_object_relation_by_id(self.runtime(), id, context)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
 #[async_trait]
 impl ObjectStore for PostgresStorage {
     async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
-        hubuum_storage_postgres::operations::object::get_object(self.runtime(), object_id)
+        crate::operations::object::get_object(self.runtime(), object_id)
             .await
             .map_err(StorageError::from)
     }
@@ -633,7 +532,7 @@ impl ObjectStore for PostgresStorage {
         &self,
         selector: StorageObjectSelector,
     ) -> Result<StorageResolvedObject, StorageError> {
-        hubuum_storage_postgres::operations::object::resolve_object(self.runtime(), selector)
+        crate::operations::object::resolve_object(self.runtime(), selector)
             .await
             .map_err(StorageError::from)
     }
@@ -644,14 +543,9 @@ impl ObjectStore for PostgresStorage {
         command: StorageObjectCreate,
         context: Option<&EventContext>,
     ) -> Result<StorageObject, StorageError> {
-        hubuum_storage_postgres::operations::object::create_object(
-            self.runtime(),
-            class,
-            command,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::object::create_object(self.runtime(), class, command, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn update_object(
@@ -660,14 +554,9 @@ impl ObjectStore for PostgresStorage {
         changes: StorageObjectUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageObject, StorageError> {
-        hubuum_storage_postgres::operations::object::update_object(
-            self.runtime(),
-            target,
-            changes,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::object::update_object(self.runtime(), target, changes, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn patch_object_data(
@@ -676,14 +565,9 @@ impl ObjectStore for PostgresStorage {
         patch: StorageObjectDataPatch,
         context: &EventContext,
     ) -> Result<StorageObject, StorageError> {
-        hubuum_storage_postgres::operations::object::patch_object_data(
-            self.runtime(),
-            target,
-            patch,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::object::patch_object_data(self.runtime(), target, patch, context)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_object(
@@ -691,13 +575,13 @@ impl ObjectStore for PostgresStorage {
         target: &StorageResolvedObject,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::object::delete_object(self.runtime(), target, context)
+        crate::operations::object::delete_object(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
     }
 
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::object::validate_object(self.runtime(), object)
+        crate::operations::object::validate_object(self.runtime(), object)
             .await
             .map_err(StorageError::from)
     }
@@ -706,12 +590,9 @@ impl ObjectStore for PostgresStorage {
         &self,
         command: StorageObjectCreate,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::object::validate_object_create_command(
-            self.runtime(),
-            command,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::object::validate_object_create_command(self.runtime(), command)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn validate_object_update(
@@ -719,7 +600,7 @@ impl ObjectStore for PostgresStorage {
         object_id: i32,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::object::validate_object_update_command(
+        crate::operations::object::validate_object_update_command(
             self.runtime(),
             object_id,
             changes,

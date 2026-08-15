@@ -1,3 +1,6 @@
+use std::future::Future;
+use std::pin::Pin;
+
 /// Backend-neutral wake-up topics used by Hubuum's durable workers.
 ///
 /// Notifications are only an optimization: workers retain their polling path
@@ -20,18 +23,25 @@ impl StorageNotification {
     }
 }
 
-/// Starts backend-native listeners for durable-worker wake-ups.
+/// Boxed application shutdown signal consumed by a backend listener.
+pub type StorageNotificationShutdown = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// Boxed backend listener that runs until its shutdown signal resolves.
+pub type StorageNotificationListener = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// Provides backend-native listeners for durable-worker wake-ups.
 ///
 /// A selectable backend must implement every topic. Application workers do
 /// not need to know whether the adapter uses PostgreSQL LISTEN/NOTIFY or a
-/// different backend-native mechanism.
+/// different backend-native mechanism. Process and thread supervision remain
+/// application responsibilities.
 pub trait WorkerNotificationStorage: Send + Sync {
-    fn spawn_worker_notification_listener(
+    fn worker_notification_listener(
         &self,
         topic: StorageNotification,
-        worker_name: &'static str,
         on_notification: fn(),
-    );
+        shutdown: StorageNotificationShutdown,
+    ) -> StorageNotificationListener;
 }
 
 #[cfg(test)]

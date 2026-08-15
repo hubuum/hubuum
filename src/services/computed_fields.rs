@@ -20,7 +20,8 @@ use crate::storage::{
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, storage_handle,
 };
 
-pub(crate) async fn class_computation_state_for(
+#[doc(hidden)]
+pub async fn class_computation_state_for(
     backend: &impl StorageContext,
     class_id: i32,
 ) -> Result<ClassComputationState, ApiError> {
@@ -73,7 +74,8 @@ pub(crate) async fn get_computed_definition(
     definition_from_storage(definition)
 }
 
-pub(crate) async fn create_shared_definition(
+#[doc(hidden)]
+pub async fn create_shared_definition(
     backend: &impl StorageContext,
     class_id: i32,
     authorized_collection_id: i32,
@@ -94,7 +96,8 @@ pub(crate) async fn create_shared_definition(
     mutation_from_storage(mutation)
 }
 
-pub(crate) async fn update_shared_definition(
+#[doc(hidden)]
+pub async fn update_shared_definition(
     backend: &impl StorageContext,
     class_id: i32,
     authorized_collection_id: i32,
@@ -138,7 +141,8 @@ pub(crate) async fn delete_shared_definition(
     Ok(state_from_storage(state))
 }
 
-pub(crate) async fn create_personal_definition(
+#[doc(hidden)]
+pub async fn create_personal_definition(
     backend: &impl StorageContext,
     class_id: i32,
     owner_id: i32,
@@ -180,7 +184,8 @@ pub(crate) async fn delete_personal_definition(
     Ok(())
 }
 
-pub(crate) async fn request_class_rebuild(
+#[doc(hidden)]
+pub async fn request_class_rebuild(
     backend: &impl StorageContext,
     class_id: i32,
     authorized_collection_id: i32,

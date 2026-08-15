@@ -20679,6 +20679,7 @@
       },
       "EventDeliveryStatus": {
         "type": "string",
+        "description": "Durable lifecycle state for one event delivery.\n\nThe textual representation is shared by storage adapters, API models, and\noperational reporting so each layer cannot silently invent different\npersisted status values.",
         "enum": [
           "pending",
           "in_flight",

@@ -47,6 +47,8 @@ pub trait PostgresTelemetry: Send + Sync {
 
     fn computed_read_repair(&self, _outcome: &'static str) {}
 
+    fn revision_condition(&self, _outcome: &'static str) {}
+
     fn task_completed(
         &self,
         _kind: &'static str,
@@ -350,6 +352,10 @@ impl PostgresRuntime {
 
     pub(crate) fn record_computed_read_repair(&self, outcome: &'static str) {
         self.telemetry.computed_read_repair(outcome);
+    }
+
+    pub(crate) fn record_revision_condition(&self, outcome: &'static str) {
+        self.telemetry.revision_condition(outcome);
     }
 
     pub(crate) fn record_task_completed(

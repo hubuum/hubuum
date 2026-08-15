@@ -6,7 +6,8 @@ pub(crate) mod catalog;
 mod class_relations;
 mod classes;
 mod collections;
-pub(crate) mod computed_fields;
+#[doc(hidden)]
+pub mod computed_fields;
 pub(crate) mod computed_objects;
 pub(crate) mod event_administration;
 pub(crate) mod groups;
@@ -22,7 +23,8 @@ pub(crate) mod related_filter_authorization;
 pub(crate) mod relation_queries;
 pub(crate) mod remote_targets;
 pub(crate) mod storage_boundary;
-pub(crate) mod tasks;
+#[doc(hidden)]
+pub mod tasks;
 pub(crate) mod unified_search;
 
 pub use class_relations::ClassRelationService;

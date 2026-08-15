@@ -276,15 +276,6 @@ impl<'a> CollectionRowInsert<'a> {
         self.parent_collection_id = parent_collection_id;
         self
     }
-
-    pub(crate) fn timestamps(
-        mut self,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-    ) -> Self {
-        self.timestamps = Some((created_at, updated_at));
-        self
-    }
 }
 
 pub(crate) async fn insert_collection_row_with_closure(

@@ -40,7 +40,8 @@ pub(crate) struct TaskSubmission {
 }
 
 /// Application-owned task projection paired with an opaque backend claim.
-pub(crate) struct ClaimedTask {
+#[doc(hidden)]
+pub struct ClaimedTask {
     task: TaskRecord,
     lease: StorageTaskLease,
 }
@@ -58,8 +59,9 @@ impl ClaimedTask {
         &self.lease
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_record(task: TaskRecord) -> Result<Self, ApiError> {
+    #[cfg(any(test, feature = "integration-test-support"))]
+    #[doc(hidden)]
+    pub fn from_record(task: TaskRecord) -> Result<Self, ApiError> {
         let token = task.lease_token.ok_or_else(|| {
             ApiError::InternalServerError("Test task does not carry a claim token".to_string())
         })?;
@@ -158,7 +160,8 @@ pub(crate) async fn renew_task_lease(
         .map_err(ApiError::from)
 }
 
-pub(crate) async fn recover_expired_task_leases(
+#[doc(hidden)]
+pub async fn recover_expired_task_leases(
     backend: &impl StorageContext,
     batch_size: usize,
 ) -> Result<Vec<TaskRecord>, ApiError> {
@@ -269,7 +272,8 @@ pub(crate) async fn purge_expired_backup_outputs(
         .map_err(ApiError::from)
 }
 
-pub(crate) async fn execute_computed_field_rebuild(
+#[doc(hidden)]
+pub async fn execute_computed_field_rebuild(
     backend: &impl StorageContext,
     task: &ClaimedTask,
 ) -> Result<TaskRecord, ApiError> {

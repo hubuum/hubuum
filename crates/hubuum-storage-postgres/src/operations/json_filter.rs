@@ -177,6 +177,17 @@ pub(crate) fn json_filter_sql(
     }
 }
 
+/// Compile one JSON predicate without exposing adapter-private SQL value types.
+///
+/// This is an internal benchmark seam, not a storage-contract operation.
+#[doc(hidden)]
+pub fn compile_json_filter_for_benchmark(
+    parameter: &ParsedQueryParam,
+) -> Result<(String, usize), PostgresStorageError> {
+    let component = json_filter_sql(parameter, "json_data")?;
+    Ok((component.sql, component.bind_variables.len()))
+}
+
 fn typed_json_filter(
     expression: &str,
     bind_variables: Vec<SqlValue>,

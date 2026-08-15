@@ -59,9 +59,11 @@ helpers that share native transactions and queries.
 
 ## Boundary Values
 
-Use the request and result DTOs owned by `hubuum-storage-core` or the root
-storage contract. These values describe application intent and observable
-results, not the adapter's schema.
+Use the request and result DTOs owned by `hubuum-storage-core` and the validated
+values owned by its publishable dependency crates. Root application models may
+be converted into those DTOs, but they are not part of the adapter contract.
+Boundary values describe application intent and observable results, not the
+adapter's schema.
 
 Adapter boundary types must not expose:
 
@@ -133,9 +135,27 @@ execution failures to database or unavailable classifications as appropriate.
 Retain diagnostic detail for logs while keeping public responses safe.
 
 Backend-neutral storage crates must not import `ApiError`. Application code
-must not convert `ApiError` back into `StorageError`. Transitional PostgreSQL
-helpers that still return `ApiError` are classified immediately inside the
-adapter and are not a pattern for a new backend.
+must not convert `ApiError` back into `StorageError`.
+
+## Import Plans and References
+
+`StorageImportPlan` is validated before an adapter begins execution. Backends may rely on its strictly increasing item indexes, valid positive update identifiers, non-empty names, and unambiguous selectors.
+
+An import `ref` is local to one plan. It allows a later item in that plan to address a value created or updated by an earlier item without knowing the backend-assigned identifier. A backend must maintain this plan-local reference map during preflight and application.
+
+A key is durable. Use a key when an item addresses state that existed before the plan or when a later, separate plan addresses state produced by an earlier plan.
+
+```text
+same StorageImportPlan
+create class ref "class:room"
+          |
+          `----> create object using class_ref "class:room"
+
+later StorageImportPlan
+update relation using class_key / object_key
+```
+
+Do not persist plan-local refs as backend identity unless a separate contract explicitly introduces that behavior.
 
 ## Observability
 
@@ -195,8 +215,8 @@ fallback:
 
 1. Add its stable variant to `StorageBackendKind` and `StorageBackendKind::ALL`.
 2. Implement every trait aggregated by `StorageBackend`.
-3. Explicitly implement `StorageBackend` in the application composition root.
-4. Add one exhaustive `StorageHandle` composition and dispatch variant.
+3. Explicitly implement `StorageBackend` beside the complete adapter implementation.
+4. Add the adapter as a static application dependency and add one exhaustive `StorageHandle` composition and dispatch variant.
 5. Add factory construction and redacted settings projection.
 6. Add it to the `available_backends()` test factory.
 

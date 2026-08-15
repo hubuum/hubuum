@@ -590,6 +590,7 @@ pub struct HubuumObjectTransitiveLink {
     path: Vec<i32>,
 }
 
+#[cfg(any(test, feature = "integration-test-support"))]
 impl HubuumObjectTransitiveLink {
     pub(crate) fn new(target_object_id: i32, path: Vec<i32>) -> Self {
         Self {

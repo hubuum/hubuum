@@ -22,10 +22,11 @@ use hubuum_storage_core::{
     StorageImportGroup, StorageImportGroupKey, StorageImportGroupMembership,
     StorageImportIdentityScope, StorageImportIdentityScopeKey, StorageImportMembershipSourceParts,
     StorageImportMode, StorageImportObject, StorageImportObjectKey, StorageImportObjectRelation,
-    StorageImportOperation, StorageImportPermissionPolicy, StorageImportPlanItem,
-    StorageImportPreflight, StorageImportPreflightItem, StorageImportPrincipal,
-    StorageImportPrincipalKey, StorageImportPrincipalParts, StorageImportPrincipalSubtype,
-    StorageImportRemoteTarget, StorageImportTimestamps, StorageImportWriteCondition, StorageObject,
+    StorageImportOperation, StorageImportPermissionPolicy, StorageImportPlan,
+    StorageImportPlanItem, StorageImportPreflight, StorageImportPreflightItem,
+    StorageImportPrincipal, StorageImportPrincipalKey, StorageImportPrincipalParts,
+    StorageImportPrincipalSubtype, StorageImportRemoteTarget, StorageImportTimestamps,
+    StorageImportWriteCondition, StorageObject,
 };
 use hubuum_templates::{TemplateAutoEscape, TemplateLimits, validate_template_composition};
 use tokio::sync::Semaphore;
@@ -88,9 +89,11 @@ impl ImportRuntime {
 
 pub async fn preflight_import(
     runtime: &PostgresRuntime,
-    items: Vec<StorageImportPlanItem>,
+    plan: StorageImportPlan,
     mode: StorageImportMode,
 ) -> Result<StorageImportPreflight, PostgresStorageError> {
+    let items = plan.into_items();
+    let telemetry_runtime = runtime.clone();
     runtime
         .with_connection(async move |connection| {
             let mut outcomes = Vec::with_capacity(items.len());
@@ -122,6 +125,7 @@ pub async fn preflight_import(
                                 revision.map(PostgresRevision::get),
                             )),
                             Err(error) => {
+                                record_revision_condition(&telemetry_runtime, &error);
                                 aborted = should_abort_preflight(&error, &mode);
                                 outcomes.push(StorageImportPreflightItem::failure(
                                     index,
@@ -156,9 +160,10 @@ pub async fn preflight_import(
 
 pub async fn apply_import_strict(
     runtime: &PostgresRuntime,
-    items: Vec<StorageImportPlanItem>,
+    plan: StorageImportPlan,
 ) -> Result<(), PostgresStorageError> {
-    runtime
+    let items = plan.into_items();
+    let result = runtime
         .with_transaction(async move |connection| {
             let mut state = ImportRuntime::for_plan(&items);
             for item in items {
@@ -167,14 +172,19 @@ pub async fn apply_import_strict(
             }
             Ok::<_, PostgresStorageError>(())
         })
-        .await
+        .await;
+    if let Err(error) = &result {
+        record_revision_condition(runtime, error);
+    }
+    result
 }
 
 pub async fn apply_import_best_effort(
     runtime: &PostgresRuntime,
-    items: Vec<StorageImportPlanItem>,
+    plan: StorageImportPlan,
     mode: StorageImportMode,
 ) -> Result<StorageImportApply, PostgresStorageError> {
+    let items = plan.into_items();
     let mut state = ImportRuntime::for_plan(&items);
     let mut outcomes = Vec::with_capacity(items.len());
     let mut aborted = false;
@@ -185,6 +195,9 @@ pub async fn apply_import_best_effort(
                 execute_operation(connection, &mut state, operation).await
             })
             .await;
+        if let Err(error) = &result {
+            record_revision_condition(runtime, error);
+        }
         match result {
             Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
             Err(error) => {
@@ -200,6 +213,12 @@ pub async fn apply_import_best_effort(
         }
     }
     Ok(StorageImportApply::new(outcomes, aborted))
+}
+
+fn record_revision_condition(runtime: &PostgresRuntime, error: &PostgresStorageError) {
+    if error.kind() == StorageErrorKind::PreconditionFailed {
+        runtime.record_revision_condition("async_stale");
+    }
 }
 
 async fn execute_operation(

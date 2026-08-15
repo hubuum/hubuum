@@ -331,6 +331,21 @@ impl UnifiedSearchCollection {
     }
 
     #[must_use]
+    pub const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> i64 {
+        self.revision
+    }
+
+    #[must_use]
     pub const fn parent_collection_id(&self) -> Option<i32> {
         self.parent_collection_id
     }

@@ -317,9 +317,9 @@ variables, or transaction settings.
 ## Changing a Family
 
 Traits and crate versions are the compatibility mechanism for statically linked
-adapters. Do not add a parallel contract version or runtime capability
-negotiation. If Hubuum later supports dynamically loaded or remote adapters,
-version that concrete ABI or wire protocol instead.
+adapters. Do not add a parallel contract version, runtime capability
+negotiation, or a dynamic plugin ABI. A backend may live in another repository,
+but the application selects and links it at compile time.
 
 When a family changes, update all of the following together:
 

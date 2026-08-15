@@ -159,12 +159,12 @@ pub use import_workflow::{
     StorageImportMembershipSource, StorageImportMembershipSourceParts, StorageImportMode,
     StorageImportObject, StorageImportObjectKey, StorageImportObjectKeyParts,
     StorageImportObjectParts, StorageImportObjectRelation, StorageImportObjectRelationParts,
-    StorageImportOperation, StorageImportPermissionPolicy, StorageImportPlanItem,
-    StorageImportPreflight, StorageImportPreflightItem, StorageImportPrincipal,
-    StorageImportPrincipalKey, StorageImportPrincipalKeyParts, StorageImportPrincipalParts,
-    StorageImportPrincipalSubtype, StorageImportRemoteTarget, StorageImportRemoteTargetParts,
-    StorageImportResult, StorageImportResultBuilder, StorageImportRevision,
-    StorageImportTimestamps, StorageImportWriteCondition,
+    StorageImportOperation, StorageImportPermissionPolicy, StorageImportPlan,
+    StorageImportPlanItem, StorageImportPreflight, StorageImportPreflightItem,
+    StorageImportPrincipal, StorageImportPrincipalKey, StorageImportPrincipalKeyParts,
+    StorageImportPrincipalParts, StorageImportPrincipalSubtype, StorageImportRemoteTarget,
+    StorageImportRemoteTargetParts, StorageImportResult, StorageImportResultBuilder,
+    StorageImportRevision, StorageImportTimestamps, StorageImportWriteCondition,
 };
 pub use inventory::{InventoryStorage, StorageInventoryCounts, StorageObjectsByClassCount};
 pub use metrics::{
@@ -254,7 +254,10 @@ pub use unified_search::{
     UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage,
     UnifiedSearchVisibility,
 };
-pub use worker_notifications::{StorageNotification, WorkerNotificationStorage};
+pub use worker_notifications::{
+    StorageNotification, StorageNotificationListener, StorageNotificationShutdown,
+    WorkerNotificationStorage,
+};
 
 /// Shared backend-neutral resource projections used by read capabilities.
 pub type StorageCollection = UnifiedSearchCollection;

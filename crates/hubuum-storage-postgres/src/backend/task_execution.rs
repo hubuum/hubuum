@@ -1,7 +1,7 @@
+use crate::operations::task_execution as postgres_task_execution;
 use async_trait::async_trait;
-use hubuum_storage_postgres::operations::task_execution as postgres_task_execution;
 
-use crate::storage::{
+use hubuum_storage_core::{
     StorageError, StorageTask, StorageTaskClaim, StorageTaskCompletion, StorageTaskEventAppend,
     StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskStateUpdate,
     TaskExecutionStorage,
@@ -79,42 +79,5 @@ impl TaskExecutionStorage for PostgresStorage {
         postgres_task_execution::purge_expired_backup_outputs(self.runtime())
             .await
             .map_err(StorageError::from)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use tokio::time::timeout;
-
-    use super::*;
-    use crate::config::get_config;
-    use crate::storage::postgres::{PostgresPoolSettings, init_postgres_pool_with_settings};
-
-    #[tokio::test]
-    async fn lease_pool_remains_available_when_an_execution_pool_is_exhausted() {
-        let config = get_config().expect("test requires database configuration");
-        let settings = PostgresPoolSettings::builder(config.database_url.clone())
-            .max_size(1)
-            .statement_timeout_ms(config.db_statement_timeout_ms)
-            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-            .build()
-            .expect("single-connection execution pool settings should be valid");
-        let execution_pool = init_postgres_pool_with_settings(&settings);
-        let backend =
-            PostgresStorage::with_operational_pool_settings(execution_pool.clone(), settings);
-        let _execution_connection = execution_pool
-            .get()
-            .await
-            .expect("execution connection should be available");
-
-        timeout(
-            Duration::from_secs(5),
-            backend.runtime().task_lease_pool().get(),
-        )
-        .await
-        .expect("lease checkout must not wait for the execution pool")
-        .expect("lease pool should connect to the test database");
     }
 }

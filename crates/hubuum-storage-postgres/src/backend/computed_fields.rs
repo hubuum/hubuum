@@ -1,7 +1,7 @@
+use crate::operations::computed_lifecycle as postgres_computed_lifecycle;
 use async_trait::async_trait;
-use hubuum_storage_postgres::operations::computed_lifecycle as postgres_computed_lifecycle;
 
-use crate::storage::{
+use hubuum_storage_core::{
     ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
     StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
     StorageError, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,

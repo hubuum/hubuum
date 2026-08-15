@@ -6,19 +6,16 @@ impl AuthenticationStorage for PostgresStorage {
         &self,
         attempt: AuthenticationAttempt,
     ) -> Result<AuthenticatedToken, StorageError> {
-        hubuum_storage_postgres::operations::authentication::authenticate_bearer_token(
-            self.runtime(),
-            attempt,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authentication::authenticate_bearer_token(self.runtime(), attempt)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_authentication_identity(
         &self,
         principal_id: i32,
     ) -> Result<AuthenticationIdentity, StorageError> {
-        hubuum_storage_postgres::operations::authentication::load_authentication_identity(
+        crate::operations::authentication::load_authentication_identity(
             self.runtime(),
             principal_id,
         )
@@ -30,80 +27,60 @@ impl AuthenticationStorage for PostgresStorage {
         &self,
         query: AuthenticationTokenScopeQuery,
     ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
-        hubuum_storage_postgres::operations::authentication::load_authentication_token_scope(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authentication::load_authentication_token_scope(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
 #[async_trait]
 impl IdentityStorage for PostgresStorage {
     async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::bootstrap::default_admin_bootstrap_required(
-            self.runtime(),
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::bootstrap::default_admin_bootstrap_required(self.runtime())
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn bootstrap_default_admin(
         &self,
         request: StorageDefaultAdminBootstrap,
     ) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::bootstrap::bootstrap_default_admin(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::bootstrap::bootstrap_default_admin(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
     ) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::identity_credentials::reset_local_password(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::identity_credentials::reset_local_password(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn ensure_identity_scope(
         &self,
         request: StorageIdentityScopeEnsure,
     ) -> Result<StorageIdentityScope, StorageError> {
-        hubuum_storage_postgres::operations::identity_scope::ensure_identity_scope(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::identity_scope::ensure_identity_scope(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
-        hubuum_storage_postgres::operations::identity_scope::identity_scope_name(
-            self.runtime(),
-            scope_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::identity_scope::identity_scope_name(self.runtime(), scope_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn identity_scope_names(
         &self,
         scope_ids: Vec<i32>,
     ) -> Result<Vec<(i32, String)>, StorageError> {
-        hubuum_storage_postgres::operations::identity_scope::identity_scope_names(
-            self.runtime(),
-            scope_ids,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::identity_scope::identity_scope_names(self.runtime(), scope_ids)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_principal_group(
@@ -111,7 +88,7 @@ impl IdentityStorage for PostgresStorage {
         principal_id: i32,
         group_id: i32,
     ) -> Result<StoragePrincipalGroup, StorageError> {
-        hubuum_storage_postgres::operations::identity_principals::load_principal_group(
+        crate::operations::identity_principals::load_principal_group(
             self.runtime(),
             principal_id,
             group_id,
@@ -124,7 +101,7 @@ impl IdentityStorage for PostgresStorage {
         &self,
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
-        hubuum_storage_postgres::operations::group::list_principal_groups(self.runtime(), query)
+        crate::operations::group::list_principal_groups(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -133,7 +110,7 @@ impl IdentityStorage for PostgresStorage {
         &self,
         query: StorageGroupListQuery,
     ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError> {
-        hubuum_storage_postgres::operations::group::list_groups(self.runtime(), query)
+        crate::operations::group::list_groups(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -142,7 +119,7 @@ impl IdentityStorage for PostgresStorage {
         &self,
         query: StorageTokenListQuery,
     ) -> Result<StorageIdentityPage<StorageTokenMetadata>, StorageError> {
-        hubuum_storage_postgres::operations::token::list_retained_tokens(self.runtime(), query)
+        crate::operations::token::list_retained_tokens(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -152,7 +129,7 @@ impl IdentityStorage for PostgresStorage {
         principal_id: i32,
         owner_group_id: i32,
     ) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::identity_principals::is_human_owner_group_member(
+        crate::operations::identity_principals::is_human_owner_group_member(
             self.runtime(),
             principal_id,
             owner_group_id,
@@ -162,31 +139,25 @@ impl IdentityStorage for PostgresStorage {
     }
 
     async fn principal_is_disabled(&self, principal_id: i32) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::identity_principals::principal_is_disabled(
-            self.runtime(),
-            principal_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::identity_principals::principal_is_disabled(self.runtime(), principal_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_service_account(
         &self,
         service_account_id: i32,
     ) -> Result<StorageServiceAccount, StorageError> {
-        hubuum_storage_postgres::operations::service_account::load_service_account(
-            self.runtime(),
-            service_account_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::service_account::load_service_account(self.runtime(), service_account_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_service_account_point(
         &self,
         service_account_id: i32,
     ) -> Result<StorageServiceAccountPoint, StorageError> {
-        hubuum_storage_postgres::operations::service_account::load_service_account_point(
+        crate::operations::service_account::load_service_account_point(
             self.runtime(),
             service_account_id,
         )
@@ -198,76 +169,58 @@ impl IdentityStorage for PostgresStorage {
         &self,
         query: StorageServiceAccountListQuery,
     ) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, StorageError> {
-        hubuum_storage_postgres::operations::service_account::list_manageable_service_accounts(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::service_account::list_manageable_service_accounts(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
     ) -> Result<StorageServiceAccount, StorageError> {
-        hubuum_storage_postgres::operations::service_account::create_service_account(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::service_account::create_service_account(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
     ) -> Result<StorageServiceAccount, StorageError> {
-        hubuum_storage_postgres::operations::service_account::update_service_account(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::service_account::update_service_account(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
     ) -> Result<StorageServiceAccountDisableOutcome, StorageError> {
-        hubuum_storage_postgres::operations::service_account::disable_service_account(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::service_account::disable_service_account(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::service_account::delete_service_account(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::service_account::delete_service_account(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn external_principal_state(
         &self,
         principal_id: i32,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
-        hubuum_storage_postgres::operations::external_identity::external_principal_state(
-            self.runtime(),
-            principal_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::external_identity::external_principal_state(self.runtime(), principal_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn mark_external_sync_attempted(&self, principal_id: i32) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::external_identity::mark_external_sync_attempted(
+        crate::operations::external_identity::mark_external_sync_attempted(
             self.runtime(),
             principal_id,
         )
@@ -279,19 +232,16 @@ impl IdentityStorage for PostgresStorage {
         &self,
         request: StorageExternalUserSync,
     ) -> Result<StorageSyncedHuman, StorageError> {
-        hubuum_storage_postgres::operations::external_identity::sync_external_user(
-            self.runtime(),
-            request,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::external_identity::sync_external_user(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
 #[async_trait]
 impl UserStorage for PostgresStorage {
     async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError> {
-        hubuum_storage_postgres::operations::user::load_user(self.runtime(), id)
+        crate::operations::user::load_user(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
@@ -301,17 +251,13 @@ impl UserStorage for PostgresStorage {
         identity_scope: String,
         name: String,
     ) -> Result<StorageUser, StorageError> {
-        hubuum_storage_postgres::operations::user::load_user_by_name(
-            self.runtime(),
-            identity_scope,
-            name,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::user::load_user_by_name(self.runtime(), identity_scope, name)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError> {
-        hubuum_storage_postgres::operations::user::load_user_point(self.runtime(), id)
+        crate::operations::user::load_user_point(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
@@ -320,19 +266,19 @@ impl UserStorage for PostgresStorage {
         &self,
         query: StorageUserListQuery,
     ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError> {
-        hubuum_storage_postgres::operations::user::list_users(self.runtime(), query)
+        crate::operations::user::list_users(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
     async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError> {
-        hubuum_storage_postgres::operations::user::create_user(self.runtime(), request)
+        crate::operations::user::create_user(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
 
     async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError> {
-        hubuum_storage_postgres::operations::user::update_user(self.runtime(), request)
+        crate::operations::user::update_user(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -341,19 +287,19 @@ impl UserStorage for PostgresStorage {
         &self,
         request: StorageUserPasswordUpdate,
     ) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::user::set_user_password(self.runtime(), request)
+        crate::operations::user::set_user_password(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
 
     async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::user::delete_user(self.runtime(), request)
+        crate::operations::user::delete_user(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
 
     async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::user::anonymize_user(self.runtime(), id)
+        crate::operations::user::anonymize_user(self.runtime(), id)
             .await
             .map_err(StorageError::from)
     }
@@ -365,7 +311,7 @@ impl TokenStorage for PostgresStorage {
         &self,
         request: StorageTokenCreate,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        hubuum_storage_postgres::operations::token::create_token(self.runtime(), request)
+        crate::operations::token::create_token(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -374,7 +320,7 @@ impl TokenStorage for PostgresStorage {
         &self,
         request: StorageTokenRenew,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        hubuum_storage_postgres::operations::token::renew_token(self.runtime(), request)
+        crate::operations::token::renew_token(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -385,7 +331,7 @@ impl TokenStorage for PostgresStorage {
         token_id: i32,
         observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        hubuum_storage_postgres::operations::token::load_token_metadata(
+        crate::operations::token::load_token_metadata(
             self.runtime(),
             principal_id,
             token_id,
@@ -400,17 +346,13 @@ impl TokenStorage for PostgresStorage {
         token_ids: Vec<i32>,
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
-        hubuum_storage_postgres::operations::token::load_token_metadata_batch(
-            self.runtime(),
-            token_ids,
-            observation,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::token::load_token_metadata_batch(self.runtime(), token_ids, observation)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::token::revoke_token(self.runtime(), request)
+        crate::operations::token::revoke_token(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -419,18 +361,15 @@ impl TokenStorage for PostgresStorage {
         &self,
         request: StorageTokenHashRevoke,
     ) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::token::revoke_token_by_hash(self.runtime(), request)
+        crate::operations::token::revoke_token_by_hash(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
 
     async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::operations::token::revoke_all_principal_tokens(
-            self.runtime(),
-            principal_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::token::revoke_all_principal_tokens(self.runtime(), principal_id)
+            .await
+            .map_err(StorageError::from)
     }
 }
 
@@ -440,19 +379,16 @@ impl AuthorizationStorage for PostgresStorage {
         &self,
         principal_id: i32,
     ) -> Result<AuthorizationPrincipal, StorageError> {
-        hubuum_storage_postgres::operations::authorization::load_authorization_principal(
-            self.runtime(),
-            principal_id,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::load_authorization_principal(self.runtime(), principal_id)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn authorization_principal_is_group_member(
         &self,
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::authorization::authorization_principal_is_group_member(
+        crate::operations::authorization::authorization_principal_is_group_member(
             self.runtime(),
             query,
         )
@@ -464,68 +400,51 @@ impl AuthorizationStorage for PostgresStorage {
         &self,
         query: AuthorizationResourceIds,
     ) -> Result<Vec<AuthorizationClassResource>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::load_authorization_classes(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::load_authorization_classes(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_authorization_objects(
         &self,
         query: AuthorizationResourceIds,
     ) -> Result<Vec<AuthorizationObjectResource>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::load_authorization_objects(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::load_authorization_objects(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn authorize_local_collection(
         &self,
         query: AuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::authorization::authorize_local_collection(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::authorize_local_collection(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn authorize_local_collections(
         &self,
         query: AuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError> {
-        hubuum_storage_postgres::operations::authorization::authorize_local_collections(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::authorize_local_collections(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn local_authorized_collections(
         &self,
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::local_authorized_collections(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::local_authorized_collections(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_authorization_collection_candidates(
         &self,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::list_authorization_collection_candidates(
-            self.runtime(),
-        )
+        crate::operations::authorization::list_authorization_collection_candidates(self.runtime())
             .await
             .map_err(StorageError::from)
     }
@@ -534,7 +453,7 @@ impl AuthorizationStorage for PostgresStorage {
         &self,
         query_options: QueryOptions,
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::list_authorization_group_candidates(
+        crate::operations::authorization::list_authorization_group_candidates(
             self.runtime(),
             query_options,
         )
@@ -545,42 +464,34 @@ impl AuthorizationStorage for PostgresStorage {
     async fn authorization_policy_snapshot(
         &self,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::authorization_policy_snapshot(
-            self.runtime(),
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::authorization_policy_snapshot(self.runtime())
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn list_local_collection_grants(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        hubuum_storage_postgres::operations::authorization::list_local_collection_grants(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::list_local_collection_grants(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn get_local_collection_grant(
         &self,
         key: AuthorizationGrantKey,
     ) -> Result<Option<AuthorizationGrant>, StorageError> {
-        hubuum_storage_postgres::operations::authorization::get_local_collection_grant(
-            self.runtime(),
-            key,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::get_local_collection_grant(self.runtime(), key)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn load_local_collection_permission_set(
         &self,
         query: AuthorizationPermissionSetQuery,
     ) -> Result<AuthorizationPermissionSet, StorageError> {
-        hubuum_storage_postgres::operations::authorization::load_local_collection_permission_set(
+        crate::operations::authorization::load_local_collection_permission_set(
             self.runtime(),
             query,
         )
@@ -592,31 +503,25 @@ impl AuthorizationStorage for PostgresStorage {
         &self,
         mutation: AuthorizationGrantMutation,
     ) -> Result<AuthorizationGrant, StorageError> {
-        hubuum_storage_postgres::operations::authorization::apply_local_collection_grant(
-            self.runtime(),
-            mutation,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::apply_local_collection_grant(self.runtime(), mutation)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn revoke_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
     ) -> Result<AuthorizationGrant, StorageError> {
-        hubuum_storage_postgres::operations::authorization::revoke_local_collection_grant(
-            self.runtime(),
-            mutation,
-        )
-        .await
-        .map_err(StorageError::from)
+        crate::operations::authorization::revoke_local_collection_grant(self.runtime(), mutation)
+            .await
+            .map_err(StorageError::from)
     }
 
     async fn revoke_all_local_collection_grants(
         &self,
         request: AuthorizationGrantDelete,
     ) -> Result<(), StorageError> {
-        hubuum_storage_postgres::operations::authorization::revoke_all_local_collection_grants(
+        crate::operations::authorization::revoke_all_local_collection_grants(
             self.runtime(),
             request,
         )

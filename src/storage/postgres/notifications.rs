@@ -1,9 +1,9 @@
+#[cfg(any(test, feature = "integration-test-support"))]
 use crate::errors::ApiError;
-use crate::lifecycle::spawn_background_worker;
-use crate::storage::{StorageNotification, WorkerNotificationStorage};
+#[cfg(test)]
+use crate::storage::StorageNotification;
 
-use super::{PostgresPool, PostgresStorage};
-
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) async fn notify_task_queue(
     conn: &mut super::PostgresConnection,
     task_id: i32,
@@ -12,40 +12,6 @@ pub(crate) async fn notify_task_queue(
         .await
         .map_err(hubuum_storage_core::StorageError::from)
         .map_err(ApiError::from)
-}
-
-fn spawn_postgres_notification_listener(
-    pool: PostgresPool,
-    topic: StorageNotification,
-    thread_name: &'static str,
-    on_notification: fn(),
-) {
-    spawn_background_worker(thread_name, move |shutdown| {
-        let system = actix_rt::System::new();
-        system.block_on(hubuum_storage_postgres::worker_notifications::listen(
-            pool,
-            topic,
-            on_notification,
-            || {},
-            shutdown.requested(),
-        ));
-    });
-}
-
-impl WorkerNotificationStorage for PostgresStorage {
-    fn spawn_worker_notification_listener(
-        &self,
-        topic: StorageNotification,
-        worker_name: &'static str,
-        on_notification: fn(),
-    ) {
-        spawn_postgres_notification_listener(
-            self.notification_listener_pool(),
-            topic,
-            worker_name,
-            on_notification,
-        );
-    }
 }
 
 #[cfg(test)]
@@ -62,15 +28,22 @@ mod tests {
     use crate::errors::ApiError;
     use crate::events::{Action, ActorKind, EntityType, NewEvent};
     use crate::lifecycle::ShutdownSignal;
+    use crate::storage::PostgresStorage;
     use crate::storage::postgres::operations::event_record::emit_event;
     use crate::storage::postgres::prelude::*;
-    use crate::storage::postgres::{PostgresPoolSettings, init_postgres_pool, with_transaction};
+    use crate::storage::postgres::{
+        PostgresPoolSettings, init_postgres_pool, init_postgres_pool_with_settings,
+        with_transaction,
+    };
     use crate::tests::test_scope;
 
     use super::*;
 
     static LISTENER_READY: AtomicUsize = AtomicUsize::new(0);
-    static NEXT_TASK_NOTIFICATION_ID: AtomicI32 = AtomicI32::new(1);
+    // Real task identifiers are positive. Negative payloads keep these
+    // transaction tests isolated from task notifications emitted by the many
+    // database tests running in parallel.
+    static NEXT_TASK_NOTIFICATION_ID: AtomicI32 = AtomicI32::new(-1);
 
     #[derive(QueryableByName)]
     struct ListeningChannel {
@@ -152,7 +125,7 @@ mod tests {
             .await
             .expect("listen on task queue channel");
 
-        let task_id = NEXT_TASK_NOTIFICATION_ID.fetch_add(1, Ordering::Relaxed);
+        let task_id = NEXT_TASK_NOTIFICATION_ID.fetch_sub(1, Ordering::Relaxed);
         let result: Result<(), ApiError> = with_transaction(&scope.pool, async |conn| {
             notify_task_queue(conn, task_id).await?;
             if commit {
@@ -242,11 +215,9 @@ mod tests {
             .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
             .build()
             .expect("listener settings should be valid");
-        let backend = PostgresStorage::with_operational_pool_settings(
-            execution_pool.clone(),
-            listener_settings,
-        );
-        let listener_pool = backend.notification_listener_pool();
+        let listener_pool = init_postgres_pool_with_settings(&listener_settings);
+        let _backend = PostgresStorage::new(execution_pool.clone())
+            .with_notification_listener_pool(listener_pool.clone());
         let _listener_connection = listener_pool.get().await.unwrap();
 
         tokio::time::timeout(Duration::from_secs(5), execution_pool.get())

@@ -1,6 +1,6 @@
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::search::{ParsedQueryParam, SearchOperator};
-use hubuum::storage::postgres::operations::search::JsonPredicateExt;
+use hubuum_storage_postgres::operations::json_filter::compile_json_filter_for_benchmark;
 use std::hint::black_box;
 
 fn json_filter_fixtures() -> [ParsedQueryParam; 4] {
@@ -36,8 +36,7 @@ fn json_filter_fixtures() -> [ParsedQueryParam; 4] {
 fn bench_build_json_predicates() {
     for param in black_box(json_filter_fixtures()) {
         black_box(
-            param
-                .as_json_predicate()
+            compile_json_filter_for_benchmark(&param)
                 .expect("benchmark JSON filter should build a predicate"),
         );
     }

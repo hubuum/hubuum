@@ -158,7 +158,7 @@ cannot reproduce.
 
 ### Native operations
 
-Tests alongside `crates/hubuum-storage-postgres`, plus transitional tests under `src/storage/postgres`, cover native behavior such as:
+Tests alongside `crates/hubuum-storage-postgres`, plus the test-only legacy harness under `src/storage/postgres/operations`, cover native behavior such as:
 
 - pool and TLS settings plus safe endpoint diagnostics;
 - transaction and connection context reset;
@@ -197,8 +197,9 @@ benchmarks catch latency changes that preserve query counts.
 runs the suite against that schema. `tests/restore_roundtrip.rs` separately
 exercises destructive state replacement and restart recovery.
 
-Migration compatibility with adjacent supported releases is covered by the
-release and container workflows, not by the shared backend contract.
+Migration compatibility with the adjacent supported release is tested directly in CI. The workflow starts the previous release, creates representative resources and workflow configuration, migrates the database with the candidate, verifies the candidate application, and then restarts the previous application against the migrated schema. A separate static policy rejects migration shapes known to violate adjacent-release compatibility.
+
+That test certifies one supported `N-1` transition. It does not promise arbitrary rollback across multiple releases, and it does not make destructive down migrations safe.
 
 ## Application and Authorization Coverage
 

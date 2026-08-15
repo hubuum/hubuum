@@ -177,6 +177,7 @@ async fn preflight_dry_run(
                 .map(|execution| StorageImportPlanItem::new(index, execution))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let plan = crate::storage::StorageImportPlan::new(plan).map_err(ApiError::from)?;
     let (preflight_items, aborted) = storage_handle(pool)
         .preflight_import(
             plan,
@@ -307,6 +308,12 @@ async fn class_relation_exists_cached(
     if state.class_relations.contains(&pair) {
         return Ok(true);
     }
+    // Negative IDs exist only inside this planning pass. A relation involving
+    // a not-yet-persisted class cannot already exist in storage, and virtual
+    // IDs must never cross the storage boundary.
+    if pair.0 <= 0 || pair.1 <= 0 {
+        return Ok(false);
+    }
     if let Some(exists) = state.class_relation_exists_cache.get(&pair) {
         return Ok(*exists);
     }
@@ -328,6 +335,11 @@ async fn object_relation_exists_cached(
     let pair = normalize_pair(left, right);
     if state.object_relations.contains(&pair) {
         return Ok(true);
+    }
+    // Keep planner-local object IDs on the application side of the boundary.
+    // The backend lookup contract accepts persisted IDs only.
+    if pair.0 <= 0 || pair.1 <= 0 {
+        return Ok(false);
     }
     if let Some(exists) = state.object_relation_exists_cache.get(&pair) {
         return Ok(*exists);

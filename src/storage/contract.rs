@@ -1,14 +1,11 @@
-use super::PostgresStorage;
-
 pub(crate) use hubuum_storage_core::{StorageBackend, StorageIdentity};
 
 pub(crate) use super::registry::{StorageBackendDescriptor, StorageBackendKind};
 
-impl StorageBackend for PostgresStorage {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::PostgresStorage;
 
     fn assert_complete_backend<T: StorageBackend>() {}
 

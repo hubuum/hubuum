@@ -291,8 +291,8 @@ async fn finalize_task(
 
 fn import_storage_plan(
     planned_items: &[PlannedItem],
-) -> Result<Vec<crate::storage::StorageImportPlanItem>, ApiError> {
-    planned_items
+) -> Result<crate::storage::StorageImportPlan, ApiError> {
+    let items = planned_items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| item.execution.clone().map(|execution| (index, execution)))
@@ -300,7 +300,8 @@ fn import_storage_plan(
             crate::services::import_boundary::import_operation_to_storage(execution)
                 .map(|execution| crate::storage::StorageImportPlanItem::new(index, execution))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::storage::StorageImportPlan::new(items).map_err(ApiError::from)
 }
 
 pub(super) async fn execute_import_strict(

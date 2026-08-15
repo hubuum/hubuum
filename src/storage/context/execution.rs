@@ -75,27 +75,26 @@ impl StorageExecution for StorageHandle {
 }
 
 impl WorkerNotificationStorage for StorageHandle {
-    fn spawn_worker_notification_listener(
+    fn worker_notification_listener(
         &self,
         topic: StorageNotification,
-        worker_name: &'static str,
         on_notification: fn(),
-    ) {
+        shutdown: StorageNotificationShutdown,
+    ) -> StorageNotificationListener {
         let backend_name = self.backend_name();
         observe_infallible_storage_call(
             backend_name,
             "worker_notifications",
-            "spawn_listener",
+            "create_listener",
             || {
                 debug!(
-                    message = "registering storage worker notification listener",
+                    message = "storage worker notification listener created",
                     topic = topic.as_str(),
-                    worker_name,
                 );
-                dispatch_backend!(self, |backend| backend.spawn_worker_notification_listener(
+                dispatch_backend!(self, |backend| backend.worker_notification_listener(
                     topic,
-                    worker_name,
-                    on_notification
+                    on_notification,
+                    shutdown,
                 ))
             },
         )

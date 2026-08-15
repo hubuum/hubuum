@@ -2316,6 +2316,7 @@ name = "hubuum-storage-postgres"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "async-trait",
  "chrono",
  "diesel",
  "diesel-async",

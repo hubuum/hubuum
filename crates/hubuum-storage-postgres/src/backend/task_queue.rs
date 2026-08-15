@@ -1,7 +1,7 @@
+use crate::operations::task_queue as postgres_task_queue;
 use async_trait::async_trait;
-use hubuum_storage_postgres::operations::task_queue as postgres_task_queue;
 
-use crate::storage::{
+use hubuum_storage_core::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageError, StorageExportOutput,
     StorageExportOutputSummary, StorageImportTaskResultPage, StorageTask, StorageTaskAccess,
     StorageTaskCreateRequest, StorageTaskEventPage, StorageTaskListQuery, StorageTaskOutputLookup,

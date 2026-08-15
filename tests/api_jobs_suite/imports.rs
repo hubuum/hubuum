@@ -263,6 +263,16 @@ mod tests {
             if expected_terminal_statuses.contains(&task.status) {
                 return task;
             }
+            if task.status.is_terminal() {
+                let response =
+                    get_request(pool, token, &format!("/api/v1/imports/{task_id}/results")).await;
+                let response = assert_response_status(response, StatusCode::OK).await;
+                let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+                panic!(
+                    "Task {task_id} reached unexpected terminal status {:?}: {:?}; results: {results:#?}",
+                    task.status, task.summary,
+                );
+            }
             sleep(Duration::from_millis(100)).await;
         }
 
@@ -513,20 +523,42 @@ mod tests {
                 .await
                 .unwrap();
 
-        let returned = with_connection(&context.pool, async |conn| {
-            crate::storage::postgres::operations::task_import::apply_permissions_db(
-                conn,
-                fixture.collection.id,
-                group.id,
-                &[Permissions::ReadCollection],
-                true,
-                None,
-                true,
-            )
-            .await
-        })
-        .await
-        .unwrap();
+        let task = submit_import(
+            &context,
+            &ImportRequest {
+                version: CURRENT_IMPORT_VERSION,
+                dry_run: Some(false),
+                mode: Some(ImportMode {
+                    atomicity: Some(ImportAtomicity::Strict),
+                    collision_policy: Some(ImportCollisionPolicy::Overwrite),
+                    permission_policy: Some(ImportPermissionPolicy::Abort),
+                }),
+                graph: ImportGraph {
+                    collection_permissions: vec![ImportCollectionPermissionInput {
+                        ref_: None,
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: fixture.collection.name.clone(),
+                            path: None,
+                        }),
+                        group_key: GroupKey {
+                            identity_scope: None,
+                            groupname: group.groupname.clone(),
+                        },
+                        permissions: vec![Permissions::ReadCollection],
+                        replace_existing: Some(true),
+                        condition: None,
+                    }],
+                    ..ImportGraph::default()
+                },
+            },
+        )
+        .await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let returned =
+            crate::models::collection::group_on(&context.pool, fixture.collection.id, group.id)
+                .await
+                .unwrap();
 
         assert_eq!(returned.id, before.id);
         assert_eq!(returned.updated_at, before.updated_at);

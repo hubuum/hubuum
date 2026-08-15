@@ -710,6 +710,479 @@ impl StorageImportPlanItem {
     }
 }
 
+/// Structurally validated import operations ready for backend execution.
+///
+/// The application may leave gaps in item indexes when planning rejected an
+/// earlier source item, but indexes must remain strictly increasing. The plan
+/// also guarantees that every operation has unambiguous selectors and valid
+/// identifiers before any backend begins a transaction.
+#[derive(Clone, Debug)]
+pub struct StorageImportPlan {
+    items: Vec<StorageImportPlanItem>,
+}
+
+impl StorageImportPlan {
+    pub fn new(items: Vec<StorageImportPlanItem>) -> Result<Self, StorageError> {
+        let mut previous_index = None;
+        for item in &items {
+            if previous_index.is_some_and(|previous| item.index() <= previous) {
+                return Err(StorageError::bad_request(
+                    "import plan indexes must be strictly increasing",
+                ));
+            }
+            item.operation().validate()?;
+            previous_index = Some(item.index());
+        }
+        Ok(Self { items })
+    }
+
+    #[must_use]
+    pub fn items(&self) -> &[StorageImportPlanItem] {
+        &self.items
+    }
+
+    #[must_use]
+    pub fn into_items(self) -> Vec<StorageImportPlanItem> {
+        self.items
+    }
+}
+
+impl StorageImportOperation {
+    fn validate(&self) -> Result<(), StorageError> {
+        match self {
+            Self::UpsertIdentityScope { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "identity scope ref")?;
+                validate_text(&parts.name, "identity scope name")?;
+                validate_text(&parts.provider_kind, "identity scope provider kind")
+            }
+            Self::UpsertGroup { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "group ref")?;
+                validate_text(&parts.name, "group name")?;
+                validate_selector(
+                    parts.identity_scope_ref.as_deref(),
+                    parts.identity_scope_key.as_ref(),
+                    "group identity scope",
+                    true,
+                )?;
+                if let Some(key) = &parts.identity_scope_key {
+                    validate_identity_scope_key(key)?;
+                }
+                validate_text(&parts.managed_by, "group provider")
+            }
+            Self::UpsertPrincipal { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "principal ref")?;
+                validate_text(&parts.name, "principal name")?;
+                validate_selector(
+                    parts.identity_scope_ref.as_deref(),
+                    parts.identity_scope_key.as_ref(),
+                    "principal identity scope",
+                    true,
+                )?;
+                if let Some(key) = &parts.identity_scope_key {
+                    validate_identity_scope_key(key)?;
+                }
+                match &parts.subtype {
+                    StorageImportPrincipalSubtype::Human { .. } => Ok(()),
+                    StorageImportPrincipalSubtype::ServiceAccount {
+                        owner_group_ref,
+                        owner_group_key,
+                        created_by_ref,
+                        created_by_key,
+                        ..
+                    } => {
+                        validate_selector(
+                            owner_group_ref.as_deref(),
+                            owner_group_key.as_ref(),
+                            "service-account owner group",
+                            true,
+                        )?;
+                        validate_selector(
+                            created_by_ref.as_deref(),
+                            created_by_key.as_ref(),
+                            "service-account creator",
+                            false,
+                        )?;
+                        if let Some(key) = owner_group_key {
+                            validate_group_key(key)?;
+                        }
+                        if let Some(key) = created_by_key {
+                            validate_principal_key(key)?;
+                        }
+                        Ok(())
+                    }
+                }
+            }
+            Self::UpsertGroupMembership { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "membership ref")?;
+                validate_selector(
+                    parts.principal_ref.as_deref(),
+                    parts.principal_key.as_ref(),
+                    "membership principal",
+                    true,
+                )?;
+                validate_selector(
+                    parts.group_ref.as_deref(),
+                    parts.group_key.as_ref(),
+                    "membership group",
+                    true,
+                )?;
+                if let Some(key) = &parts.principal_key {
+                    validate_principal_key(key)?;
+                }
+                if let Some(key) = &parts.group_key {
+                    validate_group_key(key)?;
+                }
+                for source in parts.sources {
+                    let source = source.into_parts();
+                    validate_text(&source.source, "membership source")?;
+                    validate_text(&source.source_key, "membership source key")?;
+                    validate_selector(
+                        source.source_scope_ref.as_deref(),
+                        source.source_scope_key.as_ref(),
+                        "membership source scope",
+                        true,
+                    )?;
+                    if let Some(key) = &source.source_scope_key {
+                        validate_identity_scope_key(key)?;
+                    }
+                }
+                Ok(())
+            }
+            Self::CreateCollection(input) | Self::UpdateCollection { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "collection ref")?;
+                validate_text(&parts.name, "collection name")?;
+                validate_selector(
+                    parts.parent_collection_ref.as_deref(),
+                    parts.parent_collection_key.as_ref(),
+                    "parent collection",
+                    false,
+                )?;
+                if let Some(key) = &parts.parent_collection_key {
+                    validate_collection_key(key)?;
+                }
+                if matches!(self, Self::UpdateCollection { collection_id, .. } if *collection_id <= 0)
+                {
+                    return Err(StorageError::bad_request(
+                        "updated collection id must be greater than zero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::CreateClass(input) | Self::UpdateClass { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "class ref")?;
+                validate_text(&parts.name, "class name")?;
+                validate_selector(
+                    parts.collection_ref.as_deref(),
+                    parts.collection_key.as_ref(),
+                    "class collection",
+                    true,
+                )?;
+                if let Some(key) = &parts.collection_key {
+                    validate_collection_key(key)?;
+                }
+                if matches!(self, Self::UpdateClass { class_id, .. } if *class_id <= 0) {
+                    return Err(StorageError::bad_request(
+                        "updated class id must be greater than zero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::CreateObject(input) | Self::UpdateObject { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "object ref")?;
+                validate_text(&parts.name, "object name")?;
+                validate_selector(
+                    parts.class_ref.as_deref(),
+                    parts.class_key.as_ref(),
+                    "object class",
+                    true,
+                )?;
+                if let Some(key) = &parts.class_key {
+                    validate_class_key(key)?;
+                }
+                if matches!(self, Self::UpdateObject { object_id, .. } if *object_id <= 0) {
+                    return Err(StorageError::bad_request(
+                        "updated object id must be greater than zero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::UpsertComputedField { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "computed-field ref")?;
+                validate_selector(
+                    parts.class_ref.as_deref(),
+                    parts.class_key.as_ref(),
+                    "computed-field class",
+                    true,
+                )?;
+                if let Some(key) = &parts.class_key {
+                    validate_class_key(key)?;
+                }
+                validate_text(&parts.key, "computed-field key")?;
+                validate_text(&parts.label, "computed-field label")?;
+                validate_text(&parts.result_type, "computed-field result type")
+            }
+            Self::CreateClassRelation(input)
+            | Self::UpdateClassRelationTimestamps { input, .. }
+            | Self::CheckClassRelationCondition(input) => validate_class_relation(input),
+            Self::CreateObjectRelation(input)
+            | Self::UpdateObjectRelationTimestamps { input, .. }
+            | Self::CheckObjectRelationCondition(input) => validate_object_relation(input),
+            Self::ApplyCollectionPermissions { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "permission ref")?;
+                validate_selector(
+                    parts.collection_ref.as_deref(),
+                    parts.collection_key.as_ref(),
+                    "permission collection",
+                    true,
+                )?;
+                if let Some(key) = &parts.collection_key {
+                    validate_collection_key(key)?;
+                }
+                validate_group_key(&parts.group_key)
+            }
+            Self::UpsertExportTemplate { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "export-template ref")?;
+                validate_collection_and_optional_class(
+                    parts.collection_ref.as_deref(),
+                    parts.collection_key.as_ref(),
+                    parts.class_ref.as_deref(),
+                    parts.class_key.as_ref(),
+                    "export template",
+                )?;
+                validate_text(&parts.name, "export-template name")?;
+                validate_text(&parts.content_type, "export-template content type")?;
+                validate_text(&parts.kind, "export-template kind")
+            }
+            Self::UpsertRemoteTarget { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "remote-target ref")?;
+                validate_collection_and_optional_class(
+                    parts.collection_ref.as_deref(),
+                    parts.collection_key.as_ref(),
+                    parts.class_ref.as_deref(),
+                    parts.class_key.as_ref(),
+                    "remote target",
+                )?;
+                validate_text(&parts.name, "remote-target name")?;
+                validate_text(&parts.method, "remote-target method")?;
+                validate_text(&parts.url_template, "remote-target URL template")?;
+                if parts.timeout_ms <= 0 {
+                    return Err(StorageError::bad_request(
+                        "remote-target timeout must be greater than zero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::UpsertEventSink { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "event-sink ref")?;
+                validate_text(&parts.name, "event-sink name")?;
+                validate_text(&parts.kind, "event-sink kind")
+            }
+            Self::UpsertEventSubscription { input, .. } => {
+                let parts = input.clone().into_parts();
+                validate_optional_reference(parts.reference.as_deref(), "event-subscription ref")?;
+                validate_selector(
+                    parts.collection_ref.as_deref(),
+                    parts.collection_key.as_ref(),
+                    "event-subscription collection",
+                    true,
+                )?;
+                validate_selector(
+                    parts.sink_ref.as_deref(),
+                    parts.sink_key.as_ref(),
+                    "event-subscription sink",
+                    true,
+                )?;
+                if let Some(key) = &parts.collection_key {
+                    validate_collection_key(key)?;
+                }
+                if let Some(key) = &parts.sink_key {
+                    validate_event_sink_key(key)?;
+                }
+                validate_text(&parts.name, "event-subscription name")
+            }
+        }
+    }
+}
+
+fn validate_text(value: &str, field: &str) -> Result<(), StorageError> {
+    if value.trim().is_empty() {
+        Err(StorageError::bad_request(format!(
+            "{field} must not be empty"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_optional_reference(value: Option<&str>, field: &str) -> Result<(), StorageError> {
+    value.map_or(Ok(()), |value| validate_text(value, field))
+}
+
+fn validate_selector<T>(
+    reference: Option<&str>,
+    key: Option<&T>,
+    field: &str,
+    required: bool,
+) -> Result<(), StorageError> {
+    validate_optional_reference(reference, field)?;
+    match (reference.is_some(), key.is_some(), required) {
+        (true, true, _) => Err(StorageError::bad_request(format!(
+            "{field} must use either a ref or a key, not both"
+        ))),
+        (false, false, true) => Err(StorageError::bad_request(format!(
+            "{field} requires either a ref or a key"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+fn validate_identity_scope_key(key: &StorageImportIdentityScopeKey) -> Result<(), StorageError> {
+    validate_text(&key.clone().into_parts().name, "identity scope key name")
+}
+
+fn validate_group_key(key: &StorageImportGroupKey) -> Result<(), StorageError> {
+    let parts = key.clone().into_parts();
+    if let Some(scope) = &parts.identity_scope {
+        validate_text(scope, "group key identity scope")?;
+    }
+    validate_text(&parts.name, "group key name")
+}
+
+fn validate_principal_key(key: &StorageImportPrincipalKey) -> Result<(), StorageError> {
+    let parts = key.clone().into_parts();
+    if let Some(scope) = &parts.identity_scope {
+        validate_text(scope, "principal key identity scope")?;
+    }
+    validate_text(&parts.name, "principal key name")
+}
+
+fn validate_collection_key(key: &StorageImportCollectionKey) -> Result<(), StorageError> {
+    let parts = key.clone().into_parts();
+    validate_text(&parts.name, "collection key name")?;
+    if parts
+        .path
+        .as_ref()
+        .is_some_and(|path| path.iter().any(|segment| segment.trim().is_empty()))
+    {
+        return Err(StorageError::bad_request(
+            "collection key path segments must not be empty",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_class_key(key: &StorageImportClassKey) -> Result<(), StorageError> {
+    let parts = key.clone().into_parts();
+    validate_text(&parts.name, "class key name")?;
+    validate_selector(
+        parts.collection_ref.as_deref(),
+        parts.collection_key.as_ref(),
+        "class key collection",
+        true,
+    )?;
+    if let Some(key) = &parts.collection_key {
+        validate_collection_key(key)?;
+    }
+    Ok(())
+}
+
+fn validate_object_key(key: &StorageImportObjectKey) -> Result<(), StorageError> {
+    let parts = key.clone().into_parts();
+    validate_text(&parts.name, "object key name")?;
+    validate_selector(
+        parts.class_ref.as_deref(),
+        parts.class_key.as_ref(),
+        "object key class",
+        true,
+    )?;
+    if let Some(key) = &parts.class_key {
+        validate_class_key(key)?;
+    }
+    Ok(())
+}
+
+fn validate_event_sink_key(key: &StorageImportEventSinkKey) -> Result<(), StorageError> {
+    validate_text(&key.clone().into_parts().name, "event-sink key name")
+}
+
+fn validate_class_relation(input: &StorageImportClassRelation) -> Result<(), StorageError> {
+    let parts = input.clone().into_parts();
+    validate_optional_reference(parts.reference.as_deref(), "class-relation ref")?;
+    validate_selector(
+        parts.from_class_ref.as_deref(),
+        parts.from_class_key.as_ref(),
+        "class-relation source",
+        true,
+    )?;
+    validate_selector(
+        parts.to_class_ref.as_deref(),
+        parts.to_class_key.as_ref(),
+        "class-relation target",
+        true,
+    )?;
+    if let Some(key) = &parts.from_class_key {
+        validate_class_key(key)?;
+    }
+    if let Some(key) = &parts.to_class_key {
+        validate_class_key(key)?;
+    }
+    Ok(())
+}
+
+fn validate_object_relation(input: &StorageImportObjectRelation) -> Result<(), StorageError> {
+    let parts = input.clone().into_parts();
+    validate_optional_reference(parts.reference.as_deref(), "object-relation ref")?;
+    validate_selector(
+        parts.from_object_ref.as_deref(),
+        parts.from_object_key.as_ref(),
+        "object-relation source",
+        true,
+    )?;
+    validate_selector(
+        parts.to_object_ref.as_deref(),
+        parts.to_object_key.as_ref(),
+        "object-relation target",
+        true,
+    )?;
+    if let Some(key) = &parts.from_object_key {
+        validate_object_key(key)?;
+    }
+    if let Some(key) = &parts.to_object_key {
+        validate_object_key(key)?;
+    }
+    Ok(())
+}
+
+fn validate_collection_and_optional_class(
+    collection_ref: Option<&str>,
+    collection_key: Option<&StorageImportCollectionKey>,
+    class_ref: Option<&str>,
+    class_key: Option<&StorageImportClassKey>,
+    field: &str,
+) -> Result<(), StorageError> {
+    validate_selector(collection_ref, collection_key, field, true)?;
+    validate_selector(class_ref, class_key, field, false)?;
+    if let Some(key) = collection_key {
+        validate_collection_key(key)?;
+    }
+    if let Some(key) = class_key {
+        validate_class_key(key)?;
+    }
+    Ok(())
+}
+
 /// Per-item dry-run result from a rollback-only backend transaction.
 #[derive(Debug)]
 pub struct StorageImportPreflightItem {
@@ -993,12 +1466,20 @@ pub trait ImportStorage: Send + Sync {
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError>;
 
+    /// Reports whether a relation exists between two persisted class IDs.
+    ///
+    /// Both IDs are positive storage identifiers. Planner-local virtual IDs
+    /// remain in the application layer and are never passed to a backend.
     async fn import_class_relation_exists(
         &self,
         left_class_id: i32,
         right_class_id: i32,
     ) -> Result<bool, StorageError>;
 
+    /// Reports whether a relation exists between two persisted object IDs.
+    ///
+    /// Both IDs are positive storage identifiers. Planner-local virtual IDs
+    /// remain in the application layer and are never passed to a backend.
     async fn import_object_relation_exists(
         &self,
         left_object_id: i32,
@@ -1013,18 +1494,15 @@ pub trait ImportStorage: Send + Sync {
 
     async fn preflight_import(
         &self,
-        items: Vec<StorageImportPlanItem>,
+        plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError>;
 
-    async fn apply_import_strict(
-        &self,
-        items: Vec<StorageImportPlanItem>,
-    ) -> Result<(), StorageError>;
+    async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError>;
 
     async fn apply_import_best_effort(
         &self,
-        items: Vec<StorageImportPlanItem>,
+        plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportApply, StorageError>;
 
@@ -1087,5 +1565,53 @@ mod tests {
         let debug = format!("{operation:?}");
         assert!(debug.contains("create_collection"));
         assert!(!debug.contains(sensitive));
+    }
+
+    #[test]
+    fn import_plan_rejects_non_increasing_indexes() {
+        let operation = || StorageImportOperation::UpsertIdentityScope {
+            input: StorageImportIdentityScope::from_parts(StorageImportIdentityScopeParts {
+                reference: None,
+                name: "local".to_string(),
+                provider_kind: "local".to_string(),
+                condition: None,
+                timestamps: None,
+            }),
+            overwrite: false,
+        };
+
+        let result = StorageImportPlan::new(vec![
+            StorageImportPlanItem::new(1, operation()),
+            StorageImportPlanItem::new(1, operation()),
+        ]);
+
+        assert!(result.is_err_and(|error| {
+            error
+                .to_string()
+                .contains("indexes must be strictly increasing")
+        }));
+    }
+
+    #[test]
+    fn import_plan_rejects_invalid_operation_shape() {
+        let result = StorageImportPlan::new(vec![StorageImportPlanItem::new(
+            0,
+            StorageImportOperation::UpsertIdentityScope {
+                input: StorageImportIdentityScope::from_parts(StorageImportIdentityScopeParts {
+                    reference: None,
+                    name: " ".to_string(),
+                    provider_kind: "local".to_string(),
+                    condition: None,
+                    timestamps: None,
+                }),
+                overwrite: false,
+            },
+        )]);
+
+        assert!(result.is_err_and(|error| {
+            error
+                .to_string()
+                .contains("identity scope name must not be empty")
+        }));
     }
 }

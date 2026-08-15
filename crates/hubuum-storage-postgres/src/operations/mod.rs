@@ -30,7 +30,8 @@ pub mod identity_scope;
 pub(crate) mod import_execution;
 pub mod import_workflow;
 pub mod inventory;
-pub(crate) mod json_filter;
+#[doc(hidden)]
+pub mod json_filter;
 pub mod maintenance;
 pub mod meta;
 pub mod metrics;

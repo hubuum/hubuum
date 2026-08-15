@@ -65,8 +65,8 @@ use crate::storage::{
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
     StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
     StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageImportPlanItem,
-    StorageImportResult, StorageLocalPasswordReset, StorageObject,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan,
+    StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
     StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
@@ -1379,7 +1379,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 .expect("certified backend should look up import groups")
         );
 
-        let preflight_plan = vec![StorageImportPlanItem::new(
+        let preflight_plan = StorageImportPlan::new(vec![StorageImportPlanItem::new(
             0,
             crate::services::import_boundary::import_operation_to_storage(
                 ApplicationImportOperation::CreateCollection(collection_input(
@@ -1388,7 +1388,8 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 )),
             )
             .expect("valid collection input should cross the storage boundary"),
-        )];
+        )])
+        .expect("valid operations should form an import plan");
         let (preflight, aborted) = backend
             .preflight_import(
                 preflight_plan.clone(),
@@ -1422,7 +1423,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
             .await
             .expect("certified backend should atomically apply a strict import");
 
-        let rollback_plan = vec![
+        let rollback_plan = StorageImportPlan::new(vec![
             StorageImportPlanItem::new(
                 0,
                 crate::services::import_boundary::import_operation_to_storage(
@@ -1450,7 +1451,8 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 )
                 .expect("valid class input should cross the storage boundary"),
             ),
-        ];
+        ])
+        .expect("valid operations should form a rollback import plan");
         assert!(backend.apply_import_strict(rollback_plan).await.is_err());
         assert!(
             backend
@@ -1463,7 +1465,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
 
         let best_effort = backend
             .apply_import_best_effort(
-                vec![
+                StorageImportPlan::new(vec![
                     StorageImportPlanItem::new(
                         0,
                         crate::services::import_boundary::import_operation_to_storage(
@@ -1491,7 +1493,8 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                         )
                         .expect("valid class input should cross the storage boundary"),
                     ),
-                ],
+                ])
+                .expect("valid operations should form a best-effort import plan"),
                 crate::services::import_boundary::import_mode_to_storage(ImportMode {
                     atomicity: Some(ImportAtomicity::BestEffort),
                     ..ImportMode::default()

@@ -30,8 +30,8 @@ use crate::services::tasks::{
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::storage::{
-    StorageCallSite, StorageNotification, WorkerNotificationStorage, with_mutation_provenance,
-    with_storage_call_site, with_storage_call_site_send,
+    StorageCallSite, StorageNotification, spawn_storage_notification_listener,
+    with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
 };
 
 use super::TaskWorkerSettings;
@@ -220,7 +220,8 @@ pub fn ensure_task_worker_running_with_settings(
     }
     let poll_interval = configured_task_poll_interval();
     TASK_WORKER_LISTENER.call_once(|| {
-        context.backend().spawn_worker_notification_listener(
+        spawn_storage_notification_listener(
+            context.backend().clone(),
             StorageNotification::TaskQueue,
             "task-worker-storage-listener",
             wake_task_worker_from_storage,

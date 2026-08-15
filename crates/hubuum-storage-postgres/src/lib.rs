@@ -4,6 +4,7 @@
 //! integration surface for Hubuum's PostgreSQL adapter. They must not cross
 //! the backend-neutral traits in `hubuum-storage-core`.
 
+mod backend;
 pub mod cursor;
 mod error;
 mod failpoints;
@@ -21,6 +22,7 @@ mod runtime;
 pub mod schema;
 pub mod worker_notifications;
 
+pub use backend::PostgresStorage;
 pub use error::PostgresStorageError;
 #[doc(hidden)]
 pub use failpoints::{PostgresFailpoint, check_failpoint, with_failpoint};
