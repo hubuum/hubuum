@@ -113,7 +113,75 @@ pub(crate) async fn materialize_object(
         return Ok(None);
     }
     let state = ensure_computation_state(connection, object.class_id).await?;
-    let result = evaluate_definitions(object.data, &definitions, MAX_SHARED_DEFINITIONS)?;
+    let (input, summary) =
+        evaluate_materialized_object(object, state.evaluation_revision, &definitions)?;
+    upsert_materialized_object(connection, &input).await?;
+    Ok(Some(summary))
+}
+
+/// Materialize one object in a caller-owned PostgreSQL transaction.
+///
+/// This narrow integration hook exists for PostgreSQL-owned import workflows
+/// that have not yet moved into this crate. Backend-neutral consumers use the
+/// object lifecycle traits instead.
+#[doc(hidden)]
+pub async fn materialize_object_on_connection(
+    connection: &mut PostgresConnection,
+    object_id: i32,
+    class_id: i32,
+    data: &serde_json::Value,
+) -> Result<Option<Vec<&'static str>>, PostgresStorageError> {
+    materialize_object(
+        connection,
+        ObjectMaterializationInput::new(object_id, class_id, data),
+    )
+    .await
+    .map(|summary| summary.map(|summary| summary.error_codes))
+}
+
+/// Rebuild a bounded object batch after the caller validates the task lease
+/// and acquires the shared computed-class lock.
+pub(crate) async fn rebuild_objects(
+    connection: &mut PostgresConnection,
+    class_id: i32,
+    evaluation_revision: i64,
+    objects: &[ObjectMaterializationInput<'_>],
+) -> Result<Vec<ComputedEvaluationSummary>, PostgresStorageError> {
+    if objects.iter().any(|object| object.class_id != class_id) {
+        return Err(PostgresStorageError::internal(
+            "Computed rebuild batch contains an object from another class",
+        ));
+    }
+    let definitions = shared_definitions(connection, class_id).await?;
+    if definitions.is_empty() {
+        let object_ids = objects
+            .iter()
+            .map(|object| object.object_id)
+            .collect::<Vec<_>>();
+        diesel::delete(
+            crate::schema::object_computed_data::table
+                .filter(crate::schema::object_computed_data::object_id.eq_any(object_ids)),
+        )
+        .execute(connection)
+        .await?;
+        return Ok(Vec::new());
+    }
+    let mut summaries = Vec::with_capacity(objects.len());
+    for object in objects {
+        let (input, summary) =
+            evaluate_materialized_object(*object, evaluation_revision, &definitions)?;
+        upsert_materialized_object(connection, &input).await?;
+        summaries.push(summary);
+    }
+    Ok(summaries)
+}
+
+fn evaluate_materialized_object(
+    object: ObjectMaterializationInput<'_>,
+    evaluation_revision: i64,
+    definitions: &[ComputedDefinitionRow],
+) -> Result<(NewMaterializedObjectRow, ComputedEvaluationSummary), PostgresStorageError> {
+    let result = evaluate_definitions(object.data, definitions, MAX_SHARED_DEFINITIONS)?;
     let summary = ComputedEvaluationSummary {
         error_codes: result
             .errors
@@ -121,18 +189,27 @@ pub(crate) async fn materialize_object(
             .map(|error| error.code.as_str())
             .collect(),
     };
-    let input = NewMaterializedObjectRow {
-        object_id: object.object_id,
-        class_id: object.class_id,
-        evaluation_revision: state.evaluation_revision,
-        source_data_sha256: source_data_sha256(object.data)?,
-        values: serde_json::to_value(result.values)
-            .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
-        errors: serde_json::to_value(result.errors)
-            .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
-    };
+    Ok((
+        NewMaterializedObjectRow {
+            object_id: object.object_id,
+            class_id: object.class_id,
+            evaluation_revision,
+            source_data_sha256: source_data_sha256(object.data)?,
+            values: serde_json::to_value(result.values)
+                .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
+            errors: serde_json::to_value(result.errors)
+                .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
+        },
+        summary,
+    ))
+}
+
+async fn upsert_materialized_object(
+    connection: &mut PostgresConnection,
+    input: &NewMaterializedObjectRow,
+) -> Result<(), PostgresStorageError> {
     diesel::insert_into(crate::schema::object_computed_data::table)
-        .values(&input)
+        .values(input)
         .on_conflict(crate::schema::object_computed_data::object_id)
         .do_update()
         .set((
@@ -145,7 +222,7 @@ pub(crate) async fn materialize_object(
         ))
         .execute(connection)
         .await?;
-    Ok(Some(summary))
+    Ok(())
 }
 
 async fn shared_definitions(

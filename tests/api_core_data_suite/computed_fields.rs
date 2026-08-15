@@ -13,13 +13,13 @@ mod tests {
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceAttrs, ResourceKind};
-    use crate::storage::postgres::operations::computed_field::{
+    use crate::services::computed_fields::{
         class_computation_state_for, create_personal_definition, create_shared_definition,
-        execute_computed_reindex_task, request_class_rebuild, source_data_sha256,
+        request_class_rebuild,
     };
-    use crate::storage::postgres::operations::task::{
-        claim_task_for_backend_test, recover_expired_task_leases,
-    };
+    use crate::services::tasks::{ClaimedTask, execute_computed_field_rebuild};
+    use crate::storage::postgres::operations::computed_field::source_data_sha256;
+    use crate::storage::postgres::operations::task::claim_task_for_backend_test;
     use crate::storage::postgres::{capture_queries, with_connection};
     use crate::tests::api_operations::{
         get_request, get_request_with_permission_backend, patch_request,
@@ -111,10 +111,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn active_rebuild_task(
-        context: &TestContext,
-        class_id: i32,
-    ) -> crate::models::TaskRecord {
+    async fn active_rebuild_task(context: &TestContext, class_id: i32) -> ClaimedTask {
         for _ in 0..50 {
             let state = class_computation_state_for(&context.pool, class_id)
                 .await
@@ -140,7 +137,7 @@ mod tests {
                 }
             };
             if let Ok(task) = claim_task_for_backend_test(&context.pool, task_id).await {
-                return task.into();
+                return ClaimedTask::from_record(task.into()).unwrap();
             }
             tokio::task::yield_now().await;
         }
@@ -156,7 +153,7 @@ mod tests {
                 return;
             }
             let task = active_rebuild_task(context, class_id).await;
-            let _ = execute_computed_reindex_task(&context.pool, &task).await;
+            let _ = execute_computed_field_rebuild(&context.pool, &task).await;
             tokio::task::yield_now().await;
         }
         panic!("computed-field rebuild did not reach ready state");

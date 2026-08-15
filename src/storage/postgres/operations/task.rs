@@ -223,96 +223,6 @@ async fn database_now(
         .map_err(ApiError::from)
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct QueuedTaskCancellation {
-    summary: String,
-    event_message: String,
-    actor: Option<PrincipalID>,
-}
-
-impl QueuedTaskCancellation {
-    pub(crate) fn new(summary: impl Into<String>) -> Self {
-        let summary = summary.into();
-        Self {
-            event_message: summary.clone(),
-            summary,
-            actor: None,
-        }
-    }
-
-    pub(crate) fn with_event_message(mut self, message: impl Into<String>) -> Self {
-        self.event_message = message.into();
-        self
-    }
-
-    pub(crate) fn with_actor(mut self, actor: Option<PrincipalID>) -> Self {
-        self.actor = actor;
-        self
-    }
-}
-
-/// Apply the complete queued-to-cancelled persistence transition.
-///
-/// Callers must invoke this inside a transaction when cancellation is part of a
-/// larger mutation. The status predicate protects tasks claimed after their ids
-/// were selected, while the shared transition keeps terminal timestamps,
-/// request redaction, leases, and lifecycle events consistent.
-pub(crate) async fn cancel_queued_tasks_conn(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    task_ids: &[i32],
-    cancellation: &QueuedTaskCancellation,
-) -> Result<Vec<TaskRecord>, ApiError> {
-    use crate::schema::tasks::dsl::{
-        finished_at, id, lease_expires_at, lease_token, request_payload, request_redacted_at,
-        status, summary, tasks, updated_at,
-    };
-
-    if task_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let terminal_at = database_now(conn).await?;
-    let cancelled = diesel::update(
-        tasks
-            .filter(id.eq_any(task_ids))
-            .filter(status.eq(TaskStatus::Queued.as_str())),
-    )
-    .set((
-        status.eq(TaskStatus::Cancelled.as_str()),
-        summary.eq(Some(cancellation.summary.clone())),
-        finished_at.eq(Some(terminal_at)),
-        request_payload.eq::<Option<serde_json::Value>>(None),
-        request_redacted_at.eq(Some(terminal_at)),
-        lease_token.eq::<Option<Uuid>>(None),
-        lease_expires_at.eq::<Option<NaiveDateTime>>(None),
-        updated_at.eq(terminal_at),
-    ))
-    .get_results::<TaskRecord>(conn)
-    .await?;
-
-    for task in &cancelled {
-        let provenance = if let Some(actor) = cancellation.actor {
-            task.user_provenance(actor)
-        } else {
-            task.system_provenance()
-        };
-        emit_task_lifecycle_event(
-            conn,
-            task,
-            &NewTaskEventRecord {
-                task_id: task.id,
-                event_type: TaskStatus::Cancelled.as_str().to_string(),
-                message: cancellation.event_message.clone(),
-                data: None,
-            },
-            &provenance,
-        )
-        .await?;
-    }
-
-    Ok(cancelled)
-}
-
 /// Anything that can name a task for a backend query: a [`TaskID`] from a request path or an
 /// already-loaded [`TaskRecord`] (and references to either). The required `task_id` resolves the
 /// raw id at the persistence boundary so it never leaks into the domain.
@@ -1463,12 +1373,14 @@ async fn recover_expired_task_leases_matching(
             let message = "Task worker lease expired; task failed without automatic replay";
             let counts = recovered_task_result_counts(conn, &stale_task).await?;
             if TaskKind::from_db(&stale_task.kind)? == TaskKind::Reindex {
-                crate::storage::postgres::operations::computed_field::mark_recovered_computed_reindex_failed(
+                hubuum_storage_postgres::operations::task_execution::mark_recovered_reindex_failed_on_connection(
                     conn,
                     stale_task.id,
                     message,
                 )
-                .await?;
+                .await
+                .map_err(crate::storage::StorageError::from)
+                .map_err(ApiError::from)?;
             }
             emit_task_lifecycle_event(
                 conn,
@@ -1665,6 +1577,7 @@ async fn insert_queued_task_with_event(
 ///
 /// Internal maintenance tasks may outlive the principal that triggered them,
 /// so execution cannot depend on reloading or reauthorizing that principal.
+#[cfg(test)]
 pub(crate) async fn insert_internal_queued_task(
     conn: &mut crate::storage::postgres::PostgresConnection,
     kind: TaskKind,

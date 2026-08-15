@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use hubuum_storage_postgres::operations::task_execution as postgres_task_execution;
-use uuid::Uuid;
 
-use crate::errors::ApiError;
 use crate::storage::{
     StorageError, StorageTask, StorageTaskClaim, StorageTaskCompletion, StorageTaskEventAppend,
     StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskStateUpdate,
@@ -10,39 +8,6 @@ use crate::storage::{
 };
 
 use super::PostgresStorage;
-use super::operations::task::TaskIdentifier;
-
-pub(super) struct ClaimedTaskIdentifier {
-    task_id: i32,
-    token: Uuid,
-}
-
-impl TaskIdentifier for ClaimedTaskIdentifier {
-    fn task_id(&self) -> i32 {
-        self.task_id
-    }
-
-    fn task_lease_token(&self) -> Option<Uuid> {
-        Some(self.token)
-    }
-}
-
-pub(super) fn claimed_identifier(
-    lease: &StorageTaskLease,
-) -> Result<ClaimedTaskIdentifier, ApiError> {
-    if lease.task_id() <= 0 {
-        return Err(ApiError::BadRequest(
-            "Task claim id must be greater than zero".to_string(),
-        ));
-    }
-    let token = Uuid::parse_str(lease.token().adapter_value()).map_err(|_| {
-        ApiError::BadRequest("Task claim token is not valid for this backend".to_string())
-    })?;
-    Ok(ClaimedTaskIdentifier {
-        task_id: lease.task_id(),
-        token,
-    })
-}
 
 #[async_trait]
 impl TaskExecutionStorage for PostgresStorage {

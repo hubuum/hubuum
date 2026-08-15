@@ -1425,12 +1425,14 @@ pub async fn upsert_computed_field_db(
         })
         .await?;
         if changed && matches!(input.visibility, ImportComputedFieldVisibility::Shared) {
-            crate::storage::postgres::operations::computed_field::advance_revision_and_enqueue(
+            hubuum_storage_postgres::operations::computed_lifecycle::advance_revision_and_enqueue_on_connection(
                 conn,
                 class_id_value,
                 None,
             )
-            .await?;
+            .await
+            .map_err(crate::storage::StorageError::from)
+            .map_err(ApiError::from)?;
         }
         return Ok(definition.id);
     }
@@ -1458,12 +1460,14 @@ pub async fn upsert_computed_field_db(
         .get_result::<ComputedFieldDefinitionRow>(conn)
         .await?;
     if matches!(input.visibility, ImportComputedFieldVisibility::Shared) {
-        crate::storage::postgres::operations::computed_field::advance_revision_and_enqueue(
+        hubuum_storage_postgres::operations::computed_lifecycle::advance_revision_and_enqueue_on_connection(
             conn,
             class_id_value,
             None,
         )
-        .await?;
+        .await
+        .map_err(crate::storage::StorageError::from)
+        .map_err(ApiError::from)?;
     }
     Ok(definition.id)
 }

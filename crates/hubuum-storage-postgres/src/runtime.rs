@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,6 +19,7 @@ use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, Postgres
 
 /// Latest migration required by this adapter.
 pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000025";
+pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// Adapter-level telemetry supplied by the application composition root.
 ///
@@ -54,6 +56,8 @@ pub trait PostgresTelemetry: Send + Sync {
     }
 
     fn computed_rebuild_finished(&self, _outcome: &'static str, _duration: Duration) {}
+
+    fn computed_rebuild_batch(&self, _object_count: usize) {}
 }
 
 #[derive(Debug, Default)]
@@ -66,6 +70,7 @@ impl PostgresTelemetry for NoopPostgresTelemetry {}
 pub struct PostgresRuntime {
     pool: PostgresPool,
     task_lease_pool: PostgresPool,
+    computed_reindex_batch_size: NonZeroUsize,
     telemetry: Arc<dyn PostgresTelemetry>,
 }
 
@@ -75,6 +80,10 @@ impl fmt::Debug for PostgresRuntime {
             .debug_struct("PostgresRuntime")
             .field("pool", &"<postgresql pool>")
             .field("task_lease_pool", &"<postgresql pool>")
+            .field(
+                "computed_reindex_batch_size",
+                &self.computed_reindex_batch_size,
+            )
             .field("telemetry", &"<postgresql telemetry>")
             .finish()
     }
@@ -85,6 +94,7 @@ impl PostgresRuntime {
     pub fn new(pool: PostgresPool) -> Self {
         Self {
             task_lease_pool: pool.clone(),
+            computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
             pool,
             telemetry: Arc::new(NoopPostgresTelemetry),
         }
@@ -98,6 +108,13 @@ impl PostgresRuntime {
     #[must_use]
     pub fn with_task_lease_pool(mut self, task_lease_pool: PostgresPool) -> Self {
         self.task_lease_pool = task_lease_pool;
+        self
+    }
+
+    /// Configure the bounded number of objects rebuilt in one transaction.
+    #[must_use]
+    pub fn with_computed_reindex_batch_size(mut self, batch_size: NonZeroUsize) -> Self {
+        self.computed_reindex_batch_size = batch_size;
         self
     }
 
@@ -115,6 +132,10 @@ impl PostgresRuntime {
     #[doc(hidden)]
     pub fn task_lease_pool(&self) -> &PostgresPool {
         &self.task_lease_pool
+    }
+
+    pub(crate) fn computed_reindex_batch_size(&self) -> usize {
+        self.computed_reindex_batch_size.get()
     }
 
     async fn acquire_connection_from<'pool>(
@@ -346,6 +367,10 @@ impl PostgresRuntime {
         duration: Duration,
     ) {
         self.telemetry.computed_rebuild_finished(outcome, duration);
+    }
+
+    pub(crate) fn record_computed_rebuild_batch(&self, object_count: usize) {
+        self.telemetry.computed_rebuild_batch(object_count);
     }
 }
 

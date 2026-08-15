@@ -50,9 +50,9 @@ const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
-struct ClaimedTask {
-    id: i32,
-    token: Uuid,
+pub(super) struct ClaimedTask {
+    pub(super) id: i32,
+    pub(super) token: Uuid,
 }
 
 #[derive(Clone)]
@@ -264,7 +264,12 @@ pub async fn recover_expired_task_leases(
                 let kind = stored_task_kind(&stale_task)?;
                 let counts = recovered_counts(connection, &stale_task, kind).await?;
                 if kind == StorageTaskKind::Reindex {
-                    mark_recovered_reindex_failed(connection, stale_task.id).await?;
+                    mark_recovered_reindex_failed_on_connection(
+                        connection,
+                        stale_task.id,
+                        LEASE_EXPIRED_MESSAGE,
+                    )
+                    .await?;
                 }
                 append_task_lifecycle_event(
                     connection,
@@ -417,6 +422,21 @@ pub async fn complete_task(
     };
     record_task_terminal(runtime, &row);
     row.into_storage()
+}
+
+pub(super) async fn complete_task_on_connection(
+    connection: &mut PostgresConnection,
+    update: StorageTaskStateUpdate,
+    event: StorageTaskEventInput,
+) -> Result<TaskRow, PostgresStorageError> {
+    let (claimed, update) = state_update(update)?;
+    if !update.status.is_terminal() {
+        return Err(PostgresStorageError::bad_request(format!(
+            "Task completion requires a terminal status, received '{}'",
+            update.status.as_str()
+        )));
+    }
+    finalize_task_connection(connection, claimed, update, event).await
 }
 
 pub async fn fail_task(
@@ -641,7 +661,7 @@ fn system_provenance(task: &TaskRow) -> MutationProvenance {
     MutationProvenance::system_for_task(task.initiator_user_id, task.id)
 }
 
-async fn live_claimed_task(
+pub(super) async fn live_claimed_task(
     connection: &mut PostgresConnection,
     claimed: ClaimedTask,
 ) -> Result<TaskRow, PostgresStorageError> {
@@ -658,7 +678,7 @@ async fn live_claimed_task(
         .map_err(PostgresStorageError::from)
 }
 
-async fn find_task(
+pub(super) async fn find_task(
     runtime: &PostgresRuntime,
     task_id: i32,
 ) -> Result<TaskRow, PostgresStorageError> {
@@ -690,7 +710,7 @@ fn state_update(
     ))
 }
 
-fn claimed_task(lease: &StorageTaskLease) -> Result<ClaimedTask, PostgresStorageError> {
+pub(super) fn claimed_task(lease: &StorageTaskLease) -> Result<ClaimedTask, PostgresStorageError> {
     if lease.task_id() <= 0 {
         return Err(PostgresStorageError::bad_request(
             "Task claim id must be greater than zero",
@@ -861,18 +881,18 @@ async fn mark_reindex_failed(
     Ok(())
 }
 
-async fn mark_recovered_reindex_failed(
+#[doc(hidden)]
+pub async fn mark_recovered_reindex_failed_on_connection(
     connection: &mut PostgresConnection,
     task_id: i32,
+    stored_error: &str,
 ) -> Result<(), PostgresStorageError> {
     use crate::schema::class_computation_state::dsl as state;
     diesel::update(state::class_computation_state.filter(state::active_task_id.eq(Some(task_id))))
         .set((
             state::rebuild_status.eq("failed"),
             state::active_task_id.eq::<Option<i32>>(None),
-            state::last_error.eq(Some(
-                LEASE_EXPIRED_MESSAGE.chars().take(512).collect::<String>(),
-            )),
+            state::last_error.eq(Some(stored_error.chars().take(512).collect::<String>())),
             state::updated_at.eq(diesel::dsl::now),
         ))
         .execute(connection)
@@ -1037,7 +1057,7 @@ async fn purge_expired_outputs(
     Ok(cleaned)
 }
 
-fn record_task_terminal(runtime: &PostgresRuntime, row: &TaskRow) {
+pub(super) fn record_task_terminal(runtime: &PostgresRuntime, row: &TaskRow) {
     tracing::info!(
         message = "Task reached terminal state",
         backend = "postgresql",

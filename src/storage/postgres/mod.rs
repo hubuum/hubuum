@@ -24,6 +24,7 @@ pub use runtime::*;
 
 use async_trait::async_trait;
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -146,6 +147,10 @@ impl PostgresTelemetry for ApplicationPostgresTelemetry {
     fn computed_rebuild_finished(&self, outcome: &'static str, duration: Duration) {
         crate::observability::metrics::computed_rebuild_finished(outcome, duration);
     }
+
+    fn computed_rebuild_batch(&self, object_count: usize) {
+        crate::observability::metrics::computed_rebuild_batch(object_count);
+    }
 }
 
 /// Canonical production storage adapter.
@@ -161,7 +166,12 @@ pub(in crate::storage) use hubuum_storage_postgres::run_embedded_migrations;
 
 impl PostgresStorage {
     pub(crate) fn new(pool: PostgresPool) -> Self {
+        let computed_reindex_batch_size = crate::config::get_config()
+            .ok()
+            .and_then(|config| NonZeroUsize::new(config.computed_reindex_batch_size))
+            .unwrap_or(hubuum_storage_postgres::DEFAULT_COMPUTED_REINDEX_BATCH_SIZE);
         let runtime = PostgresRuntime::new(pool.clone())
+            .with_computed_reindex_batch_size(computed_reindex_batch_size)
             .with_telemetry(Arc::new(ApplicationPostgresTelemetry));
         Self {
             pool,

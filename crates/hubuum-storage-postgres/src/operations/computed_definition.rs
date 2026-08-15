@@ -1,17 +1,23 @@
 //! Adapter-private representation and validation of persisted computed fields.
 
+use chrono::NaiveDateTime;
 use diesel::{Queryable, Selectable};
 use hubuum_computed_fields::{
     Definition, EvaluationLimits, EvaluationResult, FieldKey, Operation, ResultType, evaluate,
 };
 use hubuum_query::ComputedQueryValueType;
+use hubuum_storage_core::{
+    StorageComputedFieldDefinition, StorageComputedFieldDefinitionContent,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldProvenance,
+    StorageComputedFieldVisibility, StorageRecordMetadata,
+};
 
-use crate::PostgresStorageError;
+use crate::{PostgresRevision, PostgresStorageError};
 
 pub(crate) const PERSONAL_VISIBILITY: &str = "personal";
 pub(crate) const SHARED_VISIBILITY: &str = "shared";
 
-#[derive(Clone, Debug, Queryable, Selectable)]
+#[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::computed_field_definitions)]
 pub(crate) struct ComputedDefinitionRow {
     id: i32,
@@ -24,6 +30,27 @@ pub(crate) struct ComputedDefinitionRow {
     operation: serde_json::Value,
     result_type: String,
     enabled: bool,
+    revision: PostgresRevision,
+    semantics_version: i16,
+    created_by: Option<i32>,
+    updated_by: Option<i32>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+}
+
+impl std::fmt::Debug for ComputedDefinitionRow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ComputedDefinitionRow")
+            .field("id", &self.id)
+            .field("class_id", &self.class_id)
+            .field("visibility", &self.visibility)
+            .field("result_type", &self.result_type)
+            .field("enabled", &self.enabled)
+            .field("revision", &self.revision)
+            .field("definition", &"[redacted]")
+            .finish()
+    }
 }
 
 impl ComputedDefinitionRow {
@@ -43,12 +70,24 @@ impl ComputedDefinitionRow {
         &self.operation
     }
 
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub(crate) fn description(&self) -> &str {
+        &self.description
+    }
+
     pub(crate) fn result_type_name(&self) -> &str {
         &self.result_type
     }
 
     pub(crate) const fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub(crate) const fn revision(&self) -> PostgresRevision {
+        self.revision
     }
 
     pub(crate) fn is_shared(&self) -> bool {
@@ -89,6 +128,66 @@ impl ComputedDefinitionRow {
             self.enabled,
         )
         .map_err(|error| invalid_definition(self.id, error))
+    }
+
+    pub(crate) fn into_storage(
+        self,
+    ) -> Result<StorageComputedFieldDefinition, PostgresStorageError> {
+        let visibility = match (self.visibility.as_str(), self.owner_user_id) {
+            (SHARED_VISIBILITY, None) => StorageComputedFieldVisibility::Shared,
+            (PERSONAL_VISIBILITY, Some(owner_id)) => {
+                StorageComputedFieldVisibility::Personal { owner_id }
+            }
+            (visibility, owner_id) => {
+                return Err(PostgresStorageError::database(format!(
+                    "Computed-field definition {} has invalid visibility '{visibility}' and owner {owner_id:?}",
+                    self.id
+                )));
+            }
+        };
+        Ok(StorageComputedFieldDefinition::new(
+            StorageRecordMetadata::new(
+                self.id,
+                self.created_at,
+                self.updated_at,
+                self.revision.get(),
+            ),
+            self.class_id,
+            visibility,
+            StorageComputedFieldDefinitionContent::new(
+                StorageComputedFieldDefinitionInput::new(
+                    self.key,
+                    self.label,
+                    self.operation,
+                    self.result_type,
+                )
+                .with_description(self.description)
+                .with_enabled(self.enabled),
+                self.semantics_version,
+            ),
+            StorageComputedFieldProvenance::new(self.created_by, self.updated_by),
+        ))
+    }
+
+    pub(crate) fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "class_id": self.class_id,
+            "visibility": self.visibility,
+            "owner_user_id": self.owner_user_id,
+            "key": self.key,
+            "label": self.label,
+            "description": self.description,
+            "operation": self.operation,
+            "result_type": self.result_type,
+            "enabled": self.enabled,
+            "revision": self.revision.get(),
+            "semantics_version": self.semantics_version,
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        })
     }
 }
 

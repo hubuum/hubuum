@@ -2196,6 +2196,81 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
+fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/computed_lifecycle.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::config",
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "{} depends on application path {forbidden}",
+            adapter_path.display()
+        );
+    }
+    for required in [
+        "pub async fn computed_field_state",
+        "pub async fn list_shared_computed_fields",
+        "pub async fn list_personal_computed_fields",
+        "pub async fn create_shared_computed_field",
+        "pub async fn update_shared_computed_field",
+        "pub async fn delete_shared_computed_field",
+        "pub async fn create_personal_computed_field",
+        "pub async fn update_personal_computed_field",
+        "pub async fn delete_personal_computed_field",
+        "pub async fn request_computed_field_rebuild",
+        "pub async fn execute_computed_field_rebuild",
+    ] {
+        assert!(
+            adapter.contains(required),
+            "PostgreSQL computed-field lifecycle is missing {required}"
+        );
+    }
+
+    let facade_path = root.join("src/storage/postgres/computed_fields.rs");
+    let facade = read_source(&facade_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
+    let implementation = item_body(
+        &facade,
+        "impl",
+        "ComputedFieldLifecycleStorage for PostgresStorage",
+    );
+    for method in [
+        "computed_field_state",
+        "list_shared_computed_fields",
+        "list_personal_computed_fields",
+        "get_computed_field",
+        "create_shared_computed_field",
+        "update_shared_computed_field",
+        "delete_shared_computed_field",
+        "create_personal_computed_field",
+        "update_personal_computed_field",
+        "delete_personal_computed_field",
+        "request_computed_field_rebuild",
+        "execute_computed_field_rebuild",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("postgres_computed_lifecycle::"),
+            "the {method} computed-field implementation must delegate into the adapter crate"
+        );
+        for forbidden in ["self.pool", "operations::computed_field", "_to_storage"] {
+            assert!(
+                !method_body.contains(forbidden),
+                "the {method} computed-field implementation retains application detail {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn object_aggregate_queries_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/object_aggregate");

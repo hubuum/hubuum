@@ -241,10 +241,10 @@ pub(crate) async fn apply_restore_db(
             reset_sequence(conn, table, "history_id").await?;
         }
 
-        crate::storage::postgres::operations::computed_field::enqueue_restored_computed_rebuilds(
-            conn,
-        )
-        .await?;
+        hubuum_storage_postgres::operations::computed_lifecycle::enqueue_restored_computed_rebuilds_on_connection(conn)
+            .await
+            .map_err(crate::storage::StorageError::from)
+            .map_err(ApiError::from)?;
 
         // Restored event rows must not fan out while they are inserted. This
         // new event is the one deliberate post-restore provenance record and

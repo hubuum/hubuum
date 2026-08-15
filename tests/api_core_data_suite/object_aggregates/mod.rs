@@ -13,10 +13,11 @@ use crate::models::{
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::{PermissionBackend, ResourceAttrs, ResourceKind};
-use crate::storage::postgres::operations::computed_field::{
+use crate::services::computed_fields::{
     class_computation_state_for, create_personal_definition, create_shared_definition,
-    execute_computed_reindex_task, update_shared_definition,
+    update_shared_definition,
 };
+use crate::services::tasks::{ClaimedTask, execute_computed_field_rebuild};
 use crate::storage::postgres::operations::task::claim_task_for_backend_test;
 use crate::tests::api_operations::get_request;
 use crate::tests::asserts::{assert_response_status, header_value};
@@ -201,8 +202,8 @@ async fn finish_active_rebuild(context: &TestContext, class_id: i32) {
         let task = claim_task_for_backend_test(&context.pool, state.active_task_id.unwrap())
             .await
             .unwrap();
-        let task = task.into();
-        let _ = execute_computed_reindex_task(&context.pool, &task).await;
+        let task = ClaimedTask::from_record(task.into()).unwrap();
+        let _ = execute_computed_field_rebuild(&context.pool, &task).await;
         tokio::task::yield_now().await;
     }
     panic!("computed-field rebuild did not finish");

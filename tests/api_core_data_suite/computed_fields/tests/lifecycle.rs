@@ -127,7 +127,7 @@ async fn concurrent_backfill_and_object_update_cannot_restore_old_source_data(
         "/api/v1/classes/{}/{}",
         fixture.class.id, fixture.objects[0].id
     );
-    let rebuild = execute_computed_reindex_task(&test_context.pool, &task);
+    let rebuild = execute_computed_field_rebuild(&test_context.pool, &task);
     let update = patch_request(
         &test_context.pool,
         &test_context.admin_token,
@@ -184,7 +184,7 @@ async fn lease_recovery_marks_the_class_rebuild_failed(#[future(awt)] test_conte
     .await
     .unwrap();
 
-    let recovered = recover_expired_task_leases(&test_context.pool, 100)
+    let recovered = crate::services::tasks::recover_expired_task_leases(&test_context.pool, 100)
         .await
         .unwrap();
     assert!(recovered.iter().any(|task| task.id == task_id));
