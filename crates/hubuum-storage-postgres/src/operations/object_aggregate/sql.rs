@@ -2,7 +2,7 @@ use diesel::dsl::{count, sql};
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Bool, Jsonb};
 use diesel_async::RunQueryDsl;
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 
 use super::ObjectAggregateExecution;
 use super::accumulator::{
@@ -11,31 +11,25 @@ use super::accumulator::{
 use super::candidate::ObjectAggregateCandidate;
 use super::computed::{ComputedAggregateDefinitions, computed_aggregate_payload};
 use super::filters::apply_object_aggregate_source_filters;
-use crate::errors::ApiError;
-use crate::models::object_aggregate::{
-    ComputedFieldSelector, DecodedObjectAggregateCursor, ObjectAggregateDimension,
-    ObjectAggregateJsonPath, ObjectAggregateMeasure, ObjectAggregateMeasureField,
-    ObjectAggregateMeasureOperation, ObjectAggregateScalarField, ObjectAggregateSort,
-    ObjectAggregateSpec,
+use hubuum_query::{JsonFieldPath, QueryOptions};
+use hubuum_storage_core::{
+    StorageComputedFieldSelector, StorageObjectAggregateCursor, StorageObjectAggregateDimension,
+    StorageObjectAggregateMeasure, StorageObjectAggregateMeasureField,
+    StorageObjectAggregateMeasureOperation, StorageObjectAggregateScalarField,
+    StorageObjectAggregateSort, StorageObjectAggregateSpec,
 };
-use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
-use crate::pagination::SKIPPED_TOTAL_COUNT;
-use crate::storage::postgres::operations::computed_field::{
+
+use crate::operations::computed_objects::query::{
     ComputedQuerySnapshot, computed_filter_sql_component,
 };
-use crate::storage::postgres::operations::resource_scope::{
-    object_scope_predicate, resource_scope_ids,
-};
-use crate::storage::postgres::operations::search::JsonPredicateExt;
-use crate::storage::postgres::operations::search::SQLValue;
-use crate::storage::postgres::{PostgresConnection, with_connection};
-use crate::utilities::extensions::CustomStringExtensions;
+use crate::operations::dynamic_sql::{SqlValue, indexed_bind_placeholders};
+use crate::{PostgresConnection, PostgresStorageError};
 
 #[derive(Debug, Clone)]
 pub(super) enum ObjectAggregateBindValue {
     Json(serde_json::Value),
     BigInt(i64),
-    Query(SQLValue),
+    Query(SqlValue),
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +41,7 @@ pub(super) struct ObjectAggregateSqlSpec {
 impl ObjectAggregateSqlSpec {
     pub(super) fn indexed(self) -> Self {
         Self {
-            sql: self.sql.replace_question_mark_with_indexed_n(),
+            sql: indexed_bind_placeholders(&self.sql),
             binds: self.binds,
         }
     }
@@ -62,19 +56,19 @@ macro_rules! bind_object_aggregate_query {
                 ObjectAggregateBindValue::Json(value) => query.bind::<Jsonb, _>(value),
                 ObjectAggregateBindValue::BigInt(value) => query.bind::<BigInt, _>(value),
                 ObjectAggregateBindValue::Query(
-                    $crate::storage::postgres::operations::search::SQLValue::String(value),
+                    $crate::operations::dynamic_sql::SqlValue::String(value),
                 ) => query.bind::<diesel::sql_types::Text, _>(value),
                 ObjectAggregateBindValue::Query(
-                    $crate::storage::postgres::operations::search::SQLValue::Integer(value),
+                    $crate::operations::dynamic_sql::SqlValue::Integer(value),
                 ) => query.bind::<diesel::sql_types::Integer, _>(value),
                 ObjectAggregateBindValue::Query(
-                    $crate::storage::postgres::operations::search::SQLValue::BigInteger(value),
+                    $crate::operations::dynamic_sql::SqlValue::BigInteger(value),
                 ) => query.bind::<diesel::sql_types::BigInt, _>(value),
                 ObjectAggregateBindValue::Query(
-                    $crate::storage::postgres::operations::search::SQLValue::Date(value),
+                    $crate::operations::dynamic_sql::SqlValue::DateTime(value),
                 ) => query.bind::<diesel::sql_types::Timestamp, _>(value),
                 ObjectAggregateBindValue::Query(
-                    $crate::storage::postgres::operations::search::SQLValue::Boolean(value),
+                    $crate::operations::dynamic_sql::SqlValue::Boolean(value),
                 ) => query.bind::<diesel::sql_types::Bool, _>(value),
             };
         }
@@ -85,7 +79,7 @@ macro_rules! bind_object_aggregate_query {
 pub(super) use bind_object_aggregate_query;
 
 macro_rules! visible_filtered_object_query {
-    ($collection_id:expr, $token_scope:expr, $query_options:expr, $computed_filter_snapshot:expr) => {{
+    ($collection_id:expr, $resource_scope:expr, $query_options:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -95,8 +89,13 @@ macro_rules! visible_filtered_object_query {
         let mut query = hubuumobject
             .filter(object_collection_id.eq($collection_id))
             .into_boxed();
-        if let Some(scope) = resource_scope_ids($token_scope) {
-            query = query.filter(object_scope_predicate(scope));
+        if let Some(scope) = $resource_scope {
+            query = query.filter(
+                object_collection_id
+                    .eq_any(scope.collection_ids())
+                    .or(hubuum_class_id.eq_any(scope.class_ids()))
+                    .or(object_id.eq_any(scope.object_ids())),
+            );
         }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
         query
@@ -104,7 +103,7 @@ macro_rules! visible_filtered_object_query {
 }
 
 macro_rules! visible_filtered_aggregate_query {
-    ($collection_id:expr, $token_scope:expr, $query_options:expr, $sort_key_sql:expr, $measures_sql:expr, $computed_filter_snapshot:expr) => {{
+    ($collection_id:expr, $resource_scope:expr, $query_options:expr, $sort_key_sql:expr, $measures_sql:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -120,8 +119,13 @@ macro_rules! visible_filtered_aggregate_query {
             ))
             .into_boxed()
             .filter(object_collection_id.eq($collection_id));
-        if let Some(scope) = resource_scope_ids($token_scope) {
-            query = query.filter(object_scope_predicate(scope));
+        if let Some(scope) = $resource_scope {
+            query = query.filter(
+                object_collection_id
+                    .eq_any(scope.collection_ids())
+                    .or(hubuum_class_id.eq_any(scope.class_ids()))
+                    .or(object_id.eq_any(scope.object_ids())),
+            );
         }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
         query
@@ -129,13 +133,13 @@ macro_rules! visible_filtered_aggregate_query {
 }
 
 pub(super) async fn aggregate_visible_filtered_objects_with_sql(
+    connection: &mut PostgresConnection,
     execution: ObjectAggregateExecution<'_>,
-) -> Result<crate::models::object_aggregate::ObjectAggregatePage, ApiError> {
+) -> Result<hubuum_storage_core::StorageObjectAggregatePage, PostgresStorageError> {
     let ObjectAggregateExecution {
-        pool,
         target,
         paging,
-        token_scopes,
+        visibility,
         ..
     } = execution;
     let query_options = &paging.query_options;
@@ -143,27 +147,26 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
     let computed_filter_snapshot = paging.computed_filter_snapshot.as_ref();
     let sort_key_sql = direct_aggregate_sort_key(spec);
     let measures_sql = direct_measure_response_sql(spec, "hubuumobject");
-    let total_count = if query_options.include_total {
+    let total = if query_options.include_total {
         let query = visible_filtered_object_query!(
             target.collection_id,
-            token_scopes,
+            visibility.resources(),
             query_options,
             computed_filter_snapshot
         );
-        with_connection(pool, async |connection| {
+        Some(
             query
                 .select(count(sql::<Jsonb>(&sort_key_sql)).aggregate_distinct())
                 .get_result::<i64>(connection)
-                .await
-        })
-        .await?
+                .await?,
+        )
     } else {
-        SKIPPED_TOTAL_COUNT
+        None
     };
 
     let mut query = visible_filtered_aggregate_query!(
         target.collection_id,
-        token_scopes,
+        visibility.resources(),
         query_options,
         &sort_key_sql,
         &measures_sql,
@@ -171,78 +174,79 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
     );
     if let Some(cursor) = paging.decoded_cursor.as_ref() {
         query = match spec.sort() {
-            ObjectAggregateSort::DimensionsAscending => query.having(
+            StorageObjectAggregateSort::DimensionsAscending => query.having(
                 sql::<Bool>(&format!("{sort_key_sql} > "))
-                    .bind::<Jsonb, _>(cursor.sort_key.clone()),
+                    .bind::<Jsonb, _>(cursor.sort_key().clone()),
             ),
-            ObjectAggregateSort::DimensionsDescending => query.having(
+            StorageObjectAggregateSort::DimensionsDescending => query.having(
                 sql::<Bool>(&format!("{sort_key_sql} < "))
-                    .bind::<Jsonb, _>(cursor.sort_key.clone()),
+                    .bind::<Jsonb, _>(cursor.sort_key().clone()),
             ),
-            ObjectAggregateSort::ObjectCountAscending => query.having(
+            StorageObjectAggregateSort::ObjectCountAscending => query.having(
                 sql::<Bool>("(COUNT(*) > ")
-                    .bind::<BigInt, _>(cursor.object_count)
+                    .bind::<BigInt, _>(cursor.object_count())
                     .sql(" OR (COUNT(*) = ")
-                    .bind::<BigInt, _>(cursor.object_count)
+                    .bind::<BigInt, _>(cursor.object_count())
                     .sql(&format!(" AND {sort_key_sql} > "))
-                    .bind::<Jsonb, _>(cursor.sort_key.clone())
+                    .bind::<Jsonb, _>(cursor.sort_key().clone())
                     .sql("))"),
             ),
-            ObjectAggregateSort::ObjectCountDescending => query.having(
+            StorageObjectAggregateSort::ObjectCountDescending => query.having(
                 sql::<Bool>("(COUNT(*) < ")
-                    .bind::<BigInt, _>(cursor.object_count)
+                    .bind::<BigInt, _>(cursor.object_count())
                     .sql(" OR (COUNT(*) = ")
-                    .bind::<BigInt, _>(cursor.object_count)
+                    .bind::<BigInt, _>(cursor.object_count())
                     .sql(&format!(" AND {sort_key_sql} > "))
-                    .bind::<Jsonb, _>(cursor.sort_key.clone())
+                    .bind::<Jsonb, _>(cursor.sort_key().clone())
                     .sql("))"),
             ),
         };
     }
     query = match spec.sort() {
-        ObjectAggregateSort::DimensionsAscending => {
+        StorageObjectAggregateSort::DimensionsAscending => {
             query.order_by(sql::<Jsonb>(&format!("{sort_key_sql} ASC")))
         }
-        ObjectAggregateSort::DimensionsDescending => {
+        StorageObjectAggregateSort::DimensionsDescending => {
             query.order_by(sql::<Jsonb>(&format!("{sort_key_sql} DESC")))
         }
-        ObjectAggregateSort::ObjectCountAscending => query
+        StorageObjectAggregateSort::ObjectCountAscending => query
             .order_by(sql::<BigInt>("COUNT(*) ASC"))
             .then_order_by(sql::<Jsonb>(&format!("{sort_key_sql} ASC"))),
-        ObjectAggregateSort::ObjectCountDescending => query
+        StorageObjectAggregateSort::ObjectCountDescending => query
             .order_by(sql::<BigInt>("COUNT(*) DESC"))
             .then_order_by(sql::<Jsonb>(&format!("{sort_key_sql} ASC"))),
     };
     query = query.limit(page_query_limit(paging.effective_limit)?);
-    let database_rows = with_connection(pool, async |connection| {
-        query
-            .load::<(serde_json::Value, i64, serde_json::Value)>(connection)
-            .await
-    })
-    .await?
-    .into_iter()
-    .map(|(sort_key, object_count, measures)| {
-        Ok::<_, ApiError>(ObjectAggregateDatabaseRow {
-            sort_key,
-            measures,
-            object_count,
+    let database_rows = query
+        .load::<(serde_json::Value, i64, serde_json::Value)>(connection)
+        .await?
+        .into_iter()
+        .map(|(sort_key, object_count, measures)| {
+            Ok::<_, PostgresStorageError>(ObjectAggregateDatabaseRow {
+                sort_key,
+                measures,
+                object_count,
+            })
         })
-    })
-    .collect::<Result<Vec<_>, ApiError>>()?;
-    finish_aggregate_page(database_rows, total_count, &paging)
+        .collect::<Result<Vec<_>, PostgresStorageError>>()?;
+    finish_aggregate_page(database_rows, total, &paging)
 }
 
 pub(super) async fn aggregate_snapshot_rows(
     connection: &mut PostgresConnection,
     candidates: Vec<ObjectAggregateCandidate>,
     plan: SnapshotAggregatePlan<'_>,
-) -> Result<AggregateRows, ApiError> {
+) -> Result<AggregateRows, PostgresStorageError> {
     if candidates.is_empty() {
         return Ok(AggregateRows::default());
     }
     let (candidates, computed_payload) = if plan.spec.has_computed_field() {
-        let (candidates, payload) =
-            computed_aggregate_payload(candidates, plan.spec, plan.computed_definitions)?;
+        let (candidates, payload) = computed_aggregate_payload(
+            plan.runtime,
+            candidates,
+            plan.spec,
+            plan.computed_definitions,
+        )?;
         (candidates, Some(payload))
     } else {
         (candidates, None)
@@ -254,7 +258,7 @@ pub(super) async fn aggregate_snapshot_rows(
     let stream = bind_object_aggregate_query!(query)
         .load_stream::<PartialObjectAggregateRow>(connection)
         .await?;
-    futures::pin_mut!(stream);
+    futures_util::pin_mut!(stream);
     let mut groups = AggregateRows::default();
     while let Some(row) = stream.try_next().await? {
         groups.push_bounded(row)?;
@@ -263,17 +267,20 @@ pub(super) async fn aggregate_snapshot_rows(
 }
 
 pub(super) struct SnapshotAggregatePlan<'a> {
-    spec: &'a ObjectAggregateSpec,
+    runtime: &'a crate::PostgresRuntime,
+    spec: &'a StorageObjectAggregateSpec,
     computed_definitions: &'a ComputedAggregateDefinitions,
     computed_filters: Option<(&'a QueryOptions, &'a ComputedQuerySnapshot)>,
 }
 
 impl<'a> SnapshotAggregatePlan<'a> {
     pub(super) fn new(
-        spec: &'a ObjectAggregateSpec,
+        runtime: &'a crate::PostgresRuntime,
+        spec: &'a StorageObjectAggregateSpec,
         computed_definitions: &'a ComputedAggregateDefinitions,
     ) -> Self {
         Self {
+            runtime,
             spec,
             computed_definitions,
             computed_filters: None,
@@ -294,9 +301,9 @@ fn build_aggregate_ctes(
     candidates: Vec<ObjectAggregateCandidate>,
     computed_payload: Option<serde_json::Value>,
     plan: &SnapshotAggregatePlan<'_>,
-) -> Result<ObjectAggregateSqlSpec, ApiError> {
+) -> Result<ObjectAggregateSqlSpec, PostgresStorageError> {
     let candidates = serde_json::to_value(candidates).map_err(|error| {
-        ApiError::InternalServerError(format!(
+        PostgresStorageError::internal(format!(
             "Failed to serialize authorized object snapshots: {error}"
         ))
     })?;
@@ -404,7 +411,7 @@ aggregate_rows AS (
 fn computed_filter_clause(
     query_options: &QueryOptions,
     snapshot: &ComputedQuerySnapshot,
-) -> Result<(String, Vec<ObjectAggregateBindValue>), ApiError> {
+) -> Result<(String, Vec<ObjectAggregateBindValue>), PostgresStorageError> {
     let mut clauses = Vec::new();
     let mut binds = Vec::new();
     for filter in query_options
@@ -429,30 +436,30 @@ fn computed_filter_clause(
     Ok((clause, binds))
 }
 
-fn dimension_sql(index: usize, dimension: &ObjectAggregateDimension) -> (String, String) {
+fn dimension_sql(index: usize, dimension: &StorageObjectAggregateDimension) -> (String, String) {
     dimension_sql_for_source(index, dimension, "object")
 }
 
 fn dimension_sql_for_source(
     _index: usize,
-    dimension: &ObjectAggregateDimension,
+    dimension: &StorageObjectAggregateDimension,
     source: &str,
 ) -> (String, String) {
     match dimension {
-        ObjectAggregateDimension::Scalar(field) => {
+        StorageObjectAggregateDimension::Scalar(field) => {
             let column = match field {
-                ObjectAggregateScalarField::Name => "name",
-                ObjectAggregateScalarField::Description => "description",
-                ObjectAggregateScalarField::CollectionId => "collection_id",
-                ObjectAggregateScalarField::CreatedAt => "created_at",
-                ObjectAggregateScalarField::UpdatedAt => "updated_at",
+                StorageObjectAggregateScalarField::Name => "name",
+                StorageObjectAggregateScalarField::Description => "description",
+                StorageObjectAggregateScalarField::CollectionId => "collection_id",
+                StorageObjectAggregateScalarField::CreatedAt => "created_at",
+                StorageObjectAggregateScalarField::UpdatedAt => "updated_at",
             };
             (
                 "0::smallint".to_string(),
                 format!("to_jsonb({source}.{column})"),
             )
         }
-        ObjectAggregateDimension::JsonData(path) => {
+        StorageObjectAggregateDimension::JsonData(path) => {
             let path = json_path_sql(path);
             let value = format!("{source}.data #> ARRAY[{path}]::text[]");
             (
@@ -462,7 +469,7 @@ fn dimension_sql_for_source(
                 format!("COALESCE({value}, 'null'::jsonb)"),
             )
         }
-        ObjectAggregateDimension::Computed(selector) => {
+        StorageObjectAggregateDimension::Computed(selector) => {
             let key = computed_selector_sql(selector);
             let value = format!("{source}.computed_values -> {source}.id::text -> {key}");
             (
@@ -473,13 +480,13 @@ fn dimension_sql_for_source(
     }
 }
 
-fn measure_numeric_sql(measure: &ObjectAggregateMeasure, source: &str) -> String {
+fn measure_numeric_sql(measure: &StorageObjectAggregateMeasure, source: &str) -> String {
     let value = match measure.field() {
-        ObjectAggregateMeasureField::JsonData(path) => {
+        StorageObjectAggregateMeasureField::JsonData(path) => {
             let path = json_path_sql(path);
             format!("{source}.data #> ARRAY[{path}]::text[]")
         }
-        ObjectAggregateMeasureField::Computed(selector) => {
+        StorageObjectAggregateMeasureField::Computed(selector) => {
             let key = computed_selector_sql(selector);
             format!("{source}.computed_values -> {source}.id::text -> {key} -> 'value'")
         }
@@ -487,7 +494,7 @@ fn measure_numeric_sql(measure: &ObjectAggregateMeasure, source: &str) -> String
     format!("hubuum_computed_numeric({value})")
 }
 
-fn partial_measure_state_sql(spec: &ObjectAggregateSpec, prefix: &str) -> String {
+fn partial_measure_state_sql(spec: &StorageObjectAggregateSpec, prefix: &str) -> String {
     let values = spec
         .measures()
         .iter()
@@ -504,7 +511,7 @@ fn partial_measure_state_sql(spec: &ObjectAggregateSpec, prefix: &str) -> String
     format!("jsonb_build_array({values})")
 }
 
-fn direct_measure_response_sql(spec: &ObjectAggregateSpec, source: &str) -> String {
+fn direct_measure_response_sql(spec: &StorageObjectAggregateSpec, source: &str) -> String {
     let values = spec
         .measures()
         .iter()
@@ -513,12 +520,12 @@ fn direct_measure_response_sql(spec: &ObjectAggregateSpec, source: &str) -> Stri
             let value_count = format!("COUNT({numeric})");
             let aggregate_value = grouped_measure_value_sql(measure.operation(), &numeric);
             let value = match measure.operation() {
-                ObjectAggregateMeasureOperation::Average => {
+                StorageObjectAggregateMeasureOperation::Average => {
                     format!("{aggregate_value} / NULLIF({value_count}, 0)::numeric")
                 }
-                ObjectAggregateMeasureOperation::Sum
-                | ObjectAggregateMeasureOperation::Min
-                | ObjectAggregateMeasureOperation::Max => aggregate_value,
+                StorageObjectAggregateMeasureOperation::Sum
+                | StorageObjectAggregateMeasureOperation::Min
+                | StorageObjectAggregateMeasureOperation::Max => aggregate_value,
             };
             response_measure_sql(&value_count, &value, "COUNT(*)")
         })
@@ -527,18 +534,22 @@ fn direct_measure_response_sql(spec: &ObjectAggregateSpec, source: &str) -> Stri
     format!("jsonb_build_array({values})")
 }
 
-fn grouped_measure_value_sql(operation: ObjectAggregateMeasureOperation, source: &str) -> String {
+fn grouped_measure_value_sql(
+    operation: StorageObjectAggregateMeasureOperation,
+    source: &str,
+) -> String {
     match operation {
-        ObjectAggregateMeasureOperation::Sum | ObjectAggregateMeasureOperation::Average => {
+        StorageObjectAggregateMeasureOperation::Sum
+        | StorageObjectAggregateMeasureOperation::Average => {
             format!("SUM({source})")
         }
-        ObjectAggregateMeasureOperation::Min => format!("MIN({source})"),
-        ObjectAggregateMeasureOperation::Max => format!("MAX({source})"),
+        StorageObjectAggregateMeasureOperation::Min => format!("MIN({source})"),
+        StorageObjectAggregateMeasureOperation::Max => format!("MAX({source})"),
     }
 }
 
 pub(super) fn merged_measure_state_sql(
-    spec: &ObjectAggregateSpec,
+    spec: &StorageObjectAggregateSpec,
     left: &str,
     right: &str,
 ) -> String {
@@ -553,14 +564,14 @@ pub(super) fn merged_measure_state_sql(
             let left_value = aggregate_state_numeric_sql(left, index);
             let right_value = aggregate_state_numeric_sql(right, index);
             let merged = match measure.operation() {
-                ObjectAggregateMeasureOperation::Sum
-                | ObjectAggregateMeasureOperation::Average => format!(
+                StorageObjectAggregateMeasureOperation::Sum
+                | StorageObjectAggregateMeasureOperation::Average => format!(
                     "COALESCE({left_value}, 0::numeric) + COALESCE({right_value}, 0::numeric)"
                 ),
-                ObjectAggregateMeasureOperation::Min => {
+                StorageObjectAggregateMeasureOperation::Min => {
                     format!("LEAST({left_value}, {right_value})")
                 }
-                ObjectAggregateMeasureOperation::Max => {
+                StorageObjectAggregateMeasureOperation::Max => {
                     format!("GREATEST({left_value}, {right_value})")
                 }
             };
@@ -573,7 +584,7 @@ pub(super) fn merged_measure_state_sql(
     format!("jsonb_build_array({values})")
 }
 
-pub(super) fn grouped_measure_state_sql(spec: &ObjectAggregateSpec, source: &str) -> String {
+pub(super) fn grouped_measure_state_sql(spec: &StorageObjectAggregateSpec, source: &str) -> String {
     let values = spec
         .measures()
         .iter()
@@ -592,7 +603,7 @@ pub(super) fn grouped_measure_state_sql(spec: &ObjectAggregateSpec, source: &str
 }
 
 pub(super) fn measure_response_sql(
-    spec: &ObjectAggregateSpec,
+    spec: &StorageObjectAggregateSpec,
     state: &str,
     object_count: &str,
 ) -> String {
@@ -604,12 +615,12 @@ pub(super) fn measure_response_sql(
             let value_count = format!("({state} #>> '{{{index},value_count}}')::bigint");
             let stored_value = aggregate_state_numeric_sql(state, index);
             let value = match measure.operation() {
-                ObjectAggregateMeasureOperation::Average => {
+                StorageObjectAggregateMeasureOperation::Average => {
                     format!("{stored_value} / NULLIF({value_count}, 0)::numeric")
                 }
-                ObjectAggregateMeasureOperation::Sum
-                | ObjectAggregateMeasureOperation::Min
-                | ObjectAggregateMeasureOperation::Max => stored_value,
+                StorageObjectAggregateMeasureOperation::Sum
+                | StorageObjectAggregateMeasureOperation::Min
+                | StorageObjectAggregateMeasureOperation::Max => stored_value,
             };
             response_measure_sql(&value_count, &value, object_count)
         })
@@ -628,7 +639,7 @@ fn aggregate_state_numeric_sql(state: &str, index: usize) -> String {
     format!("({state} #>> '{{{index},value}}')::numeric")
 }
 
-fn direct_aggregate_sort_key(spec: &ObjectAggregateSpec) -> String {
+fn direct_aggregate_sort_key(spec: &StorageObjectAggregateSpec) -> String {
     let sort_key = spec
         .dimensions()
         .iter()
@@ -640,7 +651,7 @@ fn direct_aggregate_sort_key(spec: &ObjectAggregateSpec) -> String {
     format!("jsonb_build_array({sort_key})")
 }
 
-fn json_path_sql(path: &ObjectAggregateJsonPath) -> String {
+fn json_path_sql(path: &JsonFieldPath) -> String {
     path.segments()
         .map(|segment| {
             assert!(
@@ -654,7 +665,7 @@ fn json_path_sql(path: &ObjectAggregateJsonPath) -> String {
         .join(", ")
 }
 
-fn computed_selector_sql(selector: &ComputedFieldSelector) -> String {
+fn computed_selector_sql(selector: &StorageComputedFieldSelector) -> String {
     assert!(selector.key().bytes().enumerate().all(|(index, byte)| {
         matches!((index, byte), (0, b'a'..=b'z') | (_, b'a'..=b'z' | b'0'..=b'9' | b'_'))
     }));
@@ -667,10 +678,10 @@ fn computed_selector_sql(selector: &ComputedFieldSelector) -> String {
 
 pub(super) fn append_page_options(
     spec: &mut ObjectAggregateSqlSpec,
-    sort: ObjectAggregateSort,
-    cursor: Option<&DecodedObjectAggregateCursor>,
+    sort: StorageObjectAggregateSort,
+    cursor: Option<&StorageObjectAggregateCursor>,
     effective_limit: usize,
-) -> Result<(), ApiError> {
+) -> Result<(), PostgresStorageError> {
     if let Some(cursor) = cursor {
         append_cursor_clause(spec, sort, cursor);
     }
@@ -686,56 +697,56 @@ pub(super) fn append_page_options(
 
 fn append_cursor_clause(
     spec: &mut ObjectAggregateSqlSpec,
-    sort: ObjectAggregateSort,
-    cursor: &DecodedObjectAggregateCursor,
+    sort: StorageObjectAggregateSort,
+    cursor: &StorageObjectAggregateCursor,
 ) {
     spec.sql.push_str("\nWHERE ");
     match sort {
-        ObjectAggregateSort::DimensionsAscending => {
+        StorageObjectAggregateSort::DimensionsAscending => {
             spec.sql.push_str("sort_key > ?::jsonb");
             spec.binds
-                .push(ObjectAggregateBindValue::Json(cursor.sort_key.clone()));
+                .push(ObjectAggregateBindValue::Json(cursor.sort_key().clone()));
         }
-        ObjectAggregateSort::DimensionsDescending => {
+        StorageObjectAggregateSort::DimensionsDescending => {
             spec.sql.push_str("sort_key < ?::jsonb");
             spec.binds
-                .push(ObjectAggregateBindValue::Json(cursor.sort_key.clone()));
+                .push(ObjectAggregateBindValue::Json(cursor.sort_key().clone()));
         }
-        ObjectAggregateSort::ObjectCountAscending => {
+        StorageObjectAggregateSort::ObjectCountAscending => {
             spec.sql
                 .push_str("(object_count > ? OR (object_count = ? AND sort_key > ?::jsonb))");
             spec.binds
-                .push(ObjectAggregateBindValue::BigInt(cursor.object_count));
+                .push(ObjectAggregateBindValue::BigInt(cursor.object_count()));
             spec.binds
-                .push(ObjectAggregateBindValue::BigInt(cursor.object_count));
+                .push(ObjectAggregateBindValue::BigInt(cursor.object_count()));
             spec.binds
-                .push(ObjectAggregateBindValue::Json(cursor.sort_key.clone()));
+                .push(ObjectAggregateBindValue::Json(cursor.sort_key().clone()));
         }
-        ObjectAggregateSort::ObjectCountDescending => {
+        StorageObjectAggregateSort::ObjectCountDescending => {
             spec.sql
                 .push_str("(object_count < ? OR (object_count = ? AND sort_key > ?::jsonb))");
             spec.binds
-                .push(ObjectAggregateBindValue::BigInt(cursor.object_count));
+                .push(ObjectAggregateBindValue::BigInt(cursor.object_count()));
             spec.binds
-                .push(ObjectAggregateBindValue::BigInt(cursor.object_count));
+                .push(ObjectAggregateBindValue::BigInt(cursor.object_count()));
             spec.binds
-                .push(ObjectAggregateBindValue::Json(cursor.sort_key.clone()));
+                .push(ObjectAggregateBindValue::Json(cursor.sort_key().clone()));
         }
     }
 }
 
-const fn order_clause(sort: ObjectAggregateSort) -> &'static str {
+const fn order_clause(sort: StorageObjectAggregateSort) -> &'static str {
     match sort {
-        ObjectAggregateSort::DimensionsAscending => "sort_key ASC",
-        ObjectAggregateSort::DimensionsDescending => "sort_key DESC",
-        ObjectAggregateSort::ObjectCountAscending => "object_count ASC, sort_key ASC",
-        ObjectAggregateSort::ObjectCountDescending => "object_count DESC, sort_key ASC",
+        StorageObjectAggregateSort::DimensionsAscending => "sort_key ASC",
+        StorageObjectAggregateSort::DimensionsDescending => "sort_key DESC",
+        StorageObjectAggregateSort::ObjectCountAscending => "object_count ASC, sort_key ASC",
+        StorageObjectAggregateSort::ObjectCountDescending => "object_count DESC, sort_key ASC",
     }
 }
 
-fn page_query_limit(effective_limit: usize) -> Result<i64, ApiError> {
+fn page_query_limit(effective_limit: usize) -> Result<i64, PostgresStorageError> {
     i64::try_from(effective_limit.saturating_add(1))
-        .map_err(|_| ApiError::BadRequest("Object aggregate page limit is too large".to_string()))
+        .map_err(|_| PostgresStorageError::bad_request("Object aggregate page limit is too large"))
 }
 
 #[cfg(test)]
@@ -746,7 +757,8 @@ mod tests {
 
     #[test]
     fn json_dimension_sql_distinguishes_value_null_and_missing() {
-        let dimension = ObjectAggregateDimension::from_str("json_data.location,country").unwrap();
+        let dimension =
+            StorageObjectAggregateDimension::from_str("json_data.location,country").unwrap();
         let (state, value) = dimension_sql(0, &dimension);
         assert!(state.contains("IS NULL THEN 2"));
         assert!(state.contains("= 'null'::jsonb THEN 1"));
@@ -756,7 +768,7 @@ mod tests {
     #[test]
     fn count_sort_always_uses_complete_dimension_tie_breaker() {
         assert_eq!(
-            order_clause(ObjectAggregateSort::ObjectCountDescending),
+            order_clause(StorageObjectAggregateSort::ObjectCountDescending),
             "object_count DESC, sort_key ASC"
         );
     }

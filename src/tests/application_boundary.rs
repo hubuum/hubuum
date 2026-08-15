@@ -2021,6 +2021,19 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
             adapter_path.display()
         );
     }
+    let snapshot_start = adapter
+        .find("with_read_only_snapshot")
+        .expect("computed-object queries must run in a read-only snapshot");
+    let resolution = adapter
+        .find("resolve_computed_query_fields")
+        .expect("computed-object queries must resolve fields in the adapter");
+    let enrichment = adapter
+        .find("enrich_with_query_snapshot")
+        .expect("computed-object queries must enrich from the resolved snapshot");
+    assert!(
+        snapshot_start < resolution && resolution < enrichment,
+        "computed resolution, selection, and enrichment must share the adapter snapshot"
+    );
 
     let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
     let capability = read_source(&capability_path)
@@ -2046,6 +2059,53 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
     assert!(
         !legacy_path.exists(),
         "the application-owned PostgreSQL computed-object facade still exists"
+    );
+}
+
+#[test]
+fn object_aggregate_queries_are_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/object_aggregate");
+    let adapter = read_rust_module_tree(&adapter_path);
+    let entrypoint_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/object_aggregate.rs");
+    let entrypoint = read_source(&entrypoint_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", entrypoint_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+        "get_config",
+    ] {
+        assert!(
+            !adapter.contains(forbidden) && !entrypoint.contains(forbidden),
+            "the PostgreSQL aggregate adapter depends on application detail {forbidden}"
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/capabilities/queries.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "ObjectAggregateStorage for PostgresStorage",
+    );
+    let method = item_body(implementation, "fn", "aggregate_objects");
+    assert!(
+        method.contains("hubuum_storage_postgres::operations::object_aggregate"),
+        "object aggregation must delegate into the PostgreSQL adapter crate"
+    );
+    assert!(
+        !method.contains("&self.pool"),
+        "object aggregation must not expose the PostgreSQL pool"
+    );
+
+    let legacy_path = root.join("src/storage/postgres/operations/user/object_aggregate");
+    assert!(
+        !legacy_path.exists(),
+        "the application-owned PostgreSQL aggregate implementation still exists"
     );
 }
 
@@ -2815,19 +2875,10 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
 
         let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
         if operation == "authorization" {
-            let conversions = read_source(&old_path)
-                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
             assert!(
-                conversions.contains("hubuum_storage_postgres::operations::authorization"),
-                "the temporary authorization conversion shim must delegate into the adapter crate"
+                !old_path.exists(),
+                "the obsolete application authorization adapter shim still exists"
             );
-            for forbidden in ["diesel::", "crate::schema", "pub(crate) async fn apply_"] {
-                assert!(
-                    !conversions.contains(forbidden),
-                    "{} retains authorization implementation detail {forbidden}",
-                    old_path.display()
-                );
-            }
             let capability_path = root.join("src/storage/postgres/capabilities/identity.rs");
             let capability = read_source(&capability_path).unwrap_or_else(|error| {
                 panic!("could not read {}: {error}", capability_path.display())

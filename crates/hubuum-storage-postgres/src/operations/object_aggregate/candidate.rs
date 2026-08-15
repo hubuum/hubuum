@@ -1,24 +1,19 @@
 use diesel::prelude::*;
 use diesel::sql_types::{Jsonb, Nullable};
 use diesel_async::RunQueryDsl;
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 use serde::Serialize;
 
 use super::bounded_json::ObjectAggregateJsonBound;
-use super::filters::apply_object_aggregate_source_filters;
-use crate::errors::ApiError;
-use crate::models::TokenScope;
-use crate::models::object_aggregate::ObjectAggregateSpec;
-use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SortParam};
-use crate::pagination::{Page, finalize_page, finalize_partial_page};
-use crate::storage::postgres::PostgresConnection;
-use crate::storage::postgres::operations::computed_field::ComputedQuerySnapshot;
-use crate::storage::postgres::operations::object::HubuumObjectRow;
-use crate::storage::postgres::operations::resource_scope::{
-    object_scope_predicate, resource_scope_ids,
+use hubuum_query::{CursorValue, FilterField, QueryOptions, SortParam, encode_cursor_values};
+use hubuum_storage_core::{StorageObjectAggregateSpec, UnifiedSearchResourceScope};
+
+use crate::cursor::{CursorSqlField, CursorSqlType};
+use crate::operations::catalog::{apply_object_filters, object_query};
+use crate::operations::computed_objects::query::{
+    ComputedQuerySnapshot, computed_filter_predicate,
 };
-use crate::storage::postgres::operations::search::JsonPredicateExt;
-use crate::traits::{CursorPaginated, CursorValue};
+use crate::{PostgresConnection, PostgresStorageError};
 
 #[derive(Debug, Clone, Queryable, Serialize)]
 pub(super) struct ObjectAggregateCandidate {
@@ -33,32 +28,6 @@ pub(super) struct ObjectAggregateCandidate {
     pub(super) updated_at: chrono::NaiveDateTime,
 }
 
-impl CursorPaginated for ObjectAggregateCandidate {
-    fn supports_sort(field: &FilterField) -> bool {
-        matches!(field, FilterField::Id)
-    }
-
-    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
-        match field {
-            FilterField::Id => Ok(CursorValue::Integer(i64::from(self.id))),
-            _ => Err(ApiError::BadRequest(format!(
-                "Field '{field}' is not orderable for object aggregate candidates"
-            ))),
-        }
-    }
-
-    fn default_sort() -> Vec<SortParam> {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
-    }
-
-    fn tie_breaker_sort() -> Vec<SortParam> {
-        Self::default_sort()
-    }
-}
-
 pub(super) struct ObjectAggregateCandidateBatch {
     items: Vec<ObjectAggregateCandidate>,
     stopped_by_size: bool,
@@ -67,7 +36,7 @@ pub(super) struct ObjectAggregateCandidateBatch {
 pub(super) struct ObjectAggregateCandidateQuery<'a> {
     query_options: &'a QueryOptions,
     collection_id: i32,
-    token_scope: Option<&'a TokenScope>,
+    resource_scope: Option<&'a UnifiedSearchResourceScope>,
     include_object_data: bool,
     computed_filter_snapshot: Option<&'a ComputedQuerySnapshot>,
 }
@@ -76,19 +45,22 @@ impl<'a> ObjectAggregateCandidateQuery<'a> {
     pub(super) fn new(
         query_options: &'a QueryOptions,
         collection_id: i32,
-        spec: &ObjectAggregateSpec,
+        spec: &StorageObjectAggregateSpec,
     ) -> Self {
         Self {
             query_options,
             collection_id,
-            token_scope: None,
+            resource_scope: None,
             include_object_data: spec.requires_object_data(),
             computed_filter_snapshot: None,
         }
     }
 
-    pub(super) fn token_scope(mut self, token_scope: Option<&'a TokenScope>) -> Self {
-        self.token_scope = token_scope;
+    pub(super) fn resource_scope(
+        mut self,
+        resource_scope: Option<&'a UnifiedSearchResourceScope>,
+    ) -> Self {
+        self.resource_scope = resource_scope;
         self
     }
 
@@ -108,40 +80,82 @@ impl ObjectAggregateCandidateBatch {
     pub(super) fn into_page(
         self,
         query_options: &QueryOptions,
-    ) -> Result<Page<ObjectAggregateCandidate>, ApiError> {
-        if self.stopped_by_size {
-            finalize_partial_page(self.items, query_options, true)
-        } else {
-            finalize_page(self.items, query_options)
+    ) -> Result<ObjectAggregateCandidatePage, PostgresStorageError> {
+        let limit = query_options.limit.ok_or_else(|| {
+            PostgresStorageError::internal("aggregate candidate page is missing its limit")
+        })?;
+        if limit == 0 {
+            return Err(PostgresStorageError::bad_request(
+                "aggregate candidate page limit must be positive",
+            ));
         }
+        let mut items = self.items;
+        let has_more = self.stopped_by_size || items.len() > limit;
+        items.truncate(limit);
+        let next_cursor = has_more
+            .then(|| {
+                let candidate = items.last().ok_or_else(|| {
+                    PostgresStorageError::internal(
+                        "partial aggregate candidate page cannot be empty",
+                    )
+                })?;
+                encode_cursor_values(
+                    &candidate_sorts(),
+                    vec![CursorValue::Integer(i64::from(candidate.id))],
+                )
+                .map_err(|error| PostgresStorageError::internal(error.to_string()))
+            })
+            .transpose()?;
+        Ok(ObjectAggregateCandidatePage { items, next_cursor })
     }
+}
+
+pub(super) struct ObjectAggregateCandidatePage {
+    pub(super) items: Vec<ObjectAggregateCandidate>,
+    pub(super) next_cursor: Option<String>,
 }
 
 pub(super) async fn load_aggregate_candidate_batch(
     connection: &mut PostgresConnection,
     candidate_query: ObjectAggregateCandidateQuery<'_>,
-) -> Result<ObjectAggregateCandidateBatch, ApiError> {
+) -> Result<ObjectAggregateCandidateBatch, PostgresStorageError> {
     use crate::schema::hubuumobject::dsl::{
         collection_id as object_collection_id, created_at as object_created_at,
-        description as object_description, hubuum_class_id, hubuumobject, id as object_id,
-        name as object_name, updated_at as object_updated_at,
+        description as object_description, hubuum_class_id, id as object_id, name as object_name,
+        updated_at as object_updated_at,
     };
 
     let ObjectAggregateCandidateQuery {
         query_options,
         collection_id,
-        token_scope,
+        resource_scope,
         include_object_data,
         computed_filter_snapshot,
     } = candidate_query;
-    let mut query = hubuumobject
-        .filter(object_collection_id.eq(collection_id))
-        .into_boxed();
-    if let Some(scope) = resource_scope_ids(token_scope) {
-        query = query.filter(object_scope_predicate(scope));
+    let collection_ids = [collection_id];
+    let mut query = apply_object_filters(
+        object_query(&collection_ids, resource_scope),
+        query_options,
+        None,
+    )?;
+    for parameter in query_options
+        .filters
+        .iter()
+        .filter(|parameter| parameter.field.computed_query().is_some())
+    {
+        let snapshot = computed_filter_snapshot.ok_or_else(|| {
+            PostgresStorageError::internal(
+                "Computed object aggregate filter is missing its resolved query snapshot",
+            )
+        })?;
+        query = query.filter(computed_filter_predicate(parameter, snapshot)?);
     }
-    apply_object_aggregate_source_filters!(query, query_options, computed_filter_snapshot);
-    crate::apply_query_options!(query, query_options, HubuumObjectRow);
+    let fields = [CursorSqlField {
+        column: "hubuumobject.id",
+        sql_type: CursorSqlType::Integer,
+        nullable: false,
+    }];
+    crate::apply_query_options_with_fields!(query, query_options, fields);
     let data_projection = if include_object_data {
         "data"
     } else {
@@ -161,7 +175,7 @@ pub(super) async fn load_aggregate_candidate_batch(
         .distinct()
         .load_stream::<ObjectAggregateCandidate>(connection)
         .await?;
-    futures::pin_mut!(stream);
+    futures_util::pin_mut!(stream);
     let bound = ObjectAggregateJsonBound::CandidateBatch;
     let mut items = Vec::new();
     let mut serialized_bytes = 2_usize;
@@ -185,4 +199,11 @@ pub(super) async fn load_aggregate_candidate_batch(
         items,
         stopped_by_size,
     })
+}
+
+pub(super) fn candidate_sorts() -> Vec<SortParam> {
+    vec![SortParam {
+        field: FilterField::Id,
+        descending: false,
+    }]
 }

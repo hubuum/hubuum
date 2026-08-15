@@ -269,7 +269,7 @@ pub(crate) fn apply_object_filters<'query>(
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, hubuumobject::id)
             }
-            FilterField::Collections => {
+            FilterField::Collections | FilterField::CollectionId => {
                 crate::postgres_integer_filter!(query, parameter, hubuumobject::collection_id)
             }
             FilterField::CreatedAt => {

@@ -2,11 +2,13 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::object_aggregate::{
-    ObjectAggregateAuthorizationParts, ObjectAggregateRequest, ObjectAggregateRequestParts,
-    ObjectAggregateRow, ObjectAggregateSort, ObjectAggregateTargetParts,
+    ComputedFieldSelector, ObjectAggregateAuthorizationParts, ObjectAggregateDimension,
+    ObjectAggregateMeasure, ObjectAggregateMeasureField, ObjectAggregateMeasureOperation,
+    ObjectAggregateRequest, ObjectAggregateRequestParts, ObjectAggregateRow,
+    ObjectAggregateScalarField, ObjectAggregateSort, ObjectAggregateTargetParts,
 };
 use crate::models::{ObjectAggregatePage, Permissions};
-use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::pagination::{SKIPPED_TOTAL_COUNT, effective_page_limit};
 use crate::permissions::{
     AuthorizationContext, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceAttrs, ResourceKind, ResourceRef, permission_from_storage, permission_to_storage,
@@ -14,9 +16,12 @@ use crate::permissions::{
 use crate::services::storage_boundary::visibility;
 use crate::storage::{
     AuthorizationPermission, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageError, StorageErrorKind,
-    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
-    StorageObjectAggregateMeasureState, StorageObjectAggregateRow, StorageObjectAggregateSort,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageComputedFieldSelector,
+    StorageError, StorageErrorKind, StorageObjectAggregateAuthorizationCandidate,
+    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateDimension,
+    StorageObjectAggregateMeasure, StorageObjectAggregateMeasureField,
+    StorageObjectAggregateMeasureOperation, StorageObjectAggregateMeasureState,
+    StorageObjectAggregateRow, StorageObjectAggregateScalarField, StorageObjectAggregateSort,
     StorageObjectAggregateSpec, StorageObjectAggregateTarget, storage_handle,
 };
 use crate::traits::{AuthzSubject, PrincipalIdAccessor};
@@ -47,10 +52,15 @@ pub(crate) async fn aggregate_objects(
     let storage_spec = StorageObjectAggregateSpec::new(
         spec.dimensions()
             .iter()
-            .map(|dimension| dimension.canonical()),
-        spec.measures().iter().map(|measure| measure.canonical()),
+            .map(dimension_to_storage)
+            .collect::<Result<Vec<_>, _>>()?,
+        spec.measures()
+            .iter()
+            .map(measure_to_storage)
+            .collect::<Result<Vec<_>, _>>()?,
         sort_to_storage(spec.sort()),
-    );
+    )?;
+    let page_limit = effective_page_limit(&query_options)?;
     let permission_backend = backend.permission_backend();
     let delegated =
         permission_backend.is_some_and(|backend| !backend.supports_storage_visibility_filtering());
@@ -69,6 +79,7 @@ pub(crate) async fn aggregate_objects(
             .copied()
             .map(permission_to_storage),
     )
+    .page_limit(page_limit)
     .cursor_max_encoded_bytes(cursor_budget.max_encoded_bytes())
     .authorization_mode(if delegated {
         ObjectAggregateAuthorizationMode::Delegated
@@ -97,6 +108,64 @@ pub(crate) async fn aggregate_objects(
             .await?
     };
     page_from_storage(page, &response_spec)
+}
+
+fn dimension_to_storage(
+    dimension: &ObjectAggregateDimension,
+) -> Result<StorageObjectAggregateDimension, StorageError> {
+    Ok(match dimension {
+        ObjectAggregateDimension::Scalar(field) => {
+            StorageObjectAggregateDimension::Scalar(scalar_field_to_storage(*field))
+        }
+        ObjectAggregateDimension::JsonData(path) => {
+            StorageObjectAggregateDimension::JsonData(path.clone())
+        }
+        ObjectAggregateDimension::Computed(selector) => {
+            StorageObjectAggregateDimension::Computed(computed_selector_to_storage(selector)?)
+        }
+    })
+}
+
+fn measure_to_storage(
+    measure: &ObjectAggregateMeasure,
+) -> Result<StorageObjectAggregateMeasure, StorageError> {
+    let field = match measure.field() {
+        ObjectAggregateMeasureField::JsonData(path) => {
+            StorageObjectAggregateMeasureField::JsonData(path.clone())
+        }
+        ObjectAggregateMeasureField::Computed(selector) => {
+            StorageObjectAggregateMeasureField::Computed(computed_selector_to_storage(selector)?)
+        }
+    };
+    Ok(StorageObjectAggregateMeasure::new(
+        match measure.operation() {
+            ObjectAggregateMeasureOperation::Sum => StorageObjectAggregateMeasureOperation::Sum,
+            ObjectAggregateMeasureOperation::Average => {
+                StorageObjectAggregateMeasureOperation::Average
+            }
+            ObjectAggregateMeasureOperation::Min => StorageObjectAggregateMeasureOperation::Min,
+            ObjectAggregateMeasureOperation::Max => StorageObjectAggregateMeasureOperation::Max,
+        },
+        field,
+    ))
+}
+
+fn computed_selector_to_storage(
+    selector: &ComputedFieldSelector,
+) -> Result<StorageComputedFieldSelector, StorageError> {
+    StorageComputedFieldSelector::new(selector.scope(), selector.key())
+}
+
+const fn scalar_field_to_storage(
+    field: ObjectAggregateScalarField,
+) -> StorageObjectAggregateScalarField {
+    match field {
+        ObjectAggregateScalarField::Name => StorageObjectAggregateScalarField::Name,
+        ObjectAggregateScalarField::Description => StorageObjectAggregateScalarField::Description,
+        ObjectAggregateScalarField::CollectionId => StorageObjectAggregateScalarField::CollectionId,
+        ObjectAggregateScalarField::CreatedAt => StorageObjectAggregateScalarField::CreatedAt,
+        ObjectAggregateScalarField::UpdatedAt => StorageObjectAggregateScalarField::UpdatedAt,
+    }
 }
 
 struct DelegatedObjectAggregateAuthorizer<'a> {

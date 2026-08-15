@@ -43,6 +43,7 @@ pq-sys = { version = "0.7.5", optional = true }
 
 [features]
 query-capture = []
+integration-test-support = []
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 
 [dev-dependencies]

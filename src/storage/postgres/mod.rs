@@ -97,8 +97,6 @@ use crate::events::{
 };
 use crate::models::search::QueryOptions;
 use crate::models::{MaintenanceState, TokenRetentionSettings};
-use error::map_postgres_error;
-
 #[derive(Debug)]
 struct ApplicationPostgresTelemetry;
 

@@ -394,7 +394,7 @@ fn computed_query_value_sql(
     ))
 }
 
-pub(super) fn computed_filter_predicate(
+pub(crate) fn computed_filter_predicate(
     parameter: &ParsedQueryParam,
     snapshot: &ComputedQuerySnapshot,
 ) -> Result<BoundSqlPredicate, PostgresStorageError> {
@@ -749,11 +749,18 @@ fn computed_operator_mismatch(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_computed_filter_count;
+    use super::{validate_computed_filter_count, validate_computed_query_count};
 
     #[test]
     fn computed_filter_count_is_enforced_inside_the_adapter() {
         let error = validate_computed_filter_count(3).unwrap_err();
+
+        assert!(error.to_string().contains("at most 2"));
+    }
+
+    #[test]
+    fn computed_sort_count_is_enforced_inside_the_adapter() {
+        let error = validate_computed_query_count(3).unwrap_err();
 
         assert!(error.to_string().contains("at most 2"));
     }

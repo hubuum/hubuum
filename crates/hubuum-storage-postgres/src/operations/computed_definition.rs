@@ -27,6 +27,10 @@ pub(crate) struct ComputedDefinitionRow {
 }
 
 impl ComputedDefinitionRow {
+    pub(crate) const fn id(&self) -> i32 {
+        self.id
+    }
+
     pub(crate) const fn class_id(&self) -> i32 {
         self.class_id
     }

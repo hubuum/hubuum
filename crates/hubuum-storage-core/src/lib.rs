@@ -175,11 +175,13 @@ pub use metrics::{
 };
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder,
+    ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder, StorageComputedFieldSelector,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateCursor, StorageObjectAggregateDimension, StorageObjectAggregateMeasure,
+    StorageObjectAggregateMeasureField, StorageObjectAggregateMeasureOperation,
     StorageObjectAggregateMeasureState, StorageObjectAggregateMeasureValue,
-    StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget,
+    StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateScalarField,
+    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
 };
 pub use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,

@@ -1,25 +1,5 @@
 use super::*;
 
-fn cursor_budget() -> ObjectAggregateCursorBudget {
-    ObjectAggregateCursorBudget::for_request_target(
-        "/api/v1/classes/1/object-aggregates",
-        "group_by=name",
-    )
-    .unwrap()
-}
-
-fn encoded_cursor(dimension: &str, sort_key: serde_json::Value, object_count: i64) -> String {
-    let token = ObjectAggregateCursorToken {
-        version: 1,
-        dimensions: vec![dimension.to_string()],
-        measures: Vec::new(),
-        sort: ObjectAggregateSort::DimensionsAscending,
-        sort_key,
-        object_count,
-    };
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&token).unwrap())
-}
-
 #[test]
 fn parses_ordered_multidimensional_group_query() {
     let query = parse_object_aggregate_query(
@@ -31,7 +11,10 @@ fn parses_ordered_multidimensional_group_query() {
     assert_eq!(options.limit, Some(50));
     assert_eq!(spec.sort(), ObjectAggregateSort::ObjectCountDescending);
     assert_eq!(
-        spec.dimension_names(),
+        spec.dimensions()
+            .iter()
+            .map(ObjectAggregateDimension::canonical)
+            .collect::<Vec<_>>(),
         vec![
             "json_data.location,country".to_string(),
             "computed.shared.lifecycle".to_string()
@@ -114,65 +97,6 @@ fn rejects_object_list_sort_fields() {
 }
 
 #[test]
-fn cursor_is_bound_to_dimension_and_sort_spec() {
-    let first = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str("name").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-    let second = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str("description").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-    let row = ObjectAggregateRow::from_database(
-        &first,
-        serde_json::json!([]),
-        1,
-        serde_json::json!([[0, "a"]]),
-    )
-    .unwrap();
-    let budget = cursor_budget();
-    let cursor = first.encode_cursor(&row, budget).unwrap();
-    let error = second.decode_cursor(&cursor, budget).unwrap_err();
-    assert!(error.to_string().contains("does not match"));
-}
-
-#[test]
-fn cursor_is_bound_to_measure_spec() {
-    let dimensions = vec![ObjectAggregateDimension::from_str("name").unwrap()];
-    let first = ObjectAggregateSpec::with_measures(
-        dimensions.clone(),
-        vec![ObjectAggregateMeasure::from_str("sum:json_data.cost").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-    let second = ObjectAggregateSpec::with_measures(
-        dimensions,
-        vec![ObjectAggregateMeasure::from_str("max:json_data.cost").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-    let row = ObjectAggregateRow::from_database(
-        &first,
-        serde_json::json!([{
-            "state": "value",
-            "value_count": 1,
-            "skipped_count": 0,
-            "value": 42
-        }]),
-        1,
-        serde_json::json!([[0, "a"]]),
-    )
-    .unwrap();
-
-    let cursor = first.encode_cursor(&row, cursor_budget()).unwrap();
-    let error = second.decode_cursor(&cursor, cursor_budget()).unwrap_err();
-
-    assert!(error.to_string().contains("does not match"));
-}
-
-#[test]
 fn database_measure_values_gain_typed_request_metadata() {
     let spec = ObjectAggregateSpec::with_measures(
         Vec::new(),
@@ -227,28 +151,6 @@ fn rejects_non_positive_object_counts(#[case] object_count: i64) {
 }
 
 #[test]
-fn refuses_to_emit_an_unreplayable_group_cursor() {
-    let spec = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str("json_data.large").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-    let large_value = "x".repeat(MAX_OBJECT_AGGREGATE_CURSOR_LENGTH);
-    let row = ObjectAggregateRow::from_database(
-        &spec,
-        serde_json::json!([]),
-        1,
-        serde_json::json!([[0, large_value]]),
-    )
-    .unwrap();
-
-    let error = spec.encode_cursor(&row, cursor_budget()).unwrap_err();
-
-    assert!(matches!(error, ApiError::PayloadTooLarge(_)));
-    assert!(error.to_string().contains("replay-safe limit"));
-}
-
-#[test]
 fn cursor_budget_accounts_for_the_complete_replay_target() {
     let short = ObjectAggregateCursorBudget::for_request_target(
         "/api/v1/classes/1/object-aggregates",
@@ -284,132 +186,6 @@ fn existing_cursor_does_not_reduce_its_replacement_budget() {
     .unwrap();
 
     assert_eq!(with_cursor, without_cursor);
-}
-
-#[test]
-fn cursor_emission_uses_the_request_specific_budget() {
-    let spec = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str("json_data.large").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-    let boundary_value = "x".repeat(1_000);
-    let row = ObjectAggregateRow::from_database(
-        &spec,
-        serde_json::json!([]),
-        1,
-        serde_json::json!([[0, boundary_value]]),
-    )
-    .unwrap();
-    let budget = ObjectAggregateCursorBudget::for_request_target(
-        "/api/v1/classes/1/object-aggregates",
-        &format!(
-            "name__contains={}&group_by=json_data.large",
-            "x".repeat(7_000)
-        ),
-    )
-    .unwrap();
-
-    let error = spec.encode_cursor(&row, budget).unwrap_err();
-
-    assert!(matches!(error, ApiError::PayloadTooLarge(_)));
-    assert!(error.to_string().contains("for this request"));
-}
-
-#[test]
-fn rejects_an_oversized_group_cursor_before_decoding() {
-    let spec = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str("name").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-
-    let error = spec
-        .decode_cursor(
-            &"a".repeat(MAX_OBJECT_AGGREGATE_CURSOR_LENGTH + 1),
-            cursor_budget(),
-        )
-        .unwrap_err();
-
-    assert!(matches!(error, ApiError::PayloadTooLarge(_)));
-    assert!(error.to_string().contains("replay-safe limit"));
-}
-
-#[rstest::rstest]
-#[case(serde_json::json!([null]), 1)]
-#[case(serde_json::json!([[0]]), 1)]
-#[case(serde_json::json!([[0, null]]), 1)]
-#[case(serde_json::json!([[1, null]]), 1)]
-#[case(serde_json::json!([[4, "value"]]), 1)]
-#[case(serde_json::json!([[0, "value"]]), 0)]
-fn rejects_cursor_with_invalid_ordering_values(
-    #[case] sort_key: serde_json::Value,
-    #[case] object_count: i64,
-) {
-    let spec = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str("name").unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-
-    let error = spec
-        .decode_cursor(
-            &encoded_cursor("name", sort_key, object_count),
-            cursor_budget(),
-        )
-        .unwrap_err();
-
-    assert!(error.to_string().contains("invalid ordering values"));
-}
-
-#[rstest::rstest]
-#[case("name", serde_json::json!(42))]
-#[case("description", serde_json::json!(false))]
-#[case("collection_id", serde_json::json!("42"))]
-#[case("collection_id", serde_json::json!(0))]
-#[case("created_at", serde_json::json!(true))]
-#[case("updated_at", serde_json::json!("not-a-timestamp"))]
-fn rejects_cursor_with_wrong_scalar_value_type(
-    #[case] dimension: &str,
-    #[case] value: serde_json::Value,
-) {
-    let spec = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str(dimension).unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-
-    let error = spec
-        .decode_cursor(
-            &encoded_cursor(dimension, serde_json::json!([[0, value]]), 1),
-            cursor_budget(),
-        )
-        .unwrap_err();
-
-    assert!(error.to_string().contains("invalid ordering values"));
-}
-
-#[rstest::rstest]
-#[case("name", serde_json::json!("router"))]
-#[case("description", serde_json::json!("edge device"))]
-#[case("collection_id", serde_json::json!(42))]
-#[case("created_at", serde_json::json!("2026-07-20T12:34:56.123456"))]
-#[case("updated_at", serde_json::json!("2026-07-20T12:34:56"))]
-fn accepts_cursor_with_correct_scalar_value_type(
-    #[case] dimension: &str,
-    #[case] value: serde_json::Value,
-) {
-    let spec = ObjectAggregateSpec::new(
-        vec![ObjectAggregateDimension::from_str(dimension).unwrap()],
-        ObjectAggregateSort::DimensionsAscending,
-    )
-    .unwrap();
-
-    spec.decode_cursor(
-        &encoded_cursor(dimension, serde_json::json!([[0, value]]), 1),
-        cursor_budget(),
-    )
-    .unwrap();
 }
 
 #[test]

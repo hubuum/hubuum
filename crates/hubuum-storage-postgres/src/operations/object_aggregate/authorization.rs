@@ -3,9 +3,8 @@ use diesel_async::RunQueryDsl;
 
 use super::ObjectAggregateRouteTarget;
 use super::candidate::ObjectAggregateCandidate;
-use crate::errors::ApiError;
-use crate::storage::postgres::PostgresConnection;
-use crate::storage::{
+use crate::{PostgresConnection, PostgresStorageError};
+use hubuum_storage_core::{
     AuthorizationPermission, ObjectAggregateAuthorizer,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
 };
@@ -30,7 +29,7 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
         &self,
         connection: &mut PostgresConnection,
         target: &ObjectAggregateRouteTarget,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<bool, PostgresStorageError> {
         use crate::schema::collections;
 
         let collection_name = collections::table
@@ -40,7 +39,7 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
             .await
             .optional()?
             .ok_or_else(|| {
-                ApiError::InternalServerError(format!(
+                PostgresStorageError::database(format!(
                     "Object aggregate target references missing collection {}",
                     target.collection_id
                 ))
@@ -60,7 +59,7 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
     pub(super) async fn authorize_objects(
         &self,
         candidates: Vec<ObjectAggregateCandidate>,
-    ) -> Result<Vec<ObjectAggregateCandidate>, ApiError> {
+    ) -> Result<Vec<ObjectAggregateCandidate>, PostgresStorageError> {
         if candidates.is_empty() {
             return Ok(candidates);
         }
@@ -80,7 +79,7 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
             .authorize_objects(authorization_candidates, self.required_permissions.clone())
             .await?;
         if decisions.len() != candidates.len() {
-            return Err(ApiError::InternalServerError(
+            return Err(PostgresStorageError::internal(
                 "Object aggregate authorizer returned an unexpected number of decisions"
                     .to_string(),
             ));

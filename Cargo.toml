@@ -156,7 +156,10 @@ production-all = [
     "embedded-migrations",
     "vendored-openssl",
 ]
-integration-test-support = ["hubuum-storage-postgres/query-capture"]
+integration-test-support = [
+    "hubuum-storage-postgres/integration-test-support",
+    "hubuum-storage-postgres/query-capture",
+]
 
 [profile.release]
 codegen-units = 1

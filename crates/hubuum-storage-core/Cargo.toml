@@ -14,10 +14,12 @@ policy-document = "docs/rust_api/hubuum-storage-core.md"
 
 [dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 chrono = "0.4"
 hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
 hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
 hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
 hubuum-task-core = { version = "0.0.1", path = "../hubuum-task-core" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = "1"

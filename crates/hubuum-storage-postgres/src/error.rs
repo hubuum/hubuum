@@ -65,6 +65,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::PayloadTooLarge, message, None)
+    }
+
+    #[must_use]
     pub fn validation(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Validation, message, None)
     }
@@ -102,6 +107,13 @@ impl fmt::Display for PostgresStorageError {
 }
 
 impl std::error::Error for PostgresStorageError {}
+
+impl From<StorageError> for PostgresStorageError {
+    fn from(error: StorageError) -> Self {
+        let (kind, message, current_etag) = error.into_parts();
+        Self::new(kind, message, current_etag)
+    }
+}
 
 impl From<PoolError> for PostgresStorageError {
     fn from(error: PoolError) -> Self {

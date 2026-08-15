@@ -186,23 +186,6 @@ where
     finalize_page_items(items, &request.sorts, has_more)
 }
 
-pub(crate) fn finalize_partial_page<T>(
-    items: Vec<T>,
-    query_options: &QueryOptions,
-    has_more: bool,
-) -> Result<Page<T>, ApiError>
-where
-    T: CursorPaginated,
-{
-    let request = page_request::<T>(query_options)?;
-    if items.len() > request.limit || (has_more && items.is_empty()) {
-        return Err(ApiError::InternalServerError(
-            "Partial cursor page has invalid item bounds".to_string(),
-        ));
-    }
-    finalize_page_items(items, &request.sorts, has_more)
-}
-
 fn finalize_page_items<T>(
     items: Vec<T>,
     sorts: &[SortParam],

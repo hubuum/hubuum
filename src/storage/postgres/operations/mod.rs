@@ -1,5 +1,4 @@
 pub mod active_tokens;
-pub(crate) mod authorization;
 pub mod authz;
 pub mod class;
 pub mod collection;
@@ -33,7 +32,6 @@ pub mod task_rows;
 pub mod token;
 pub mod token_retention;
 pub mod user;
-mod visibility;
 
 use super::with_connection;
 use crate::bind_transitive_filter_params;

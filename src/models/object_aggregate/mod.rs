@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use base64::Engine;
 use hubuum_computed_fields::FieldKey;
 use hubuum_query::JsonFieldPath;
 use serde::{Deserialize, Serialize};
@@ -34,10 +33,6 @@ pub struct ObjectAggregateCursorBudget {
 }
 
 impl ObjectAggregateCursorBudget {
-    pub(crate) const fn from_max_encoded_bytes(max_encoded_bytes: usize) -> Self {
-        Self { max_encoded_bytes }
-    }
-
     pub fn for_request_target(path: &str, query_string: &str) -> Result<Self, ApiError> {
         let base_query_length = query_string
             .split('&')
@@ -426,15 +421,6 @@ impl ObjectAggregateSpec {
                 .any(|measure| measure.computed_selector().is_some())
     }
 
-    pub(crate) fn requires_object_data(&self) -> bool {
-        self.dimensions.iter().any(|dimension| {
-            matches!(
-                dimension,
-                ObjectAggregateDimension::JsonData(_) | ObjectAggregateDimension::Computed(_)
-            )
-        }) || !self.measures.is_empty()
-    }
-
     pub fn has_personal_computed_dimension(&self) -> bool {
         self.dimensions.iter().any(|dimension| {
             dimension
@@ -451,161 +437,6 @@ impl ObjectAggregateSpec {
                     .is_some_and(|selector| selector.scope() == ComputedFieldScope::Personal)
             })
     }
-
-    pub(crate) fn computed_selectors(&self) -> impl Iterator<Item = &ComputedFieldSelector> {
-        self.dimensions
-            .iter()
-            .filter_map(ObjectAggregateDimension::computed_selector)
-            .chain(
-                self.measures
-                    .iter()
-                    .filter_map(ObjectAggregateMeasure::computed_selector),
-            )
-    }
-
-    fn dimension_names(&self) -> Vec<String> {
-        self.dimensions
-            .iter()
-            .map(ObjectAggregateDimension::canonical)
-            .collect()
-    }
-
-    fn measure_names(&self) -> Vec<String> {
-        self.measures
-            .iter()
-            .map(ObjectAggregateMeasure::canonical)
-            .collect()
-    }
-
-    pub(crate) fn decode_cursor(
-        &self,
-        cursor: &str,
-        budget: ObjectAggregateCursorBudget,
-    ) -> Result<DecodedObjectAggregateCursor, ApiError> {
-        if cursor.len() > budget.max_encoded_bytes() {
-            return Err(ApiError::PayloadTooLarge(format!(
-                "aggregate cursor exceeds the replay-safe limit of {} bytes for this request",
-                budget.max_encoded_bytes()
-            )));
-        }
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(cursor)
-            .map_err(|error| ApiError::BadRequest(format!("invalid aggregate cursor: {error}")))?;
-        let token: ObjectAggregateCursorToken = serde_json::from_slice(&bytes)
-            .map_err(|error| ApiError::BadRequest(format!("invalid aggregate cursor: {error}")))?;
-        if token.version != 1
-            || token.dimensions != self.dimension_names()
-            || token.measures != self.measure_names()
-            || token.sort != self.sort
-        {
-            return Err(ApiError::BadRequest(
-                "aggregate cursor does not match the current dimensions, measures, and sort"
-                    .to_string(),
-            ));
-        }
-        let sort_key_is_valid = token.sort_key.as_array().is_some_and(|values| {
-            values.len() == self.dimensions.len()
-                && values
-                    .iter()
-                    .zip(&self.dimensions)
-                    .all(|(value, dimension)| valid_cursor_dimension_value(value, dimension))
-        });
-        if !sort_key_is_valid || token.object_count <= 0 {
-            return Err(ApiError::BadRequest(
-                "aggregate cursor contains invalid ordering values".to_string(),
-            ));
-        }
-        Ok(DecodedObjectAggregateCursor {
-            sort_key: token.sort_key,
-            object_count: token.object_count,
-        })
-    }
-
-    pub(crate) fn encode_cursor(
-        &self,
-        row: &ObjectAggregateRow,
-        budget: ObjectAggregateCursorBudget,
-    ) -> Result<String, ApiError> {
-        let token = ObjectAggregateCursorToken {
-            version: 1,
-            dimensions: self.dimension_names(),
-            measures: self.measure_names(),
-            sort: self.sort,
-            sort_key: row.sort_key.clone(),
-            object_count: row.object_count,
-        };
-        let bytes = serde_json::to_vec(&token).map_err(|error| {
-            ApiError::InternalServerError(format!("failed to serialize aggregate cursor: {error}"))
-        })?;
-        let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-        if cursor.len() > budget.max_encoded_bytes() {
-            return Err(ApiError::PayloadTooLarge(format!(
-                "aggregate value at the page boundary produces a cursor larger than the replay-safe limit of {} bytes for this request; shorten the filters, narrow the grouping dimensions, or use a page limit that does not end on this value",
-                budget.max_encoded_bytes()
-            )));
-        }
-        Ok(cursor)
-    }
-}
-
-fn valid_cursor_dimension_value(
-    value: &serde_json::Value,
-    dimension: &ObjectAggregateDimension,
-) -> bool {
-    let Some(pair) = value.as_array().filter(|pair| pair.len() == 2) else {
-        return false;
-    };
-    let Some(state) = pair[0].as_u64() else {
-        return false;
-    };
-    match state {
-        0 => valid_cursor_present_value(&pair[1], dimension),
-        1 => !matches!(dimension, ObjectAggregateDimension::Scalar(_)) && pair[1].is_null(),
-        2 => matches!(dimension, ObjectAggregateDimension::JsonData(_)) && pair[1].is_null(),
-        3 => matches!(dimension, ObjectAggregateDimension::Computed(_)) && pair[1].is_null(),
-        _ => false,
-    }
-}
-
-fn valid_cursor_present_value(
-    value: &serde_json::Value,
-    dimension: &ObjectAggregateDimension,
-) -> bool {
-    match dimension {
-        ObjectAggregateDimension::Scalar(ObjectAggregateScalarField::Name)
-        | ObjectAggregateDimension::Scalar(ObjectAggregateScalarField::Description) => {
-            value.is_string()
-        }
-        ObjectAggregateDimension::Scalar(ObjectAggregateScalarField::CollectionId) => value
-            .as_i64()
-            .and_then(|value| i32::try_from(value).ok())
-            .is_some_and(|value| value > 0),
-        ObjectAggregateDimension::Scalar(
-            ObjectAggregateScalarField::CreatedAt | ObjectAggregateScalarField::UpdatedAt,
-        ) => value
-            .as_str()
-            .is_some_and(|value| value.parse::<chrono::NaiveDateTime>().is_ok()),
-        ObjectAggregateDimension::JsonData(_) | ObjectAggregateDimension::Computed(_) => {
-            !value.is_null()
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ObjectAggregateCursorToken {
-    version: u8,
-    dimensions: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    measures: Vec<String>,
-    sort: ObjectAggregateSort,
-    sort_key: serde_json::Value,
-    object_count: i64,
-}
-
-#[derive(Debug)]
-pub(crate) struct DecodedObjectAggregateCursor {
-    pub sort_key: serde_json::Value,
-    pub object_count: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -783,10 +614,6 @@ impl ObjectAggregateRow {
 
     pub const fn object_count(&self) -> i64 {
         self.object_count
-    }
-
-    pub(crate) const fn sort_key(&self) -> &serde_json::Value {
-        &self.sort_key
     }
 }
 

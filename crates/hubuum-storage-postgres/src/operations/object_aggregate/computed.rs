@@ -3,31 +3,28 @@ use diesel_async::RunQueryDsl;
 use hubuum_computed_fields::{EvaluationResult, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS};
 
 use super::candidate::ObjectAggregateCandidate;
-use crate::errors::ApiError;
-use crate::models::computed_field::{
-    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ComputedResultType,
+use hubuum_query::{ComputedFieldScope, ComputedQueryValueType};
+use hubuum_storage_core::{StorageComputedFieldSelector, StorageObjectAggregateSpec};
+
+use crate::operations::computed_definition::{
+    ComputedDefinitionRow, PERSONAL_VISIBILITY, SHARED_VISIBILITY, evaluate_definitions,
 };
-use crate::models::object_aggregate::{ComputedFieldSelector, ObjectAggregateSpec};
-use crate::models::search::ComputedFieldScope;
-use crate::storage::postgres::PostgresConnection;
-use crate::storage::postgres::operations::computed_field::{
-    ComputedQuerySnapshot, evaluate_definitions,
-};
-use crate::storage::postgres::operations::computed_field_rows::ComputedFieldDefinitionRow as ComputedFieldDefinition;
+use crate::operations::computed_objects::query::ComputedQuerySnapshot;
+use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 #[derive(Default)]
 pub(super) struct ComputedAggregateDefinitions {
-    shared: Vec<ComputedFieldDefinition>,
-    personal: Vec<ComputedFieldDefinition>,
+    shared: Vec<ComputedDefinitionRow>,
+    personal: Vec<ComputedDefinitionRow>,
 }
 
 pub(super) async fn load_computed_aggregate_definitions(
     connection: &mut PostgresConnection,
     class_id_value: i32,
-    spec: &ObjectAggregateSpec,
+    spec: &StorageObjectAggregateSpec,
     personal_owner_id: Option<i32>,
     computed_filter_snapshot: Option<&ComputedQuerySnapshot>,
-) -> Result<ComputedAggregateDefinitions, ApiError> {
+) -> Result<ComputedAggregateDefinitions, PostgresStorageError> {
     let selectors = spec.computed_selectors().collect::<Vec<_>>();
     if selectors.is_empty() {
         return Ok(ComputedAggregateDefinitions::default());
@@ -44,7 +41,7 @@ pub(super) async fn load_computed_aggregate_definitions(
         .map(|selector| selector.key().to_string())
         .collect::<Vec<_>>();
     if computed_filter_snapshot.is_some_and(|snapshot| snapshot.class_id() != class_id_value) {
-        return Err(ApiError::InternalServerError(
+        return Err(PostgresStorageError::internal(
             "Computed object aggregate filter snapshot belongs to a different class".to_string(),
         ));
     }
@@ -73,23 +70,22 @@ pub(super) async fn load_computed_aggregate_definitions(
             .iter()
             .find(|definition| match selector.scope() {
                 ComputedFieldScope::Shared => {
-                    definition.visibility == COMPUTED_FIELD_VISIBILITY_SHARED
-                        && definition.key == selector.key()
+                    definition.is_shared() && definition.key() == selector.key()
                 }
                 ComputedFieldScope::Personal => {
-                    definition.visibility == COMPUTED_FIELD_VISIBILITY_PERSONAL
-                        && definition.owner_user_id == personal_owner_id
-                        && definition.key == selector.key()
+                    personal_owner_id
+                        .is_some_and(|owner_id| definition.is_personal_for(owner_id))
+                        && definition.key() == selector.key()
                 }
             })
             .ok_or_else(|| {
-                ApiError::BadRequest(format!(
+                PostgresStorageError::bad_request(format!(
                     "Computed aggregate field '{}' does not name an accessible field in class {class_id_value}",
                     selector.canonical()
                 ))
             })?;
-        if !definition.enabled {
-            return Err(ApiError::BadRequest(format!(
+        if !definition.enabled() {
+            return Err(PostgresStorageError::bad_request(format!(
                 "Computed aggregate field '{}' is disabled",
                 selector.canonical()
             )));
@@ -101,11 +97,11 @@ pub(super) async fn load_computed_aggregate_definitions(
         });
         if is_measure
             && !matches!(
-                ComputedResultType::from_db(&definition.result_type)?,
-                ComputedResultType::Number | ComputedResultType::Integer
+                definition.query_value_type()?,
+                ComputedQueryValueType::Number | ComputedQueryValueType::Integer
             )
         {
-            return Err(ApiError::BadRequest(format!(
+            return Err(PostgresStorageError::bad_request(format!(
                 "Computed aggregate measure '{}' must select a numeric field",
                 selector.canonical()
             )));
@@ -117,7 +113,7 @@ pub(super) async fn load_computed_aggregate_definitions(
         };
         if !target
             .iter()
-            .any(|selected_definition| selected_definition.id == definition.id)
+            .any(|selected_definition| selected_definition.id() == definition.id())
         {
             target.push(definition.clone());
         }
@@ -131,7 +127,7 @@ async fn load_selected_definitions(
     shared_keys: &[String],
     personal_keys: &[String],
     personal_owner_id: Option<i32>,
-) -> Result<Vec<ComputedFieldDefinition>, ApiError> {
+) -> Result<Vec<ComputedDefinitionRow>, PostgresStorageError> {
     use crate::schema::computed_field_definitions::dsl::{
         class_id, computed_field_definitions, id, key, owner_user_id, visibility,
     };
@@ -141,29 +137,29 @@ async fn load_selected_definitions(
         definitions.extend(
             computed_field_definitions
                 .filter(class_id.eq(class_id_value))
-                .filter(visibility.eq(COMPUTED_FIELD_VISIBILITY_SHARED))
+                .filter(visibility.eq(SHARED_VISIBILITY))
                 .filter(key.eq_any(shared_keys))
                 .order(id.asc())
-                .select(ComputedFieldDefinition::as_select())
-                .load::<ComputedFieldDefinition>(connection)
+                .select(ComputedDefinitionRow::as_select())
+                .load::<ComputedDefinitionRow>(connection)
                 .await?,
         );
     }
     if !personal_keys.is_empty() {
         let owner_id = personal_owner_id.ok_or_else(|| {
-            ApiError::InternalServerError(
+            PostgresStorageError::internal(
                 "Personal computed grouping requires an owner".to_string(),
             )
         })?;
         definitions.extend(
             computed_field_definitions
                 .filter(class_id.eq(class_id_value))
-                .filter(visibility.eq(COMPUTED_FIELD_VISIBILITY_PERSONAL))
+                .filter(visibility.eq(PERSONAL_VISIBILITY))
                 .filter(owner_user_id.eq(Some(owner_id)))
                 .filter(key.eq_any(personal_keys))
                 .order(id.asc())
-                .select(ComputedFieldDefinition::as_select())
-                .load::<ComputedFieldDefinition>(connection)
+                .select(ComputedDefinitionRow::as_select())
+                .load::<ComputedDefinitionRow>(connection)
                 .await?,
         );
     }
@@ -171,24 +167,27 @@ async fn load_selected_definitions(
 }
 
 pub(super) fn computed_aggregate_payload(
+    runtime: &PostgresRuntime,
     candidates: Vec<ObjectAggregateCandidate>,
-    spec: &ObjectAggregateSpec,
+    spec: &StorageObjectAggregateSpec,
     definitions: &ComputedAggregateDefinitions,
-) -> Result<(Vec<ObjectAggregateCandidate>, serde_json::Value), ApiError> {
+) -> Result<(Vec<ObjectAggregateCandidate>, serde_json::Value), PostgresStorageError> {
     let mut payload = serde_json::Map::new();
     for object in &candidates {
         let data = object.data.as_ref().ok_or_else(|| {
-            ApiError::InternalServerError(
+            PostgresStorageError::internal(
                 "Computed aggregation candidate is missing its JSON data snapshot".to_string(),
             )
         })?;
         let shared = evaluate_aggregate_definitions(
+            runtime,
             data,
             &definitions.shared,
             MAX_SHARED_DEFINITIONS,
             "shared_group",
         )?;
         let personal = evaluate_aggregate_definitions(
+            runtime,
             data,
             &definitions.personal,
             MAX_PERSONAL_DEFINITIONS,
@@ -209,20 +208,30 @@ pub(super) fn computed_aggregate_payload(
 }
 
 fn evaluate_aggregate_definitions(
+    runtime: &PostgresRuntime,
     data: &serde_json::Value,
-    definitions: &[ComputedFieldDefinition],
+    definitions: &[ComputedDefinitionRow],
     limit: usize,
-    context: &'static str,
-) -> Result<Option<EvaluationResult>, ApiError> {
-    (!definitions.is_empty())
-        .then(|| evaluate_definitions(data, definitions, limit, context))
-        .transpose()
+    scope: &'static str,
+) -> Result<Option<EvaluationResult>, PostgresStorageError> {
+    let result = (!definitions.is_empty())
+        .then(|| evaluate_definitions(data, definitions, limit))
+        .transpose()?;
+    if let Some(result) = &result {
+        let error_codes = result
+            .errors
+            .values()
+            .map(|error| error.code.as_str())
+            .collect::<Vec<_>>();
+        runtime.record_computed_evaluation(scope, &error_codes);
+    }
+    Ok(result)
 }
 
 fn computed_selector_value(
     shared: Option<&EvaluationResult>,
     personal: Option<&EvaluationResult>,
-    selector: &ComputedFieldSelector,
+    selector: &StorageComputedFieldSelector,
 ) -> serde_json::Value {
     let result = match selector.scope() {
         ComputedFieldScope::Shared => shared,

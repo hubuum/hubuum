@@ -184,9 +184,13 @@ impl ObjectAggregateStorage for PostgresStorage {
         query: ObjectAggregateStorageQuery,
         authorizer: Option<&dyn ObjectAggregateAuthorizer>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
-        operations::user::aggregate_objects(&self.pool, query, authorizer)
-            .await
-            .map_err(map_postgres_error)
+        hubuum_storage_postgres::operations::object_aggregate::aggregate_objects(
+            self.runtime(),
+            query,
+            authorizer,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 

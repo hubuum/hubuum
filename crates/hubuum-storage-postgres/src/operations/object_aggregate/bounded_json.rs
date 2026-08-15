@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
-use crate::errors::ApiError;
+use crate::PostgresStorageError;
 
 #[cfg(not(feature = "integration-test-support"))]
 const MAX_OBJECT_AGGREGATE_CANDIDATE_BATCH_BYTES: usize = 8 * 1024 * 1024;
@@ -24,7 +24,7 @@ impl ObjectAggregateJsonBound {
         }
     }
 
-    pub(super) fn measure<T>(self, value: &T) -> Result<usize, ApiError>
+    pub(super) fn measure<T>(self, value: &T) -> Result<usize, PostgresStorageError>
     where
         T: Serialize,
     {
@@ -32,20 +32,20 @@ impl ObjectAggregateJsonBound {
         match serde_json::to_writer(&mut writer, value) {
             Ok(()) => Ok(writer.bytes),
             Err(_) if writer.exceeded => Err(self.overflow_error()),
-            Err(error) => Err(ApiError::InternalServerError(format!(
+            Err(error) => Err(PostgresStorageError::database(format!(
                 "Failed to measure {}: {error}",
                 self.subject()
             ))),
         }
     }
 
-    pub(super) fn overflow_error(self) -> ApiError {
+    pub(super) fn overflow_error(self) -> PostgresStorageError {
         match self {
-            Self::CandidateBatch => ApiError::PayloadTooLarge(format!(
+            Self::CandidateBatch => PostgresStorageError::payload_too_large(format!(
                 "An object snapshot exceeds the {}-byte grouped-query source batch limit",
                 self.max_bytes()
             )),
-            Self::Accumulator => ApiError::PayloadTooLarge(format!(
+            Self::Accumulator => PostgresStorageError::payload_too_large(format!(
                 "Object aggregate cardinality and values exceed the {}-byte intermediate storage limit; narrow the source filters or grouping dimensions",
                 self.max_bytes()
             )),

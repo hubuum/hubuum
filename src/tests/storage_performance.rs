@@ -13,8 +13,10 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
     HubuumObjectRelationID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, NewHubuumObjectRelation, ObjectRelationCreateSelector, ObjectRelationSelector,
-    ObjectSelector, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID,
+    NewHubuumObject, NewHubuumObjectRelation, ObjectAggregateAuthorization,
+    ObjectAggregateCursorBudget, ObjectAggregateRequest, ObjectAggregateTarget,
+    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, Permissions,
+    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID, parse_object_aggregate_query,
 };
 use crate::services::Services;
 use crate::services::history::{
@@ -1029,6 +1031,99 @@ async fn object_page_query_count_is_constant_with_page_size() {
     assert_eq!(large_queries.domain_queries(), 4);
     assert_eq!(large_queries.control_queries(), 0);
     assert_eq!(large_queries.connection_checkouts(), 4);
+
+    fixture.cleanup().await.expect("object fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_aggregate_query_count_is_constant_with_page_size() {
+    let scope = TestScope::new();
+    let fixture = scope
+        .object_fixture(
+            "query_budget_object_aggregate",
+            NewHubuumClass {
+                collection_id: 0,
+                name: scope.scoped_name("query_budget_object_aggregate_class"),
+                description: "query budget object aggregate class".to_string(),
+                json_schema: None,
+                validate_schema: None,
+            },
+            (0..20)
+                .map(|index| NewHubuumObject {
+                    collection_id: 0,
+                    hubuum_class_id: 0,
+                    name: scope.scoped_name(&format!("query_budget_group_{index:02}")),
+                    description: "query budget object aggregate".to_string(),
+                    data: serde_json::json!({"index": index}),
+                })
+                .collect(),
+        )
+        .await
+        .expect("object aggregate fixture should save");
+    let actor = ensure_admin_user(&scope.pool).await;
+
+    let run_page = |limit: usize| {
+        let query_string = format!("group_by=name&limit={limit}&include_total=true");
+        let request = ObjectAggregateRequest::builder(
+            ObjectAggregateTarget::from_class(&fixture.class)
+                .expect("aggregate target should be valid"),
+            parse_object_aggregate_query(&query_string).expect("aggregate query should be valid"),
+        )
+        .authorization(
+            ObjectAggregateAuthorization::new(
+                vec![Permissions::ReadObject, Permissions::ReadCollection],
+                None,
+            )
+            .expect("aggregate authorization should be valid"),
+        )
+        .cursor_budget(
+            ObjectAggregateCursorBudget::for_request_target(
+                &format!("/api/v1/classes/{}/object-aggregates", fixture.class.id),
+                &query_string,
+            )
+            .expect("aggregate cursor budget should be valid"),
+        )
+        .build()
+        .expect("aggregate request should be valid");
+        crate::services::object_aggregates::aggregate_objects(&scope.pool, &actor, request)
+    };
+
+    let (small_page, small_queries) = capture_queries(run_page(1)).await;
+    let (small_rows, small_total, small_cursor) = small_page
+        .expect("small aggregate page should load")
+        .into_parts();
+    assert_eq!(small_rows.len(), 1);
+    assert_eq!(small_total, 20);
+    assert!(small_cursor.is_some());
+
+    let (large_page, large_queries) = capture_queries(run_page(20)).await;
+    let (large_rows, large_total, large_cursor) = large_page
+        .expect("large aggregate page should load")
+        .into_parts();
+    assert_eq!(large_rows.len(), 20);
+    assert_eq!(large_total, 20);
+    assert!(large_cursor.is_none());
+
+    assert_same_query_shape(&small_queries, &large_queries);
+    assert_eq!(
+        large_queries.connection_checkouts(),
+        2,
+        "one admin lookup and one aggregate transaction are expected: {:#?}",
+        large_queries.query_counts()
+    );
+    assert_eq!(large_queries.total_queries(), 6);
+    assert_eq!(large_queries.domain_queries(), 4);
+    assert_eq!(large_queries.control_queries(), 2);
+    assert_eq!(
+        large_queries.queries_matching("count( DISTINCT jsonb_build_array"),
+        1
+    );
+    assert_eq!(
+        large_queries.queries_matching("GROUP BY jsonb_build_array"),
+        1,
+        "{:#?}",
+        large_queries.query_counts()
+    );
 
     fixture.cleanup().await.expect("object fixture cleanup");
 }

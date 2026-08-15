@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
 use diesel::sql_types::{BigInt, Integer, Text};
@@ -6,37 +5,28 @@ use hubuum_computed_fields::{
     EvaluationLimits, EvaluationResult, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, evaluate,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent};
-use crate::models::search::{
-    ComputedFieldScope, ComputedQueryValueType, FilterField, Operator, ParsedQueryParam,
-    ParsedQueryParamExt, QueryOptions, SortParam,
-};
+use crate::models::search::QueryOptions;
 use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
     ComputedFieldDefinition as DomainComputedFieldDefinition, ComputedFieldDefinitionPatch,
-    ComputedFieldDefinitionRequest, ComputedFieldErrorResponse, ComputedFieldMutationResponse,
-    ComputedObjectScopesResponse, ComputedResultType, ComputedScopeResponse, HubuumClass,
-    HubuumObject, HubuumObjectComputedResponse, NewTaskEventRecord, PrincipalID,
-    SharedComputedScopeResponse, TaskKind, TaskResultCounts, TaskStatus,
+    ComputedFieldDefinitionRequest, ComputedFieldMutationResponse, HubuumClass, HubuumObject,
+    NewTaskEventRecord, PrincipalID, TaskKind, TaskResultCounts, TaskStatus,
     ValidatedComputedFieldPatch,
 };
-use crate::pagination::{CursorSqlField, CursorSqlType};
 use crate::storage::postgres::operations::class::HubuumClassRow;
 use crate::storage::postgres::operations::computed_field_rows::{
     ClassComputationStateRow as ClassComputationState,
     ComputedFieldDefinitionRow as ComputedFieldDefinition,
     NewComputedFieldDefinitionRow as NewComputedFieldDefinition,
-    NewObjectComputedDataRow as NewObjectComputedData, ObjectComputedDataRow as ObjectComputedData,
+    NewObjectComputedDataRow as NewObjectComputedData,
 };
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::object::HubuumObjectRow;
-use crate::storage::postgres::operations::search::{
-    JsonSqlPredicate, SQLComponent, SQLValue, dynamic_sql_predicate,
-};
 use crate::storage::postgres::operations::task::{
     QueuedTaskCancellation, TaskBackend, TaskStateUpdate, cancel_queued_tasks_conn,
     insert_internal_queued_task,
@@ -46,18 +36,11 @@ use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_transaction};
 
 mod materialization;
-mod query;
 mod rebuild;
 
-pub use materialization::{
-    enrich_objects_with_computed, enrich_objects_with_computed_query_snapshot, source_data_sha256,
-};
+pub use materialization::source_data_sha256;
 pub(crate) use materialization::{evaluate_definitions, materialize_object_in_transaction};
 use materialization::{shared_definitions_conn, upsert_materialized};
-pub use query::{ComputedQuerySnapshot, resolve_computed_query_fields};
-pub(crate) use query::{computed_filter_predicate, computed_filter_sql_component};
-#[cfg(test)]
-use query::{validate_computed_filter_count, validate_computed_query_count};
 pub(crate) use rebuild::{
     enqueue_restored_computed_rebuilds, execute_computed_reindex_task_row,
     mark_computed_reindex_failed_conn, mark_recovered_computed_reindex_failed,
@@ -65,9 +48,6 @@ pub(crate) use rebuild::{
 pub use rebuild::{execute_computed_reindex_task, request_class_rebuild};
 
 const REINDEX_PAYLOAD_TYPE: &str = "computed_fields";
-pub const MAX_FILTERS_WITH_COMPUTED: usize = 2;
-pub const MAX_SORT_FIELDS_WITH_COMPUTED: usize = 2;
-
 fn reindex_batch_size() -> i64 {
     crate::config::get_config()
         .map(|config| config.computed_reindex_batch_size)
@@ -731,9 +711,6 @@ pub async fn delete_personal_definition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::search::{
-        parse_query_parameter, parse_query_parameter_with_computed_filters_and_passthrough,
-    };
 
     #[test]
     fn canonical_hash_ignores_object_key_order() {
@@ -751,41 +728,6 @@ mod tests {
         assert_ne!(
             source_data_sha256(&serde_json::json!([1, 2])).unwrap(),
             source_data_sha256(&serde_json::json!([2, 1])).unwrap()
-        );
-    }
-
-    #[test]
-    fn computed_query_request_size_is_bounded_before_sql_resolution() {
-        let sorts = parse_query_parameter("sort=computed.shared.first,computed.shared.second,name")
-            .unwrap()
-            .sort;
-
-        let error = validate_computed_query_count(sorts.len()).unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "Computed sorting supports at most 2 explicit sort fields per request"
-        );
-    }
-
-    #[test]
-    fn computed_filter_count_is_bounded_before_sql_resolution() {
-        let (query, _) = parse_query_parameter_with_computed_filters_and_passthrough(
-            "computed.shared.first=1&computed.shared.first__gte=0&computed.personal.second=2",
-            &[],
-        )
-        .unwrap();
-        let computed_filter_count = query
-            .filters
-            .iter()
-            .filter(|filter| filter.field.computed_query().is_some())
-            .count();
-
-        let error = validate_computed_filter_count(computed_filter_count).unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "Computed filtering supports at most 2 computed filter parameters per request"
         );
     }
 }

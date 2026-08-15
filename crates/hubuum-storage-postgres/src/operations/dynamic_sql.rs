@@ -87,6 +87,19 @@ pub(crate) fn bound_sql_predicate(
     })
 }
 
+pub(crate) fn indexed_bind_placeholders(sql: &str) -> String {
+    let mut indexed = String::with_capacity(sql.len());
+    let mut start = 0;
+    for (index, offset) in bind_placeholder_offsets(sql).enumerate() {
+        indexed.push_str(&sql[start..offset]);
+        indexed.push('$');
+        indexed.push_str(&(index + 1).to_string());
+        start = offset + 1;
+    }
+    indexed.push_str(&sql[start..]);
+    indexed
+}
+
 fn bind_placeholder_offsets(sql: &str) -> impl Iterator<Item = usize> + '_ {
     let mut characters = sql.char_indices().peekable();
     let mut in_single_quoted_string = false;
@@ -112,7 +125,7 @@ fn bind_placeholder_offsets(sql: &str) -> impl Iterator<Item = usize> + '_ {
 
 #[cfg(test)]
 mod tests {
-    use super::bind_placeholder_offsets;
+    use super::{bind_placeholder_offsets, indexed_bind_placeholders};
 
     #[test]
     fn placeholders_ignore_question_marks_in_sql_strings() {
@@ -121,6 +134,14 @@ mod tests {
         assert_eq!(
             bind_placeholder_offsets(sql).collect::<Vec<_>>(),
             vec![sql.len() - 1]
+        );
+    }
+
+    #[test]
+    fn placeholders_are_numbered_without_touching_quoted_question_marks() {
+        assert_eq!(
+            indexed_bind_placeholders("SELECT ?, '?', ?"),
+            "SELECT $1, '?', $2"
         );
     }
 }

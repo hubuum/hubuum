@@ -3423,6 +3423,8 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_object_aggregates() {
+    use hubuum_storage_core::{StorageObjectAggregateDimension, StorageObjectAggregateScalarField};
+
     let _permit = postgres_permit().await;
     let pool = pool();
     let needle = prefix("object_aggregate");
@@ -3475,16 +3477,20 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
                 include_total: true,
             },
             StorageObjectAggregateSpec::new(
-                ["name".to_string()],
+                [StorageObjectAggregateDimension::Scalar(
+                    StorageObjectAggregateScalarField::Name,
+                )],
                 [],
                 StorageObjectAggregateSort::DimensionsAscending,
-            ),
+            )
+            .expect("compatibility aggregate spec should be valid"),
             visibility(),
         )
         .required_permissions([
             AuthorizationPermission::ReadObject,
             AuthorizationPermission::ReadCollection,
         ])
+        .page_limit(50)
         .cursor_max_encoded_bytes(4_096)
         .authorization_mode(mode)
         .build()

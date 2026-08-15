@@ -26,12 +26,10 @@ use crate::traits::{GroupAccessors, SelfAccessors};
 
 mod auth;
 mod membership;
-mod object_aggregate;
 pub(crate) mod search;
 
 pub use auth::*;
 pub use membership::*;
-pub(crate) use object_aggregate::aggregate_objects;
 pub use search::*;
 
 #[derive(Debug, Queryable, Selectable, Clone)]

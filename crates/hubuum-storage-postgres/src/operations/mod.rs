@@ -31,6 +31,7 @@ pub mod maintenance;
 pub mod meta;
 pub mod metrics;
 pub mod object;
+pub mod object_aggregate;
 pub mod principal;
 pub mod probe;
 pub(crate) mod related_filter;

@@ -1,10 +1,14 @@
+use std::collections::HashSet;
 use std::fmt;
+use std::str::FromStr;
 
 use async_trait::async_trait;
-use hubuum_query::QueryOptions;
+use base64::Engine;
+use hubuum_query::{ComputedFieldScope, JsonFieldPath, QueryOptions};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{AuthorizationPermission, StorageError, StorageVisibility};
+use crate::{AuthorizationPermission, StorageError, StorageErrorKind, StorageVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectAggregateAuthorizationMode {
@@ -12,12 +16,277 @@ pub enum ObjectAggregateAuthorizationMode {
     Delegated,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageObjectAggregateSort {
     DimensionsAscending,
     DimensionsDescending,
     ObjectCountAscending,
     ObjectCountDescending,
+}
+
+const MAX_OBJECT_AGGREGATE_DIMENSIONS: usize = 3;
+const MAX_OBJECT_AGGREGATE_MEASURES: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageObjectAggregateScalarField {
+    Name,
+    Description,
+    CollectionId,
+    CreatedAt,
+    UpdatedAt,
+}
+
+impl StorageObjectAggregateScalarField {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Description => "description",
+            Self::CollectionId => "collection_id",
+            Self::CreatedAt => "created_at",
+            Self::UpdatedAt => "updated_at",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageComputedFieldSelector {
+    scope: ComputedFieldScope,
+    key: String,
+}
+
+impl StorageComputedFieldSelector {
+    pub fn new(scope: ComputedFieldScope, key: impl Into<String>) -> Result<Self, StorageError> {
+        let key = key.into();
+        let valid = !key.is_empty()
+            && key.len() <= 64
+            && key
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| match (index, byte) {
+                    (0, b'a'..=b'z') => true,
+                    (0, _) => false,
+                    (_, b'a'..=b'z' | b'0'..=b'9' | b'_') => true,
+                    (_, _) => false,
+                });
+        if !valid {
+            return Err(StorageError::bad_request(format!(
+                "Invalid computed aggregate field key '{key}'"
+            )));
+        }
+        Ok(Self { scope, key })
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> ComputedFieldScope {
+        self.scope
+    }
+
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        format!("computed.{}.{}", self.scope.as_str(), self.key)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageObjectAggregateDimension {
+    Scalar(StorageObjectAggregateScalarField),
+    JsonData(JsonFieldPath),
+    Computed(StorageComputedFieldSelector),
+}
+
+impl StorageObjectAggregateDimension {
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        match self {
+            Self::Scalar(field) => field.as_str().to_string(),
+            Self::JsonData(path) => format!("json_data.{}", path.canonical()),
+            Self::Computed(selector) => selector.canonical(),
+        }
+    }
+
+    #[must_use]
+    pub const fn computed_selector(&self) -> Option<&StorageComputedFieldSelector> {
+        match self {
+            Self::Computed(selector) => Some(selector),
+            Self::Scalar(_) | Self::JsonData(_) => None,
+        }
+    }
+}
+
+impl FromStr for StorageObjectAggregateDimension {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let scalar = match value {
+            "name" => Some(StorageObjectAggregateScalarField::Name),
+            "description" => Some(StorageObjectAggregateScalarField::Description),
+            "collection_id" => Some(StorageObjectAggregateScalarField::CollectionId),
+            "created_at" => Some(StorageObjectAggregateScalarField::CreatedAt),
+            "updated_at" => Some(StorageObjectAggregateScalarField::UpdatedAt),
+            _ => None,
+        };
+        if let Some(scalar) = scalar {
+            return Ok(Self::Scalar(scalar));
+        }
+        if let Some(path) = value.strip_prefix("json_data.") {
+            return JsonFieldPath::new(path)
+                .map(Self::JsonData)
+                .map_err(|error| StorageError::bad_request(error.to_string()));
+        }
+        if let Some(key) = value.strip_prefix("computed.shared.") {
+            return StorageComputedFieldSelector::new(ComputedFieldScope::Shared, key)
+                .map(Self::Computed);
+        }
+        if let Some(key) = value.strip_prefix("computed.personal.") {
+            return StorageComputedFieldSelector::new(ComputedFieldScope::Personal, key)
+                .map(Self::Computed);
+        }
+        Err(StorageError::bad_request(format!(
+            "Invalid object aggregate dimension '{value}'; use an allowed object field, json_data path, or computed selector"
+        )))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageObjectAggregateMeasureOperation {
+    Sum,
+    Average,
+    Min,
+    Max,
+}
+
+impl StorageObjectAggregateMeasureOperation {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Average => "average",
+            Self::Min => "min",
+            Self::Max => "max",
+        }
+    }
+}
+
+impl FromStr for StorageObjectAggregateMeasureOperation {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "sum" => Ok(Self::Sum),
+            "average" => Ok(Self::Average),
+            "min" => Ok(Self::Min),
+            "max" => Ok(Self::Max),
+            _ => Err(StorageError::bad_request(format!(
+                "Invalid object aggregate operation '{value}'; use sum, average, min, or max"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageObjectAggregateMeasureField {
+    JsonData(JsonFieldPath),
+    Computed(StorageComputedFieldSelector),
+}
+
+impl StorageObjectAggregateMeasureField {
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        match self {
+            Self::JsonData(path) => format!("json_data.{}", path.canonical()),
+            Self::Computed(selector) => selector.canonical(),
+        }
+    }
+
+    #[must_use]
+    pub const fn computed_selector(&self) -> Option<&StorageComputedFieldSelector> {
+        match self {
+            Self::Computed(selector) => Some(selector),
+            Self::JsonData(_) => None,
+        }
+    }
+}
+
+impl FromStr for StorageObjectAggregateMeasureField {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if let Some(path) = value.strip_prefix("json_data.") {
+            return JsonFieldPath::new(path)
+                .map(Self::JsonData)
+                .map_err(|error| StorageError::bad_request(error.to_string()));
+        }
+        if let Some(key) = value.strip_prefix("computed.shared.") {
+            return StorageComputedFieldSelector::new(ComputedFieldScope::Shared, key)
+                .map(Self::Computed);
+        }
+        if let Some(key) = value.strip_prefix("computed.personal.") {
+            return StorageComputedFieldSelector::new(ComputedFieldScope::Personal, key)
+                .map(Self::Computed);
+        }
+        Err(StorageError::bad_request(format!(
+            "Invalid object aggregate measure field '{value}'; use a json_data path or computed selector"
+        )))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageObjectAggregateMeasure {
+    operation: StorageObjectAggregateMeasureOperation,
+    field: StorageObjectAggregateMeasureField,
+}
+
+impl StorageObjectAggregateMeasure {
+    #[must_use]
+    pub const fn new(
+        operation: StorageObjectAggregateMeasureOperation,
+        field: StorageObjectAggregateMeasureField,
+    ) -> Self {
+        Self { operation, field }
+    }
+
+    #[must_use]
+    pub const fn operation(&self) -> StorageObjectAggregateMeasureOperation {
+        self.operation
+    }
+
+    #[must_use]
+    pub const fn field(&self) -> &StorageObjectAggregateMeasureField {
+        &self.field
+    }
+
+    #[must_use]
+    pub const fn computed_selector(&self) -> Option<&StorageComputedFieldSelector> {
+        self.field.computed_selector()
+    }
+
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        format!("{}:{}", self.operation.as_str(), self.field.canonical())
+    }
+}
+
+impl FromStr for StorageObjectAggregateMeasure {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (operation, field) = value.split_once(':').ok_or_else(|| {
+            StorageError::bad_request(format!(
+                "Invalid object aggregate measure '{value}'; use operation:field"
+            ))
+        })?;
+        Ok(Self::new(
+            StorageObjectAggregateMeasureOperation::from_str(operation)?,
+            StorageObjectAggregateMeasureField::from_str(field)?,
+        ))
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -66,38 +335,279 @@ impl fmt::Debug for StorageObjectAggregateTarget {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageObjectAggregateSpec {
-    dimensions: Vec<String>,
-    measures: Vec<String>,
+    dimensions: Vec<StorageObjectAggregateDimension>,
+    measures: Vec<StorageObjectAggregateMeasure>,
     sort: StorageObjectAggregateSort,
 }
 
 impl StorageObjectAggregateSpec {
-    #[must_use]
     pub fn new(
-        dimensions: impl IntoIterator<Item = String>,
-        measures: impl IntoIterator<Item = String>,
+        dimensions: impl IntoIterator<Item = StorageObjectAggregateDimension>,
+        measures: impl IntoIterator<Item = StorageObjectAggregateMeasure>,
         sort: StorageObjectAggregateSort,
-    ) -> Self {
-        Self {
-            dimensions: dimensions.into_iter().collect(),
-            measures: measures.into_iter().collect(),
-            sort,
+    ) -> Result<Self, StorageError> {
+        let dimensions = dimensions.into_iter().collect::<Vec<_>>();
+        let measures = measures.into_iter().collect::<Vec<_>>();
+        if dimensions.is_empty() && measures.is_empty() {
+            return Err(StorageError::bad_request(
+                "Object aggregation requires at least one group_by dimension or aggregate measure",
+            ));
         }
+        if dimensions.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
+            return Err(StorageError::bad_request(format!(
+                "Object aggregation supports at most {MAX_OBJECT_AGGREGATE_DIMENSIONS} group_by dimensions"
+            )));
+        }
+        if measures.len() > MAX_OBJECT_AGGREGATE_MEASURES {
+            return Err(StorageError::bad_request(format!(
+                "Object aggregation supports at most {MAX_OBJECT_AGGREGATE_MEASURES} aggregate measures"
+            )));
+        }
+        let mut seen = HashSet::with_capacity(dimensions.len());
+        if let Some(duplicate) = dimensions
+            .iter()
+            .map(StorageObjectAggregateDimension::canonical)
+            .find(|field| !seen.insert(field.clone()))
+        {
+            return Err(StorageError::bad_request(format!(
+                "Duplicate object aggregate dimension '{duplicate}'"
+            )));
+        }
+        let mut seen = HashSet::with_capacity(measures.len());
+        if let Some(duplicate) = measures
+            .iter()
+            .map(StorageObjectAggregateMeasure::canonical)
+            .find(|measure| !seen.insert(measure.clone()))
+        {
+            return Err(StorageError::bad_request(format!(
+                "Duplicate object aggregate measure '{duplicate}'"
+            )));
+        }
+        Ok(Self {
+            dimensions,
+            measures,
+            sort,
+        })
     }
 
     #[must_use]
-    pub fn dimensions(&self) -> &[String] {
+    pub fn dimensions(&self) -> &[StorageObjectAggregateDimension] {
         &self.dimensions
     }
 
     #[must_use]
-    pub fn measures(&self) -> &[String] {
+    pub fn measures(&self) -> &[StorageObjectAggregateMeasure] {
         &self.measures
     }
 
     #[must_use]
     pub const fn sort(&self) -> StorageObjectAggregateSort {
         self.sort
+    }
+
+    #[must_use]
+    pub fn has_computed_field(&self) -> bool {
+        self.dimensions
+            .iter()
+            .any(|dimension| dimension.computed_selector().is_some())
+            || self
+                .measures
+                .iter()
+                .any(|measure| measure.computed_selector().is_some())
+    }
+
+    #[must_use]
+    pub fn requires_object_data(&self) -> bool {
+        self.dimensions.iter().any(|dimension| {
+            matches!(
+                dimension,
+                StorageObjectAggregateDimension::JsonData(_)
+                    | StorageObjectAggregateDimension::Computed(_)
+            )
+        }) || !self.measures.is_empty()
+    }
+
+    pub fn computed_selectors(&self) -> impl Iterator<Item = &StorageComputedFieldSelector> {
+        self.dimensions
+            .iter()
+            .filter_map(StorageObjectAggregateDimension::computed_selector)
+            .chain(
+                self.measures
+                    .iter()
+                    .filter_map(StorageObjectAggregateMeasure::computed_selector),
+            )
+    }
+
+    fn dimension_names(&self) -> Vec<String> {
+        self.dimensions
+            .iter()
+            .map(StorageObjectAggregateDimension::canonical)
+            .collect()
+    }
+
+    fn measure_names(&self) -> Vec<String> {
+        self.measures
+            .iter()
+            .map(StorageObjectAggregateMeasure::canonical)
+            .collect()
+    }
+
+    pub fn decode_cursor(
+        &self,
+        cursor: &str,
+        maximum_encoded_bytes: usize,
+    ) -> Result<StorageObjectAggregateCursor, StorageError> {
+        if cursor.len() > maximum_encoded_bytes {
+            return Err(StorageError::new(
+                StorageErrorKind::PayloadTooLarge,
+                format!(
+                    "aggregate cursor exceeds the replay-safe limit of {maximum_encoded_bytes} bytes for this request"
+                ),
+                None,
+            ));
+        }
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(cursor)
+            .map_err(|error| {
+                StorageError::bad_request(format!("invalid aggregate cursor: {error}"))
+            })?;
+        let token: StorageObjectAggregateCursorToken =
+            serde_json::from_slice(&bytes).map_err(|error| {
+                StorageError::bad_request(format!("invalid aggregate cursor: {error}"))
+            })?;
+        if token.version != 1
+            || token.dimensions != self.dimension_names()
+            || token.measures != self.measure_names()
+            || token.sort != self.sort
+        {
+            return Err(StorageError::bad_request(
+                "aggregate cursor does not match the current dimensions, measures, and sort",
+            ));
+        }
+        let sort_key_is_valid = token.sort_key.as_array().is_some_and(|values| {
+            values.len() == self.dimensions.len()
+                && values
+                    .iter()
+                    .zip(&self.dimensions)
+                    .all(|(value, dimension)| valid_cursor_dimension_value(value, dimension))
+        });
+        if !sort_key_is_valid || token.object_count <= 0 {
+            return Err(StorageError::bad_request(
+                "aggregate cursor contains invalid ordering values",
+            ));
+        }
+        Ok(StorageObjectAggregateCursor::new(
+            token.sort_key,
+            token.object_count,
+        ))
+    }
+
+    pub fn encode_cursor(
+        &self,
+        row: &StorageObjectAggregateRow,
+        maximum_encoded_bytes: usize,
+    ) -> Result<String, StorageError> {
+        let token = StorageObjectAggregateCursorToken {
+            version: 1,
+            dimensions: self.dimension_names(),
+            measures: self.measure_names(),
+            sort: self.sort,
+            sort_key: row.sort_key.clone(),
+            object_count: row.object_count,
+        };
+        let bytes = serde_json::to_vec(&token).map_err(|error| {
+            StorageError::internal(format!("failed to serialize aggregate cursor: {error}"))
+        })?;
+        let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        if cursor.len() > maximum_encoded_bytes {
+            return Err(StorageError::new(
+                StorageErrorKind::PayloadTooLarge,
+                format!(
+                    "aggregate value at the page boundary produces a cursor larger than the replay-safe limit of {maximum_encoded_bytes} bytes for this request; shorten the filters, narrow the grouping dimensions, or use a page limit that does not end on this value"
+                ),
+                None,
+            ));
+        }
+        Ok(cursor)
+    }
+}
+
+fn valid_cursor_dimension_value(
+    value: &Value,
+    dimension: &StorageObjectAggregateDimension,
+) -> bool {
+    let Some(pair) = value.as_array().filter(|pair| pair.len() == 2) else {
+        return false;
+    };
+    let Some(state) = pair[0].as_u64() else {
+        return false;
+    };
+    match state {
+        0 => valid_cursor_present_value(&pair[1], dimension),
+        1 => !matches!(dimension, StorageObjectAggregateDimension::Scalar(_)) && pair[1].is_null(),
+        2 => matches!(dimension, StorageObjectAggregateDimension::JsonData(_)) && pair[1].is_null(),
+        3 => matches!(dimension, StorageObjectAggregateDimension::Computed(_)) && pair[1].is_null(),
+        _ => false,
+    }
+}
+
+fn valid_cursor_present_value(value: &Value, dimension: &StorageObjectAggregateDimension) -> bool {
+    match dimension {
+        StorageObjectAggregateDimension::Scalar(StorageObjectAggregateScalarField::Name)
+        | StorageObjectAggregateDimension::Scalar(StorageObjectAggregateScalarField::Description) => {
+            value.is_string()
+        }
+        StorageObjectAggregateDimension::Scalar(
+            StorageObjectAggregateScalarField::CollectionId,
+        ) => value
+            .as_i64()
+            .and_then(|value| i32::try_from(value).ok())
+            .is_some_and(|value| value > 0),
+        StorageObjectAggregateDimension::Scalar(
+            StorageObjectAggregateScalarField::CreatedAt
+            | StorageObjectAggregateScalarField::UpdatedAt,
+        ) => value
+            .as_str()
+            .is_some_and(|value| value.parse::<chrono::NaiveDateTime>().is_ok()),
+        StorageObjectAggregateDimension::JsonData(_)
+        | StorageObjectAggregateDimension::Computed(_) => !value.is_null(),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StorageObjectAggregateCursorToken {
+    version: u8,
+    dimensions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    measures: Vec<String>,
+    sort: StorageObjectAggregateSort,
+    sort_key: Value,
+    object_count: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StorageObjectAggregateCursor {
+    sort_key: Value,
+    object_count: i64,
+}
+
+impl StorageObjectAggregateCursor {
+    #[must_use]
+    pub const fn new(sort_key: Value, object_count: i64) -> Self {
+        Self {
+            sort_key,
+            object_count,
+        }
+    }
+
+    #[must_use]
+    pub const fn sort_key(&self) -> &Value {
+        &self.sort_key
+    }
+
+    #[must_use]
+    pub const fn object_count(&self) -> i64 {
+        self.object_count
     }
 }
 
@@ -120,6 +630,7 @@ pub struct ObjectAggregateStorageQuery {
     personal_owner_id: Option<i32>,
     required_permissions: Vec<AuthorizationPermission>,
     visibility: StorageVisibility,
+    page_limit: usize,
     cursor_max_encoded_bytes: usize,
     authorization_mode: ObjectAggregateAuthorizationMode,
 }
@@ -131,6 +642,7 @@ pub struct ObjectAggregateStorageQueryBuilder {
     personal_owner_id: Option<i32>,
     required_permissions: Option<Vec<AuthorizationPermission>>,
     visibility: StorageVisibility,
+    page_limit: Option<usize>,
     cursor_max_encoded_bytes: Option<usize>,
     authorization_mode: ObjectAggregateAuthorizationMode,
 }
@@ -150,6 +662,7 @@ impl ObjectAggregateStorageQuery {
             personal_owner_id: None,
             required_permissions: None,
             visibility,
+            page_limit: None,
             cursor_max_encoded_bytes: None,
             authorization_mode: ObjectAggregateAuthorizationMode::Storage,
         }
@@ -191,6 +704,11 @@ impl ObjectAggregateStorageQuery {
     }
 
     #[must_use]
+    pub const fn page_limit(&self) -> usize {
+        self.page_limit
+    }
+
+    #[must_use]
     pub const fn authorization_mode(&self) -> ObjectAggregateAuthorizationMode {
         self.authorization_mode
     }
@@ -219,6 +737,12 @@ impl ObjectAggregateStorageQueryBuilder {
     }
 
     #[must_use]
+    pub const fn page_limit(mut self, page_limit: usize) -> Self {
+        self.page_limit = Some(page_limit);
+        self
+    }
+
+    #[must_use]
     pub const fn authorization_mode(
         mut self,
         authorization_mode: ObjectAggregateAuthorizationMode,
@@ -236,6 +760,14 @@ impl ObjectAggregateStorageQueryBuilder {
                 "Object aggregate query requires at least one permission",
             ));
         }
+        let page_limit = self.page_limit.ok_or_else(|| {
+            StorageError::internal("Object aggregate query is missing its page limit")
+        })?;
+        if page_limit == 0 {
+            return Err(StorageError::bad_request(
+                "Object aggregate page limit must be positive",
+            ));
+        }
         let cursor_max_encoded_bytes = self.cursor_max_encoded_bytes.ok_or_else(|| {
             StorageError::internal("Object aggregate query is missing its cursor budget")
         })?;
@@ -251,6 +783,7 @@ impl ObjectAggregateStorageQueryBuilder {
             personal_owner_id: self.personal_owner_id,
             required_permissions,
             visibility: self.visibility,
+            page_limit,
             cursor_max_encoded_bytes,
             authorization_mode: self.authorization_mode,
         })
@@ -270,6 +803,7 @@ impl fmt::Debug for ObjectAggregateStorageQuery {
             .field("has_personal_owner", &self.personal_owner_id.is_some())
             .field("permission_count", &self.required_permissions.len())
             .field("visibility", &self.visibility)
+            .field("page_limit", &self.page_limit)
             .field("cursor_max_encoded_bytes", &self.cursor_max_encoded_bytes)
             .field("authorization_mode", &self.authorization_mode)
             .finish()
@@ -336,7 +870,8 @@ impl StorageObjectAggregateAuthorizationCandidate {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageObjectAggregateMeasureState {
     Value,
     Empty,
@@ -462,6 +997,38 @@ mod tests {
     use crate::StorageErrorKind;
     use hubuum_query::{FilterField, ParsedQueryParam, SearchOperator};
 
+    const CURSOR_BUDGET: usize = 1_024;
+
+    fn aggregate_spec(
+        dimension: &str,
+        measures: impl IntoIterator<Item = &'static str>,
+    ) -> StorageObjectAggregateSpec {
+        StorageObjectAggregateSpec::new(
+            [StorageObjectAggregateDimension::from_str(dimension).unwrap()],
+            measures
+                .into_iter()
+                .map(|measure| StorageObjectAggregateMeasure::from_str(measure).unwrap()),
+            StorageObjectAggregateSort::DimensionsAscending,
+        )
+        .unwrap()
+    }
+
+    fn aggregate_row(sort_key: Value) -> StorageObjectAggregateRow {
+        StorageObjectAggregateRow::new(Vec::new(), 1, sort_key)
+    }
+
+    fn encoded_cursor(dimension: &str, sort_key: Value, object_count: i64) -> String {
+        let token = StorageObjectAggregateCursorToken {
+            version: 1,
+            dimensions: vec![dimension.to_string()],
+            measures: Vec::new(),
+            sort: StorageObjectAggregateSort::DimensionsAscending,
+            sort_key,
+            object_count,
+        };
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&token).unwrap())
+    }
+
     fn empty_query_options() -> QueryOptions {
         QueryOptions {
             filters: Vec::new(),
@@ -470,6 +1037,103 @@ mod tests {
             cursor: None,
             include_total: false,
         }
+    }
+
+    #[test]
+    fn aggregate_cursor_is_bound_to_dimension_contract() {
+        let first = aggregate_spec("name", []);
+        let second = aggregate_spec("description", []);
+        let cursor = first
+            .encode_cursor(
+                &aggregate_row(serde_json::json!([[0, "router"]])),
+                CURSOR_BUDGET,
+            )
+            .unwrap();
+
+        let error = second.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert!(error.to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn aggregate_cursor_is_bound_to_measure_contract() {
+        let first = aggregate_spec("name", ["sum:json_data.cost"]);
+        let second = aggregate_spec("name", ["max:json_data.cost"]);
+        let cursor = first
+            .encode_cursor(
+                &aggregate_row(serde_json::json!([[0, "router"]])),
+                CURSOR_BUDGET,
+            )
+            .unwrap();
+
+        let error = second.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert!(error.to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn aggregate_cursor_refuses_an_unreplayable_boundary_value() {
+        let spec = aggregate_spec("json_data.large", []);
+        let row = aggregate_row(serde_json::json!([[0, "x".repeat(CURSOR_BUDGET)]]));
+
+        let error = spec.encode_cursor(&row, CURSOR_BUDGET).unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::PayloadTooLarge);
+        assert!(error.to_string().contains("replay-safe limit"));
+    }
+
+    #[test]
+    fn aggregate_cursor_rejects_oversized_input_before_decoding() {
+        let spec = aggregate_spec("name", []);
+
+        let error = spec
+            .decode_cursor(&"a".repeat(CURSOR_BUDGET + 1), CURSOR_BUDGET)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::PayloadTooLarge);
+        assert!(error.to_string().contains("replay-safe limit"));
+    }
+
+    #[test]
+    fn aggregate_cursor_rejects_invalid_ordering_shape() {
+        let spec = aggregate_spec("name", []);
+        let cursor = encoded_cursor("name", serde_json::json!([[0]]), 1);
+
+        let error = spec.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert!(error.to_string().contains("invalid ordering values"));
+    }
+
+    #[test]
+    fn aggregate_cursor_rejects_wrong_scalar_value_type() {
+        let spec = aggregate_spec("collection_id", []);
+        let cursor = encoded_cursor("collection_id", serde_json::json!([[0, "42"]]), 1);
+
+        let error = spec.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert!(error.to_string().contains("invalid ordering values"));
+    }
+
+    #[test]
+    fn aggregate_cursor_accepts_typed_scalar_value() {
+        let spec = aggregate_spec("created_at", []);
+        let cursor = encoded_cursor(
+            "created_at",
+            serde_json::json!([[0, "2026-07-20T12:34:56.123456"]]),
+            1,
+        );
+
+        let decoded = spec.decode_cursor(&cursor, CURSOR_BUDGET).unwrap();
+
+        assert_eq!(decoded.object_count(), 1);
+        assert_eq!(
+            decoded.sort_key(),
+            &serde_json::json!([[0, "2026-07-20T12:34:56.123456"]])
+        );
     }
 
     #[test]
@@ -488,14 +1152,22 @@ mod tests {
                 include_total: true,
             },
             StorageObjectAggregateSpec::new(
-                ["secret dimension".to_string()],
-                ["secret measure".to_string()],
+                [
+                    StorageObjectAggregateDimension::from_str("json_data.secret_dimension")
+                        .unwrap(),
+                ],
+                [
+                    StorageObjectAggregateMeasure::from_str("sum:json_data.secret_measure")
+                        .unwrap(),
+                ],
                 StorageObjectAggregateSort::DimensionsAscending,
-            ),
+            )
+            .unwrap(),
             StorageVisibility::new(73, false, None::<[AuthorizationPermission; 0]>, None),
         )
         .personal_owner_id(Some(42))
         .required_permissions([AuthorizationPermission::ReadObject])
+        .page_limit(20)
         .cursor_max_encoded_bytes(1_000)
         .authorization_mode(ObjectAggregateAuthorizationMode::Delegated)
         .build()
@@ -522,13 +1194,17 @@ mod tests {
             StorageObjectAggregateTarget::new(7, "class".to_string(), 9),
             empty_query_options(),
             StorageObjectAggregateSpec::new(
-                ["name".to_string()],
+                [StorageObjectAggregateDimension::Scalar(
+                    StorageObjectAggregateScalarField::Name,
+                )],
                 [],
                 StorageObjectAggregateSort::DimensionsAscending,
-            ),
+            )
+            .unwrap(),
             StorageVisibility::new(73, false, None::<[AuthorizationPermission; 0]>, None),
         )
         .required_permissions([])
+        .page_limit(20)
         .cursor_max_encoded_bytes(1_000)
         .build();
 
@@ -541,13 +1217,17 @@ mod tests {
             StorageObjectAggregateTarget::new(7, "class".to_string(), 9),
             empty_query_options(),
             StorageObjectAggregateSpec::new(
-                ["name".to_string()],
+                [StorageObjectAggregateDimension::Scalar(
+                    StorageObjectAggregateScalarField::Name,
+                )],
                 [],
                 StorageObjectAggregateSort::DimensionsAscending,
-            ),
+            )
+            .unwrap(),
             StorageVisibility::new(73, false, None::<[AuthorizationPermission; 0]>, None),
         )
         .required_permissions([AuthorizationPermission::ReadObject])
+        .page_limit(20)
         .cursor_max_encoded_bytes(0)
         .build();
 
