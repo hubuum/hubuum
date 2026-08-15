@@ -100,12 +100,6 @@ pub(crate) async fn resolve_computed_query_fields(
             "Computed query resolution requires at least one computed field",
         ));
     }
-    if sorts
-        .iter()
-        .any(|sort| sort.field.computed_query().is_some())
-    {
-        validate_computed_query_count(sorts.len())?;
-    }
     if personal_owner_id.is_none()
         && requested
             .iter()
@@ -254,7 +248,7 @@ fn validate_computed_filter_count(filter_count: usize) -> Result<(), PostgresSto
     Ok(())
 }
 
-fn validate_computed_query_count(sort_count: usize) -> Result<(), PostgresStorageError> {
+pub(super) fn validate_explicit_sort_count(sort_count: usize) -> Result<(), PostgresStorageError> {
     if sort_count > MAX_SORT_FIELDS_WITH_COMPUTED {
         return Err(PostgresStorageError::bad_request(format!(
             "Computed sorting supports at most {MAX_SORT_FIELDS_WITH_COMPUTED} explicit sort fields per request"
@@ -749,7 +743,7 @@ fn computed_operator_mismatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_computed_filter_count, validate_computed_query_count};
+    use super::{validate_computed_filter_count, validate_explicit_sort_count};
 
     #[test]
     fn computed_filter_count_is_enforced_inside_the_adapter() {
@@ -760,7 +754,8 @@ mod tests {
 
     #[test]
     fn computed_sort_count_is_enforced_inside_the_adapter() {
-        let error = validate_computed_query_count(3).unwrap_err();
+        validate_explicit_sort_count(2).unwrap();
+        let error = validate_explicit_sort_count(3).unwrap_err();
 
         assert!(error.to_string().contains("at most 2"));
     }

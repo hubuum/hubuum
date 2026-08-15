@@ -29,6 +29,15 @@ pub async fn list_computed_objects(
     let include_total = query.options().include_total;
     let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
     let (mut request_options, mut options) = options.into_parts();
+    // The execution copy includes pagination tie-breakers. Enforce the public
+    // limit against only the sort fields supplied by the caller.
+    if request_options
+        .sort
+        .iter()
+        .any(|sort| sort.field.computed_query().is_some())
+    {
+        query::validate_explicit_sort_count(request_options.sort.len())?;
+    }
     let snapshot_runtime = runtime.clone();
 
     runtime

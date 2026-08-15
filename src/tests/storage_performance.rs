@@ -1027,10 +1027,15 @@ async fn object_page_query_count_is_constant_with_page_size() {
     assert_eq!(large_total, 20);
 
     assert_same_query_shape(&small_queries, &large_queries);
-    assert_eq!(large_queries.total_queries(), 4);
-    assert_eq!(large_queries.domain_queries(), 4);
-    assert_eq!(large_queries.control_queries(), 0);
-    assert_eq!(large_queries.connection_checkouts(), 4);
+    assert_eq!(
+        large_queries.total_queries(),
+        6,
+        "{:#?}",
+        large_queries.query_counts()
+    );
+    assert_eq!(large_queries.domain_queries(), 3);
+    assert_eq!(large_queries.control_queries(), 3);
+    assert_eq!(large_queries.connection_checkouts(), 1);
 
     fixture.cleanup().await.expect("object fixture cleanup");
 }
@@ -1177,8 +1182,13 @@ async fn effective_permission_query_count_is_constant_with_collection_depth() {
     );
 
     assert_same_query_shape(&shallow_queries, &deep_queries);
-    assert_eq!(deep_queries.total_queries(), 3);
-    assert_eq!(deep_queries.domain_queries(), 3);
+    assert_eq!(
+        deep_queries.total_queries(),
+        2,
+        "{:#?}",
+        deep_queries.query_counts()
+    );
+    assert_eq!(deep_queries.domain_queries(), 2);
     assert_eq!(deep_queries.control_queries(), 0);
     assert_eq!(deep_queries.connection_checkouts(), 1);
 

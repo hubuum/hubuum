@@ -3618,7 +3618,7 @@ mod tests {
         );
         assert_eq!(large_queries.domain_queries(), 7);
         assert_eq!(large_queries.control_queries(), 0);
-        assert_eq!(large_queries.connection_checkouts(), 7);
+        assert_eq!(large_queries.connection_checkouts(), 4);
         assert_eq!(
             large_queries.queries_matching("FROM \"hubuumclass_relation\""),
             1

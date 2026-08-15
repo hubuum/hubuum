@@ -809,20 +809,39 @@ fn group_domain_types_are_free_of_persistence_implementation_details() {
         }
     }
 
-    let adapter_path = root.join("src/storage/postgres/operations/group.rs");
-    let adapter_source = read_source(&adapter_path)
+    let transitional_adapter_path = root.join("src/storage/postgres/operations/group.rs");
+    let transitional_adapter = read_source(&transitional_adapter_path).unwrap_or_else(|error| {
+        panic!(
+            "could not read {}: {error}",
+            transitional_adapter_path.display()
+        )
+    });
+    for required in [
+        "struct GroupRow",
+        "impl From<GroupRow> for Group",
+        "impl CursorSqlMapping for GroupRow",
+    ] {
+        assert!(
+            transitional_adapter.contains(required),
+            "transitional PostgreSQL group projection is missing {required}"
+        );
+    }
+
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/group.rs");
+    let adapter = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for required in [
         "struct GroupRow",
         "struct PrincipalGroupRow",
         "struct UpdateGroupRow",
-        "impl From<GroupRow> for Group",
-        "impl From<PrincipalGroupRow> for PrincipalGroup",
-        "impl CursorSqlMapping for GroupRow",
+        "impl GroupRow",
+        "impl PrincipalGroupRow",
+        "StorageIdentityGroup::builder",
+        "StoragePrincipalGroup::new",
     ] {
         assert!(
-            adapter_source.contains(required),
-            "PostgreSQL group adapter is missing {required}"
+            adapter.contains(required),
+            "workspace PostgreSQL group adapter is missing {required}"
         );
     }
     assert!(
@@ -852,19 +871,35 @@ fn principal_domain_types_are_free_of_persistence_implementation_details() {
     .filter(|forbidden| production_source.contains(forbidden))
     .collect::<Vec<_>>();
 
-    let adapter_path = root.join("src/storage/postgres/operations/principal.rs");
-    let adapter_source = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    let transitional_adapter_path = root.join("src/storage/postgres/operations/principal.rs");
+    let transitional_adapter = read_source(&transitional_adapter_path).unwrap_or_else(|error| {
+        panic!(
+            "could not read {}: {error}",
+            transitional_adapter_path.display()
+        )
+    });
     for required in [
         "struct PrincipalRow",
-        "struct PrincipalMemberQueryRow",
         "impl From<PrincipalRow> for Principal",
         "impl CursorSqlMapping for PrincipalRow",
-        "impl CursorSqlMapping for PrincipalMemberQueryRow",
     ] {
         assert!(
-            adapter_source.contains(required),
-            "PostgreSQL principal adapter is missing {required}"
+            transitional_adapter.contains(required),
+            "transitional PostgreSQL principal projection is missing {required}"
+        );
+    }
+
+    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/principal.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for required in [
+        "pub(crate) struct PrincipalRow",
+        "impl PrincipalRow",
+        "StoragePrincipal::builder",
+    ] {
+        assert!(
+            adapter.contains(required),
+            "workspace PostgreSQL principal adapter is missing {required}"
         );
     }
 
@@ -1216,26 +1251,58 @@ fn relation_domain_types_are_free_of_persistence_implementation_details() {
         }
     }
 
-    let adapter_path = root.join("src/storage/postgres/operations/relation_rows.rs");
-    let adapter_source = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    let transitional_adapter_path = root.join("src/storage/postgres/operations/relation_rows.rs");
+    let transitional_adapter = read_source(&transitional_adapter_path).unwrap_or_else(|error| {
+        panic!(
+            "could not read {}: {error}",
+            transitional_adapter_path.display()
+        )
+    });
     for required in [
         "struct HubuumClassRelationRow",
         "struct NewHubuumClassRelationRow",
         "struct HubuumObjectRelationRow",
         "struct NewHubuumObjectRelationRow",
         "struct HubuumClassRelationTransitiveRow",
-        "struct ClassGraphQueryRow",
-        "struct RelatedObjectGraphQueryRow",
         "impl CursorSqlMapping for HubuumClassRelationRow",
         "impl CursorSqlMapping for HubuumObjectRelationRow",
         "impl CursorSqlMapping for HubuumClassRelationTransitiveRow",
-        "impl CursorSqlMapping for ClassGraphQueryRow",
-        "impl CursorSqlMapping for RelatedObjectGraphQueryRow",
     ] {
         assert!(
-            adapter_source.contains(required),
-            "PostgreSQL relation adapter is missing {required}"
+            transitional_adapter.contains(required),
+            "transitional PostgreSQL relation projection is missing {required}"
+        );
+    }
+
+    let lifecycle_path = root.join("crates/hubuum-storage-postgres/src/operations/relation.rs");
+    let lifecycle = read_source(&lifecycle_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", lifecycle_path.display()));
+    for required in [
+        "struct ClassRelationRow",
+        "struct NewClassRelationRow",
+        "struct ObjectRelationRow",
+        "struct NewObjectRelationRow",
+        "impl ClassRelationRow",
+        "impl ObjectRelationRow",
+    ] {
+        assert!(
+            lifecycle.contains(required),
+            "workspace PostgreSQL relation lifecycle is missing {required}"
+        );
+    }
+
+    let query_path = root.join("crates/hubuum-storage-postgres/src/operations/relation_query.rs");
+    let query = read_source(&query_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", query_path.display()));
+    for required in [
+        "struct ClassGraphQueryRow",
+        "struct ObjectGraphQueryRow",
+        "impl ClassGraphQueryRow",
+        "impl ObjectGraphQueryRow",
+    ] {
+        assert!(
+            query.contains(required),
+            "workspace PostgreSQL relation query adapter is missing {required}"
         );
     }
 
