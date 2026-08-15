@@ -28,8 +28,8 @@ The dedicated test database and Cedar fixture use these IDs:
 - `HubuumTask::"9501"`: task submitted by user 9001
 
 The test resources are synthetic Cedar entities except for collections used by
-the reverse-query test. Those collections are inserted into the disposable CI
-PostgreSQL database when missing.
+the reverse-query test. Those collections are inserted beneath the existing
+root collection in the disposable CI PostgreSQL database when missing.
 
 ## Fixture files
 
@@ -45,9 +45,10 @@ PostgreSQL database when missing.
 
 The runner uses strict schema validation and waits until the status endpoint
 reports both a loaded policy and a schema-backed request context. Its fixture
-server withholds the policy until Treetop has fetched the schema, avoiding a
-startup race in strict mode. Uploads remain disabled, so no upload token is
-generated or stored.
+server withholds each policy fetch until Treetop has fetched the schema. The
+server consumes one schema handoff for each policy fetch so a restarted service
+cannot reuse a stale readiness signal and race strict validation. Uploads remain
+disabled, so no upload token is generated or stored.
 
 ## Shared semantic corpus
 
@@ -79,8 +80,8 @@ The real-service suite additionally verifies:
   duplicate handling, and an eleven-row retained page;
 - reverse collection queries and synthetic group-permission rows;
 - trusted private-CA TLS, untrusted TLS, and missing CA material;
-- connection refusal, request timeout, restart recovery, and termination of an
-  in-flight request;
+- connection refusal, credential-bearing URL rejection, request timeout,
+  restart recovery, and termination of an in-flight request;
 - fail-closed handling of malformed, missing, extra, duplicate, out-of-range,
   and failed batch results through the protocol and extraction tests;
 - diagnostic scanning with a secret canary, plus error sanitization that omits

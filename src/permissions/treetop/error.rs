@@ -1,5 +1,11 @@
 use crate::errors::ApiError;
-use treetop_client::TreetopError;
+use treetop_client::{TreetopError, ValidationError};
+
+/// Convert a locally constructed Treetop request validation error without
+/// exposing the rejected value through the public API surface.
+pub fn treetop_validation_to_api_error(_err: ValidationError) -> ApiError {
+    ApiError::InternalServerError("treetop authorization request is invalid".to_string())
+}
 
 /// Convert a treetop-client error into our ApiError.
 ///
@@ -86,6 +92,16 @@ mod tests {
         assert_eq!(
             api,
             ApiError::InternalServerError("treetop client configuration is invalid".to_string())
+        );
+    }
+
+    #[test]
+    fn request_validation_maps_to_sanitized_internal_error() {
+        let err = treetop_client::Action::new("invalid\"action").unwrap_err();
+        let api = treetop_validation_to_api_error(err);
+        assert_eq!(
+            api,
+            ApiError::InternalServerError("treetop authorization request is invalid".to_string())
         );
     }
 

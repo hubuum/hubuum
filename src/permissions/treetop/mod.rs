@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use reqwest::Certificate;
 use treetop_client::{
     Action, AuthorizeBriefResponse, AuthorizeRequest, BatchResult, Client, DecisionBrief,
-    Request as TreetopRequest,
+    Request as TreetopRequest, ValidationError,
 };
 
 use crate::config::AppConfig;
@@ -31,7 +31,7 @@ const MAX_CEDAR_REQUESTS_PER_BATCH: usize = 512;
 pub mod error;
 pub mod mapping;
 
-pub use error::treetop_to_api_error;
+pub use error::{treetop_to_api_error, treetop_validation_to_api_error};
 pub use mapping::{cedar_action, cedar_resource, cedar_user};
 
 /// Production permission backend that delegates to a Treetop policy server.
@@ -78,7 +78,7 @@ impl TreetopPermissionBackend {
 
     async fn authorize_cedar_requests(
         &self,
-        mut requests: Box<dyn Iterator<Item = TreetopRequest> + Send + '_>,
+        mut requests: Box<dyn Iterator<Item = Result<TreetopRequest, ValidationError>> + Send + '_>,
         expected_count: usize,
     ) -> Result<Vec<bool>, ApiError> {
         let mut decisions = Vec::with_capacity(expected_count);
@@ -86,7 +86,8 @@ impl TreetopPermissionBackend {
             let chunk = requests
                 .by_ref()
                 .take(MAX_CEDAR_REQUESTS_PER_BATCH)
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(treetop_validation_to_api_error)?;
             if chunk.is_empty() {
                 break;
             }
@@ -251,12 +252,16 @@ impl PermissionBackend for TreetopPermissionBackend {
         }
 
         let cedar_request_count = permission_check_count(&requests)?;
-        let user = cedar_user(principal);
+        let user = cedar_user(principal).map_err(treetop_validation_to_api_error)?;
         let cedar_requests = requests.iter().flat_map(|request| {
             let user = user.clone();
             let resource = cedar_resource(&request.resource);
             request.permissions.iter().map(move |permission| {
-                TreetopRequest::new(user.clone(), cedar_action(*permission), resource.clone())
+                Ok(TreetopRequest::new(
+                    user.clone(),
+                    cedar_action(*permission)?,
+                    resource.clone()?,
+                ))
             })
         });
         let cedar_decisions = self
@@ -304,9 +309,9 @@ impl PermissionBackend for TreetopPermissionBackend {
         task: &ResourceRef,
     ) -> Result<PermissionDecision, ApiError> {
         let batch = AuthorizeRequest::single(TreetopRequest::new(
-            cedar_user(principal),
-            Action::new("ReadTask"),
-            cedar_resource(task),
+            cedar_user(principal).map_err(treetop_validation_to_api_error)?,
+            Action::new("ReadTask").map_err(treetop_validation_to_api_error)?,
+            cedar_resource(task).map_err(treetop_validation_to_api_error)?,
         ));
         let response = self
             .client
@@ -325,9 +330,13 @@ impl PermissionBackend for TreetopPermissionBackend {
         principal: &PrincipalRef,
         tasks: &[ResourceRef],
     ) -> Result<Vec<PermissionDecision>, ApiError> {
-        let user = cedar_user(principal);
+        let user = cedar_user(principal).map_err(treetop_validation_to_api_error)?;
         let requests = tasks.iter().map(|task| {
-            TreetopRequest::new(user.clone(), Action::new("ReadTask"), cedar_resource(task))
+            Ok(TreetopRequest::new(
+                user.clone(),
+                Action::new("ReadTask")?,
+                cedar_resource(task)?,
+            ))
         });
         Ok(self
             .authorize_cedar_requests(Box::new(requests), tasks.len())
@@ -366,17 +375,17 @@ impl PermissionBackend for TreetopPermissionBackend {
         let check_count = candidate_count.checked_mul(width).ok_or_else(|| {
             ApiError::InternalServerError("too many collection permission checks".into())
         })?;
-        let user = cedar_user(principal);
+        let user = cedar_user(principal).map_err(treetop_validation_to_api_error)?;
         let requests = all_collections.iter().flat_map(|collection| {
             let user = user.clone();
             tested_permissions.iter().map(move |permission| {
                 let resource =
                     ResourceRef::for_permission_on_collection(*permission, collection.id);
-                TreetopRequest::new(
+                Ok(TreetopRequest::new(
                     user.clone(),
-                    cedar_action(*permission),
-                    cedar_resource(&resource),
-                )
+                    cedar_action(*permission)?,
+                    cedar_resource(&resource)?,
+                ))
             })
         });
         let decisions = self
@@ -465,11 +474,11 @@ impl PermissionBackend for TreetopPermissionBackend {
             perms.iter().map(move |permission| {
                 let resource =
                     ResourceRef::for_permission_on_collection(*permission, collection_id);
-                TreetopRequest::new(
-                    user.clone(),
-                    cedar_action(*permission),
-                    cedar_resource(&resource),
-                )
+                Ok(TreetopRequest::new(
+                    user.clone()?,
+                    cedar_action(*permission)?,
+                    cedar_resource(&resource)?,
+                ))
             })
         });
         let decisions = self

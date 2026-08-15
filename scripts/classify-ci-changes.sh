@@ -39,6 +39,7 @@ for path in "$@"; do
     .github/treetop-conformance.env | .github/workflows/ci.yml | \
       Cargo.toml | Cargo.lock | docs/treetop/* | \
       scripts/run-treetop-conformance.sh | scripts/serve-treetop-fixture.py | \
+      scripts/test-serve-treetop-fixture.py | \
       src/config.rs | src/config/* | src/db/traits/authz.rs | src/permissions/* | \
       src/models/permissions.rs | src/models/token.rs | \
       src/models/token_scope.rs | src/models/unified_search.rs | \

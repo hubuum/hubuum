@@ -342,7 +342,22 @@ async fn live_missing_ca_file_fails_before_authorization() {
 
 #[actix_test]
 #[ignore = "run by scripts/run-treetop-conformance.sh"]
-async fn live_connection_refusal_is_sanitized_and_fails_closed() {
+async fn live_connection_refusal_fails_closed() {
+    let _guard = live_test_guard().await;
+    let mut config = live_config("http://127.0.0.1:1");
+    config.treetop_connect_timeout_ms = 250;
+    config.treetop_request_timeout_ms = 250;
+
+    let error = backend_with_config(&config)
+        .await
+        .err()
+        .expect("connection refusal must fail closed");
+    assert!(matches!(error, ApiError::PermissionBackendUnavailable(_)));
+}
+
+#[actix_test]
+#[ignore = "run by scripts/run-treetop-conformance.sh"]
+async fn live_credential_bearing_url_is_rejected_and_sanitized() {
     let _guard = live_test_guard().await;
     let canary = "treetop-conformance-secret-canary";
     let url = format!("http://canary-user:{canary}@127.0.0.1:1");
@@ -353,8 +368,8 @@ async fn live_connection_refusal_is_sanitized_and_fails_closed() {
     let error = backend_with_config(&config)
         .await
         .err()
-        .expect("connection refusal must fail closed");
-    assert!(matches!(error, ApiError::PermissionBackendUnavailable(_)));
+        .expect("credential-bearing URLs must be rejected");
+    assert!(matches!(error, ApiError::InternalServerError(_)));
     let rendered = format!("{error:?} {error}");
     assert!(
         !rendered.contains(canary) && !rendered.contains("canary-user"),
@@ -437,7 +452,7 @@ async fn live_in_flight_termination_fails_closed_and_service_recovers() {
 async fn seed_collection_if_missing(collection_id: i32) {
     use crate::db::prelude::*;
     use crate::db::with_connection;
-    use crate::schema::collections::dsl::{collections, id};
+    use crate::schema::collections::dsl::{collections, id, parent_collection_id};
     use crate::schema::collections::{description, name};
     use diesel::dsl::exists;
     use diesel::result::Error as DieselError;
@@ -453,12 +468,23 @@ async fn seed_collection_if_missing(collection_id: i32) {
     .expect("collections existence check failed");
 
     if !exists {
+        let root_collection_id: i32 = with_connection(&pool, async |connection| {
+            collections
+                .filter(parent_collection_id.is_null())
+                .select(id)
+                .first(connection)
+                .await
+        })
+        .await
+        .expect("root collection lookup failed");
+
         with_connection(&pool, async |connection| -> Result<usize, DieselError> {
             insert_into(collections)
                 .values((
                     id.eq(collection_id),
                     name.eq(format!("treetop_conformance_collection_{collection_id}")),
                     description.eq("hermetic Treetop conformance fixture"),
+                    parent_collection_id.eq(root_collection_id),
                 ))
                 .execute(connection)
                 .await

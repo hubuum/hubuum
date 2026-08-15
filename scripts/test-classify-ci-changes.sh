@@ -179,7 +179,8 @@ treetop_output="$(bash "$classifier" \
   src/permissions/treetop/mod.rs \
   src/models/token_scope.rs \
   scripts/run-treetop-conformance.sh \
-  scripts/serve-treetop-fixture.py)"
+  scripts/serve-treetop-fixture.py \
+  scripts/test-serve-treetop-fixture.py)"
 assert_flag "$treetop_output" code true
 assert_flag "$treetop_output" markdown false
 assert_flag "$treetop_output" treetop_conformance true
