@@ -158,8 +158,7 @@ cannot reproduce.
 
 ### Native operations
 
-Tests alongside `src/storage/postgres` and
-`src/storage/postgres/operations` cover native behavior such as:
+Tests alongside `crates/hubuum-storage-postgres`, plus transitional tests under `src/storage/postgres`, cover native behavior such as:
 
 - pool and TLS settings plus safe endpoint diagnostics;
 - transaction and connection context reset;
@@ -186,11 +185,7 @@ means file-local test counts are not a useful coverage measure.
 
 ### Query budgets and plans
 
-`src/tests/storage_performance.rs` instruments Diesel and checks representative
-query counts, pool checkouts, fixed query shapes, no-op write avoidance, and
-selected query plans. It protects point reads, lifecycle writes, relations,
-history, permission depth, paging, and ancestor traversal from accidental N+1
-or round-trip growth.
+`src/tests/storage_performance.rs` instruments Diesel and checks representative query counts, pool checkouts, fixed query shapes, no-op write avoidance, and selected query plans. It protects point reads, lifecycle writes, relations, history, permission depth, paging, ancestor traversal, computed reads, and object aggregation from accidental N+1 or round-trip growth.
 
 The PostgreSQL benchmark workflow compares representative storage operations
 against the pull request base. Query budgets catch structural regressions;

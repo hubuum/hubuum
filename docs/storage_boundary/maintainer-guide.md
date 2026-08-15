@@ -41,13 +41,13 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Concern | Primary location |
 | --- | --- |
 | Extracted traits, DTOs, errors, descriptors | `crates/hubuum-storage-core/src/*` |
-| Extracted PostgreSQL pool, TLS, schema, migrations, JSONB, query capture | `crates/hubuum-storage-postgres/*` |
+| PostgreSQL adapter operations, private rows, pool, TLS, schema, migrations, JSONB, query capture | `crates/hubuum-storage-postgres/*` |
 | Complete aggregate | `crates/hubuum-storage-core/src/backend.rs` |
 | Application-owned backend opt-in | `src/storage/contract.rs` |
 | Opaque context, dispatch, common observation | `src/storage/context/*` |
 | Resource-family and root-domain contracts | `src/storage/*.rs` |
-| PostgreSQL adapter trait implementations | `src/storage/postgres/capabilities/*` |
-| PostgreSQL operations, rows, and query mapping | `src/storage/postgres/operations/*` |
+| Thin PostgreSQL capability delegates | `src/storage/postgres/capabilities/*` |
+| Transitional legacy/workflow PostgreSQL code | `src/storage/postgres/*`, `src/storage/postgres/operations/*` |
 | Connection and transaction helpers | `src/storage/postgres/runtime.rs` |
 | Adapter error conversion | `src/storage/postgres/error.rs` |
 | Storage construction and settings | `src/storage/factory.rs` |
@@ -60,18 +60,11 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | PostgreSQL query budgets | `src/tests/storage_performance.rs` |
 | HTTP integration suites | `tests/api_*_suite/*` |
 
-`src/storage/postgres` is an adapter tree even though most of it still resides
-in the root crate. Do not treat root-crate placement as permission for an
-application consumer to import it.
+`hubuum-storage-postgres` is the destination for every native PostgreSQL operation, row, query, migration, and driver concern. The remaining `src/storage/postgres` modules are transitional adapter code plus application-owned composition delegates. Root-crate placement does not make those modules an application API.
 
-The composition modules are grouped by capability family. In
-`src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource
-ports, and one exhaustive dispatch macro. The sibling modules own forwarding
-implementations for identity, queries, computed fields, tasks, workflows,
-resources, diagnostics, and operations. In
-`src/storage/postgres/capabilities`, the same broad groups hold the PostgreSQL
-trait implementations. SQL and row mapping remain below them in the adapter
-operation modules.
+The composition modules are grouped by capability family. In `src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource ports, and one exhaustive dispatch macro. Sibling modules own forwarding implementations for identity, queries, computed fields, tasks, workflows, resources, diagnostics, and operations.
+
+`src/storage/postgres/capabilities` implements those traits for `PostgresStorage`. Each method should be a thin conversion and delegation boundary. Native execution belongs under `crates/hubuum-storage-postgres/src/operations`; any equivalent code under the root PostgreSQL tree is migration debt, not a pattern for new work.
 
 This split is structural, not semantic. A selectable backend still implements
 the single complete `StorageBackend` aggregate, and every application call
@@ -234,29 +227,27 @@ authentication configuration, or raw driver option string.
 
 ## Workspace Ownership
 
-The current workspace extraction is intentionally incremental:
+The workspace extraction is still in progress:
 
 - `hubuum-domain` owns extracted backend-independent domain values.
 - `hubuum-storage-core` owns extracted contract traits and DTOs, including
   backend-neutral metrics snapshots and pool diagnostics.
-- `hubuum-storage-postgres` owns pool construction, schema, migrations, and
-  selected native helpers.
-- The root crate owns composition and still contains traits and PostgreSQL
-  queries that depend on root domain types.
+- `hubuum-storage-postgres` owns pool construction, schema, migrations, native helpers, and the extracted contract-facing operation implementations.
+- The root crate owns composition and still contains transitional PostgreSQL code coupled to root domain types and legacy workflows.
 
 There is not yet a `hubuum-storage-contract-tests` workspace crate. The shared
 suite currently lives in `src/tests/storage_contract.rs`. Extract it only after
 its inputs no longer require root application fixtures or root-owned domain
 types.
 
-A safe continuation is:
+The extraction sequence for each remaining family is:
 
 1. Split mixed domain and Diesel types into neutral values plus private rows.
 2. Move the corresponding trait and DTO into `hubuum-storage-core`.
 3. Move its implementation, rows, and queries into
    `hubuum-storage-postgres`.
-4. Extract the reusable test harness after it depends only on public contract
-   values and a backend fixture interface.
+4. Delete the root implementation after all callers use the workspace adapter.
+5. Extract the reusable test harness after it depends only on public contract values and a backend fixture interface.
 
 When workspace membership or manifests change, update the Docker manifest-copy
 stage and run the container parity and production build required by
