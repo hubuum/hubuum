@@ -19,6 +19,7 @@ pub mod event_record;
 pub mod event_retention;
 mod event_rows;
 pub mod event_subscription;
+pub mod export_template;
 pub mod external_identity;
 pub mod group;
 pub mod history;

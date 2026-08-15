@@ -1793,6 +1793,72 @@ fn export_template_consumers_use_only_the_backend_neutral_lifecycle_contract() {
 }
 
 #[test]
+fn export_template_lifecycle_is_owned_by_the_postgres_adapter() {
+    let root = repository_root();
+    let adapter_path =
+        root.join("crates/hubuum-storage-postgres/src/operations/export_template.rs");
+    let adapter = read_source(&adapter_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
+    for forbidden in [
+        "crate::errors",
+        "crate::models",
+        "crate::storage::postgres",
+        "ApiError",
+        "get_config",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "the PostgreSQL export-template adapter depends on application detail {forbidden}"
+        );
+    }
+    for required in [
+        "with_read_only_snapshot",
+        "assert_locked_revision_precondition",
+        "append_export_template_audit",
+        "apply_query_options_with_fields",
+    ] {
+        assert!(
+            adapter.contains(required),
+            "the PostgreSQL export-template adapter is missing {required}"
+        );
+    }
+
+    let capability_path = root.join("src/storage/postgres/export_templates.rs");
+    let capability = read_source(&capability_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "ExportTemplateStorage for PostgresStorage",
+    );
+    for method in [
+        "get_export_template",
+        "list_export_templates",
+        "list_export_templates_in_collection",
+        "export_template_class_collection_id",
+        "create_export_template",
+        "replace_export_template",
+        "delete_export_template",
+    ] {
+        let method_body = item_body(implementation, "fn", method);
+        assert!(
+            method_body.contains("hubuum_storage_postgres::operations::export_template"),
+            "the {method} export-template implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("self.pool"),
+            "the {method} export-template implementation leaks the PostgreSQL pool"
+        );
+    }
+
+    let legacy_path = root.join("src/storage/postgres/operations/export_template.rs");
+    assert!(
+        !legacy_path.exists(),
+        "the application-owned PostgreSQL export-template implementation still exists"
+    );
+}
+
+#[test]
 fn remote_target_consumers_use_the_backend_neutral_application_service() {
     let root = repository_root();
     for file in [
