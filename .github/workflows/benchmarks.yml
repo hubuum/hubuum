@@ -108,9 +108,10 @@ jobs:
     name: Self-contained benchmarks
     needs: changes
     if: needs.changes.outputs.run_self_contained == 'true'
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@a0993c0f7cbfcb4e34c9e13dbea62176608c833c # v3
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@0343a98c94e04d326c5fbfea753fad9934eee7be # v1.0.0
     secrets: inherit
     with:
+      action_ref: 0343a98c94e04d326c5fbfea753fad9934eee7be
       backend: all
       auto_discover: true
       auto_detect_moved_benchmarks: true

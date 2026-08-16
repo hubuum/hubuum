@@ -153,7 +153,8 @@ must pass before `main-latest` artifacts or container images are published.
 
 ## Benchmarks
 
-Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.yml`, via `terjekv/github-action-iai-callgrind`.
+Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.yml`, via
+`terjekv/rust-pr-bench`.
 
 ### Local execution
 
