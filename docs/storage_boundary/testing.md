@@ -257,7 +257,7 @@ The pull-request workflows add coverage that a local default build does not:
 - release builds with all production features;
 - OpenAPI, Rust API, dependency, license, and static checks;
 - production-container construction and live single-host rollout tests; and
-- runtime, self-contained, and PostgreSQL storage benchmarks.
+- shared Criterion and Gungraun benchmarks plus runtime behavior validation.
 
 The repository's required local command remains:
 

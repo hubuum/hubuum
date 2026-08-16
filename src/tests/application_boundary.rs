@@ -638,7 +638,7 @@ fn postgres_adapter_helpers_accept_only_postgres_owned_context() {
 #[test]
 fn postgres_benchmark_composes_before_calling_domain_operations() {
     let root = repository_root();
-    let path = root.join("benches/postgres/storage_postgres_criterion.rs");
+    let path = root.join("benches/storage_postgres_criterion.rs");
     let source = read_source(&path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
 

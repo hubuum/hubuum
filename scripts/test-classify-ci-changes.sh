@@ -168,7 +168,6 @@ assert_flag "$source_output" code true
 assert_flag "$source_output" container true
 assert_flag "$source_output" artifacts true
 assert_flag "$source_output" benchmarks true
-assert_flag "$source_output" postgres_benchmark true
 assert_flag "$source_output" runtime_benchmark true
 assert_flag "$source_output" treetop_conformance false
 
@@ -202,29 +201,33 @@ migration_output="$(bash "$classifier" \
 assert_flag "$migration_output" code true
 assert_flag "$migration_output" container true
 assert_flag "$migration_output" artifacts true
-assert_flag "$migration_output" benchmarks false
-assert_flag "$migration_output" postgres_benchmark true
+assert_flag "$migration_output" benchmarks true
 assert_flag "$migration_output" runtime_benchmark true
 
 benchmark_output="$(bash "$classifier" .github/workflows/benchmarks.yml)"
 assert_flag "$benchmark_output" benchmarks true
-assert_flag "$benchmark_output" postgres_benchmark true
 assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
 
-storage_boundary_benchmark_output="$(
-  bash "$classifier" benches/storage_collection_boundary_callgrind.rs
+storage_benchmark_output="$(
+  bash "$classifier" benches/storage_postgres_criterion.rs
 )"
-assert_flag "$storage_boundary_benchmark_output" code true
-assert_flag "$storage_boundary_benchmark_output" benchmarks true
-assert_flag "$storage_boundary_benchmark_output" postgres_benchmark false
-assert_flag "$storage_boundary_benchmark_output" runtime_benchmark false
-assert_flag "$storage_boundary_benchmark_output" artifacts false
+assert_flag "$storage_benchmark_output" code true
+assert_flag "$storage_benchmark_output" benchmarks true
+assert_flag "$storage_benchmark_output" runtime_benchmark false
+assert_flag "$storage_benchmark_output" artifacts false
+
+runtime_check_output="$(
+  bash "$classifier" src/bin/runtime_behavior_check.rs
+)"
+assert_flag "$runtime_check_output" code true
+assert_flag "$runtime_check_output" benchmarks true
+assert_flag "$runtime_check_output" runtime_benchmark true
+assert_flag "$runtime_check_output" artifacts true
 
 classifier_output="$(bash "$classifier" scripts/classify-ci-changes.sh)"
 assert_flag "$classifier_output" code true
 assert_flag "$classifier_output" benchmarks true
-assert_flag "$classifier_output" postgres_benchmark true
 assert_flag "$classifier_output" runtime_benchmark true
 assert_flag "$classifier_output" artifacts false
 

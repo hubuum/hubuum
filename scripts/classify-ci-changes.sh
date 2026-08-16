@@ -17,7 +17,6 @@ openapi=false
 container=false
 artifacts=false
 benchmarks=false
-postgres_benchmark=false
 runtime_benchmark=false
 treetop_conformance=false
 
@@ -90,7 +89,6 @@ for path in "$@"; do
     .github/workflows/benchmarks.yml)
       code=true
       benchmarks=true
-      postgres_benchmark=true
       runtime_benchmark=true
       ;;
     .github/workflows/ci.yml)
@@ -117,7 +115,6 @@ for path in "$@"; do
       artifacts=true
       benchmarks=true
       if [[ "$path" != src/tests/* ]]; then
-        postgres_benchmark=true
         runtime_benchmark=true
       fi
       ;;
@@ -129,7 +126,7 @@ for path in "$@"; do
       code=true
       container=true
       artifacts=true
-      postgres_benchmark=true
+      benchmarks=true
       runtime_benchmark=true
       ;;
     crates/*)
@@ -137,17 +134,6 @@ for path in "$@"; do
       container=true
       artifacts=true
       benchmarks=true
-      postgres_benchmark=true
-      ;;
-    benches/postgres/*)
-      code=true
-      benchmarks=true
-      postgres_benchmark=true
-      ;;
-    benches/runtime_behavior.rs)
-      code=true
-      benchmarks=true
-      runtime_benchmark=true
       ;;
     benches/*)
       code=true
@@ -159,7 +145,6 @@ for path in "$@"; do
       container=true
       artifacts=true
       benchmarks=true
-      postgres_benchmark=true
       runtime_benchmark=true
       ;;
     Cross.toml | diesel.toml | build.rs)
@@ -179,13 +164,7 @@ for path in "$@"; do
     scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh)
       code=true
       benchmarks=true
-      postgres_benchmark=true
       runtime_benchmark=true
-      ;;
-    scripts/check-criterion-regressions.sh | scripts/check-criterion-stability.sh)
-      code=true
-      benchmarks=true
-      postgres_benchmark=true
       ;;
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
       scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
@@ -206,7 +185,6 @@ for path in "$@"; do
       container=true
       artifacts=true
       benchmarks=true
-      postgres_benchmark=true
       runtime_benchmark=true
       ;;
   esac
@@ -221,7 +199,6 @@ outputs=(
   "container=$container"
   "artifacts=$artifacts"
   "benchmarks=$benchmarks"
-  "postgres_benchmark=$postgres_benchmark"
   "runtime_benchmark=$runtime_benchmark"
   "treetop_conformance=$treetop_conformance"
 )

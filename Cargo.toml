@@ -138,13 +138,14 @@ vendored-openssl = ["openssl/vendored"]
 # checks. Keeping this opt-in avoids adding instrumentation work to production
 # pool checkouts.
 query-capture = ["hubuum-storage-postgres/query-capture"]
-# Enables the opt-in PostgreSQL Criterion target. It remains separate from the
-# self-contained benchmark fan-out because it needs a migrated database.
-postgres-bench = []
-# Enables the opt-in end-to-end runtime behavior benchmark. The target starts
-# real server processes and therefore remains separate from self-contained
-# benchmark auto-discovery.
-runtime-behavior-bench = []
+# Enables the opt-in PostgreSQL Criterion target and its embedded migrations.
+# The benchmark provisions its own disposable database outside the measured
+# region so the shared benchmark action can discover and run it directly.
+postgres-bench = ["hubuum-storage-postgres/embedded-migrations"]
+# Enables the opt-in end-to-end runtime behavior validator. It starts real
+# server processes and enforces operational budgets rather than benchmarking a
+# library function, so it is intentionally a binary instead of a Cargo bench.
+runtime-behavior-check = []
 production-all = [
     "amqp",
     "email",
@@ -184,6 +185,12 @@ test = false
 name = "hubuum-openapi"
 path = "src/bin/openapi.rs"
 test = false
+
+[[bin]]
+name = "hubuum-runtime-behavior-check"
+path = "src/bin/runtime_behavior_check.rs"
+test = false
+required-features = ["runtime-behavior-check"]
 
 [[test]]
 name = "api_core_data"
@@ -261,12 +268,5 @@ harness = false
 
 [[bench]]
 name = "storage_postgres_criterion"
-path = "benches/postgres/storage_postgres_criterion.rs"
 harness = false
 required-features = ["postgres-bench"]
-
-[[bench]]
-name = "runtime_behavior"
-path = "benches/runtime/runtime_behavior.rs"
-harness = false
-required-features = ["runtime-behavior-bench"]

@@ -32,9 +32,6 @@ type Result<T> = std::result::Result<T, Error>;
 struct Cli {
     #[command(subcommand)]
     command: Command,
-    /// Marker appended by Cargo when executing a harnessless benchmark.
-    #[arg(long, hide = true, global = true)]
-    bench: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -49,7 +46,7 @@ enum Command {
 struct MeasureArgs {
     #[arg(long)]
     server_binary: PathBuf,
-    #[arg(long, env = "HUBUUM_BENCH_DATABASE_URL")]
+    #[arg(long)]
     database_url: String,
     #[arg(long)]
     output: PathBuf,
@@ -143,9 +140,6 @@ impl ManagedServer {
             )
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log));
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
         let child = command.spawn()?;
         Ok(Self { child, log_path })
     }
