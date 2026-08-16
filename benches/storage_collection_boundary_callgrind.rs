@@ -1,0 +1,138 @@
+use std::hint::black_box;
+
+use async_trait::async_trait;
+use chrono::{NaiveDate, NaiveDateTime};
+use futures::executor::block_on;
+use gungraun::{library_benchmark, library_benchmark_group, main};
+use hubuum::benchmark_support::observed_collection_service;
+use hubuum::events::EventContext;
+use hubuum::models::CollectionID;
+use hubuum::services::CollectionService;
+use hubuum_storage_core::{
+    CollectionStore, StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
+    StorageError, StorageIdentity, StorageRecordMetadata,
+};
+
+const TARGET_COLLECTION_ID: i32 = 42;
+const ANCESTOR_COUNT: usize = 12;
+
+struct FixedCollectionStore {
+    collection: StorageCollection,
+    ancestors: Vec<StorageCollection>,
+}
+
+impl FixedCollectionStore {
+    fn new() -> Self {
+        Self {
+            collection: collection(TARGET_COLLECTION_ID, None),
+            ancestors: (1..=ANCESTOR_COUNT)
+                .map(|id| collection(id as i32, (id > 1).then_some(id as i32 - 1)))
+                .collect(),
+        }
+    }
+}
+
+impl StorageIdentity for FixedCollectionStore {
+    fn storage_name(&self) -> &'static str {
+        "fixed-benchmark"
+    }
+}
+
+#[async_trait]
+impl CollectionStore for FixedCollectionStore {
+    async fn get_collection(&self, _id: i32) -> Result<StorageCollection, StorageError> {
+        Ok(self.collection.clone())
+    }
+
+    async fn create_collection(
+        &self,
+        _command: StorageCollectionCreate,
+        _context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
+        Ok(self.collection.clone())
+    }
+
+    async fn update_collection(
+        &self,
+        _id: i32,
+        _changes: StorageCollectionUpdate,
+        _context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
+        Ok(self.collection.clone())
+    }
+
+    async fn delete_collection(
+        &self,
+        _id: i32,
+        _context: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    async fn collection_children(&self, _id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+        Ok(Vec::new())
+    }
+
+    async fn collection_ancestors(&self, _id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+        Ok(self.ancestors.clone())
+    }
+
+    async fn move_collection(
+        &self,
+        _id: i32,
+        _new_parent_id: i32,
+        _context: Option<&EventContext>,
+    ) -> Result<StorageCollection, StorageError> {
+        Ok(self.collection.clone())
+    }
+}
+
+fn timestamp() -> NaiveDateTime {
+    NaiveDate::from_ymd_opt(2026, 1, 1)
+        .expect("benchmark date should be valid")
+        .and_hms_opt(0, 0, 0)
+        .expect("benchmark time should be valid")
+}
+
+fn collection(id: i32, parent_collection_id: Option<i32>) -> StorageCollection {
+    StorageCollection::new(
+        StorageRecordMetadata::new(id, timestamp(), timestamp(), 1),
+        format!("collection-{id}"),
+        "deterministic benchmark collection",
+        parent_collection_id,
+    )
+}
+
+fn setup() -> CollectionService {
+    observed_collection_service(FixedCollectionStore::new())
+}
+
+#[library_benchmark(setup = setup)]
+fn bench_collection_service_storage_boundary(service: CollectionService) -> usize {
+    block_on(async move {
+        let collection = service
+            .get(black_box(
+                CollectionID::new(TARGET_COLLECTION_ID)
+                    .expect("benchmark collection id should be valid"),
+            ))
+            .await
+            .expect("fixed storage get should succeed");
+        let ancestors = service
+            .ancestors(black_box(
+                CollectionID::new(TARGET_COLLECTION_ID)
+                    .expect("benchmark collection id should be valid"),
+            ))
+            .await
+            .expect("fixed storage ancestors should succeed");
+
+        black_box(
+            collection.name.len() + ancestors.iter().map(|item| item.name.len()).sum::<usize>(),
+        )
+    })
+}
+
+library_benchmark_group!(
+    name = benches;
+    benchmarks = bench_collection_service_storage_boundary
+);
+main!(library_benchmark_groups = benches);

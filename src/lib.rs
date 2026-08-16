@@ -17,7 +17,6 @@ pub use application::run_runtime_from_environment;
 pub mod api;
 pub mod auth;
 pub mod backups;
-#[cfg(feature = "postgres-bench")]
 #[doc(hidden)]
 pub mod benchmark_support;
 pub mod config;

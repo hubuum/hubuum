@@ -212,6 +212,15 @@ assert_flag "$benchmark_output" postgres_benchmark true
 assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
 
+storage_boundary_benchmark_output="$(
+  bash "$classifier" benches/storage_collection_boundary_callgrind.rs
+)"
+assert_flag "$storage_boundary_benchmark_output" code true
+assert_flag "$storage_boundary_benchmark_output" benchmarks true
+assert_flag "$storage_boundary_benchmark_output" postgres_benchmark false
+assert_flag "$storage_boundary_benchmark_output" runtime_benchmark false
+assert_flag "$storage_boundary_benchmark_output" artifacts false
+
 classifier_output="$(bash "$classifier" scripts/classify-ci-changes.sh)"
 assert_flag "$classifier_output" code true
 assert_flag "$classifier_output" benchmarks true

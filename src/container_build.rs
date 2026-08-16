@@ -369,7 +369,7 @@ fn self_contained_benchmark_autodiscovery_excludes_feature_gated_targets() {
 }
 
 #[test]
-fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
+fn postgres_benchmark_workflow_reports_confirmed_regressions_without_gating() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
         .expect("benchmark workflow should be readable");
@@ -378,6 +378,10 @@ fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
     assert!(workflow.contains("check-criterion-stability.sh"));
     assert!(workflow.contains("ALTER SYSTEM SET autovacuum = 'off'"));
     assert!(workflow.contains("POSTGRES_BENCH_FAILURE_ABSOLUTE_NS"));
+    assert_eq!(workflow.matches("--baseline-lenient").count(), 2);
+    assert!(workflow.contains("reverse warning \"\" \"$CONFIRMED_FAILURES\" pr-head-confirmation"));
+    assert!(workflow.contains("case \"$report_status\" in"));
+    assert!(workflow.contains("exit \"$report_status\""));
     let stability_invocation = workflow
         .rsplit_once("scripts/check-criterion-stability.sh")
         .expect("workflow should invoke the stability checker")

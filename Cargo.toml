@@ -252,6 +252,10 @@ name = "unified_search_cursor_callgrind"
 harness = false
 
 [[bench]]
+name = "storage_collection_boundary_callgrind"
+harness = false
+
+[[bench]]
 name = "password_hashing_criterion"
 harness = false
 

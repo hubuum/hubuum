@@ -151,7 +151,6 @@ pub(crate) use imports::ApplicationImportOperation;
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
 pub(crate) use notifications::spawn_storage_notification_listener;
-#[cfg(test)]
 pub(crate) use observed::ObservedStorage;
 pub(crate) use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventHealthStorage,

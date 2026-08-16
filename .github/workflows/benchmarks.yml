@@ -219,7 +219,7 @@ jobs:
           if [[ "$BASE_AVAILABLE" == "true" ]]; then
             cargo bench --locked --features postgres-bench \
               --bench storage_postgres_criterion -- \
-              --baseline pr-base --noplot --sample-size 40 --measurement-time 4
+              --baseline-lenient pr-base --noplot --sample-size 40 --measurement-time 4
           else
             cargo bench --locked --features postgres-bench \
               --bench storage_postgres_criterion -- \
@@ -287,7 +287,7 @@ jobs:
           HUBUUM_BENCH_DATABASE_URL="$BASE_DATABASE_URL" \
             cargo bench --locked --features postgres-bench \
               --bench storage_postgres_criterion -- \
-              --baseline pr-head-confirmation \
+              --baseline-lenient pr-head-confirmation \
               --noplot --sample-size 40 --measurement-time 4
 
           git checkout --detach "$HEAD_SHA"
@@ -330,12 +330,28 @@ jobs:
             exit 0
           fi
 
+          set +e
           scripts/check-criterion-regressions.sh \
             target/criterion/storage_postgres \
             "$POSTGRES_BENCH_WARNING_PCT" \
             "$POSTGRES_BENCH_FAILURE_PCT" \
             "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            reverse error "" "$CONFIRMED_FAILURES" pr-head-confirmation
+            reverse warning "" "$CONFIRMED_FAILURES" pr-head-confirmation
+          report_status=$?
+          set -e
+
+          case "$report_status" in
+            0)
+              ;;
+            1)
+              echo "::warning title=PostgreSQL timing regression::A repeatable wall-clock regression was detected. Deterministic query-budget, query-plan, and Gungraun checks remain the required performance gates."
+              echo "A repeatable PostgreSQL wall-clock regression was detected. This timing result is informational; deterministic performance checks remain required." \
+                >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              exit "$report_status"
+              ;;
+          esac
 
   runtime-behavior:
     name: Runtime behavior benchmark
