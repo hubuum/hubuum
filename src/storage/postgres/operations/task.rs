@@ -304,10 +304,10 @@ pub trait TaskBackend: TaskIdentifier {
 
         let task_id_value = self.task_id();
         let limit = query_options
-            .limit
+            .limit()
             .unwrap_or(page_limits_or_defaults().default_limit().saturating_add(1));
         let descending = query_options
-            .sort
+            .sort()
             .as_slice()
             .first()
             .map(|sort| sort.descending)
@@ -372,10 +372,10 @@ pub trait TaskBackend: TaskIdentifier {
 
         let task_id_value = self.task_id();
         let limit = query_options
-            .limit
+            .limit()
             .unwrap_or(page_limits_or_defaults().default_limit().saturating_add(1));
         let descending = query_options
-            .sort
+            .sort()
             .as_slice()
             .first()
             .map(|sort| sort.descending)
@@ -984,11 +984,11 @@ pub async fn purge_expired_export_outputs(
 }
 
 fn decode_task_event_cursor_id(query_options: &QueryOptions) -> Result<Option<i64>, ApiError> {
-    let Some(cursor) = &query_options.cursor else {
+    let Some(cursor) = query_options.cursor() else {
         return Ok(None);
     };
 
-    let values = decode_cursor_values(cursor, &query_options.sort)?;
+    let values = decode_cursor_values(cursor, query_options.sort())?;
     match values.as_slice() {
         [CursorValue::Integer(value)] => Ok(Some(*value)),
         _ => Err(ApiError::BadRequest(
@@ -998,11 +998,11 @@ fn decode_task_event_cursor_id(query_options: &QueryOptions) -> Result<Option<i6
 }
 
 fn decode_int_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>, ApiError> {
-    let Some(cursor) = &query_options.cursor else {
+    let Some(cursor) = query_options.cursor() else {
         return Ok(None);
     };
 
-    let values = decode_cursor_values(cursor, &query_options.sort)?;
+    let values = decode_cursor_values(cursor, query_options.sort())?;
     match values.as_slice() {
         [CursorValue::Integer(value)] => i32::try_from(*value)
             .map(Some)
@@ -1014,7 +1014,7 @@ fn decode_int_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i
 }
 
 fn task_event_action(event_type: &str) -> Result<Action, ApiError> {
-    Action::from_db(event_type).map_err(|_| {
+    Action::parse(event_type).map_err(|_| {
         ApiError::InternalServerError(format!("Unknown task event type '{event_type}'"))
     })
 }
@@ -1038,7 +1038,9 @@ fn task_lifecycle_event(
         provenance.actor_kind(),
         event.message.clone(),
     )?
-    .with_entity_id(task.id)
+    .with_entity_id(
+        crate::events::EventEntityId::new(task.id).expect("stored task id must be positive"),
+    )
     .with_metadata(metadata)
     .with_mutation_provenance(provenance))
 }
@@ -1844,8 +1846,8 @@ mod tests {
             "legacy task queued",
         )
         .unwrap()
-        .with_entity_id(task_id)
-        .with_actor_user_id(initiator.id);
+        .with_entity_id(crate::events::EventEntityId::new(task_id).unwrap())
+        .with_actor_user_id(crate::events::PrincipalId::new(initiator.id).unwrap());
         let running = NewEvent::new(
             EntityType::Task,
             Action::Running,
@@ -1853,7 +1855,7 @@ mod tests {
             "legacy task running",
         )
         .unwrap()
-        .with_entity_id(task_id);
+        .with_entity_id(crate::events::EventEntityId::new(task_id).unwrap());
         with_transaction(&context.pool, async |conn| {
             emit_event(conn, &queued).await?;
             emit_event(conn, &running).await?;
@@ -1863,13 +1865,8 @@ mod tests {
         .unwrap();
 
         let task = TaskID::new(task_id).unwrap();
-        let query_options = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        };
+        let query_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+            .expect("test query must be valid");
         let (result, queries) = capture_queries(async {
             let (records, _) = task
                 .list_events_with_total_count(&context.pool, &query_options)
@@ -1881,13 +1878,16 @@ mod tests {
 
         assert_eq!(responses.len(), 2);
         for response in responses {
-            assert_eq!(response.provenance.task_id, Some(task_id));
+            assert_eq!(
+                response.provenance.task_id.map(crate::events::TaskId::id),
+                Some(task_id)
+            );
             assert_eq!(
                 response
                     .provenance
                     .initiator
                     .as_ref()
-                    .map(|principal| principal.principal_id),
+                    .map(|principal| principal.principal_id.id()),
                 Some(initiator.id)
             );
         }
@@ -1920,13 +1920,8 @@ mod tests {
             .unwrap()
             .list_events_with_total_count(
                 &context.pool,
-                &QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: false,
-                },
+                &QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+                    .expect("test query must be valid"),
             )
             .await
             .unwrap();
@@ -2176,13 +2171,8 @@ mod tests {
             .unwrap()
             .list_events_with_total_count(
                 &context.pool,
-                &QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                },
+                &QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
+                    .expect("test query must be valid"),
             ))
         .await
         .unwrap();
@@ -2227,13 +2217,8 @@ mod tests {
             .unwrap()
             .list_events_with_total_count(
                 &context.pool,
-                &QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: false,
-                },
+                &QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+                    .expect("test query must be valid"),
             )
             .await
             .unwrap();
@@ -2577,13 +2562,8 @@ mod tests {
         let (events, _) = task
             .list_events_with_total_count(
                 &context.pool,
-                &QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: false,
-                },
+                &QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+                    .expect("test query must be valid"),
             )
             .await
             .unwrap();
@@ -2593,7 +2573,7 @@ mod tests {
             provenance
                 .initiator
                 .as_ref()
-                .map(|principal| principal.principal_id),
+                .map(|principal| principal.principal_id.id()),
             Some(task_owner.id)
         );
         assert_eq!(

@@ -181,15 +181,15 @@ pub(crate) async fn emit_event(
 fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Result<Event, ApiError> {
     let (event, before_revision, after_revision) = event.into_parts();
     Ok(Event {
-        id: event.id,
+        id: event.id.get(),
         event_id: event.event_id,
         occurred_at: event.occurred_at,
         entity_type: event.entity_type,
-        entity_id: event.entity_id,
+        entity_id: event.entity_id.map(crate::events::EventEntityId::get),
         entity_name: event.entity_name,
-        collection_id: event.collection_id,
+        collection_id: event.collection_id.map(crate::events::CollectionId::id),
         action: event.action,
-        actor_user_id: event.actor_user_id,
+        actor_user_id: event.actor_user_id.map(crate::events::PrincipalId::id),
         actor_kind: event.actor_kind,
         request_id: event.request_id,
         correlation_id: event.correlation_id,
@@ -201,8 +201,8 @@ fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Resul
         initiator_user_id: event
             .provenance
             .initiator
-            .map(|principal| principal.principal_id),
-        task_id: event.provenance.task_id,
+            .map(|principal| principal.principal_id.id()),
+        task_id: event.provenance.task_id.map(crate::events::TaskId::id),
         before_revision: before_revision.map(ResourceRevision::new).transpose()?,
         after_revision: after_revision.map(ResourceRevision::new).transpose()?,
     })

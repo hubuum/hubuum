@@ -4,7 +4,8 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
 use crate::services::storage_boundary::{
-    collection_create_to_storage, collection_from_storage, collection_update_to_storage,
+    collection_create_to_storage, collection_from_storage, collection_id_to_storage,
+    collection_update_to_storage,
 };
 use crate::storage::CollectionStore;
 
@@ -25,7 +26,7 @@ impl CollectionService {
 
     pub async fn get(&self, id: CollectionID) -> Result<Collection, ApiError> {
         self.storage
-            .get_collection(id.id())
+            .get_collection(collection_id_to_storage(id.id()))
             .await
             .map_err(ApiError::from)
             .and_then(collection_from_storage)
@@ -51,7 +52,7 @@ impl CollectionService {
     ) -> Result<Collection, ApiError> {
         self.storage
             .update_collection(
-                id.id(),
+                collection_id_to_storage(id.id()),
                 collection_update_to_storage(changes),
                 Some(context),
             )
@@ -62,14 +63,14 @@ impl CollectionService {
 
     pub async fn delete(&self, id: CollectionID, context: &EventContext) -> Result<(), ApiError> {
         self.storage
-            .delete_collection(id.id(), Some(context))
+            .delete_collection(collection_id_to_storage(id.id()), Some(context))
             .await
             .map_err(ApiError::from)
     }
 
     pub async fn children(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .collection_children(id.id())
+            .collection_children(collection_id_to_storage(id.id()))
             .await
             .map_err(ApiError::from)?
             .into_iter()
@@ -79,7 +80,7 @@ impl CollectionService {
 
     pub async fn ancestors(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .collection_ancestors(id.id())
+            .collection_ancestors(collection_id_to_storage(id.id()))
             .await
             .map_err(ApiError::from)?
             .into_iter()
@@ -94,7 +95,11 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .move_collection(id.id(), new_parent_id.id(), Some(context))
+            .move_collection(
+                collection_id_to_storage(id.id()),
+                collection_id_to_storage(new_parent_id.id()),
+                Some(context),
+            )
             .await
             .map_err(ApiError::from)
             .and_then(collection_from_storage)

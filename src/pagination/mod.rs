@@ -42,7 +42,7 @@ pub async fn exact_count_or_skipped(
     query_options: &QueryOptions,
     count: impl AsyncFnOnce() -> Result<i64, ApiError>,
 ) -> Result<i64, ApiError> {
-    if query_options.include_total {
+    if query_options.include_total() {
         count().await
     } else {
         Ok(SKIPPED_TOTAL_COUNT)
@@ -50,7 +50,7 @@ pub async fn exact_count_or_skipped(
 }
 
 pub fn known_count_or_skipped(query_options: &QueryOptions, count: i64) -> i64 {
-    if query_options.include_total {
+    if query_options.include_total() {
         count
     } else {
         SKIPPED_TOTAL_COUNT
@@ -142,31 +142,38 @@ pub fn validate_page_limit(limit: usize) -> Result<usize, ApiError> {
 }
 
 pub fn effective_page_limit(query_options: &QueryOptions) -> Result<usize, ApiError> {
-    page_limits()?.resolve(query_options.limit)
+    page_limits()?.resolve(query_options.limit())
 }
 
 pub fn prepare_db_pagination<T>(query_options: &QueryOptions) -> Result<QueryOptions, ApiError>
 where
     T: CursorPaginated,
 {
-    let limit = page_limits()?.resolve(query_options.limit)?;
-    let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    let limit = page_limits()?.resolve(query_options.limit())?;
+    let sorts = normalized_sorts::<T>(query_options.sort())?;
 
-    if let Some(cursor) = &query_options.cursor {
+    if let Some(cursor) = query_options.cursor() {
         let _ = decode_cursor_values(cursor, &sorts)?;
     }
 
     let mut prepared = query_options.clone();
-    prepared.sort = sorts;
-    prepared.limit = Some(limit.saturating_add(1));
+    let mut requested_sorts = sorts;
+    let tie_breaker = (requested_sorts.len() > hubuum_query::MAX_QUERY_SORT_FIELDS)
+        .then(|| requested_sorts.pop())
+        .flatten();
+    prepared.set_sort(requested_sorts.try_into()?);
+    if let Some(tie_breaker) = tie_breaker {
+        prepared.sort_mut().append_tie_breaker(tie_breaker)?;
+    }
+    prepared.set_limit(Some(limit.saturating_add(1)));
     Ok(prepared)
 }
 
 pub fn count_query_options(query_options: &QueryOptions) -> QueryOptions {
     let mut prepared = query_options.clone();
-    prepared.sort.clear();
-    prepared.limit = None;
-    prepared.cursor = None;
+    prepared.set_sort(Default::default());
+    prepared.set_limit(None);
+    prepared.clear_cursor();
     prepared
 }
 
@@ -217,10 +224,10 @@ pub fn paginate_in_memory<T>(
 where
     T: CursorPaginated,
 {
-    let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    let sorts = normalized_sorts::<T>(query_options.sort())?;
     let cursor_values = query_options
-        .cursor
-        .as_deref()
+        .cursor()
+        .map(|cursor| cursor.as_str())
         .map(|cursor| decode_cursor_values(cursor, &sorts))
         .transpose()?;
     paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
@@ -254,7 +261,7 @@ where
         });
     }
 
-    if let Some(limit) = query_options.limit {
+    if let Some(limit) = query_options.limit() {
         keyed_items.truncate(limit);
     }
     Ok(keyed_items.into_iter().map(|(item, _)| item).collect())
@@ -300,7 +307,7 @@ where
 {
     Ok(CursorPageRequest {
         limit: effective_page_limit(query_options)?,
-        sorts: normalized_sorts::<T>(&query_options.sort)?,
+        sorts: normalized_sorts::<T>(query_options.sort())?,
     })
 }
 
@@ -561,16 +568,16 @@ macro_rules! apply_query_options_with_fields {
         let query_options = &$query_options;
 
         if let Some(cursor_sql) = $crate::pagination::cursor_filter_sql_for_fields(
-            &query_options.sort,
+            query_options.sort(),
             &$sql_fields,
-            query_options.cursor.as_deref(),
+            query_options.cursor().map(|cursor| cursor.as_str()),
         )? {
             $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
         }
 
-        $crate::apply_cursor_ordering_fields!($query, query_options.sort, $sql_fields);
+        $crate::apply_cursor_ordering_fields!($query, query_options.sort(), $sql_fields);
 
-        if let Some(limit) = query_options.limit {
+        if let Some(limit) = query_options.limit() {
             $query = $query.limit(limit as i64);
         }
     }};
@@ -581,7 +588,7 @@ macro_rules! apply_query_options {
     ($query:ident, $query_options:expr, $ty:ty) => {{
         let query_options = &$query_options;
         let sql_fields = query_options
-            .sort
+            .sort()
             .iter()
             .map(|sort| $crate::pagination::cursor_sql_field::<$ty>(&sort.field))
             .collect::<Result<Vec<_>, $crate::errors::ApiError>>()?;

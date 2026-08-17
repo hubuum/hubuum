@@ -197,7 +197,7 @@ fn export_template_from_storage(
         default_limits,
     ) = definition.into_parts();
     Ok(ExportTemplate {
-        id,
+        id: id.id(),
         collection_id,
         name,
         description,
@@ -219,7 +219,7 @@ fn export_template_from_storage(
         default_limits: from_optional_json(default_limits)?,
         created_at,
         updated_at,
-        revision: ResourceRevision::new(revision)?,
+        revision,
     })
 }
 
@@ -329,13 +329,7 @@ impl ExportTemplate {
     pub async fn list_all(
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Vec<ExportTemplate>, ApiError> {
-        let query = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        };
+        let query = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)?;
         let page = storage_handle(pool)
             .list_export_templates(StorageExportTemplateListQuery::candidates(query))
             .await?;

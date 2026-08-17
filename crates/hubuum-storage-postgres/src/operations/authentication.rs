@@ -100,7 +100,7 @@ pub async fn authenticate_bearer_token(
     )) = row
     else {
         return Err(PostgresStorageError::new(
-            StorageErrorKind::Unauthorized,
+            StorageErrorKind::AuthenticationRequired,
             "Invalid token",
             None,
         ));

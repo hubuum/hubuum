@@ -9,6 +9,7 @@ use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtensio
 use diesel::sql_types::{Array, BigInt, Integer, Nullable, Text, Timestamp};
 use diesel::{Insertable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, MutationProvenance, NewEvent};
 use hubuum_storage_core::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
@@ -172,7 +173,7 @@ pub async fn claim_next_task(
                     StorageTaskStatus::Validating.as_str(),
                     "Task claimed for validation",
                 ),
-                &worker_provenance(&row),
+                &worker_provenance(&row)?,
             )
             .await?;
             Ok::<_, PostgresStorageError>(Some(row))
@@ -281,7 +282,7 @@ pub async fn recover_expired_task_leases(
                             "attempt_count": stale_task.attempt_count,
                             "operator_action": "inspect task history and submit a new task if replay is safe",
                         }))),
-                    &system_provenance(&stale_task),
+                    &system_provenance(&stale_task)?,
                 )
                 .await?;
                 let row = diesel::update(tasks::tasks.filter(tasks::id.eq(stale_task.id)))
@@ -324,7 +325,7 @@ pub async fn append_task_event(
     runtime
         .with_transaction(async move |connection| {
             let row = live_claimed_task(connection, claimed).await?;
-            append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row))
+            append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?)
                 .await
                 .map(|_| ())
         })
@@ -555,7 +556,7 @@ async fn finalize_task_connection(
         .first::<TaskRow>(connection)
         .await?;
     let recorded =
-        append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)).await?;
+        append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?).await?;
     let occurred_at = recorded.into_parts().0.occurred_at;
     crate::check_failpoint(crate::PostgresFailpoint::TaskFinalizeAfterEvent)?;
     diesel::update(
@@ -635,7 +636,7 @@ async fn append_task_lifecycle_event(
     provenance: &MutationProvenance,
 ) -> Result<hubuum_storage_core::StorageRecordedEvent, PostgresStorageError> {
     let (event_type, message, data) = event.into_parts();
-    let action = Action::from_db(&event_type).map_err(|_| {
+    let action = Action::parse(&event_type).map_err(|_| {
         PostgresStorageError::internal(format!("Unknown task event type '{event_type}'"))
     })?;
     let mut metadata = json!({
@@ -647,18 +648,24 @@ async fn append_task_lifecycle_event(
     }
     let event = NewEvent::new(EntityType::Task, action, provenance.actor_kind(), message)
         .map_err(|error| PostgresStorageError::internal(error.to_string()))?
-        .with_entity_id(task.id)
+        .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
         .with_metadata(metadata)
         .with_mutation_provenance(provenance);
     append_event(connection, &event).await
 }
 
-fn worker_provenance(task: &TaskRow) -> MutationProvenance {
-    MutationProvenance::worker(task.initiator_user_id, task.id)
+fn worker_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStorageError> {
+    Ok(MutationProvenance::worker(
+        task.initiator_user_id.map(PrincipalId::new).transpose()?,
+        TaskId::new(task.id)?,
+    ))
 }
 
-fn system_provenance(task: &TaskRow) -> MutationProvenance {
-    MutationProvenance::system_for_task(task.initiator_user_id, task.id)
+fn system_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStorageError> {
+    Ok(MutationProvenance::system_for_task(
+        task.initiator_user_id.map(PrincipalId::new).transpose()?,
+        TaskId::new(task.id)?,
+    ))
 }
 
 pub(super) async fn live_claimed_task(
@@ -1041,7 +1048,7 @@ async fn purge_expired_outputs(
                     row,
                     StorageTaskEventInput::new(Action::Cleanup.as_str(), message)
                         .with_data(Some(json!({ "cleaned_at": now }))),
-                    &system_provenance(row),
+                    &system_provenance(row)?,
                 )
                 .await?;
             }
@@ -1113,7 +1120,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            hubuum_storage_core::StorageErrorKind::BadRequest
+            hubuum_storage_core::StorageErrorKind::InvalidInput
         );
     }
 }

@@ -4,8 +4,8 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    NewRemoteTarget, RemoteHttpMethod, RemoteTarget, RemoteTargetSubjectType, ResourceRevision,
-    UpdateRemoteTarget, validate_target_parts,
+    NewRemoteTarget, RemoteHttpMethod, RemoteTarget, RemoteTargetSubjectType, UpdateRemoteTarget,
+    validate_target_parts,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
@@ -196,7 +196,7 @@ fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiE
         transport.into_parts();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     Ok(RemoteTarget {
-        id: metadata.id(),
+        id: metadata.id().id(),
         collection_id,
         class_id,
         name,
@@ -214,6 +214,6 @@ fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiE
         enabled,
         created_at: metadata.created_at(),
         updated_at: metadata.updated_at(),
-        revision: ResourceRevision::new(metadata.revision())?,
+        revision: metadata.revision(),
     })
 }

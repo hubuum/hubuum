@@ -9,7 +9,7 @@ use std::num::ParseIntError;
 use tracing::error;
 
 use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevisionError};
-use hubuum_events_core::EventCatalogError;
+use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 
 use crate::models::TokenPolicyError;
 use crate::observability::metrics;
@@ -164,23 +164,23 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, current_etag) = error.into_parts();
+        let (kind, message, _current_revision) = error.into_parts();
         match kind {
             StorageErrorKind::AuthorizationUnavailable => {
                 Self::PermissionBackendUnavailable(message)
             }
-            StorageErrorKind::BadRequest => Self::BadRequest(message),
+            StorageErrorKind::InvalidInput => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
             StorageErrorKind::Database => Self::DatabaseError(message),
-            StorageErrorKind::Forbidden => Self::Forbidden(message),
+            StorageErrorKind::PermissionDenied => Self::Forbidden(message),
             StorageErrorKind::Internal => Self::InternalServerError(message),
             StorageErrorKind::NotFound => Self::NotFound(message),
-            StorageErrorKind::NotAcceptable => Self::NotAcceptable(message),
-            StorageErrorKind::PayloadTooLarge => Self::PayloadTooLarge(message),
-            StorageErrorKind::PreconditionFailed => Self::PreconditionFailed(message, current_etag),
-            StorageErrorKind::TooManyRequests => Self::TooManyRequests(message),
+            StorageErrorKind::Unsupported => Self::NotAcceptable(message),
+            StorageErrorKind::InputTooLarge => Self::PayloadTooLarge(message),
+            StorageErrorKind::RevisionConflict => Self::PreconditionFailed(message, None),
+            StorageErrorKind::RateLimited => Self::TooManyRequests(message),
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
-            StorageErrorKind::Unauthorized => Self::Unauthorized(message),
+            StorageErrorKind::AuthenticationRequired => Self::Unauthorized(message),
             StorageErrorKind::Validation => Self::ValidationError(message),
         }
     }
@@ -206,6 +206,12 @@ impl From<EventCatalogError> for ApiError {
             }
             _ => Self::BadRequest(error.to_string()),
         }
+    }
+}
+
+impl From<EventIdentifierError> for ApiError {
+    fn from(error: EventIdentifierError) -> Self {
+        Self::BadRequest(error.to_string())
     }
 }
 
@@ -445,7 +451,7 @@ mod tests {
                 "permission_backend_unavailable",
             ),
             (
-                StorageError::new(StorageErrorKind::BadRequest, "invalid move", None),
+                StorageError::new(StorageErrorKind::InvalidInput, "invalid move", None),
                 "bad_request",
             ),
             (
@@ -453,7 +459,7 @@ mod tests {
                 "conflict",
             ),
             (
-                StorageError::new(StorageErrorKind::Forbidden, "access denied", None),
+                StorageError::new(StorageErrorKind::PermissionDenied, "access denied", None),
                 "forbidden",
             ),
             (
@@ -466,7 +472,7 @@ mod tests {
             ),
             (
                 StorageError::new(
-                    StorageErrorKind::PayloadTooLarge,
+                    StorageErrorKind::InputTooLarge,
                     "object data exceeds its limit",
                     None,
                 ),
@@ -474,22 +480,22 @@ mod tests {
             ),
             (
                 StorageError::new(
-                    StorageErrorKind::PreconditionFailed,
+                    StorageErrorKind::RevisionConflict,
                     "stale collection",
-                    Some("\"collection-1-r2\"".to_string()),
+                    Some(hubuum_domain::ResourceRevision::new(2).unwrap()),
                 ),
                 "precondition_failed",
             ),
             (
-                StorageError::new(
-                    StorageErrorKind::TooManyRequests,
-                    "task capacity reached",
-                    None,
-                ),
+                StorageError::new(StorageErrorKind::RateLimited, "task capacity reached", None),
                 "too_many_requests",
             ),
             (
-                StorageError::new(StorageErrorKind::Unauthorized, "login required", None),
+                StorageError::new(
+                    StorageErrorKind::AuthenticationRequired,
+                    "login required",
+                    None,
+                ),
                 "unauthorized",
             ),
         ] {

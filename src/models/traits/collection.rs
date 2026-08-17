@@ -6,7 +6,8 @@ use crate::models::collection::{
 use crate::models::group::GroupID;
 use crate::models::search::{FilterField, SortParam};
 use crate::services::storage_boundary::{
-    collection_create_to_storage, collection_from_storage, collection_update_to_storage,
+    collection_create_to_storage, collection_from_storage, collection_id_to_storage,
+    collection_update_to_storage,
 };
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{CollectionAdapter, IdAccessor, InstanceAdapter};
@@ -27,7 +28,7 @@ impl SaveAdapter for Collection {
         storage_handle(pool)
             .collection_store()
             .update_collection(
-                self.id,
+                collection_id_to_storage(self.id),
                 collection_update_to_storage(updated_collection),
                 None,
             )
@@ -48,7 +49,7 @@ impl SaveAdapter for Collection {
         storage_handle(pool)
             .collection_store()
             .update_collection(
-                self.id,
+                collection_id_to_storage(self.id),
                 collection_update_to_storage(updated_collection),
                 Some(context),
             )
@@ -65,7 +66,7 @@ impl DeleteAdapter for Collection {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .collection_store()
-            .delete_collection(self.id, None)
+            .delete_collection(collection_id_to_storage(self.id), None)
             .await
             .map_err(ApiError::from)
     }
@@ -77,7 +78,7 @@ impl DeleteAdapter for Collection {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .collection_store()
-            .delete_collection(self.id, Some(context))
+            .delete_collection(collection_id_to_storage(self.id), Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -90,7 +91,7 @@ impl DeleteAdapter for CollectionID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .collection_store()
-            .delete_collection(self.id(), None)
+            .delete_collection(collection_id_to_storage(self.id()), None)
             .await
             .map_err(ApiError::from)
     }
@@ -102,7 +103,7 @@ impl DeleteAdapter for CollectionID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .collection_store()
-            .delete_collection(self.id(), Some(context))
+            .delete_collection(collection_id_to_storage(self.id()), Some(context))
             .await
             .map_err(ApiError::from)
     }
@@ -120,7 +121,7 @@ impl UpdateAdapter for UpdateCollection {
         storage_handle(pool)
             .collection_store()
             .update_collection(
-                target_collection_id.id(),
+                collection_id_to_storage(target_collection_id.id()),
                 collection_update_to_storage(self.clone()),
                 None,
             )
@@ -138,7 +139,7 @@ impl UpdateAdapter for UpdateCollection {
         storage_handle(pool)
             .collection_store()
             .update_collection(
-                target_collection_id.id(),
+                collection_id_to_storage(target_collection_id.id()),
                 collection_update_to_storage(self.clone()),
                 Some(context),
             )
@@ -240,7 +241,7 @@ impl CollectionAdapter for CollectionID {
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
             .collection_store()
-            .get_collection(self.id())
+            .get_collection(collection_id_to_storage(self.id()))
             .await
             .map_err(ApiError::from)
             .and_then(collection_from_storage)

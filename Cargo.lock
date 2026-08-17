@@ -2264,6 +2264,7 @@ name = "hubuum-events-core"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "hubuum-domain",
  "percent-encoding",
  "serde",
  "serde_json",

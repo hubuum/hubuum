@@ -31,6 +31,14 @@ wire formats unless their documentation explicitly says otherwise. Backend
 implementations are expected to implement every supertrait of `StorageBackend`;
 focused test doubles may implement only the traits under test.
 
+Lifecycle operations, record metadata, principal projections, and revision
+preconditions use `hubuum-domain` IDs and `ResourceRevision`. Revision targets
+are a closed semantic enum rather than adapter-formatted owner keys. Query
+methods accept validated `hubuum-query` values, and errors use storage-domain
+classifications rather than HTTP status or database-driver names. Native table,
+row, connection, query, and ETag representations are adapter or application
+concerns.
+
 ## Errors, Runtime, and Cancellation
 
 Backend-specific errors must be classified into `StorageError` before returning
@@ -62,3 +70,6 @@ clean package, and compares SemVer compatibility with the latest crates.io
 release. The PostgreSQL adapter is the pinned reference implementation. Shared
 compatibility tests exercise every statically registered backend, while each
 backend owns native query, transaction, migration, and failure tests.
+An external-crate integration test also compiles representative transaction,
+query, and typed DTO usage so accidental reliance on crate-private adapter
+hooks fails before publication.

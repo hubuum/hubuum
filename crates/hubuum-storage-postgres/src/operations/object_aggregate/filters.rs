@@ -1,6 +1,6 @@
 macro_rules! apply_object_aggregate_source_filters {
     ($query:ident, $query_options:expr, $computed_filter_snapshot:expr) => {{
-        let query_params = $query_options.filters.clone();
+        let query_params = $query_options.filters().clone();
         for param in query_params {
             if param.field.computed_query().is_some() {
                 let snapshot = $computed_filter_snapshot.ok_or_else(|| {

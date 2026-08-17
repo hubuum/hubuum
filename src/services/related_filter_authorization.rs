@@ -126,8 +126,8 @@ pub(crate) async fn externally_authorized_related_object_ids(
             return Ok(Some(AuthorizedObjectIds::empty()));
         }
 
-        let mut target_query = related_target_query(&group, target_class.id);
-        target_query.limit = Some(MAX_EXTERNAL_RELATED_FILTER_TARGETS + 1);
+        let mut target_query = related_target_query(&group, target_class.id)?;
+        target_query.set_limit(Some(MAX_EXTERNAL_RELATED_FILTER_TARGETS + 1));
         let (target_candidates, _) =
             catalog::list_objects(storage, principal.user_id, true, None, target_query).await?;
         RelatedTraversalResource::TargetObjects.ensure_count(target_candidates.len())?;
@@ -202,17 +202,17 @@ async fn load_related_target_class(
         principal_id,
         true,
         None,
-        QueryOptions {
-            filters: vec![ParsedQueryParam {
+        QueryOptions::new(
+            vec![ParsedQueryParam {
                 field,
                 operator: class_filter.operator.clone(),
                 value: class_filter.value.clone(),
             }],
-            sort: Vec::new(),
-            limit: Some(2),
-            cursor: None,
-            include_total: false,
-        },
+            Vec::new(),
+            Some(2),
+            None,
+            false,
+        )?,
     )
     .await?;
     if classes.len() > 1 {
@@ -223,7 +223,10 @@ async fn load_related_target_class(
     Ok(classes.pop())
 }
 
-fn related_target_query(group: &RelatedFilterGroup<'_>, class_id: i32) -> QueryOptions {
+fn related_target_query(
+    group: &RelatedFilterGroup<'_>,
+    class_id: i32,
+) -> Result<QueryOptions, ApiError> {
     let mut filters = Vec::with_capacity(group.object_filters.len() + 1);
     filters.push(ParsedQueryParam {
         field: FilterField::ClassId,
@@ -244,13 +247,7 @@ fn related_target_query(group: &RelatedFilterGroup<'_>, class_id: i32) -> QueryO
         };
         filter
     }));
-    QueryOptions {
-        filters,
-        sort: Vec::new(),
-        limit: None,
-        cursor: None,
-        include_total: false,
-    }
+    Ok(QueryOptions::new(filters, Vec::new(), None, None, false)?)
 }
 
 #[derive(Clone, Copy)]
@@ -474,8 +471,8 @@ async fn load_objects_by_ids(
             principal_id,
             true,
             None,
-            QueryOptions {
-                filters: vec![ParsedQueryParam {
+            QueryOptions::new(
+                vec![ParsedQueryParam {
                     field: FilterField::Id,
                     operator: SearchOperator::In { is_negated: false },
                     value: chunk
@@ -484,11 +481,11 @@ async fn load_objects_by_ids(
                         .collect::<Vec<_>>()
                         .join(","),
                 }],
-                sort: Vec::new(),
-                limit: None,
-                cursor: None,
-                include_total: false,
-            },
+                Vec::new(),
+                None,
+                None,
+                false,
+            )?,
         )
         .await?;
         objects.append(&mut rows);

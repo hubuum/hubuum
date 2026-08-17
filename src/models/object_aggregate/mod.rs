@@ -750,13 +750,13 @@ impl ObjectAggregateQuery {
 
     pub fn has_computed_filter(&self) -> bool {
         self.query_options
-            .filters
+            .filters()
             .iter()
             .any(|filter| filter.field.computed_query().is_some())
     }
 
     pub fn has_personal_computed_filter(&self) -> bool {
-        self.query_options.filters.iter().any(|filter| {
+        self.query_options.filters().iter().any(|filter| {
             filter
                 .field
                 .computed_query()
@@ -889,19 +889,19 @@ impl ObjectAggregateRequestBuilder {
                 "Object aggregate backend request is missing a cursor transport budget".to_string(),
             )
         })?;
-        self.query.query_options.filters.add_filter(
+        self.query.query_options.filters_mut().add_filter(
             FilterField::ClassId,
             SearchOperator::Equals { is_negated: false },
             &self.target.class_id.id().to_string(),
-        );
-        self.query.query_options.filters.add_filter(
+        )?;
+        self.query.query_options.filters_mut().add_filter(
             FilterField::CollectionId,
             SearchOperator::Equals { is_negated: false },
             &self.target.collection_id.id().to_string(),
-        );
+        )?;
         let (query_options, spec) = self.query.into_parts();
         let requires_personal_owner = spec.has_personal_computed_field()
-            || query_options.filters.iter().any(|filter| {
+            || query_options.filters().iter().any(|filter| {
                 filter
                     .field
                     .computed_query()
@@ -929,7 +929,7 @@ pub fn parse_object_aggregate_query(query_string: &str) -> Result<ObjectAggregat
             query_string,
             &["group_by", "aggregate", "sort"],
         )?;
-    if !query_options.sort.is_empty() {
+    if !query_options.sort().is_empty() {
         return Err(ApiError::BadRequest(
             "Object-list sort fields are not valid for grouped results; use sort=dimensions.asc|desc or sort=object_count.asc|desc"
                 .to_string(),

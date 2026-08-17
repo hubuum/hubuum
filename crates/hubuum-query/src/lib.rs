@@ -135,13 +135,7 @@ fn parse_query_parameter_with_options(
 
     if qs.is_empty() {
         return Ok((
-            QueryOptions {
-                filters,
-                sort,
-                limit,
-                cursor,
-                include_total: true,
-            },
+            QueryOptions::from_parsed_parts(filters, sort, limit, cursor, true)?,
             passthrough,
         ));
     }
@@ -219,13 +213,13 @@ fn parse_query_parameter_with_options(
     }
 
     Ok((
-        QueryOptions {
+        QueryOptions::from_parsed_parts(
             filters,
             sort,
             limit,
             cursor,
-            include_total: include_total.unwrap_or(true),
-        },
+            include_total.unwrap_or(true),
+        )?,
         passthrough,
     ))
 }
@@ -474,13 +468,442 @@ fn is_computed_field_name(key: &str) -> bool {
     .any(|prefix| key.starts_with(prefix))
 }
 
+/// A bounded collection of query filters.
+///
+/// The private representation prevents callers from bypassing the same
+/// resource limit enforced by the query-string parser.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QueryFilters(Vec<ParsedQueryParam>);
+
+impl QueryFilters {
+    pub fn new(filters: Vec<ParsedQueryParam>) -> Result<Self, QueryError> {
+        if filters.len() > MAX_QUERY_FILTERS {
+            return Err(QueryError::BadRequest(format!(
+                "query accepts at most {MAX_QUERY_FILTERS} filters"
+            )));
+        }
+        if filters
+            .iter()
+            .any(|filter| filter.field.related_query().is_some())
+        {
+            validate_related_filter_groups(&filters)?;
+        }
+        Ok(Self(filters))
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[ParsedQueryParam] {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_vec(self) -> Vec<ParsedQueryParam> {
+        self.0
+    }
+
+    /// Remove filters while preserving all construction-time invariants.
+    pub fn try_retain(
+        &mut self,
+        predicate: impl FnMut(&ParsedQueryParam) -> bool,
+    ) -> Result<(), QueryError> {
+        if !self
+            .0
+            .iter()
+            .any(|filter| filter.field.related_query().is_some())
+        {
+            self.0.retain(predicate);
+            return Ok(());
+        }
+
+        let previous = self.0.clone();
+        self.0.retain(predicate);
+        if self
+            .0
+            .iter()
+            .any(|filter| filter.field.related_query().is_some())
+            && let Err(error) = validate_related_filter_groups(&self.0)
+        {
+            self.0 = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Add one filter while enforcing the same bounds and related-filter
+    /// invariants as construction.
+    pub fn try_push(&mut self, parameter: ParsedQueryParam) -> Result<(), QueryError> {
+        if self.0.len() >= MAX_QUERY_FILTERS {
+            return Err(QueryError::BadRequest(format!(
+                "query accepts at most {MAX_QUERY_FILTERS} filters"
+            )));
+        }
+        let validate_related = parameter.field.related_query().is_some();
+        self.0.push(parameter);
+        if validate_related && let Err(error) = validate_related_filter_groups(&self.0) {
+            self.0.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Resolve the value type of every computed field without exposing
+    /// unrestricted mutable access to the bounded collection.
+    pub fn try_resolve_computed_fields<E>(
+        &mut self,
+        mut resolver: impl FnMut(&ComputedQueryField) -> Result<ComputedQueryValueType, E>,
+    ) -> Result<(), E> {
+        for parameter in &mut self.0 {
+            if let Some(field) = parameter.field.computed_query_mut() {
+                let value_type = resolver(field)?;
+                field.resolve(value_type);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<Vec<ParsedQueryParam>> for QueryFilters {
+    type Error = QueryError;
+
+    fn try_from(filters: Vec<ParsedQueryParam>) -> Result<Self, Self::Error> {
+        Self::new(filters)
+    }
+}
+
+impl std::ops::Deref for QueryFilters {
+    type Target = [ParsedQueryParam];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a QueryFilters {
+    type Item = &'a ParsedQueryParam;
+    type IntoIter = std::slice::Iter<'a, ParsedQueryParam>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for QueryFilters {
+    type Item = ParsedQueryParam;
+    type IntoIter = std::vec::IntoIter<ParsedQueryParam>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// A bounded, duplicate-free sort specification.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuerySort(Vec<SortParam>);
+
+impl QuerySort {
+    pub fn new(sort: Vec<SortParam>) -> Result<Self, QueryError> {
+        if sort.len() > MAX_QUERY_SORT_FIELDS {
+            return Err(QueryError::BadRequest(format!(
+                "query accepts at most {MAX_QUERY_SORT_FIELDS} sort fields"
+            )));
+        }
+        for (index, parameter) in sort.iter().enumerate() {
+            if parameter.field.related_query().is_some() {
+                return Err(QueryError::BadRequest(
+                    "Related fields cannot be used for sorting".to_string(),
+                ));
+            }
+            if sort[..index]
+                .iter()
+                .any(|existing| existing.field == parameter.field)
+            {
+                return Err(QueryError::BadRequest(format!(
+                    "duplicate sort field '{}'",
+                    parameter.field
+                )));
+            }
+        }
+        Ok(Self(sort))
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[SortParam] {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_vec(self) -> Vec<SortParam> {
+        self.0
+    }
+
+    /// Add one deterministic pagination tie-breaker to a caller-bounded sort.
+    ///
+    /// The parser limit applies to caller-selected fields; storage adapters
+    /// may need one additional unique field to guarantee stable cursor order.
+    pub fn append_tie_breaker(&mut self, parameter: SortParam) -> Result<(), QueryError> {
+        if self.0.len() > MAX_QUERY_SORT_FIELDS {
+            return Err(QueryError::BadRequest(format!(
+                "effective query sort accepts at most {} fields",
+                MAX_QUERY_SORT_FIELDS + 1
+            )));
+        }
+        if parameter.field.related_query().is_some() {
+            return Err(QueryError::BadRequest(
+                "Related fields cannot be used for sorting".to_string(),
+            ));
+        }
+        if self
+            .0
+            .iter()
+            .any(|existing| existing.field == parameter.field)
+        {
+            return Err(QueryError::BadRequest(format!(
+                "duplicate sort field '{}'",
+                parameter.field
+            )));
+        }
+        self.0.push(parameter);
+        Ok(())
+    }
+
+    /// Resolve the value type of every computed sort field without exposing
+    /// unrestricted mutable access to the bounded collection.
+    pub fn try_resolve_computed_fields<E>(
+        &mut self,
+        mut resolver: impl FnMut(&ComputedQueryField) -> Result<ComputedQueryValueType, E>,
+    ) -> Result<(), E> {
+        for parameter in &mut self.0 {
+            if let Some(field) = parameter.field.computed_query_mut() {
+                let value_type = resolver(field)?;
+                field.resolve(value_type);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<Vec<SortParam>> for QuerySort {
+    type Error = QueryError;
+
+    fn try_from(sort: Vec<SortParam>) -> Result<Self, Self::Error> {
+        Self::new(sort)
+    }
+}
+
+impl std::ops::Deref for QuerySort {
+    type Target = [SortParam];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a QuerySort {
+    type Item = &'a SortParam;
+    type IntoIter = std::slice::Iter<'a, SortParam>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for QuerySort {
+    type Item = SortParam;
+    type IntoIter = std::vec::IntoIter<SortParam>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// A cursor token bounded before it reaches a decoder or storage adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryCursor(String);
+
+impl QueryCursor {
+    pub fn new(cursor: String) -> Result<Self, QueryError> {
+        if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
+            return Err(QueryError::BadRequest(format!(
+                "cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes"
+            )));
+        }
+        Ok(Self(cursor))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl TryFrom<String> for QueryCursor {
+    type Error = QueryError;
+
+    fn try_from(cursor: String) -> Result<Self, Self::Error> {
+        Self::new(cursor)
+    }
+}
+
+impl std::ops::Deref for QueryCursor {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for QueryCursor {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for QueryCursor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryOptions {
-    pub filters: Vec<ParsedQueryParam>,
-    pub sort: Vec<SortParam>,
-    pub limit: Option<usize>,
-    pub cursor: Option<String>,
-    pub include_total: bool,
+    filters: QueryFilters,
+    sort: QuerySort,
+    limit: Option<usize>,
+    cursor: Option<QueryCursor>,
+    include_total: bool,
+}
+
+impl QueryOptions {
+    fn from_parsed_parts(
+        filters: Vec<ParsedQueryParam>,
+        sort: Vec<SortParam>,
+        limit: Option<usize>,
+        cursor: Option<String>,
+        include_total: bool,
+    ) -> Result<Self, QueryError> {
+        Ok(Self {
+            filters: QueryFilters(filters),
+            sort: QuerySort(sort),
+            limit,
+            cursor: cursor.map(QueryCursor::new).transpose()?,
+            include_total,
+        })
+    }
+
+    pub fn new(
+        filters: Vec<ParsedQueryParam>,
+        sort: Vec<SortParam>,
+        limit: Option<usize>,
+        cursor: Option<String>,
+        include_total: bool,
+    ) -> Result<Self, QueryError> {
+        Ok(Self {
+            filters: QueryFilters::new(filters)?,
+            sort: QuerySort::new(sort)?,
+            limit,
+            cursor: cursor.map(QueryCursor::new).transpose()?,
+            include_total,
+        })
+    }
+
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            filters: QueryFilters::default(),
+            sort: QuerySort::default(),
+            limit: None,
+            cursor: None,
+            include_total: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn filters(&self) -> &QueryFilters {
+        &self.filters
+    }
+
+    /// Mutably access the bounded filter collection.
+    ///
+    /// The returned type exposes only invariant-preserving mutations.
+    pub const fn filters_mut(&mut self) -> &mut QueryFilters {
+        &mut self.filters
+    }
+
+    pub fn set_filters(&mut self, filters: QueryFilters) {
+        self.filters = filters;
+    }
+
+    #[must_use]
+    pub const fn sort(&self) -> &QuerySort {
+        &self.sort
+    }
+
+    /// Mutably access the bounded sort collection.
+    ///
+    /// The returned type exposes only invariant-preserving mutations.
+    pub const fn sort_mut(&mut self) -> &mut QuerySort {
+        &mut self.sort
+    }
+
+    /// Mutably access both invariant-preserving query collections.
+    pub const fn filters_and_sort_mut(&mut self) -> (&mut QueryFilters, &mut QuerySort) {
+        (&mut self.filters, &mut self.sort)
+    }
+
+    pub fn set_sort(&mut self, sort: QuerySort) {
+        self.sort = sort;
+    }
+
+    #[must_use]
+    pub const fn limit(&self) -> Option<usize> {
+        self.limit
+    }
+
+    pub const fn set_limit(&mut self, limit: Option<usize>) {
+        self.limit = limit;
+    }
+
+    #[must_use]
+    pub const fn cursor(&self) -> Option<&QueryCursor> {
+        self.cursor.as_ref()
+    }
+
+    pub fn set_cursor(&mut self, cursor: Option<String>) -> Result<(), QueryError> {
+        self.cursor = cursor.map(QueryCursor::new).transpose()?;
+        Ok(())
+    }
+
+    pub fn set_validated_cursor(&mut self, cursor: Option<QueryCursor>) {
+        self.cursor = cursor;
+    }
+
+    pub fn clear_cursor(&mut self) {
+        self.cursor = None;
+    }
+
+    #[must_use]
+    pub const fn include_total(&self) -> bool {
+        self.include_total
+    }
+
+    pub const fn set_include_total(&mut self, include_total: bool) {
+        self.include_total = include_total;
+    }
+
+    /// Resolve computed filter and sort types while retaining all query-shape
+    /// invariants.
+    pub fn try_resolve_computed_fields<E>(
+        &mut self,
+        mut resolver: impl FnMut(&ComputedQueryField) -> Result<ComputedQueryValueType, E>,
+    ) -> Result<(), E> {
+        self.filters.try_resolve_computed_fields(&mut resolver)?;
+        self.sort.try_resolve_computed_fields(resolver)
+    }
 }
 
 /// A validated, comma-separated path into a JSON object.
@@ -579,6 +1002,28 @@ fn invalid_json_field_path(value: &str) -> QueryError {
 pub struct SortParam {
     pub field: FilterField,
     pub descending: bool,
+}
+
+impl SortParam {
+    #[must_use]
+    pub const fn new(field: FilterField, descending: bool) -> Self {
+        Self { field, descending }
+    }
+
+    #[must_use]
+    pub const fn field(&self) -> &FilterField {
+        &self.field
+    }
+
+    #[must_use]
+    pub const fn descending(&self) -> bool {
+        self.descending
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (FilterField, bool) {
+        (self.field, self.descending)
+    }
 }
 
 /// Backend-neutral value stored in an opaque cursor token.
@@ -974,6 +1419,39 @@ impl ParsedQueryParam {
         })
     }
 
+    #[must_use]
+    pub fn from_parts(
+        field: FilterField,
+        operator: SearchOperator,
+        value: impl Into<String>,
+    ) -> Self {
+        Self {
+            field,
+            operator,
+            value: value.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn field(&self) -> &FilterField {
+        &self.field
+    }
+
+    #[must_use]
+    pub const fn operator(&self) -> &SearchOperator {
+        &self.operator
+    }
+
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (FilterField, SearchOperator, String) {
+        (self.field, self.operator, self.value)
+    }
+
     pub fn is_permission(&self) -> bool {
         self.field == FilterField::Permissions
     }
@@ -1286,7 +1764,7 @@ impl SearchOperator {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum SQLMappedType {
+pub enum QueryScalarType {
     String,
     Numeric,
     Date,
@@ -1294,17 +1772,10 @@ pub enum SQLMappedType {
     None,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct JsonbFieldType {
-    pub value: String,
-    pub mapping: SQLMappedType,
-    pub operator: Operator,
-}
-
-pub fn get_jsonb_field_type_from_json_schema(
+pub fn infer_query_scalar_type_from_schema(
     schema: &serde_json::Value,
     key: &str,
-) -> Option<SQLMappedType> {
+) -> Option<QueryScalarType> {
     let path = JsonFieldPathRef::new(key).ok()?;
     use serde_json::Value;
     let mut current_schema = schema;
@@ -1325,51 +1796,48 @@ pub fn get_jsonb_field_type_from_json_schema(
     if let Some(Value::String(format_str)) = current_schema.get("format")
         && matches!(format_str.as_ref(), "date-time" | "date")
     {
-        return Some(SQLMappedType::Date);
+        return Some(QueryScalarType::Date);
     }
 
     match current_schema.get("type") {
         Some(Value::String(type_str)) => match type_str.as_ref() {
-            "string" => Some(SQLMappedType::String),
-            "number" | "integer" => Some(SQLMappedType::Numeric),
-            "boolean" => Some(SQLMappedType::Boolean),
+            "string" => Some(QueryScalarType::String),
+            "number" | "integer" => Some(QueryScalarType::Numeric),
+            "boolean" => Some(QueryScalarType::Boolean),
             _ => None,
         },
         _ => None,
     }
 }
 
-pub fn get_jsonb_field_type_from_value_and_operator(
-    value: &str,
-    operator: Operator,
-) -> Option<SQLMappedType> {
+pub fn infer_query_scalar_type(value: &str, operator: Operator) -> Option<QueryScalarType> {
     match operator {
-        Operator::Equals => get_sql_mapped_type_from_value(
+        Operator::Equals => infer_scalar_type_from_value(
             value,
             &[
-                SQLMappedType::Date,
-                SQLMappedType::Boolean,
-                SQLMappedType::Numeric,
-                SQLMappedType::None,
-                SQLMappedType::String,
+                QueryScalarType::Date,
+                QueryScalarType::Boolean,
+                QueryScalarType::Numeric,
+                QueryScalarType::None,
+                QueryScalarType::String,
             ],
         ),
-        Operator::Contains => Some(SQLMappedType::String),
+        Operator::Contains => Some(QueryScalarType::String),
         Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte => {
-            get_sql_mapped_type_from_value(value, &[SQLMappedType::Date, SQLMappedType::Numeric])
+            infer_scalar_type_from_value(value, &[QueryScalarType::Date, QueryScalarType::Numeric])
         }
         Operator::Between => {
             let parts = value.split(',').collect::<Vec<&str>>();
             if parts.len() != 2 {
                 return None;
             }
-            let lval = get_sql_mapped_type_from_value(
+            let lval = infer_scalar_type_from_value(
                 parts[0],
-                &[SQLMappedType::Date, SQLMappedType::Numeric],
+                &[QueryScalarType::Date, QueryScalarType::Numeric],
             );
-            let rval = get_sql_mapped_type_from_value(
+            let rval = infer_scalar_type_from_value(
                 parts[1],
-                &[SQLMappedType::Date, SQLMappedType::Numeric],
+                &[QueryScalarType::Date, QueryScalarType::Numeric],
             );
             if lval.is_none() || rval.is_none() || lval != rval {
                 return None;
@@ -1383,44 +1851,44 @@ pub fn get_jsonb_field_type_from_value_and_operator(
         | Operator::EndsWith
         | Operator::IEndsWith
         | Operator::Like
-        | Operator::Regex => Some(SQLMappedType::String),
+        | Operator::Regex => Some(QueryScalarType::String),
         Operator::WithinNetwork
         | Operator::ContainsNetwork
         | Operator::ContainsIp
         | Operator::OverlapsNetwork
         | Operator::InetEquals => None,
-        Operator::In => Some(SQLMappedType::String),
+        Operator::In => Some(QueryScalarType::String),
         Operator::All | Operator::ArrayLength | Operator::HasKey | Operator::IsNull => None,
     }
 }
 
-pub fn get_sql_mapped_type_from_value(
+pub fn infer_scalar_type_from_value(
     value: &str,
-    accepted_types: &[SQLMappedType],
-) -> Option<SQLMappedType> {
+    accepted_types: &[QueryScalarType],
+) -> Option<QueryScalarType> {
     for t in accepted_types {
         match t {
-            SQLMappedType::String => return Some(SQLMappedType::String),
-            SQLMappedType::Numeric => {
+            QueryScalarType::String => return Some(QueryScalarType::String),
+            QueryScalarType::Numeric => {
                 if value.parse::<f64>().is_ok() {
-                    return Some(SQLMappedType::Numeric);
+                    return Some(QueryScalarType::Numeric);
                 }
             }
-            SQLMappedType::Date => {
+            QueryScalarType::Date => {
                 if DateTime::parse_from_rfc3339(value).is_ok()
                     || NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
                 {
-                    return Some(SQLMappedType::Date);
+                    return Some(QueryScalarType::Date);
                 }
             }
-            SQLMappedType::Boolean => {
+            QueryScalarType::Boolean => {
                 if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
-                    return Some(SQLMappedType::Boolean);
+                    return Some(QueryScalarType::Boolean);
                 }
             }
-            SQLMappedType::None => {
+            QueryScalarType::None => {
                 if value.is_empty() || value.eq_ignore_ascii_case("null") {
-                    return Some(SQLMappedType::None);
+                    return Some(QueryScalarType::None);
                 }
             }
         }
@@ -1642,21 +2110,6 @@ macro_rules! filter_fields {
         }
 
         impl FilterField {
-            /// Return the JSONB column addressed by this query field.
-            ///
-            /// Most filter fields map to typed SQL columns and therefore have no
-            /// JSONB column. Keeping that distinction in the return type prevents
-            /// callers from turning an ordinary parsed field into a panic.
-            pub fn json_column(&self) -> Option<&'static str> {
-                match self {
-                    FilterField::JsonSchema => Some("json_schema"),
-                    FilterField::JsonData
-                    | FilterField::JsonDataFrom
-                    | FilterField::JsonDataTo => Some("data"),
-                    _ => None,
-                }
-            }
-
             pub fn computed_query(&self) -> Option<&ComputedQueryField> {
                 match self {
                     FilterField::Computed(field) => Some(field),
@@ -1979,18 +2432,6 @@ mod tests {
     }
 
     #[test]
-    fn filter_field_json_column_mapping_is_total() {
-        assert_eq!(FilterField::JsonSchema.json_column(), Some("json_schema"));
-        assert_eq!(FilterField::JsonData.json_column(), Some("data"));
-        assert_eq!(FilterField::JsonDataFrom.json_column(), Some("data"));
-        assert_eq!(FilterField::JsonDataTo.json_column(), Some("data"));
-        assert_eq!(FilterField::Id.json_column(), None);
-
-        let computed = FilterField::from_str("computed.shared.rank").unwrap();
-        assert_eq!(computed.json_column(), None);
-    }
-
-    #[test]
     fn parses_filters_sort_cursor_and_limit() {
         let parsed = parse_query_parameter(
             "name__not_icontains=archived&limit=10&cursor=abc&sort=-created_at,name.asc",
@@ -2003,6 +2444,81 @@ mod tests {
         assert_eq!(parsed.sort.len(), 2);
         assert!(parsed.sort[0].descending);
         assert!(!parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn rejected_cursor_update_preserves_the_previous_valid_cursor() {
+        let mut options = QueryOptions::new(
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("valid".to_string()),
+            true,
+        )
+        .unwrap();
+
+        let error = options
+            .set_cursor(Some("x".repeat(MAX_ENCODED_CURSOR_BYTES + 1)))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("maximum encoded size"));
+        assert_eq!(options.cursor().map(QueryCursor::as_str), Some("valid"));
+    }
+
+    #[test]
+    fn rejected_filter_push_preserves_the_previous_valid_filters() {
+        let mut options = QueryOptions::new(
+            std::iter::repeat_with(|| {
+                ParsedQueryParam::from_parts(
+                    FilterField::Name,
+                    SearchOperator::Contains { is_negated: false },
+                    "value",
+                )
+            })
+            .take(MAX_QUERY_FILTERS)
+            .collect(),
+            Vec::new(),
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+
+        let error = options
+            .filters_mut()
+            .try_push(ParsedQueryParam::from_parts(
+                FilterField::Description,
+                SearchOperator::Contains { is_negated: false },
+                "extra",
+            ))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("at most"));
+        assert_eq!(options.filters().len(), MAX_QUERY_FILTERS);
+    }
+
+    #[test]
+    fn rejected_filter_retain_preserves_related_group_invariants() {
+        let (mut options, _) =
+            parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+                "related.room.class.name=Room&related.room.object.name=router",
+                &[],
+            )
+            .unwrap();
+        let before = options.filters().clone();
+
+        let error = options
+            .filters_mut()
+            .try_retain(|filter| {
+                !matches!(
+                    filter.field.related_query().map(RelatedQueryField::target),
+                    Some(RelatedFilterTarget::Class(RelatedClassField::Name))
+                )
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("exactly one"));
+        assert_eq!(options.filters(), &before);
     }
 
     #[test]
@@ -2582,14 +3098,14 @@ mod tests {
     }
 
     #[test]
-    fn infers_jsonb_type_from_value_and_operator() {
+    fn infers_scalar_type_from_value_and_operator() {
         assert_eq!(
-            get_jsonb_field_type_from_value_and_operator("2024-01-15", Operator::Equals),
-            Some(SQLMappedType::Date)
+            infer_query_scalar_type("2024-01-15", Operator::Equals),
+            Some(QueryScalarType::Date)
         );
         assert_eq!(
-            get_jsonb_field_type_from_value_and_operator("router", Operator::IContains),
-            Some(SQLMappedType::String)
+            infer_query_scalar_type("router", Operator::IContains),
+            Some(QueryScalarType::String)
         );
     }
 

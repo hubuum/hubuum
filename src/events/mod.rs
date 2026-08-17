@@ -36,8 +36,9 @@ pub use sink::{
 };
 
 pub use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventCatalogError, EventContext, EventId, MutationProvenance,
-    NewEvent, Provenance, ProvenanceActor, ProvenancePrincipal, is_valid_pair, valid_actions,
+    Action, ActorKind, CollectionId, EntityType, EventCatalogError, EventContext, EventEntityId,
+    EventId, EventSequence, MutationProvenance, NewEvent, PrincipalId, Provenance, ProvenanceActor,
+    ProvenancePrincipal, TaskId, is_valid_pair, valid_actions,
 };
 
 #[cfg(test)]

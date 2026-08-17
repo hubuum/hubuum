@@ -8,6 +8,7 @@ use hubuum::benchmark_support::observed_collection_service;
 use hubuum::events::EventContext;
 use hubuum::models::CollectionID;
 use hubuum::services::CollectionService;
+use hubuum_domain::{CollectionId, ResourceId, ResourceRevision};
 use hubuum_storage_core::{
     CollectionStore, StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
     StorageError, StorageIdentity, StorageRecordMetadata,
@@ -40,7 +41,7 @@ impl StorageIdentity for FixedCollectionStore {
 
 #[async_trait]
 impl CollectionStore for FixedCollectionStore {
-    async fn get_collection(&self, _id: i32) -> Result<StorageCollection, StorageError> {
+    async fn get_collection(&self, _id: CollectionId) -> Result<StorageCollection, StorageError> {
         Ok(self.collection.clone())
     }
 
@@ -54,7 +55,7 @@ impl CollectionStore for FixedCollectionStore {
 
     async fn update_collection(
         &self,
-        _id: i32,
+        _id: CollectionId,
         _changes: StorageCollectionUpdate,
         _context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
@@ -63,24 +64,30 @@ impl CollectionStore for FixedCollectionStore {
 
     async fn delete_collection(
         &self,
-        _id: i32,
+        _id: CollectionId,
         _context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         Ok(())
     }
 
-    async fn collection_children(&self, _id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+    async fn collection_children(
+        &self,
+        _id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         Ok(Vec::new())
     }
 
-    async fn collection_ancestors(&self, _id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+    async fn collection_ancestors(
+        &self,
+        _id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         Ok(self.ancestors.clone())
     }
 
     async fn move_collection(
         &self,
-        _id: i32,
-        _new_parent_id: i32,
+        _id: CollectionId,
+        _new_parent_id: CollectionId,
         _context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
         Ok(self.collection.clone())
@@ -96,7 +103,12 @@ fn timestamp() -> NaiveDateTime {
 
 fn collection(id: i32, parent_collection_id: Option<i32>) -> StorageCollection {
     StorageCollection::new(
-        StorageRecordMetadata::new(id, timestamp(), timestamp(), 1),
+        StorageRecordMetadata::new(
+            ResourceId::new(id).expect("benchmark resource id should be valid"),
+            timestamp(),
+            timestamp(),
+            ResourceRevision::INITIAL,
+        ),
         format!("collection-{id}"),
         "deterministic benchmark collection",
         parent_collection_id,

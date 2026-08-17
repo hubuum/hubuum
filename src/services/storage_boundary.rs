@@ -28,6 +28,18 @@ use crate::storage::{
 };
 use crate::traits::SelfAccessors;
 
+pub(crate) fn collection_id_to_storage(id: i32) -> hubuum_domain::CollectionId {
+    hubuum_domain::CollectionId::new(id).expect("validated collection id must be positive")
+}
+
+pub(crate) fn class_id_to_storage(id: i32) -> hubuum_domain::ClassId {
+    hubuum_domain::ClassId::new(id).expect("validated class id must be positive")
+}
+
+pub(crate) fn object_id_to_storage(id: i32) -> hubuum_domain::ObjectId {
+    hubuum_domain::ObjectId::new(id).expect("validated object id must be positive")
+}
+
 pub(super) fn visibility(
     principal_id: i32,
     is_admin: bool,
@@ -113,20 +125,19 @@ pub(crate) fn group_update_to_storage(update: &UpdateGroup) -> StorageGroupUpdat
 }
 
 pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal, ApiError> {
-    let row = row.into_parts();
     Ok(Principal {
-        id: row.id,
-        kind: row.kind,
-        name: row.name,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        identity_scope_id: row.identity_scope_id,
-        provider_managed: row.provider_managed,
-        settings: row.settings,
-        external_subject: row.external_subject,
-        last_sync_attempted_at: row.last_sync_attempted_at,
-        last_sync_success_at: row.last_sync_success_at,
-        revision: ResourceRevision::new(row.revision)?,
+        id: row.id().id(),
+        kind: row.kind().to_owned(),
+        name: row.name().to_owned(),
+        created_at: row.created_at(),
+        updated_at: row.updated_at(),
+        identity_scope_id: row.identity_scope_id().id(),
+        provider_managed: row.provider_managed(),
+        settings: row.settings().clone(),
+        external_subject: row.external_subject().map(ToOwned::to_owned),
+        last_sync_attempted_at: row.last_sync_attempted_at(),
+        last_sync_success_at: row.last_sync_success_at(),
+        revision: ResourceRevision::new(row.revision().get())?,
     })
 }
 
@@ -170,10 +181,11 @@ pub(crate) fn principal_settings_mutation_to_storage(
 pub(crate) fn collection_to_storage(collection: Collection) -> StorageCollection {
     StorageCollection::new(
         StorageRecordMetadata::new(
-            collection.id,
+            hubuum_domain::ResourceId::new(collection.id)
+                .expect("stored collection id must be positive"),
             collection.created_at,
             collection.updated_at,
-            collection.revision.get(),
+            collection.revision,
         ),
         collection.name,
         collection.description,
@@ -187,8 +199,12 @@ pub(crate) fn collection_create_to_storage(
     StorageCollectionCreate::new(
         command.name,
         command.description,
-        command.group_id.id(),
-        command.parent_collection_id.map(|id| id.id()),
+        hubuum_domain::GroupId::new(command.group_id.id())
+            .expect("validated group id must be positive"),
+        command.parent_collection_id.map(|id| {
+            hubuum_domain::CollectionId::new(id.id())
+                .expect("validated collection id must be positive")
+        }),
     )
 }
 
@@ -234,28 +250,29 @@ pub(crate) fn class_record_from_storage(row: StorageClassRecord) -> Result<Hubuu
         revision,
     ) = row.into_parts();
     Ok(HubuumClass {
-        id,
+        id: id.id(),
         name,
-        collection_id,
+        collection_id: collection_id.id(),
         json_schema,
         validate_schema,
         description,
         created_at,
         updated_at,
-        revision: ResourceRevision::new(revision)?,
+        revision,
     })
 }
 
 pub(crate) fn class_record_to_storage(class: HubuumClass) -> StorageClassRecord {
     StorageClassRecord::builder(
         StorageRecordMetadata::new(
-            class.id,
+            hubuum_domain::ResourceId::new(class.id).expect("stored class id must be positive"),
             class.created_at,
             class.updated_at,
-            class.revision.get(),
+            class.revision,
         ),
         class.name,
-        class.collection_id,
+        hubuum_domain::CollectionId::new(class.collection_id)
+            .expect("stored class collection id must be positive"),
         class.description,
     )
     .json_schema(class.json_schema)
@@ -265,7 +282,9 @@ pub(crate) fn class_record_to_storage(class: HubuumClass) -> StorageClassRecord 
 
 pub(crate) fn class_selector_to_storage(selector: ClassSelector) -> StorageClassSelector {
     match selector.kind() {
-        ClassSelectorKind::ById(id) => StorageClassSelector::Id(id.id()),
+        ClassSelectorKind::ById(id) => StorageClassSelector::Id(
+            hubuum_domain::ClassId::new(id.id()).expect("validated class id must be positive"),
+        ),
         ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
     }
 }
@@ -274,7 +293,7 @@ pub(super) fn class_selector_from_storage(
     selector: StorageClassSelector,
 ) -> Result<ClassSelector, ApiError> {
     Ok(match selector {
-        StorageClassSelector::Id(id) => ClassSelector::by_id(HubuumClassID::new(id)?),
+        StorageClassSelector::Id(id) => ClassSelector::by_id(HubuumClassID::new(id.id())?),
         StorageClassSelector::Name(name) => ClassSelector::by_name(name),
     })
 }
@@ -297,16 +316,23 @@ pub(crate) fn resolved_class_from_storage(
 }
 
 pub(crate) fn class_create_to_storage(command: NewHubuumClass) -> StorageClassCreate {
-    StorageClassCreate::builder(command.name, command.collection_id, command.description)
-        .json_schema(command.json_schema)
-        .validate_schema(command.validate_schema.unwrap_or(false))
-        .build()
+    StorageClassCreate::builder(
+        command.name,
+        hubuum_domain::CollectionId::new(command.collection_id)
+            .expect("validated collection id must be positive"),
+        command.description,
+    )
+    .json_schema(command.json_schema)
+    .validate_schema(command.validate_schema.unwrap_or(false))
+    .build()
 }
 
 pub(crate) fn class_update_to_storage(update: UpdateHubuumClass) -> StorageClassUpdate {
     StorageClassUpdate::builder()
         .name(update.name)
-        .collection_id(update.collection_id)
+        .collection_id(update.collection_id.map(|id| {
+            hubuum_domain::CollectionId::new(id).expect("validated collection id must be positive")
+        }))
         .json_schema(update.json_schema)
         .validate_schema(update.validate_schema)
         .description(update.description)
@@ -341,10 +367,10 @@ pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, Ap
 pub(crate) fn object_to_storage(object: HubuumObject) -> StorageObject {
     StorageObject::new(
         StorageRecordMetadata::new(
-            object.id,
+            hubuum_domain::ResourceId::new(object.id).expect("stored object id must be positive"),
             object.created_at,
             object.updated_at,
-            object.revision.get(),
+            object.revision,
         ),
         object.name,
         object.collection_id,
@@ -360,8 +386,10 @@ pub(crate) fn object_selector_to_storage(selector: ObjectSelector) -> StorageObj
             class_id,
             object_id,
         } => StorageObjectSelector::Ids {
-            class_id: class_id.id(),
-            object_id: object_id.id(),
+            class_id: hubuum_domain::ClassId::new(class_id.id())
+                .expect("validated class id must be positive"),
+            object_id: hubuum_domain::ObjectId::new(object_id.id())
+                .expect("validated object id must be positive"),
         },
         ObjectSelectorKind::ByName {
             class_name,
@@ -381,8 +409,8 @@ pub(super) fn object_selector_from_storage(
             class_id,
             object_id,
         } => ObjectSelector::by_id(
-            HubuumClassID::new(class_id)?,
-            HubuumObjectID::new(object_id)?,
+            HubuumClassID::new(class_id.id())?,
+            HubuumObjectID::new(object_id.id())?,
         ),
         StorageObjectSelector::Names {
             class_name,
@@ -413,8 +441,10 @@ pub(crate) fn resolved_object_from_storage(
 pub(crate) fn object_create_to_storage(command: NewHubuumObject) -> StorageObjectCreate {
     StorageObjectCreate::new(
         command.name,
-        command.collection_id,
-        command.hubuum_class_id,
+        hubuum_domain::CollectionId::new(command.collection_id)
+            .expect("validated collection id must be positive"),
+        hubuum_domain::ClassId::new(command.hubuum_class_id)
+            .expect("validated class id must be positive"),
         command.data,
         command.description,
     )
@@ -423,8 +453,12 @@ pub(crate) fn object_create_to_storage(command: NewHubuumObject) -> StorageObjec
 pub(crate) fn object_update_to_storage(update: UpdateHubuumObject) -> StorageObjectUpdate {
     StorageObjectUpdate::builder()
         .name(update.name)
-        .collection_id(update.collection_id)
-        .class_id(update.hubuum_class_id)
+        .collection_id(update.collection_id.map(|id| {
+            hubuum_domain::CollectionId::new(id).expect("validated collection id must be positive")
+        }))
+        .class_id(update.hubuum_class_id.map(|id| {
+            hubuum_domain::ClassId::new(id).expect("validated class id must be positive")
+        }))
         .data(update.data)
         .description(update.description)
         .build()
@@ -439,10 +473,11 @@ pub(crate) fn object_patch_to_storage(
 pub(crate) fn class_relation_to_storage(relation: HubuumClassRelation) -> StorageClassRelation {
     StorageClassRelation::new(
         StorageRecordMetadata::new(
-            relation.id,
+            hubuum_domain::ResourceId::new(relation.id)
+                .expect("stored class relation id must be positive"),
             relation.created_at,
             relation.updated_at,
-            relation.revision.get(),
+            relation.revision,
         ),
         relation.from_hubuum_class_id,
         relation.to_hubuum_class_id,
@@ -567,10 +602,11 @@ pub(crate) fn resolved_class_relation_from_storage(
 pub(crate) fn object_relation_to_storage(relation: HubuumObjectRelation) -> StorageObjectRelation {
     StorageObjectRelation::new(
         StorageRecordMetadata::new(
-            relation.id,
+            hubuum_domain::ResourceId::new(relation.id)
+                .expect("stored object relation id must be positive"),
             relation.created_at,
             relation.updated_at,
-            relation.revision.get(),
+            relation.revision,
         ),
         relation.from_hubuum_object_id,
         relation.to_hubuum_object_id,

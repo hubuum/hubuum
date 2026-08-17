@@ -6,13 +6,13 @@ use std::str::FromStr;
 pub use hubuum_query::{
     ComputedFieldScope, ComputedQueryValueType, DEFAULT_RELATED_FILTER_DEPTH, DataType,
     FilterField, MAX_RELATED_FILTER_DEPTH, MAX_RELATED_FILTER_GROUPS, Operator, ParsedQueryParam,
-    QueryOptions, RelatedClassField, RelatedFilterTarget, RelatedObjectField, RelatedQueryField,
-    SearchOperator, SortParam, decode_query_parameter_pairs,
+    QueryFilters, QueryOptions, RelatedClassField, RelatedFilterTarget, RelatedObjectField,
+    RelatedQueryField, SearchOperator, SortParam, decode_query_parameter_pairs,
 };
 #[cfg(test)]
 use hubuum_query::{
-    SQLMappedType, get_jsonb_field_type_from_json_schema,
-    get_jsonb_field_type_from_value_and_operator, get_sql_mapped_type_from_value,
+    QueryScalarType, infer_query_scalar_type, infer_query_scalar_type_from_schema,
+    infer_scalar_type_from_value,
 };
 
 use crate::errors::ApiError;
@@ -23,7 +23,7 @@ use crate::utilities::extensions::CustomStringExtensions;
 
 #[cfg(test)]
 use crate::storage::postgres::operations::search::{
-    ParsedQueryParamSqlExt, SQLComponent, SQLValue,
+    ParsedQueryParamSqlExt, SQLComponent, SQLValue, json_column,
 };
 
 use super::{HubuumClass, HubuumClassID};
@@ -47,7 +47,8 @@ pub fn parse_query_parameter_with_passthrough(
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
     let (mut query_options, passthrough) =
         hubuum_query::parse_query_parameter_with_passthrough(qs, passthrough_keys)?;
-    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    let limit = query_options.limit().map(validate_page_limit).transpose()?;
+    query_options.set_limit(limit);
     Ok((query_options, passthrough))
 }
 
@@ -60,7 +61,8 @@ pub fn parse_query_parameter_with_computed_filters_and_passthrough(
             qs,
             passthrough_keys,
         )?;
-    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    let limit = query_options.limit().map(validate_page_limit).transpose()?;
+    query_options.set_limit(limit);
     Ok((query_options, passthrough))
 }
 
@@ -73,7 +75,8 @@ pub fn parse_query_parameter_with_computed_and_related_filters_and_passthrough(
             qs,
             passthrough_keys,
         )?;
-    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    let limit = query_options.limit().map(validate_page_limit).transpose()?;
+    query_options.set_limit(limit);
     Ok((query_options, passthrough))
 }
 
@@ -109,11 +112,15 @@ pub trait QueryOptionsExt {
         field: FilterField,
         operator: SearchOperator,
         identifier: &I,
-    ) -> bool
+    ) -> Result<bool, ApiError>
     where
         I: SelfAccessors<T>;
 
-    fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool;
+    fn ensure_filter_exact(
+        &mut self,
+        field: FilterField,
+        identifier: &HubuumClassID,
+    ) -> Result<bool, ApiError>;
 }
 
 impl QueryOptionsExt for QueryOptions {
@@ -122,12 +129,13 @@ impl QueryOptionsExt for QueryOptions {
         field: FilterField,
         operator: SearchOperator,
         identifier: &I,
-    ) -> bool
+    ) -> Result<bool, ApiError>
     where
         I: SelfAccessors<T>,
     {
         let id_string = identifier.id().to_string();
-        self.filters.ensure_filter(field, operator, &id_string)
+        self.filters_mut()
+            .ensure_filter(field, operator, &id_string)
     }
 
     /// ## Ensure that an equality filter is present in the query options
@@ -143,7 +151,11 @@ impl QueryOptionsExt for QueryOptions {
     /// ### Returns
     ///
     /// * bool - true if the filter was added, false if it already existed
-    fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool {
+    fn ensure_filter_exact(
+        &mut self,
+        field: FilterField,
+        identifier: &HubuumClassID,
+    ) -> Result<bool, ApiError> {
         self.ensure_filter::<_, HubuumClass>(
             field,
             SearchOperator::Equals { is_negated: false },
@@ -253,7 +265,12 @@ pub trait QueryParamsExt {
     /// ### Returns
     ///
     /// * None
-    fn add_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str);
+    fn add_filter(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        value: &str,
+    ) -> Result<(), ApiError>;
 
     /// ## Ensure a filter is present in the query options
     ///
@@ -269,7 +286,12 @@ pub trait QueryParamsExt {
     /// ### Returns
     ///
     /// * true if the filter was added, false if it already exists
-    fn ensure_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str) -> bool;
+    fn ensure_filter(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        value: &str,
+    ) -> Result<bool, ApiError>;
 
     /// ## Check if a filter exists
     ///
@@ -328,12 +350,18 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         Ok(json_schema)
     }
 
-    fn add_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str) {
+    fn add_filter(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        value: &str,
+    ) -> Result<(), ApiError> {
         self.push(ParsedQueryParam {
             field,
             operator,
             value: value.to_string(),
         });
+        Ok(())
     }
 
     fn filter_exists(&self, field: FilterField, operator: SearchOperator) -> bool {
@@ -341,13 +369,74 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
             .any(|p| p.field == field && p.operator == operator)
     }
 
-    fn ensure_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str) -> bool {
+    fn ensure_filter(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        value: &str,
+    ) -> Result<bool, ApiError> {
         if !self.filter_exists(field.clone(), operator.clone()) {
-            self.add_filter(field, operator, value);
-            true
+            self.add_filter(field, operator, value)?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
+    }
+}
+
+impl QueryParamsExt for QueryFilters {
+    fn permissions(&self) -> Result<PermissionsList, ApiError> {
+        self.iter()
+            .filter(|param| param.is_permission())
+            .map(ParsedQueryParam::value_as_permission)
+            .collect::<Result<Vec<_>, _>>()
+            .map(PermissionsList::new)
+    }
+
+    fn json_schemas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError> {
+        Ok(self
+            .iter()
+            .filter(|parameter| parameter.is_json_schema())
+            .collect())
+    }
+
+    fn json_datas(&self, field: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError> {
+        Ok(self
+            .iter()
+            .filter(|parameter| parameter.is_json_data() && parameter.field == field)
+            .collect())
+    }
+
+    fn add_filter(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        value: &str,
+    ) -> Result<(), ApiError> {
+        self.try_push(ParsedQueryParam {
+            field,
+            operator,
+            value: value.to_string(),
+        })?;
+        Ok(())
+    }
+
+    fn filter_exists(&self, field: FilterField, operator: SearchOperator) -> bool {
+        self.iter()
+            .any(|parameter| parameter.field == field && parameter.operator == operator)
+    }
+
+    fn ensure_filter(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        value: &str,
+    ) -> Result<bool, ApiError> {
+        if self.filter_exists(field.clone(), operator.clone()) {
+            return Ok(false);
+        }
+        self.add_filter(field, operator, value)?;
+        Ok(true)
     }
 }
 
@@ -370,7 +459,7 @@ mod test {
     #[test]
     fn test_empty_query_string_returns_empty_vec() {
         let result = parse_query_parameter("").unwrap();
-        assert_eq!(result.filters, vec![]);
+        assert!(result.filters().is_empty());
     }
 
     #[test]
@@ -468,7 +557,10 @@ mod test {
         ]
     )]
     fn test_query_string_parsing(#[case] query: &str, #[case] expected: Vec<ParsedQueryParam>) {
-        assert_eq!(parse_query_parameter(query).unwrap().filters, expected);
+        assert_eq!(
+            parse_query_parameter(query).unwrap().filters().as_slice(),
+            expected
+        );
     }
 
     #[rstest]
@@ -896,18 +988,18 @@ mod test {
         });
 
         let test_cases = vec![
-            ("name", SQLMappedType::String),
-            ("age", SQLMappedType::Numeric),
-            ("is_active", SQLMappedType::Boolean),
-            ("date_of_birth", SQLMappedType::Date),
-            ("last_updated", SQLMappedType::Date),
-            ("address,street", SQLMappedType::String),
-            ("address,city", SQLMappedType::String),
-            ("address,zip", SQLMappedType::Numeric),
+            ("name", QueryScalarType::String),
+            ("age", QueryScalarType::Numeric),
+            ("is_active", QueryScalarType::Boolean),
+            ("date_of_birth", QueryScalarType::Date),
+            ("last_updated", QueryScalarType::Date),
+            ("address,street", QueryScalarType::String),
+            ("address,city", QueryScalarType::String),
+            ("address,zip", QueryScalarType::Numeric),
         ];
 
         for (key, expected) in test_cases {
-            let result = get_jsonb_field_type_from_json_schema(&schema, key);
+            let result = infer_query_scalar_type_from_schema(&schema, key);
             assert_eq!(result, Some(expected), "Failed test case for key: {key}");
         }
     }
@@ -946,33 +1038,33 @@ mod test {
         let test_cases = vec!["invalid", "address,invalid", "address,zip,invalid"];
 
         for key in test_cases {
-            let result = get_jsonb_field_type_from_json_schema(&schema, key);
+            let result = infer_query_scalar_type_from_schema(&schema, key);
             assert_eq!(result, None, "Failed test case for key: {key}");
         }
     }
 
     #[test]
-    fn test_get_sql_mapped_type_from_value() {
+    fn test_infer_scalar_type_from_value() {
         let test_cases = vec![
-            ("foo", SQLMappedType::String),
-            ("3", SQLMappedType::Numeric),
-            ("3.14", SQLMappedType::Numeric),
-            ("2021-01-01", SQLMappedType::Date),
-            ("2021-01-01T00:00:00Z", SQLMappedType::Date),
-            ("true", SQLMappedType::Boolean),
-            ("false", SQLMappedType::Boolean),
-            ("null", SQLMappedType::None),
+            ("foo", QueryScalarType::String),
+            ("3", QueryScalarType::Numeric),
+            ("3.14", QueryScalarType::Numeric),
+            ("2021-01-01", QueryScalarType::Date),
+            ("2021-01-01T00:00:00Z", QueryScalarType::Date),
+            ("true", QueryScalarType::Boolean),
+            ("false", QueryScalarType::Boolean),
+            ("null", QueryScalarType::None),
         ];
 
         for (value, expected) in test_cases {
-            let result = get_sql_mapped_type_from_value(
+            let result = infer_scalar_type_from_value(
                 value,
                 &[
-                    SQLMappedType::Date,
-                    SQLMappedType::Numeric,
-                    SQLMappedType::Boolean,
-                    SQLMappedType::None,
-                    SQLMappedType::String,
+                    QueryScalarType::Date,
+                    QueryScalarType::Numeric,
+                    QueryScalarType::Boolean,
+                    QueryScalarType::None,
+                    QueryScalarType::String,
                 ],
             );
             assert_eq!(
@@ -984,30 +1076,30 @@ mod test {
     }
 
     #[test]
-    fn test_get_sql_mapped_type_from_value_and_operator() {
+    fn test_infer_scalar_type_from_value_and_operator() {
         let test_cases = vec![
-            ("foo", Operator::Equals, Some(SQLMappedType::String)),
-            ("3", Operator::Equals, Some(SQLMappedType::Numeric)),
-            ("2021-01-01", Operator::Equals, Some(SQLMappedType::Date)),
-            ("true", Operator::Equals, Some(SQLMappedType::Boolean)),
-            ("FALSe", Operator::Equals, Some(SQLMappedType::Boolean)),
-            ("null", Operator::Equals, Some(SQLMappedType::None)),
-            ("true", Operator::Equals, Some(SQLMappedType::Boolean)),
-            ("2021-01-01", Operator::Gt, Some(SQLMappedType::Date)),
-            ("3", Operator::Gt, Some(SQLMappedType::Numeric)),
+            ("foo", Operator::Equals, Some(QueryScalarType::String)),
+            ("3", Operator::Equals, Some(QueryScalarType::Numeric)),
+            ("2021-01-01", Operator::Equals, Some(QueryScalarType::Date)),
+            ("true", Operator::Equals, Some(QueryScalarType::Boolean)),
+            ("FALSe", Operator::Equals, Some(QueryScalarType::Boolean)),
+            ("null", Operator::Equals, Some(QueryScalarType::None)),
+            ("true", Operator::Equals, Some(QueryScalarType::Boolean)),
+            ("2021-01-01", Operator::Gt, Some(QueryScalarType::Date)),
+            ("3", Operator::Gt, Some(QueryScalarType::Numeric)),
             (
                 "2021-01-01,2021-01-31",
                 Operator::Between,
-                Some(SQLMappedType::Date),
+                Some(QueryScalarType::Date),
             ),
-            ("3,5", Operator::Between, Some(SQLMappedType::Numeric)),
-            ("3", Operator::Contains, Some(SQLMappedType::String)),
+            ("3,5", Operator::Between, Some(QueryScalarType::Numeric)),
+            ("3", Operator::Contains, Some(QueryScalarType::String)),
             ("null", Operator::Gt, None),
             ("foo", Operator::Gt, None),
         ];
 
         for (value, operator, expected) in test_cases {
-            let result = get_jsonb_field_type_from_value_and_operator(value, operator.clone());
+            let result = infer_query_scalar_type(value, operator.clone());
             assert_eq!(
                 result, expected,
                 "Failed test case for value: '{value}', operator: '{operator:?}'"
@@ -1166,18 +1258,21 @@ mod test {
         let query_options =
             parse_query_parameter("limit=2&sort=id.desc&cursor=test-cursor").unwrap();
 
-        assert_eq!(query_options.limit, Some(2));
-        assert_eq!(query_options.sort.len(), 1);
-        assert_eq!(query_options.sort[0].field, FilterField::Id);
-        assert!(query_options.sort[0].descending);
-        assert_eq!(query_options.cursor, Some("test-cursor".to_string()));
+        assert_eq!(query_options.limit(), Some(2));
+        assert_eq!(query_options.sort().len(), 1);
+        assert_eq!(query_options.sort()[0].field, FilterField::Id);
+        assert!(query_options.sort()[0].descending);
+        assert_eq!(
+            query_options.cursor().map(|cursor| cursor.as_str()),
+            Some("test-cursor")
+        );
     }
 
     #[test]
     fn parse_query_parameter_preserves_total_count_opt_out() {
         let options = parse_query_parameter("include_total=false").unwrap();
 
-        assert!(!options.include_total);
+        assert!(!options.include_total());
     }
 
     #[test]
@@ -1188,14 +1283,14 @@ mod test {
         )
         .unwrap();
 
-        assert_eq!(query_options.filters.len(), 1);
-        assert_eq!(query_options.filters[0].field, FilterField::Name);
+        assert_eq!(query_options.filters().len(), 1);
+        assert_eq!(query_options.filters()[0].field, FilterField::Name);
         assert_eq!(
-            query_options.filters[0].operator,
+            query_options.filters()[0].operator,
             SearchOperator::Contains { is_negated: false }
         );
-        assert_eq!(query_options.filters[0].value, "alpha");
-        assert_eq!(query_options.sort.len(), 1);
+        assert_eq!(query_options.filters()[0].value, "alpha");
+        assert_eq!(query_options.sort().len(), 1);
         assert_eq!(
             passthrough.get("ignore_classes"),
             Some(&vec!["1,2".to_string()])
@@ -1232,11 +1327,11 @@ mod test {
     fn docs_parse_query_parameter_accepts_order_by_alias() {
         let query_options = parse_query_parameter("order_by=name.desc,id.asc").unwrap();
 
-        assert_eq!(query_options.sort.len(), 2);
-        assert_eq!(query_options.sort[0].field, FilterField::Name);
-        assert!(query_options.sort[0].descending);
-        assert_eq!(query_options.sort[1].field, FilterField::Id);
-        assert!(!query_options.sort[1].descending);
+        assert_eq!(query_options.sort().len(), 2);
+        assert_eq!(query_options.sort()[0].field, FilterField::Name);
+        assert!(query_options.sort()[0].descending);
+        assert_eq!(query_options.sort()[1].field, FilterField::Id);
+        assert!(!query_options.sort()[1].descending);
     }
 
     // Covers docs/querying.md "Query syntax" (`field=value` means `field__equals=value`).
@@ -1244,26 +1339,26 @@ mod test {
     fn docs_parse_query_parameter_plain_filter_defaults_to_equals() {
         let query_options = parse_query_parameter("name=alpha").unwrap();
 
-        assert_eq!(query_options.filters.len(), 1);
-        assert_eq!(query_options.filters[0].field, FilterField::Name);
+        assert_eq!(query_options.filters().len(), 1);
+        assert_eq!(query_options.filters()[0].field, FilterField::Name);
         assert_eq!(
-            query_options.filters[0].operator,
+            query_options.filters()[0].operator,
             SearchOperator::Equals { is_negated: false }
         );
-        assert_eq!(query_options.filters[0].value, "alpha");
+        assert_eq!(query_options.filters()[0].value, "alpha");
     }
 
     #[test]
     fn test_parse_query_parameter_decodes_keys_values_and_plus() {
         let query_options = parse_query_parameter("name%5F%5Fcontains=alpha+beta").unwrap();
 
-        assert_eq!(query_options.filters.len(), 1);
-        assert_eq!(query_options.filters[0].field, FilterField::Name);
+        assert_eq!(query_options.filters().len(), 1);
+        assert_eq!(query_options.filters()[0].field, FilterField::Name);
         assert_eq!(
-            query_options.filters[0].operator,
+            query_options.filters()[0].operator,
             SearchOperator::Contains { is_negated: false }
         );
-        assert_eq!(query_options.filters[0].value, "alpha beta");
+        assert_eq!(query_options.filters()[0].value, "alpha beta");
     }
 
     // Covers docs/querying.md "Negation" (`not_` works with `between`).
@@ -1274,14 +1369,14 @@ mod test {
         )
         .unwrap();
 
-        assert_eq!(query_options.filters.len(), 1);
-        assert_eq!(query_options.filters[0].field, FilterField::CreatedAt);
+        assert_eq!(query_options.filters().len(), 1);
+        assert_eq!(query_options.filters()[0].field, FilterField::CreatedAt);
         assert_eq!(
-            query_options.filters[0].operator,
+            query_options.filters()[0].operator,
             SearchOperator::Between { is_negated: true }
         );
         assert_eq!(
-            query_options.filters[0].value,
+            query_options.filters()[0].value,
             "2026-01-01T00:00:00Z,2026-02-01T00:00:00Z"
         );
     }
@@ -1289,9 +1384,9 @@ mod test {
     // Covers docs/querying.md "JSON filtering" (`json_data` aliases target object JSON payload data).
     #[test]
     fn docs_json_data_aliases_map_to_object_data_column() {
-        assert_eq!(FilterField::JsonData.json_column(), Some("data"));
-        assert_eq!(FilterField::JsonDataFrom.json_column(), Some("data"));
-        assert_eq!(FilterField::JsonDataTo.json_column(), Some("data"));
+        assert_eq!(json_column(&FilterField::JsonData), Some("data"));
+        assert_eq!(json_column(&FilterField::JsonDataFrom), Some("data"));
+        assert_eq!(json_column(&FilterField::JsonDataTo), Some("data"));
     }
 
     #[test]
@@ -1319,6 +1414,6 @@ mod test {
     #[test]
     fn docs_parse_query_parameter_clamps_limit_above_maximum() {
         let query_options = parse_query_parameter("limit=251").unwrap();
-        assert_eq!(query_options.limit, Some(250));
+        assert_eq!(query_options.limit(), Some(250));
     }
 }

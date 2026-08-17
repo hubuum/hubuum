@@ -11,6 +11,7 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{BigInt, Bool};
 use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::{Action, ActorKind, EntityType, MutationProvenance, NewEvent};
 use hubuum_query::{CursorValue, FilterField, QueryOptions};
 use hubuum_storage_core::{
@@ -380,7 +381,7 @@ pub async fn list_tasks(
     query: StorageTaskListQuery,
 ) -> Result<StorageTaskPage, PostgresStorageError> {
     let (submitted_by, kind, status, options) = query.into_parts();
-    let total = if options.include_total {
+    let total = if options.include_total() {
         Some(
             runtime
                 .with_connection(async move |connection| {
@@ -416,7 +417,7 @@ pub async fn list_task_events(
 ) -> Result<StorageTaskEventPage, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     validate_positive_task_id(task_id)?;
-    let total = if options.include_total {
+    let total = if options.include_total() {
         Some(count_task_events(runtime, task_id).await?)
     } else {
         None
@@ -436,7 +437,7 @@ pub async fn list_import_task_results(
 ) -> Result<StorageImportTaskResultPage, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     validate_positive_task_id(task_id)?;
-    let total = if options.include_total {
+    let total = if options.include_total() {
         Some(
             runtime
                 .with_connection(async move |connection| {
@@ -652,7 +653,7 @@ fn build_task_query(
 
 fn task_cursor_fields(options: &QueryOptions) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| {
             Ok(match &sort.field {
@@ -797,12 +798,13 @@ async fn insert_queued_task(
         .returning(TaskRow::as_returning())
         .get_result::<TaskRow>(connection)
         .await?;
+    let actor_user_id = task.submitted_by.ok_or_else(|| {
+        PostgresStorageError::database("Newly queued task is missing its submitter")
+    })?;
     let provenance = MutationProvenance::user_for_task(
-        task.submitted_by.ok_or_else(|| {
-            PostgresStorageError::database("Newly queued task is missing its submitter")
-        })?,
-        task.initiator_user_id,
-        task.id,
+        PrincipalId::new(actor_user_id)?,
+        task.initiator_user_id.map(PrincipalId::new).transpose()?,
+        TaskId::new(task.id)?,
     );
     let event = NewEvent::new(
         EntityType::Task,
@@ -811,7 +813,7 @@ async fn insert_queued_task(
         "Task queued",
     )
     .map_err(|error| PostgresStorageError::internal(error.to_string()))?
-    .with_entity_id(task.id)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
     .with_metadata(json!({
         "task_id": task.id,
         "task_kind": task.kind,
@@ -954,10 +956,10 @@ fn decode_i64_page_cursor(
     options: &QueryOptions,
     resource: &str,
 ) -> Result<Option<i64>, PostgresStorageError> {
-    let Some(cursor) = options.cursor.as_deref() else {
+    let Some(cursor) = options.cursor().map(|cursor| cursor.as_str()) else {
         return Ok(None);
     };
-    let values = hubuum_query::decode_cursor_values(cursor, &options.sort)
+    let values = hubuum_query::decode_cursor_values(cursor, options.sort())
         .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
     match values.as_slice() {
         [CursorValue::Integer(value)] => Ok(Some(*value)),
@@ -981,14 +983,14 @@ fn decode_i32_page_cursor(
 
 fn page_descending(options: &QueryOptions) -> bool {
     options
-        .sort
+        .sort()
         .as_slice()
         .first()
         .is_some_and(|sort| sort.descending)
 }
 
 fn page_limit(options: &QueryOptions) -> i64 {
-    i64::try_from(options.limit.unwrap_or(DEFAULT_PAGE_WITH_LOOKAHEAD)).unwrap_or(i64::MAX)
+    i64::try_from(options.limit().unwrap_or(DEFAULT_PAGE_WITH_LOOKAHEAD)).unwrap_or(i64::MAX)
 }
 
 fn classify_output<T, U>(
@@ -1026,9 +1028,9 @@ mod tests {
 
     #[test]
     fn task_cursor_mapping_covers_the_public_sort_contract() {
-        let options = QueryOptions {
-            filters: Vec::new(),
-            sort: [
+        let options = QueryOptions::new(
+            Vec::new(),
+            [
                 FilterField::Id,
                 FilterField::Kind,
                 FilterField::Status,
@@ -1042,11 +1044,12 @@ mod tests {
                 field,
                 descending: false,
             })
-            .collect(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        };
+            .collect::<Vec<_>>(),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(task_cursor_fields(&options).unwrap().len(), 7);
     }

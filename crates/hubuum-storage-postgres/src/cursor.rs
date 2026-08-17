@@ -369,14 +369,14 @@ macro_rules! apply_query_options_with_fields {
     ($query:ident, $query_options:expr, $sql_fields:expr) => {{
         let query_options = &$query_options;
         if let Some(cursor_sql) = $crate::cursor::cursor_filter_sql_for_fields(
-            &query_options.sort,
+            query_options.sort(),
             &$sql_fields,
-            query_options.cursor.as_deref(),
+            query_options.cursor().map(|cursor| cursor.as_str()),
         )? {
             $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
         }
-        $crate::apply_cursor_ordering_fields!($query, query_options.sort, $sql_fields);
-        if let Some(limit) = query_options.limit {
+        $crate::apply_cursor_ordering_fields!($query, query_options.sort(), $sql_fields);
+        if let Some(limit) = query_options.limit() {
             $query = $query.limit(limit as i64);
         }
     }};

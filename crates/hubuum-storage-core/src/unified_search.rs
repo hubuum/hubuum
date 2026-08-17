@@ -282,13 +282,13 @@ impl UnifiedSearchCollection {
         parent_collection_id: Option<i32>,
     ) -> Self {
         Self {
-            id: metadata.id(),
+            id: metadata.id().into(),
             name: name.into(),
             description: description.into(),
             created_at: metadata.created_at(),
             updated_at: metadata.updated_at(),
             parent_collection_id,
-            revision: metadata.revision(),
+            revision: metadata.revision().into(),
         }
     }
 
@@ -452,7 +452,7 @@ impl UnifiedSearchClassBuilder {
     #[must_use]
     pub fn build(self) -> UnifiedSearchClass {
         UnifiedSearchClass {
-            id: self.metadata.id(),
+            id: self.metadata.id().into(),
             name: self.name,
             collection: self.collection,
             json_schema: self.json_schema,
@@ -460,7 +460,7 @@ impl UnifiedSearchClassBuilder {
             description: self.description,
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),
-            revision: self.metadata.revision(),
+            revision: self.metadata.revision().into(),
         }
     }
 }
@@ -490,7 +490,7 @@ impl UnifiedSearchObject {
         description: impl Into<String>,
     ) -> Self {
         Self {
-            id: metadata.id(),
+            id: metadata.id().into(),
             name: name.into(),
             collection_id,
             class_id,
@@ -498,7 +498,7 @@ impl UnifiedSearchObject {
             description: description.into(),
             created_at: metadata.created_at(),
             updated_at: metadata.updated_at(),
-            revision: metadata.revision(),
+            revision: metadata.revision().into(),
         }
     }
 

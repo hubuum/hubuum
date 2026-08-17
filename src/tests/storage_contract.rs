@@ -6,8 +6,21 @@ use actix_web::{App, http, test, web::Data};
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId, GroupId, PrincipalId, ResourceId, ResourceRevision};
 use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+fn principal_id(id: i32) -> PrincipalId {
+    PrincipalId::new(id).expect("test principal id must be positive")
+}
+
+fn collection_id(id: i32) -> CollectionId {
+    CollectionId::new(id).expect("test collection id must be positive")
+}
+
+fn group_id(id: i32) -> GroupId {
+    GroupId::new(id).expect("test group id must be positive")
+}
 
 use crate::events::{
     Action, EntityType, EventContext, EventFanoutSettings, EventRetentionSettings,
@@ -79,20 +92,20 @@ use crate::storage::{
     StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
     StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
     StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageServiceAccountCreate,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
-    StorageUserCreate, StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationStorage,
+    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageRevisionTarget,
+    StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
+    StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserCreate,
+    StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
+    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -221,10 +234,14 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
     let command = StorageCollectionCreate::new(
         collection_name.clone(),
         "must be rolled back",
-        GroupID::new(group.id())
-            .expect("fixture group id should be valid")
-            .id(),
-        Some(CollectionID::new(1).expect("root id should be valid").id()),
+        group_id(
+            GroupID::new(group.id())
+                .expect("fixture group id should be valid")
+                .id(),
+        ),
+        Some(collection_id(
+            CollectionID::new(1).expect("root id should be valid").id(),
+        )),
     );
 
     let error = crate::storage::postgres::with_failpoint(
@@ -331,13 +348,8 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
     let events = backend
         .list_task_events(StorageTaskPageQuery::new(
             task.id(),
-            QueryOptions {
-                filters: Vec::new(),
-                sort: Vec::new(),
-                limit: Some(10),
-                cursor: None,
-                include_total: true,
-            },
+            QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+                .expect("contract query must be valid"),
         ))
         .await
         .expect("rolled-back task events should remain readable");
@@ -431,13 +443,8 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .expect("certified backend should update groups");
         assert_eq!(updated.name(), renamed);
 
-        let list_options = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: true,
-        };
+        let list_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
+            .expect("contract query must be valid");
         let (listed, total_count) = backend
             .list_groups(StorageGroupListQuery::new(
                 list_options.clone(),
@@ -464,28 +471,30 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .group_members(created.id())
             .await
             .expect("certified backend should list group members");
-        assert!(members.iter().any(|member| member.id() == user.id));
+        assert!(
+            members
+                .iter()
+                .any(|member| member.id() == principal_id(user.id))
+        );
         assert_eq!(
             backend
                 .group_member_principal(user.id)
                 .await
                 .expect("certified backend should load a membership principal")
                 .id(),
-            user.id
+            principal_id(user.id)
         );
 
-        let query_options = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(10),
-            cursor: None,
-            include_total: true,
-        };
+        let query_options = QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+            .expect("contract query must be valid");
         let page = backend
             .group_members_page(created.id(), query_options.clone())
             .await
             .expect("certified backend should page group members");
-        assert!(page.iter().any(|(_, member)| member.id() == user.id));
+        assert!(
+            page.iter()
+                .any(|(_, member)| member.id() == principal_id(user.id))
+        );
         assert_eq!(
             backend
                 .count_group_members(created.id(), query_options.clone())
@@ -525,14 +534,14 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
         "testpassword",
     )
     .await;
-    let event_context = EventContext::user(user.id, None, None);
+    let event_context = EventContext::user(principal_id(user.id), None, None);
 
     for backend in available_backends() {
         let loaded = backend
             .load_principal(user.id)
             .await
             .expect("certified backend should load principals");
-        assert_eq!(loaded.id(), user.id);
+        assert_eq!(loaded.id(), principal_id(user.id));
 
         let initial = backend
             .load_principal_settings(user.id)
@@ -709,13 +718,10 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .await
             .expect("certified backend should load effective memberships");
         assert_eq!(membership.principal_id(), user.id);
-        let group_options = prepare_db_pagination::<crate::models::Group>(&QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(20),
-            cursor: None,
-            include_total: true,
-        })
+        let group_options = prepare_db_pagination::<crate::models::Group>(
+            &QueryOptions::new(Vec::new(), Vec::new(), Some(20), None, true)
+                .expect("contract query must be valid"),
+        )
         .expect("identity compatibility group query should be valid");
         let (groups, group_total) = backend
             .list_principal_groups(StoragePrincipalGroupListQuery::new(user.id, group_options))
@@ -731,7 +737,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .expect("certified backend should evaluate human ownership")
         );
 
-        let event_context = EventContext::user(user.id, None, None);
+        let event_context = EventContext::user(principal_id(user.id), None, None);
         let contract_username = prefix("complete_user_contract");
         let contract_user = backend
             .create_user(StorageUserCreate::new(
@@ -772,17 +778,20 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .0,
             contract_user_id
         );
-        let user_options = prepare_db_pagination::<crate::models::UserWithName>(&QueryOptions {
-            filters: vec![ParsedQueryParam {
-                field: FilterField::Id,
-                operator: SearchOperator::Equals { is_negated: false },
-                value: contract_user_id.to_string(),
-            }],
-            sort: Vec::new(),
-            limit: Some(100),
-            cursor: None,
-            include_total: true,
-        })
+        let user_options = prepare_db_pagination::<crate::models::UserWithName>(
+            &QueryOptions::new(
+                vec![ParsedQueryParam {
+                    field: FilterField::Id,
+                    operator: SearchOperator::Equals { is_negated: false },
+                    value: contract_user_id.to_string(),
+                }],
+                Vec::new(),
+                Some(100),
+                None,
+                true,
+            )
+            .expect("contract query must be valid"),
+        )
         .expect("identity compatibility user query should be valid");
         let (users, user_total) = backend
             .list_users(StorageUserListQuery::new(user_options))
@@ -908,13 +917,10 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             1
         );
 
-        let token_options = prepare_db_pagination::<crate::models::PrincipalToken>(&QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(20),
-            cursor: None,
-            include_total: true,
-        })
+        let token_options = prepare_db_pagination::<crate::models::PrincipalToken>(
+            &QueryOptions::new(Vec::new(), Vec::new(), Some(20), None, true)
+                .expect("contract query must be valid"),
+        )
         .expect("identity compatibility token query should be valid");
         let (tokens, token_total) = backend
             .list_retained_tokens(StorageTokenListQuery::new(
@@ -962,13 +968,10 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         assert_eq!(point.into_parts().2, service_account_name);
 
         let service_account_options =
-            prepare_db_pagination::<crate::models::ServiceAccountWithName>(&QueryOptions {
-                filters: Vec::new(),
-                sort: Vec::new(),
-                limit: Some(100),
-                cursor: None,
-                include_total: true,
-            })
+            prepare_db_pagination::<crate::models::ServiceAccountWithName>(
+                &QueryOptions::new(Vec::new(), Vec::new(), Some(100), None, true)
+                    .expect("contract query must be valid"),
+            )
             .expect("identity compatibility service-account query should be valid");
         let (accounts, account_total) = backend
             .list_manageable_service_accounts(StorageServiceAccountListQuery::new(
@@ -1243,10 +1246,10 @@ async fn every_available_storage_backend_supplies_execution_context() {
         let evaluated = Arc::clone(&evaluations);
         backend
             .run_with_revision_precondition(
-                Some(
-                    StorageRevisionPrecondition::new("collection:1", vec![1])
-                        .expect("compatibility precondition should be valid"),
-                ),
+                Some(StorageRevisionPrecondition::new(
+                    StorageRevisionTarget::Collection(CollectionID::new(1).unwrap()),
+                    vec![crate::models::ResourceRevision::INITIAL],
+                )),
                 async move {
                     evaluated.fetch_add(1, Ordering::SeqCst);
                 },
@@ -1533,12 +1536,9 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
         "testpassword",
     )
     .await;
-    let options = || QueryOptions {
-        filters: Vec::new(),
-        sort: Vec::new(),
-        limit: Some(10),
-        cursor: None,
-        include_total: true,
+    let options = || {
+        QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+            .expect("contract query must be valid")
     };
 
     for backend in available_backends() {
@@ -1982,7 +1982,7 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
     .save_without_events(pool.get_ref())
     .await
     .expect("export-template compatibility class should be created");
-    let event_context = EventContext::user(owner.id, None, None);
+    let event_context = EventContext::user(principal_id(owner.id), None, None);
 
     for backend in available_backends() {
         let name = prefix("export_template");
@@ -2002,7 +2002,7 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
             .await
             .expect("certified backend should create an export template");
         let (metadata, created_collection_id, created_name, _) = created.into_parts();
-        let template_id = metadata.id();
+        let template_id = metadata.id().id();
         assert_eq!(created_collection_id, collection_id);
         assert_eq!(created_name, name);
 
@@ -2010,18 +2010,13 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
             .get_export_template(template_id)
             .await
             .expect("certified backend should load an export template");
-        assert_eq!(loaded.into_parts().0.id(), template_id);
+        assert_eq!(loaded.into_parts().0.id().id(), template_id);
 
         let (templates, total) = backend
             .list_export_templates(StorageExportTemplateListQuery::within_collections(
                 vec![collection_id],
-                QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: Some(10),
-                    cursor: None,
-                    include_total: true,
-                },
+                QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+                    .expect("contract query must be valid"),
             ))
             .await
             .expect("certified backend should list export templates")
@@ -2096,7 +2091,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
     )
     .await;
     let collection_id = fixture.collection.id;
-    let event_context = EventContext::user(owner.id, None, None);
+    let event_context = EventContext::user(principal_id(owner.id), None, None);
 
     for backend in available_backends() {
         let name = prefix("remote_target");
@@ -2120,25 +2115,20 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
             ))
             .await
             .expect("certified backend should create a remote target");
-        let target_id = created.metadata().id();
+        let target_id = created.metadata().id().id();
         assert_eq!(created.collection_id(), collection_id);
 
         let loaded = backend
             .get_remote_target(target_id)
             .await
             .expect("certified backend should load a remote target");
-        assert_eq!(loaded.metadata().id(), target_id);
+        assert_eq!(loaded.metadata().id().id(), target_id);
 
         let (targets, total) = backend
             .list_remote_targets(StorageRemoteTargetListQuery::new(
                 vec![collection_id],
-                QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: Some(10),
-                    cursor: None,
-                    include_total: true,
-                },
+                QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+                    .expect("contract query must be valid"),
             ))
             .await
             .expect("certified backend should list remote targets")
@@ -2147,7 +2137,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
         assert!(
             targets
                 .iter()
-                .any(|target| target.metadata().id() == target_id)
+                .any(|target| target.metadata().id().id() == target_id)
         );
 
         let updated = backend
@@ -2163,7 +2153,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
         let (metadata, _, updated_name, definition) = updated.into_parts();
         let (_, _, policy) = definition.into_parts();
         let (_, allowed_subject_types, enabled) = policy.into_parts();
-        assert_eq!(metadata.id(), target_id);
+        assert_eq!(metadata.id().id(), target_id);
         assert_eq!(updated_name, format!("{name}_updated"));
         assert_eq!(allowed_subject_types, ["collection"]);
         assert!(!enabled);
@@ -2342,7 +2332,7 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
         let command = StorageCollectionCreate::new(
             prefix("collection_lifecycle"),
             "collection lifecycle",
-            group.id,
+            group_id(group.id),
             None,
         );
         let collections = backend.collection_store();
@@ -2353,7 +2343,7 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
             .expect("certified backend should create collections");
         let updated = collections
             .update_collection(
-                created.id(),
+                collection_id(created.id()),
                 StorageCollectionUpdate::new(
                     None,
                     Some("updated collection lifecycle".to_string()),
@@ -2364,12 +2354,12 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
             .expect("certified backend should update collections");
         assert_eq!(updated.description(), "updated collection lifecycle");
         let moved = collections
-            .move_collection(created.id(), 1, None)
+            .move_collection(collection_id(created.id()), collection_id(1), None)
             .await
             .expect("certified backend should move collections");
         assert_eq!(moved.parent_collection_id(), Some(1));
         collections
-            .delete_collection(created.id(), Some(&EventContext::system()))
+            .delete_collection(collection_id(created.id()), Some(&EventContext::system()))
             .await
             .expect("certified backend should delete collections");
     }
@@ -2393,7 +2383,7 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
                 StorageCollectionCreate::new(
                     prefix("class_lifecycle_collection"),
                     "class lifecycle collection",
-                    group.id,
+                    group_id(group.id),
                     None,
                 ),
                 None,
@@ -2404,18 +2394,22 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
         let class_name = prefix("class_lifecycle");
         let created = classes
             .create_class(
-                StorageClassCreate::builder(&class_name, collection.id(), "class lifecycle")
-                    .json_schema(Some(serde_json::json!({
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}}
-                    })))
-                    .validate_schema(true)
-                    .build(),
+                StorageClassCreate::builder(
+                    &class_name,
+                    collection_id(collection.id()),
+                    "class lifecycle",
+                )
+                .json_schema(Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}}
+                })))
+                .validate_schema(true)
+                .build(),
                 Some(&EventContext::system()),
             )
             .await
             .expect("certified backend should create classes");
-        assert_eq!(created.collection_id(), collection.id());
+        assert_eq!(created.collection_id().id(), collection.id());
         assert!(created.validates_schema());
 
         let resolved_by_id = classes
@@ -2448,7 +2442,10 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
             vec![(created.id(), updated.name().to_string())]
         );
         let missing = classes
-            .class_names(vec![created.id(), i32::MAX])
+            .class_names(vec![
+                created.id(),
+                ClassId::new(i32::MAX).expect("maximum class id is positive"),
+            ])
             .await
             .expect_err("certified backend must reject a partial class-name mapping");
         assert_eq!(missing.kind(), StorageErrorKind::NotFound);
@@ -2471,7 +2468,7 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
             StorageErrorKind::NotFound
         );
         collections
-            .delete_collection(collection.id(), None)
+            .delete_collection(collection_id(collection.id()), None)
             .await
             .expect("class lifecycle collection should be removable");
     }
@@ -2639,12 +2636,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .expect("applied local grant should authorize the batch")
         );
 
-        let page_options = || QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: true,
+        let page_options = || {
+            QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
+                .expect("contract query must be valid")
         };
         let principal_query = || AuthorizationPrincipalCollectionQuery::new(user.id, collection_id);
 
@@ -2796,13 +2790,8 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
                 collection_id,
                 [AuthorizationPermission::ReadCollection],
-                QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                },
+                QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
+                    .expect("contract query must be valid"),
             ))
             .await
             .expect("certified backend should list local grants");
@@ -2821,13 +2810,10 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let group_candidates = backend
-            .list_authorization_group_candidates(QueryOptions {
-                filters: Vec::new(),
-                sort: Vec::new(),
-                limit: None,
-                cursor: None,
-                include_total: false,
-            })
+            .list_authorization_group_candidates(
+                QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+                    .expect("contract query must be valid"),
+            )
             .await
             .expect("certified backend should list authorization group candidates");
         assert!(
@@ -3061,17 +3047,18 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
     for backend in available_backends() {
         let request = || {
             CatalogListQuery::new(
-                QueryOptions {
-                    filters: vec![ParsedQueryParam {
+                QueryOptions::new(
+                    vec![ParsedQueryParam {
                         field: FilterField::Name,
                         operator: SearchOperator::Contains { is_negated: false },
                         value: needle.clone(),
                     }],
-                    sort: Vec::new(),
-                    limit: Some(10),
-                    cursor: None,
-                    include_total: true,
-                },
+                    Vec::new(),
+                    Some(10),
+                    None,
+                    true,
+                )
+                .expect("contract query must be valid"),
                 StorageVisibility::new(i32::MAX, true, None::<Vec<AuthorizationPermission>>, None),
             )
         };
@@ -3196,10 +3183,11 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
             .enrich_objects_with_computed(ComputedObjectEnrichmentQuery::new(
                 vec![StorageObject::new(
                     StorageRecordMetadata::new(
-                        object.id,
+                        ResourceId::new(object.id).expect("persisted resource id must be positive"),
                         object.created_at,
                         object.updated_at,
-                        object.revision.get(),
+                        ResourceRevision::new(object.revision.get())
+                            .expect("persisted revision must be positive"),
                     ),
                     object.name.clone(),
                     object.collection_id,
@@ -3241,7 +3229,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
     .expect("computed-field lifecycle compatibility fixture should be created");
     let class_id = fixture.classes[0].id;
     let collection_id = fixture.collection.collection.id;
-    let event_context = EventContext::user(owner.id, None, None);
+    let event_context = EventContext::user(principal_id(owner.id), None, None);
     let definition = |key: &str| {
         StorageComputedFieldDefinitionInput::new(
             key.to_string(),
@@ -3287,7 +3275,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
         );
 
         let loaded = backend
-            .get_computed_field(shared.metadata().id())
+            .get_computed_field(shared.metadata().id().id())
             .await
             .expect("certified backend should load a computed field");
         assert_eq!(loaded.key(), "compatibility_shared");
@@ -3296,7 +3284,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
             .update_shared_computed_field(StorageSharedComputedFieldUpdate::new(
                 class_id,
                 collection_id,
-                shared.metadata().id(),
+                shared.metadata().id().id(),
                 owner.id,
                 StorageComputedFieldDefinitionPatch::new()
                     .with_label(Some("Updated compatibility".to_string())),
@@ -3368,13 +3356,8 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
             .list_personal_computed_fields(StoragePersonalComputedFieldListQuery::new(
                 owner.id,
                 Some(class_id),
-                QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: Some(10),
-                    cursor: None,
-                    include_total: true,
-                },
+                QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+                    .expect("contract query must be valid"),
             ))
             .await
             .expect("certified backend should list personal computed fields")
@@ -3385,7 +3368,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
         let updated_personal = backend
             .update_personal_computed_field(StoragePersonalComputedFieldUpdate::new(
                 owner.id,
-                personal.metadata().id(),
+                personal.metadata().id().id(),
                 StorageComputedFieldDefinitionPatch::new()
                     .with_label(Some("Updated personal compatibility".to_string())),
             ))
@@ -3396,7 +3379,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
         backend
             .delete_personal_computed_field(StoragePersonalComputedFieldDelete::new(
                 owner.id,
-                personal.metadata().id(),
+                personal.metadata().id().id(),
             ))
             .await
             .expect("certified backend should delete a personal computed field");
@@ -3405,7 +3388,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
             .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
                 class_id,
                 collection_id,
-                shared.metadata().id(),
+                shared.metadata().id().id(),
                 owner.id,
                 event_context.clone(),
             ))
@@ -3461,8 +3444,8 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
                 fixture.class.name.clone(),
                 fixture.class.collection_id,
             ),
-            QueryOptions {
-                filters: vec![
+            QueryOptions::new(
+                vec![
                     ParsedQueryParam {
                         field: FilterField::ClassId,
                         operator: SearchOperator::Equals { is_negated: false },
@@ -3474,11 +3457,12 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
                         value: fixture.class.collection_id.to_string(),
                     },
                 ],
-                sort: Vec::new(),
-                limit: Some(50),
-                cursor: None,
-                include_total: true,
-            },
+                Vec::new(),
+                Some(50),
+                None,
+                true,
+            )
+            .expect("contract query must be valid"),
             StorageObjectAggregateSpec::new(
                 [StorageObjectAggregateDimension::Scalar(
                     StorageObjectAggregateScalarField::Name,
@@ -3598,12 +3582,9 @@ async fn every_available_storage_backend_supplies_relation_queries() {
     for backend in available_backends() {
         let visibility =
             || StorageVisibility::new(i32::MAX, true, None::<Vec<AuthorizationPermission>>, None);
-        let options = || QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(50),
-            cursor: None,
-            include_total: true,
+        let options = || {
+            QueryOptions::new(Vec::new(), Vec::new(), Some(50), None, true)
+                .expect("contract query must be valid")
         };
 
         let (class_relations, class_total) = backend
@@ -3884,12 +3865,9 @@ async fn every_available_storage_backend_supplies_event_health() {
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_complete_event_administration() {
     let _permit = postgres_permit().await;
-    let options = || QueryOptions {
-        filters: Vec::new(),
-        sort: Vec::new(),
-        limit: Some(50),
-        cursor: None,
-        include_total: true,
+    let options = || {
+        QueryOptions::new(Vec::new(), Vec::new(), Some(50), None, true)
+            .expect("contract query must be valid")
     };
     let fanout_settings = EventFanoutSettings::new(1_000, 30_000)
         .expect("compatibility fan-out settings should be valid");

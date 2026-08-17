@@ -5,6 +5,7 @@ use crate::tests::TestScope;
 use crate::traits::{CanSave, CanUpdate, UserIdApplicationExt};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
+use hubuum_domain::{PrincipalId, TaskId};
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL with only the
 /// legacy actor GUC set must produce I/U/D history rows carrying compatible
@@ -394,7 +395,9 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     let in_name = format!("actor_in_{}", scope.scope_id);
     let in_class = with_mutation_provenance(
         &pool,
-        Some(crate::events::MutationProvenance::user(4242)),
+        Some(crate::events::MutationProvenance::user(
+            PrincipalId::new(4242).expect("test principal id must be positive"),
+        )),
         async {
             let event_context = hubuum_events_core::EventContext::system();
             NewHubuumClass {
@@ -465,7 +468,10 @@ async fn worker_mutation_scope_records_root_task_provenance() {
     let task_id = 6161;
     let class = with_mutation_provenance(
         &pool,
-        Some(MutationProvenance::worker(Some(initiator_user_id), task_id)),
+        Some(MutationProvenance::worker(
+            Some(PrincipalId::new(initiator_user_id).expect("test principal id must be positive")),
+            TaskId::new(task_id).expect("test task id must be positive"),
+        )),
         async {
             NewHubuumClass {
                 name: scope.scoped_name("worker_created_class"),
@@ -477,8 +483,11 @@ async fn worker_mutation_scope_records_root_task_provenance() {
             .save(
                 &pool,
                 &EventContext::from_mutation(MutationProvenance::worker(
-                    Some(initiator_user_id),
-                    task_id,
+                    Some(
+                        PrincipalId::new(initiator_user_id)
+                            .expect("test principal id must be positive"),
+                    ),
+                    TaskId::new(task_id).expect("test task id must be positive"),
                 )),
             )
             .await
@@ -545,7 +554,9 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     let cname = format!("anon_class_{}", scope.scope_id);
     let class = with_mutation_provenance(
         &pool,
-        Some(crate::events::MutationProvenance::user(user.id)),
+        Some(crate::events::MutationProvenance::user(
+            PrincipalId::new(user.id).expect("persisted principal id must be positive"),
+        )),
         async {
             let event_context = hubuum_events_core::EventContext::system();
             NewHubuumClass {

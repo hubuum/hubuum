@@ -26,28 +26,29 @@ pub async fn list_computed_objects(
     runtime: &PostgresRuntime,
     query: ComputedObjectListQuery,
 ) -> Result<ComputedObjectPage, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
     let (mut request_options, mut options) = options.into_parts();
     // The execution copy includes pagination tie-breakers. Enforce the public
     // limit against only the sort fields supplied by the caller.
     if request_options
-        .sort
+        .sort()
         .iter()
         .any(|sort| sort.field.computed_query().is_some())
     {
-        query::validate_explicit_sort_count(request_options.sort.len())?;
+        query::validate_explicit_sort_count(request_options.sort().len())?;
     }
     let snapshot_runtime = runtime.clone();
 
     runtime
         .with_read_only_snapshot(async move |connection| {
+            let (filters, sort) = options.filters_and_sort_mut();
             let snapshot = query::resolve_computed_query_fields(
                 connection,
                 class_id,
                 personal_owner_id,
-                &mut options.filters,
-                &mut options.sort,
+                filters,
+                sort,
             )
             .await?;
             query::resolve_query_option_types(&mut request_options, &snapshot)?;
@@ -80,7 +81,7 @@ pub async fn list_computed_objects(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             let related_predicate =
-                related_object_filter_predicate(connection, &options.filters, &visibility).await?;
+                related_object_filter_predicate(connection, options.filters(), &visibility).await?;
 
             let total = if include_total {
                 let count_query = filtered_object_query(
@@ -111,13 +112,13 @@ pub async fn list_computed_objects(
                 related_predicate,
                 &snapshot,
             )?;
-            let fields = query::object_cursor_sql_fields(&options.sort, &snapshot)?;
+            let fields = query::object_cursor_sql_fields(options.sort(), &snapshot)?;
             crate::apply_query_options_with_fields!(row_query, options, fields);
             tracing::debug!(
                 operation = "list_computed_objects",
-                filter_count = options.filters.len(),
-                sort_count = options.sort.len(),
-                has_cursor = options.cursor.is_some(),
+                filter_count = options.filters().len(),
+                sort_count = options.sort().len(),
+                has_cursor = options.cursor().is_some(),
                 include_total,
                 "executing PostgreSQL computed-object query"
             );
@@ -220,7 +221,7 @@ fn filtered_object_query<'query>(
     }
     query = apply_object_filters(query, options, related_predicate)?;
     for parameter in options
-        .filters
+        .filters()
         .iter()
         .filter(|parameter| parameter.field.computed_query().is_some())
     {
@@ -249,14 +250,19 @@ fn projected_objects(
 
 #[cfg(test)]
 mod tests {
+    use crate::revision::record_metadata_from_raw_revision;
     use chrono::NaiveDateTime;
-    use hubuum_storage_core::StorageRecordMetadata;
 
     use super::*;
 
     fn object(id: i32) -> StorageObject {
         StorageObject::new(
-            StorageRecordMetadata::new(id, NaiveDateTime::default(), NaiveDateTime::default(), 1),
+            record_metadata_from_raw_revision(
+                id,
+                NaiveDateTime::default(),
+                NaiveDateTime::default(),
+                1,
+            ),
             format!("object-{id}"),
             1,
             1,

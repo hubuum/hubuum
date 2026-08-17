@@ -515,7 +515,9 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .collection_children(collection_id.id())
+        .collection_children(crate::services::storage_boundary::collection_id_to_storage(
+            collection_id.id(),
+        ))
         .await
         .map_err(ApiError::from)?
         .into_iter()
@@ -534,7 +536,9 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .collection_ancestors(collection_id.id())
+        .collection_ancestors(crate::services::storage_boundary::collection_id_to_storage(
+            collection_id.id(),
+        ))
         .await
         .map_err(ApiError::from)?
         .into_iter()
@@ -553,7 +557,11 @@ where
 {
     storage_handle(backend)
         .collection_store()
-        .move_collection(collection_id, new_parent_collection_id, context)
+        .move_collection(
+            crate::services::storage_boundary::collection_id_to_storage(collection_id),
+            crate::services::storage_boundary::collection_id_to_storage(new_parent_collection_id),
+            context,
+        )
         .await
         .map_err(ApiError::from)
         .and_then(collection_from_storage)
@@ -1003,13 +1011,7 @@ mod tests {
             &pool,
             collection.collection.clone(),
             vec![],
-            QueryOptions {
-                filters: vec![],
-                sort: vec![],
-                limit: None,
-                cursor: None,
-                include_total: true,
-            },
+            QueryOptions::new(vec![], vec![], None, None, true).expect("test query must be valid"),
         )
         .await
         .unwrap();

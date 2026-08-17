@@ -115,15 +115,19 @@ fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions,
     Ok((params, include_computed))
 }
 
-fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID) {
+fn scope_object_query_to_class(
+    params: &mut QueryOptions,
+    class: &HubuumClassID,
+) -> Result<(), ApiError> {
     params
-        .filters
-        .retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes));
-    params.filters.add_filter(
+        .filters_mut()
+        .try_retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes))?;
+    params.filters_mut().add_filter(
         FilterField::ClassId,
         SearchOperator::Equals { is_negated: false },
         &class.id().to_string(),
-    );
+    )?;
+    Ok(())
 }
 
 async fn computed_personal_owner(
@@ -265,14 +269,14 @@ fn ensure_object_update_stays_in_path_class(
 fn prepare_graph_query_options(
     mut params: QueryOptions,
 ) -> Result<(QueryOptions, usize), ApiError> {
-    if params.cursor.is_some() {
+    if params.cursor().is_some() {
         return Err(ApiError::BadRequest(
             "Graph endpoint does not support cursor".to_string(),
         ));
     }
 
-    let limit = page_limits()?.resolve(params.limit)?;
-    params.limit = Some(limit + 1);
+    let limit = page_limits()?.resolve(params.limit())?;
+    params.set_limit(Some(limit + 1));
 
     Ok((params, limit))
 }
@@ -342,7 +346,7 @@ async fn get_classes(
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) =
             catalog_service::list_classes(&context, user.id(), true, None, candidate_options)
                 .await?;
@@ -813,7 +817,7 @@ async fn read_resolved_class_permissions(
     ];
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let (permissions, total_count) = if context.permission_backend().uses_local_permission_store() {
-        let total_count = if params.include_total {
+        let total_count = if params.include_total() {
             collection_model::count_groups_on_paginated(
                 &context,
                 target_collection_id,

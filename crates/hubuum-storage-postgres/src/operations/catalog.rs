@@ -8,7 +8,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
     AuthorizationPermission, CatalogListQuery, CatalogPage, StorageClass, StorageCollection,
-    StorageObject, StorageRecordMetadata, UnifiedSearchResourceScope,
+    StorageObject, UnifiedSearchResourceScope,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -18,6 +18,7 @@ use crate::operations::json_filter::json_predicate;
 use crate::operations::object::ObjectRow;
 use crate::operations::related_filter::related_object_filter_predicate;
 use crate::operations::visibility::{authorized_collection_ids, required_permissions};
+use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 #[derive(Queryable, Selectable)]
@@ -35,12 +36,7 @@ struct CollectionCatalogRow {
 impl CollectionCatalogRow {
     fn into_storage(self) -> StorageCollection {
         StorageCollection::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.name,
             self.description,
             self.parent_collection_id,
@@ -54,7 +50,7 @@ pub async fn list_collections(
     runtime: &PostgresRuntime,
     query: CatalogListQuery,
 ) -> Result<CatalogPage<StorageCollection>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     if !query
         .visibility()
         .allows_permissions(&[AuthorizationPermission::ReadCollection])
@@ -63,7 +59,7 @@ pub async fn list_collections(
     }
 
     let (options, visibility) = query.into_parts();
-    validate_permission_filters(&options.filters)?;
+    validate_permission_filters(options.filters())?;
     let principal_id = visibility.principal_id();
     let is_admin = visibility.is_admin();
     let resource_scope = visibility.resources().cloned();
@@ -101,7 +97,7 @@ pub async fn list_classes(
     runtime: &PostgresRuntime,
     query: CatalogListQuery,
 ) -> Result<CatalogPage<StorageClass>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(
         &options,
@@ -131,9 +127,9 @@ pub async fn list_classes(
             crate::apply_query_options_with_fields!(query, options, fields);
             tracing::debug!(
                 operation = "list_classes",
-                filter_count = options.filters.len(),
-                sort_count = options.sort.len(),
-                has_cursor = options.cursor.is_some(),
+                filter_count = options.filters().len(),
+                sort_count = options.sort().len(),
+                has_cursor = options.cursor().is_some(),
                 include_total,
                 "executing PostgreSQL catalog query"
             );
@@ -158,7 +154,7 @@ pub async fn list_objects(
     runtime: &PostgresRuntime,
     query: CatalogListQuery,
 ) -> Result<CatalogPage<StorageObject>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(
         &options,
@@ -177,7 +173,7 @@ pub async fn list_objects(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             let related_predicate =
-                related_object_filter_predicate(connection, &options.filters, &visibility).await?;
+                related_object_filter_predicate(connection, options.filters(), &visibility).await?;
             let build_query = || object_query(&collection_ids, visibility.resources());
             let total = if include_total {
                 let query =
@@ -192,9 +188,9 @@ pub async fn list_objects(
             crate::apply_query_options_with_fields!(query, options, fields);
             tracing::debug!(
                 operation = "list_objects",
-                filter_count = options.filters.len(),
-                sort_count = options.sort.len(),
-                has_cursor = options.cursor.is_some(),
+                filter_count = options.filters().len(),
+                sort_count = options.sort().len(),
+                has_cursor = options.cursor().is_some(),
                 include_total,
                 "executing PostgreSQL catalog query"
             );
@@ -213,11 +209,11 @@ pub async fn list_objects(
 
 fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresStorageError> {
     if options
-        .filters
+        .filters()
         .iter()
         .any(|filter| filter.field.computed_query().is_some())
         || options
-            .sort
+            .sort()
             .iter()
             .any(|sort| sort.field.computed_query().is_some())
     {
@@ -258,7 +254,7 @@ pub(crate) fn apply_object_filters<'query>(
     if let Some(predicate) = related_predicate {
         query = query.filter(predicate);
     }
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         if parameter.field.related_query().is_some() {
             continue;
         }
@@ -308,7 +304,7 @@ fn object_cursor_fields(
     options: &QueryOptions,
 ) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| object_cursor_field(&sort.field))
         .collect()
@@ -391,7 +387,7 @@ fn apply_class_filters<'query>(
 ) -> Result<crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::hubuumclass;
 
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match &parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, hubuumclass::id)
@@ -435,7 +431,7 @@ fn class_cursor_fields(
     options: &QueryOptions,
 ) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| {
             Ok(match sort.field {
@@ -526,7 +522,7 @@ fn class_to_storage(
             ))
         })?;
     Ok(StorageClass::builder(
-        StorageRecordMetadata::new(row.id, row.created_at, row.updated_at, row.revision.get()),
+        record_metadata(row.id, row.created_at, row.updated_at, row.revision),
         row.name,
         collection,
         row.description,
@@ -574,7 +570,7 @@ fn apply_collection_filters<'query>(
 ) -> Result<crate::schema::collections::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::collections;
 
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match &parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, collections::id)
@@ -622,7 +618,7 @@ fn collection_cursor_fields(
     options: &QueryOptions,
 ) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| {
             Ok(match sort.field {

@@ -784,11 +784,11 @@ impl fmt::Debug for AuthorizationCollectionGrantListQuery {
                 "required_permission_count",
                 &self.required_permissions.len(),
             )
-            .field("filter_count", &self.query_options.filters.len())
-            .field("sort_count", &self.query_options.sort.len())
-            .field("limit", &self.query_options.limit)
-            .field("has_cursor", &self.query_options.cursor.is_some())
-            .field("include_total", &self.query_options.include_total)
+            .field("filter_count", &self.query_options.filters().len())
+            .field("sort_count", &self.query_options.sort().len())
+            .field("limit", &self.query_options.limit())
+            .field("has_cursor", &self.query_options.cursor().is_some())
+            .field("include_total", &self.query_options.include_total())
             .finish()
     }
 }
@@ -1270,7 +1270,7 @@ mod tests {
     fn unknown_permission_names_are_rejected_at_the_contract_boundary() {
         let error = AuthorizationPermission::from_name("read_collection")
             .expect_err("permission names are case-sensitive persisted vocabulary");
-        assert_eq!(error.kind(), crate::StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
     }
 
     #[test]

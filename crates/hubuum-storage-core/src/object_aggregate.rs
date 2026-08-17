@@ -459,7 +459,7 @@ impl StorageObjectAggregateSpec {
     ) -> Result<StorageObjectAggregateCursor, StorageError> {
         if cursor.len() > maximum_encoded_bytes {
             return Err(StorageError::new(
-                StorageErrorKind::PayloadTooLarge,
+                StorageErrorKind::InputTooLarge,
                 format!(
                     "aggregate cursor exceeds the replay-safe limit of {maximum_encoded_bytes} bytes for this request"
                 ),
@@ -521,7 +521,7 @@ impl StorageObjectAggregateSpec {
         let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
         if cursor.len() > maximum_encoded_bytes {
             return Err(StorageError::new(
-                StorageErrorKind::PayloadTooLarge,
+                StorageErrorKind::InputTooLarge,
                 format!(
                     "aggregate value at the page boundary produces a cursor larger than the replay-safe limit of {maximum_encoded_bytes} bytes for this request; shorten the filters, narrow the grouping dimensions, or use a page limit that does not end on this value"
                 ),
@@ -796,10 +796,10 @@ impl fmt::Debug for ObjectAggregateStorageQuery {
             .debug_struct("ObjectAggregateStorageQuery")
             .field("target", &self.target)
             .field("spec", &self.spec)
-            .field("filter_count", &self.options.filters.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .field("has_personal_owner", &self.personal_owner_id.is_some())
             .field("permission_count", &self.required_permissions.len())
             .field("visibility", &self.visibility)
@@ -1030,13 +1030,7 @@ mod tests {
     }
 
     fn empty_query_options() -> QueryOptions {
-        QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        }
+        QueryOptions::new(Vec::new(), Vec::new(), None, None, false).unwrap()
     }
 
     #[test]
@@ -1052,7 +1046,7 @@ mod tests {
 
         let error = second.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
 
-        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
         assert!(error.to_string().contains("does not match"));
     }
 
@@ -1069,7 +1063,7 @@ mod tests {
 
         let error = second.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
 
-        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
         assert!(error.to_string().contains("does not match"));
     }
 
@@ -1080,7 +1074,7 @@ mod tests {
 
         let error = spec.encode_cursor(&row, CURSOR_BUDGET).unwrap_err();
 
-        assert_eq!(error.kind(), StorageErrorKind::PayloadTooLarge);
+        assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
         assert!(error.to_string().contains("replay-safe limit"));
     }
 
@@ -1092,7 +1086,7 @@ mod tests {
             .decode_cursor(&"a".repeat(CURSOR_BUDGET + 1), CURSOR_BUDGET)
             .unwrap_err();
 
-        assert_eq!(error.kind(), StorageErrorKind::PayloadTooLarge);
+        assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
         assert!(error.to_string().contains("replay-safe limit"));
     }
 
@@ -1103,7 +1097,7 @@ mod tests {
 
         let error = spec.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
 
-        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
         assert!(error.to_string().contains("invalid ordering values"));
     }
 
@@ -1114,7 +1108,7 @@ mod tests {
 
         let error = spec.decode_cursor(&cursor, CURSOR_BUDGET).unwrap_err();
 
-        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
         assert!(error.to_string().contains("invalid ordering values"));
     }
 
@@ -1140,17 +1134,18 @@ mod tests {
     fn aggregate_query_debug_redacts_target_filters_and_cursor() {
         let query = ObjectAggregateStorageQuery::builder(
             StorageObjectAggregateTarget::new(7, "secret class".to_string(), 9),
-            QueryOptions {
-                filters: vec![ParsedQueryParam {
-                    field: FilterField::Name,
-                    operator: SearchOperator::Equals { is_negated: false },
-                    value: "secret object".to_string(),
-                }],
-                sort: Vec::new(),
-                limit: Some(20),
-                cursor: Some("secret cursor".to_string()),
-                include_total: true,
-            },
+            QueryOptions::new(
+                vec![ParsedQueryParam::from_parts(
+                    FilterField::Name,
+                    SearchOperator::Equals { is_negated: false },
+                    "secret object",
+                )],
+                Vec::new(),
+                Some(20),
+                Some("secret cursor".to_string()),
+                true,
+            )
+            .unwrap(),
             StorageObjectAggregateSpec::new(
                 [
                     StorageObjectAggregateDimension::from_str("json_data.secret_dimension")
@@ -1208,7 +1203,7 @@ mod tests {
         .cursor_max_encoded_bytes(1_000)
         .build();
 
-        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::BadRequest);
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
     }
 
     #[test]
@@ -1231,6 +1226,6 @@ mod tests {
         .cursor_max_encoded_bytes(0)
         .build();
 
-        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::BadRequest);
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
     }
 }

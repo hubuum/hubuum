@@ -4,8 +4,10 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Queryable, Selectable};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{CollectionId, PrincipalId, TaskId};
 use hubuum_events_core::{
-    Action, EntityType, EventEnvelope, Provenance, ProvenanceActor, ProvenancePrincipal,
+    Action, EntityType, EventEntityId, EventEnvelope, EventSequence, Provenance, ProvenanceActor,
+    ProvenancePrincipal,
 };
 use hubuum_storage_core::StorageAuditEvent;
 use serde_json::Value;
@@ -54,29 +56,34 @@ impl StoredEventProjection {
         }
     }
 
-    pub(super) fn into_envelope(self, principal_names: &HashMap<i32, String>) -> EventEnvelope {
-        let principal = |principal_id| ProvenancePrincipal {
+    pub(super) fn into_envelope(
+        self,
+        principal_names: &HashMap<i32, String>,
+    ) -> Result<EventEnvelope, PostgresStorageError> {
+        let actor_user_id = self.actor_user_id.map(PrincipalId::new).transpose()?;
+        let initiator_user_id = self.initiator_user_id.map(PrincipalId::new).transpose()?;
+        let principal = |principal_id: PrincipalId| ProvenancePrincipal {
             principal_id,
-            name: principal_names.get(&principal_id).cloned(),
+            name: principal_names.get(&principal_id.id()).cloned(),
         };
         let provenance = Provenance {
             actor: ProvenanceActor {
                 kind: Some(self.actor_kind.clone()),
-                principal: self.actor_user_id.map(principal),
+                principal: actor_user_id.map(principal),
             },
-            initiator: self.initiator_user_id.map(principal),
-            task_id: self.task_id,
+            initiator: initiator_user_id.map(principal),
+            task_id: self.task_id.map(TaskId::new).transpose()?,
         };
-        EventEnvelope {
-            id: self.id,
+        Ok(EventEnvelope {
+            id: EventSequence::new(self.id)?,
             event_id: self.event_id,
             occurred_at: self.occurred_at,
             entity_type: self.entity_type,
-            entity_id: self.entity_id,
+            entity_id: self.entity_id.map(EventEntityId::new).transpose()?,
             entity_name: self.entity_name,
-            collection_id: self.collection_id,
+            collection_id: self.collection_id.map(CollectionId::new).transpose()?,
             action: self.action,
-            actor_user_id: self.actor_user_id,
+            actor_user_id,
             actor_kind: self.actor_kind,
             provenance,
             request_id: self.request_id,
@@ -86,22 +93,26 @@ impl StoredEventProjection {
             after: self.after,
             metadata: self.metadata,
             schema_version: self.schema_version,
-        }
+        })
     }
 
     pub(super) fn into_audit_event(
         self,
         principal_names: &HashMap<i32, String>,
         redact_payloads: bool,
-    ) -> StorageAuditEvent {
+    ) -> Result<StorageAuditEvent, PostgresStorageError> {
         let before_revision = self.before_revision.map(PostgresRevision::get);
         let after_revision = self.after_revision.map(PostgresRevision::get);
-        let mut envelope = self.into_envelope(principal_names);
+        let mut envelope = self.into_envelope(principal_names)?;
         if redact_payloads {
             envelope.before = None;
             envelope.after = None;
         }
-        StorageAuditEvent::new(envelope, before_revision, after_revision)
+        Ok(StorageAuditEvent::new(
+            envelope,
+            before_revision,
+            after_revision,
+        ))
     }
 }
 

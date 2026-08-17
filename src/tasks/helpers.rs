@@ -186,9 +186,9 @@ pub(super) fn storage_class_to_resolution(
 ) -> ClassResolution {
     let (id, name, collection_id, json_schema, validate_schema, _, _, _, _) = class.into_parts();
     ClassResolution {
-        id,
+        id: id.id(),
         name,
-        collection_id,
+        collection_id: collection_id.id(),
         json_schema,
         validate_schema,
         exists_in_db: true,

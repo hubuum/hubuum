@@ -698,11 +698,11 @@ impl fmt::Debug for StorageTaskListQuery {
             .field("has_submitter", &self.submitted_by.is_some())
             .field("kind", &self.kind)
             .field("status", &self.status)
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish_non_exhaustive()
     }
 }

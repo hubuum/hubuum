@@ -100,7 +100,7 @@ async fn get_class_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!("class {entity_id} not found")));
     }
 
@@ -301,7 +301,7 @@ async fn get_object_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!("object {entity_id} not found")));
     }
 

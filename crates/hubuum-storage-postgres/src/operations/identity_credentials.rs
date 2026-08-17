@@ -28,7 +28,7 @@ pub async fn reset_local_password(
                 .await?;
             if provider_managed {
                 return Err(PostgresStorageError::new(
-                    StorageErrorKind::Forbidden,
+                    StorageErrorKind::PermissionDenied,
                     "Provider-managed users are read-only in Hubuum",
                     None,
                 ));

@@ -59,7 +59,7 @@ pub(crate) fn required_permissions(
     baseline: impl IntoIterator<Item = AuthorizationPermission>,
 ) -> Result<Vec<AuthorizationPermission>, PostgresStorageError> {
     let mut permissions = baseline.into_iter().collect::<Vec<_>>();
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         if parameter.field == FilterField::Permissions {
             permissions.push(
                 AuthorizationPermission::from_name(&parameter.value)

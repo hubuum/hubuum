@@ -95,8 +95,7 @@ pub use events::{
     EventRetentionSummary, RetainedEvent, StorageRecordedEvent,
 };
 pub use execution::{
-    StorageCallSite, StorageExecution, StorageRevisionPrecondition,
-    StorageRevisionPreconditionError,
+    StorageCallSite, StorageExecution, StorageRevisionPrecondition, StorageRevisionTarget,
 };
 pub use export_query::{ExportQueryStorage, StorageQueryBudget};
 pub use export_template_lifecycle::{
@@ -132,8 +131,7 @@ pub use identity_operations::{
 };
 pub use identity_resources::{
     GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupUpdate, StoragePrincipal,
-    StoragePrincipalBuilder, StoragePrincipalParts, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation,
+    StoragePrincipalBuilder, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
 };
 pub use identity_tokens::{
     StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenRenew,
@@ -272,6 +270,7 @@ pub type StorageObject = UnifiedSearchObject;
 pub type StorageResourceScope = UnifiedSearchResourceScope;
 pub type StorageVisibility = UnifiedSearchVisibility;
 
+use hubuum_domain::ResourceRevision;
 use std::fmt;
 
 /// Backend identity used for diagnostics and complete-backend composition.
@@ -282,18 +281,18 @@ pub trait StorageIdentity: Send + Sync {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageErrorKind {
     AuthorizationUnavailable,
-    BadRequest,
+    InvalidInput,
     Conflict,
     Database,
-    Forbidden,
+    PermissionDenied,
     Internal,
     NotFound,
-    NotAcceptable,
-    PayloadTooLarge,
-    PreconditionFailed,
-    TooManyRequests,
+    Unsupported,
+    InputTooLarge,
+    RevisionConflict,
+    RateLimited,
     Unavailable,
-    Unauthorized,
+    AuthenticationRequired,
     Validation,
 }
 
@@ -302,18 +301,18 @@ impl StorageErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AuthorizationUnavailable => "authorization_unavailable",
-            Self::BadRequest => "bad_request",
+            Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
             Self::Database => "database",
-            Self::Forbidden => "forbidden",
+            Self::PermissionDenied => "permission_denied",
             Self::Internal => "internal",
             Self::NotFound => "not_found",
-            Self::NotAcceptable => "not_acceptable",
-            Self::PayloadTooLarge => "payload_too_large",
-            Self::PreconditionFailed => "precondition_failed",
-            Self::TooManyRequests => "too_many_requests",
+            Self::Unsupported => "unsupported",
+            Self::InputTooLarge => "input_too_large",
+            Self::RevisionConflict => "revision_conflict",
+            Self::RateLimited => "rate_limited",
             Self::Unavailable => "unavailable",
-            Self::Unauthorized => "unauthorized",
+            Self::AuthenticationRequired => "authentication_required",
             Self::Validation => "validation",
         }
     }
@@ -335,13 +334,17 @@ impl StorageErrorKind {
 pub struct StorageError {
     kind: StorageErrorKind,
     message: String,
-    current_etag: Option<String>,
+    current_revision: Option<ResourceRevision>,
 }
 
 impl StorageError {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
+        Self::invalid_input(message)
+    }
+
     #[must_use]
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::BadRequest, message, None)
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::InvalidInput, message, None)
     }
 
     #[must_use]
@@ -363,18 +366,18 @@ impl StorageError {
     pub fn new(
         kind: StorageErrorKind,
         message: impl Into<String>,
-        current_etag: Option<String>,
+        current_revision: Option<ResourceRevision>,
     ) -> Self {
         Self {
             kind,
             message: message.into(),
-            current_etag,
+            current_revision,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageErrorKind, String, Option<String>) {
-        (self.kind, self.message, self.current_etag)
+    pub fn into_parts(self) -> (StorageErrorKind, String, Option<ResourceRevision>) {
+        (self.kind, self.message, self.current_revision)
     }
 
     #[must_use]
@@ -396,20 +399,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn storage_errors_keep_classification_and_precondition_metadata() {
+    fn storage_errors_keep_classification_and_revision_metadata() {
+        let current_revision = ResourceRevision::new(2).unwrap();
         let error = StorageError::new(
-            StorageErrorKind::PreconditionFailed,
+            StorageErrorKind::RevisionConflict,
             "stale resource",
-            Some("\"revision-2\"".to_string()),
+            Some(current_revision),
         );
 
-        assert_eq!(error.kind(), StorageErrorKind::PreconditionFailed);
+        assert_eq!(error.kind(), StorageErrorKind::RevisionConflict);
         assert_eq!(
             error.into_parts(),
             (
-                StorageErrorKind::PreconditionFailed,
+                StorageErrorKind::RevisionConflict,
                 "stale resource".to_string(),
-                Some("\"revision-2\"".to_string()),
+                Some(current_revision),
             )
         );
     }

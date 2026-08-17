@@ -31,16 +31,16 @@ impl From<MemoryStorageModelError> for StorageError {
             ApiError::BadRequest(message)
             | ApiError::InvalidIntegerRange(message)
             | ApiError::OperatorMismatch(message) => {
-                Self::new(StorageErrorKind::BadRequest, message, None)
+                Self::new(StorageErrorKind::InvalidInput, message, None)
             }
             ApiError::NotAcceptable(message) => {
-                Self::new(StorageErrorKind::NotAcceptable, message, None)
+                Self::new(StorageErrorKind::Unsupported, message, None)
             }
             ApiError::ValidationError(message) => {
                 Self::new(StorageErrorKind::Validation, message, None)
             }
             ApiError::PayloadTooLarge(message) => {
-                Self::new(StorageErrorKind::PayloadTooLarge, message, None)
+                Self::new(StorageErrorKind::InputTooLarge, message, None)
             }
             ApiError::Conflict(message) => Self::new(StorageErrorKind::Conflict, message, None),
             ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
@@ -49,11 +49,11 @@ impl From<MemoryStorageModelError> for StorageError {
             ApiError::NotFound(message) | ApiError::Gone(message) => {
                 Self::new(StorageErrorKind::NotFound, message, None)
             }
-            ApiError::PreconditionFailed(message, current_etag) => {
-                Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
+            ApiError::PreconditionFailed(message, _) => {
+                Self::new(StorageErrorKind::RevisionConflict, message, None)
             }
             ApiError::TooManyRequests(message) => {
-                Self::new(StorageErrorKind::TooManyRequests, message, None)
+                Self::new(StorageErrorKind::RateLimited, message, None)
             }
             ApiError::ServiceUnavailable(message) => {
                 Self::new(StorageErrorKind::Unavailable, message, None)

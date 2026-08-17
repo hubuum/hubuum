@@ -182,7 +182,7 @@ fn build_event_query<'a>(
         query = query.filter(occurred_at.le(value));
     }
 
-    for param in &query_options.filters {
+    for param in query_options.filters() {
         let operator = param.operator.clone();
         match param.field {
             crate::models::search::FilterField::BeforeRevision => {

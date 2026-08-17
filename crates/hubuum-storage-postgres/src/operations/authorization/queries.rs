@@ -301,7 +301,7 @@ pub async fn list_authorization_group_candidates(
             use crate::schema::groups::dsl::{created_at, groupname, groups, id, updated_at};
 
             let mut query = groups.into_boxed();
-            for parameter in &options.filters {
+            for parameter in options.filters() {
                 match parameter.field {
                     FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
                     FilterField::Name | FilterField::Groupname => {
@@ -436,7 +436,7 @@ pub async fn principal_collection_permissions_page(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionPageQuery,
 ) -> Result<AuthorizationGroupGrantPage, PostgresStorageError> {
-    if query.query_options().include_total {
+    if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
                 let total = build_principal_grant_query(&query)?
@@ -645,7 +645,7 @@ pub async fn groups_with_collection_permission_page(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGroupsPageQuery,
 ) -> Result<AuthorizationGroupPage, PostgresStorageError> {
-    if query.query_options().include_total {
+    if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
                 let total = build_groups_page_query(&query)?
@@ -758,7 +758,7 @@ fn build_principal_grant_query(
         .filter(permissions::collection_id.eq(principal.collection_id()))
         .filter(permissions::group_id.eq_any(group_ids))
         .into_boxed();
-    for parameter in &query.query_options().filters {
+    for parameter in query.query_options().filters() {
         match parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, permissions::id)
@@ -794,7 +794,7 @@ async fn load_principal_grants(
     let mut records = build_principal_grant_query(query)?;
     let fields = query
         .query_options()
-        .sort
+        .sort()
         .iter()
         .map(|sort| group_grant_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
@@ -832,7 +832,7 @@ fn build_groups_page_query(
     use crate::schema::groups;
 
     let mut groups = build_groups_with_permission_query(query.groups())?;
-    for parameter in &query.query_options().filters {
+    for parameter in query.query_options().filters() {
         match parameter.field {
             FilterField::Id => crate::postgres_integer_filter!(groups, parameter, groups::id),
             FilterField::Name | FilterField::Groupname => {
@@ -868,7 +868,7 @@ async fn load_groups_page(
     let mut groups = build_groups_page_query(query)?;
     let fields = query
         .query_options()
-        .sort
+        .sort()
         .iter()
         .map(|sort| group_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
@@ -900,7 +900,7 @@ pub async fn list_local_collection_grants(
     query: AuthorizationCollectionGrantListQuery,
 ) -> Result<AuthorizationGroupGrantPage, PostgresStorageError> {
     let permissions = grant_query_permissions(&query)?;
-    if query.query_options().include_total {
+    if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async |connection| {
                 let total = build_group_grant_query(&query, &permissions)?
@@ -932,7 +932,7 @@ async fn load_group_grants(
     let mut records = build_group_grant_query(query, permissions)?;
     let fields = query
         .query_options()
-        .sort
+        .sort()
         .iter()
         .map(|sort| group_grant_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
@@ -971,7 +971,7 @@ fn build_group_grant_query<'a>(
     for permission in required_permissions.iter().copied() {
         apply_permission_filter!(records, permission, true);
     }
-    for parameter in &query.query_options().filters {
+    for parameter in query.query_options().filters() {
         match parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, permissions::id)
@@ -1001,7 +1001,7 @@ fn grant_query_permissions(
     query: &AuthorizationCollectionGrantListQuery,
 ) -> Result<Vec<AuthorizationPermission>, PostgresStorageError> {
     let mut permissions = query.required_permissions().to_vec();
-    for parameter in &query.query_options().filters {
+    for parameter in query.query_options().filters() {
         if parameter.field == FilterField::Permissions {
             permissions.push(parse_permission_filter(parameter)?);
         }

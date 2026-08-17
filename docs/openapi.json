@@ -20741,6 +20741,12 @@
           }
         }
       },
+      "EventEntityId": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive event entity id.",
+        "minimum": 1
+      },
       "EventFanoutHealth": {
         "type": "object",
         "required": [
@@ -21140,15 +21146,13 @@
           "actor_user_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/PrincipalID"
             }
           },
           "collection_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/CollectionID"
             }
           },
           "correlation_ids": {
@@ -21160,8 +21164,7 @@
           "entity_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/EventEntityId"
             }
           },
           "entity_names": {
@@ -21173,15 +21176,13 @@
           "initiator_user_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/PrincipalID"
             }
           },
           "related_collection_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/CollectionID"
             }
           },
           "request_ids": {
@@ -27373,11 +27374,14 @@
             ]
           },
           "task_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskID"
+              }
+            ]
           }
         }
       },
@@ -27417,8 +27421,7 @@
             ]
           },
           "principal_id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/PrincipalID"
           }
         }
       },
@@ -28616,6 +28619,12 @@
             "format": "int32"
           }
         }
+      },
+      "TaskID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive task id.",
+        "minimum": 1
       },
       "TaskKind": {
         "type": "string",

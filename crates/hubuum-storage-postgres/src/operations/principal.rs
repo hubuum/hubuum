@@ -1,15 +1,14 @@
 use diesel::{ExpressionMethods, QueryDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{BoundedJsonPatch, JsonPatchErrorKind};
+use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageErrorKind, StoragePrincipal, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
-    StorageRecordMetadata,
 };
 use serde_json::{Map, Value, json};
 
 use crate::operations::event_record::append_event;
-use crate::revision::RevisionOwner;
+use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -36,15 +35,11 @@ pub(crate) struct PrincipalRow {
 impl PrincipalRow {
     pub(crate) fn into_storage(self) -> StoragePrincipal {
         StoragePrincipal::builder(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.kind,
             self.name,
-            self.identity_scope_id,
+            IdentityScopeId::new(self.identity_scope_id)
+                .expect("persisted identity scope id must be positive"),
         )
         .provider_managed(self.provider_managed)
         .settings(self.settings)
@@ -156,7 +151,7 @@ pub async fn mutate_principal_settings(
                 )
                 .map_err(|error| PostgresStorageError::database(error.to_string()))?
                 .with_context(event_context)
-                .with_entity_id(principal_id)
+                .with_entity_id(hubuum_events_core::EventEntityId::new(principal_id)?)
                 .with_entity_name(name)
                 .with_before(json!({ "revision": before_revision, "settings": before }))
                 .with_after(json!({ "revision": after_revision, "settings": after }));
@@ -197,9 +192,9 @@ fn apply_settings_mutation(
             let after = patch.apply(&before).map_err(|error| {
                 let (kind, message) = error.into_parts();
                 let storage_kind = match kind {
-                    JsonPatchErrorKind::BadRequest => StorageErrorKind::BadRequest,
+                    JsonPatchErrorKind::BadRequest => StorageErrorKind::InvalidInput,
                     JsonPatchErrorKind::Conflict => StorageErrorKind::Conflict,
-                    JsonPatchErrorKind::PayloadTooLarge => StorageErrorKind::PayloadTooLarge,
+                    JsonPatchErrorKind::PayloadTooLarge => StorageErrorKind::InputTooLarge,
                 };
                 PostgresStorageError::new(storage_kind, message, None)
             })?;
@@ -307,6 +302,6 @@ mod tests {
         )
         .expect_err("non-object settings must be rejected");
 
-        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
     }
 }

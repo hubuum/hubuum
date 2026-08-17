@@ -294,7 +294,7 @@ pub async fn list_event_sinks(
     runtime: &PostgresRuntime,
     query: StorageEventSinkListQuery,
 ) -> Result<StorageEventPage<StorageEventSink>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(async |connection| {
             let total = if include_total {
@@ -310,7 +310,7 @@ pub async fn list_event_sinks(
             let mut records = build_event_sink_query(query.options())?;
             let fields = query
                 .options()
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| event_sink_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -459,7 +459,7 @@ pub async fn list_event_subscriptions(
     runtime: &PostgresRuntime,
     query: StorageEventSubscriptionListQuery,
 ) -> Result<StorageEventPage<StorageEventSubscription>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(async |connection| {
             let total = if include_total {
@@ -476,7 +476,7 @@ pub async fn list_event_subscriptions(
                 build_event_subscription_query(query.collection_id(), query.options())?;
             let fields = query
                 .options()
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| event_subscription_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -680,7 +680,7 @@ async fn append_sink_audit(
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
-    .with_entity_id(after.id)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
     .with_before_opt(before.map(event_sink_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| event_sink_snapshot(after)))
@@ -708,9 +708,9 @@ async fn append_subscription_audit(
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
-    .with_entity_id(after.id)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
-    .with_collection_id(after.collection_id)
+    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
     .with_before_opt(before.map(event_subscription_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| event_subscription_snapshot(after)))
     .with_metadata(json!({
@@ -757,7 +757,7 @@ fn build_event_sink_query(
     use crate::schema::event_sinks::dsl::{created_at, event_sinks, id, kind, name, revision};
 
     let mut query = event_sinks.into_boxed();
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),
@@ -793,7 +793,7 @@ fn build_event_subscription_query(
     let mut query = event_subscriptions
         .filter(collection_id.eq(collection))
         .into_boxed();
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),

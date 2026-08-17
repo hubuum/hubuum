@@ -11,6 +11,7 @@ use hubuum_computed_fields::{
     Definition, FieldKey, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, Operation, ResultType,
     SEMANTICS_VERSION,
 };
+use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
@@ -314,7 +315,7 @@ pub async fn list_personal_computed_fields(
     }
     normalize_list_options(&mut options);
     let count_options = options.clone();
-    let total = if options.include_total {
+    let total = if options.include_total() {
         Some(
             runtime
                 .with_connection(
@@ -920,7 +921,7 @@ fn apply_personal_definition_filters<'query>(
     PostgresStorageError,
 > {
     use crate::schema::computed_field_definitions::dsl as definitions;
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, definitions::id)
@@ -954,11 +955,15 @@ fn apply_personal_definition_filters<'query>(
 }
 
 fn normalize_list_options(options: &mut QueryOptions) {
-    if options.sort.is_empty() {
-        options.sort.push(SortParam {
-            field: FilterField::Id,
-            descending: false,
-        });
+    if options.sort().is_empty() {
+        options.set_sort(
+            vec![SortParam {
+                field: FilterField::Id,
+                descending: false,
+            }]
+            .try_into()
+            .expect("the fixed computed-field default sort must be valid"),
+        );
     }
 }
 
@@ -966,7 +971,7 @@ fn computed_cursor_fields(
     options: &QueryOptions,
 ) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| {
             Ok(match sort.field {
@@ -1208,13 +1213,13 @@ fn computed_field_event(
         summary,
     )
     .map_err(|error| PostgresStorageError::internal(error.to_string()))
-    .map(|event| {
-        event
+    .and_then(|event| {
+        Ok(event
             .with_context(context)
-            .with_entity_id(definition.id())
+            .with_entity_id(hubuum_events_core::EventEntityId::new(definition.id())?)
             .with_entity_name(definition.key())
-            .with_collection_id(class.collection_id)
-            .with_metadata(json!({ "class_id": class.id }))
+            .with_collection_id(hubuum_domain::CollectionId::new(class.collection_id)?)
+            .with_metadata(json!({ "class_id": class.id })))
     })
 }
 
@@ -1355,10 +1360,16 @@ async fn cancel_queued_reindex_tasks(
     .get_results::<TaskRow>(connection)
     .await?;
     for task in &cancelled {
-        let provenance = actor_id.map_or_else(
-            || MutationProvenance::system_for_task(task.initiator_user_id, task.id),
-            |actor_id| MutationProvenance::user_for_task(actor_id, task.initiator_user_id, task.id),
-        );
+        let initiator_user_id = task.initiator_user_id.map(PrincipalId::new).transpose()?;
+        let task_id = TaskId::new(task.id)?;
+        let provenance = match actor_id {
+            Some(actor_id) => MutationProvenance::user_for_task(
+                PrincipalId::new(actor_id)?,
+                initiator_user_id,
+                task_id,
+            ),
+            None => MutationProvenance::system_for_task(initiator_user_id, task_id),
+        };
         append_event(
             connection,
             &task_event(
@@ -1403,10 +1414,16 @@ async fn insert_internal_task(
         .returning(TaskRow::as_returning())
         .get_result::<TaskRow>(connection)
         .await?;
-    let provenance = actor_id.map_or_else(
-        || MutationProvenance::system_for_task(task.initiator_user_id, task.id),
-        |actor_id| MutationProvenance::user_for_task(actor_id, task.initiator_user_id, task.id),
-    );
+    let initiator_user_id = task.initiator_user_id.map(PrincipalId::new).transpose()?;
+    let task_id = TaskId::new(task.id)?;
+    let provenance = match actor_id {
+        Some(actor_id) => MutationProvenance::user_for_task(
+            PrincipalId::new(actor_id)?,
+            initiator_user_id,
+            task_id,
+        ),
+        None => MutationProvenance::system_for_task(initiator_user_id, task_id),
+    };
     append_event(
         connection,
         &task_event(&task, Action::Queued, "Internal task queued", &provenance)?,
@@ -1432,14 +1449,14 @@ fn task_event(
 ) -> Result<NewEvent, PostgresStorageError> {
     NewEvent::new(EntityType::Task, action, provenance.actor_kind(), summary)
         .map_err(|error| PostgresStorageError::internal(error.to_string()))
-        .map(|event| {
-            event
-                .with_entity_id(task.id)
+        .and_then(|event| {
+            Ok(event
+                .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
                 .with_metadata(json!({
                     "task_id": task.id,
                     "task_kind": task.kind,
                 }))
-                .with_mutation_provenance(provenance)
+                .with_mutation_provenance(provenance))
         })
 }
 
@@ -1471,9 +1488,9 @@ mod tests {
 
     #[test]
     fn computed_cursor_mapping_covers_the_public_sort_contract() {
-        let options = QueryOptions {
-            filters: Vec::new(),
-            sort: [
+        let options = QueryOptions::new(
+            Vec::new(),
+            [
                 FilterField::Id,
                 FilterField::Name,
                 FilterField::ClassId,
@@ -1486,11 +1503,12 @@ mod tests {
                 field,
                 descending: false,
             })
-            .collect(),
-            limit: Some(10),
-            cursor: None,
-            include_total: false,
-        };
+            .collect::<Vec<_>>(),
+            Some(10),
+            None,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(computed_cursor_fields(&options).unwrap().len(), 6);
     }
@@ -1501,23 +1519,24 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            hubuum_storage_core::StorageErrorKind::BadRequest
+            hubuum_storage_core::StorageErrorKind::InvalidInput
         );
     }
 
     #[test]
     fn personal_definition_filters_reject_fields_outside_the_contract() {
-        let options = QueryOptions {
-            filters: vec![ParsedQueryParam {
+        let options = QueryOptions::new(
+            vec![ParsedQueryParam {
                 field: FilterField::Permissions,
                 operator: SearchOperator::Equals { is_negated: false },
                 value: "read".to_string(),
             }],
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        };
+            Vec::new(),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
 
         let error = apply_personal_definition_filters(personal_definition_query(1, None), &options)
             .err()
@@ -1525,7 +1544,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            hubuum_storage_core::StorageErrorKind::BadRequest
+            hubuum_storage_core::StorageErrorKind::InvalidInput
         );
         assert!(error.to_string().contains("permissions"));
     }
@@ -1543,7 +1562,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            hubuum_storage_core::StorageErrorKind::BadRequest
+            hubuum_storage_core::StorageErrorKind::InvalidInput
         );
     }
 }

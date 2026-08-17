@@ -280,8 +280,8 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 
 #[async_trait]
 impl CollectionStore for PostgresStorage {
-    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
-        crate::operations::collection::get_collection(self.runtime(), id)
+    async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
+        crate::operations::collection::get_collection(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -298,46 +298,57 @@ impl CollectionStore for PostgresStorage {
 
     async fn update_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        crate::operations::collection::update_collection(self.runtime(), id, changes, context)
+        crate::operations::collection::update_collection(self.runtime(), id.id(), changes, context)
             .await
             .map_err(StorageError::from)
     }
 
     async fn delete_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        crate::operations::collection::delete_collection(self.runtime(), id, context)
+        crate::operations::collection::delete_collection(self.runtime(), id.id(), context)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        crate::operations::collection::collection_children(self.runtime(), id)
+    async fn collection_children(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
+        crate::operations::collection::collection_children(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        crate::operations::collection::collection_ancestors(self.runtime(), id)
+    async fn collection_ancestors(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
+        crate::operations::collection::collection_ancestors(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn move_collection(
         &self,
-        id: i32,
-        new_parent_id: i32,
+        id: CollectionId,
+        new_parent_id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        crate::operations::collection::move_collection(self.runtime(), id, new_parent_id, context)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::collection::move_collection(
+            self.runtime(),
+            id.id(),
+            new_parent_id.id(),
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 
@@ -383,10 +394,24 @@ impl ClassStore for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+    async fn class_names(
+        &self,
+        class_ids: Vec<ClassId>,
+    ) -> Result<Vec<(ClassId, String)>, StorageError> {
+        let class_ids = class_ids.into_iter().map(ClassId::id).collect();
         crate::operations::class::class_names(self.runtime(), class_ids)
             .await
             .map_err(StorageError::from)
+            .and_then(|rows| {
+                rows.into_iter()
+                    .map(|(id, name)| {
+                        ClassId::new(id)
+                            .map(|id| (id, name))
+                            .map_err(crate::PostgresStorageError::from)
+                            .map_err(StorageError::from)
+                    })
+                    .collect()
+            })
     }
 }
 
@@ -522,8 +547,8 @@ impl ObjectRelationStore for PostgresStorage {
 
 #[async_trait]
 impl ObjectStore for PostgresStorage {
-    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
-        crate::operations::object::get_object(self.runtime(), object_id)
+    async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
+        crate::operations::object::get_object(self.runtime(), object_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -597,12 +622,12 @@ impl ObjectStore for PostgresStorage {
 
     async fn validate_object_update(
         &self,
-        object_id: i32,
+        object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
         crate::operations::object::validate_object_update_command(
             self.runtime(),
-            object_id,
+            object_id.id(),
             changes,
         )
         .await

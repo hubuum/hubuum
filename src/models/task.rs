@@ -279,7 +279,13 @@ impl fmt::Debug for TaskRecord {
 
 impl TaskRecord {
     pub(crate) fn worker_provenance(&self) -> MutationProvenance {
-        MutationProvenance::worker(self.initiator_user_id, self.id)
+        MutationProvenance::worker(
+            self.initiator_user_id.map(|initiator_user_id| {
+                hubuum_domain::PrincipalId::new(initiator_user_id)
+                    .expect("persisted task initiator id must be positive")
+            }),
+            hubuum_domain::TaskId::new(self.id).expect("persisted task id must be positive"),
+        )
     }
 }
 

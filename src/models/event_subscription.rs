@@ -298,7 +298,7 @@ pub fn validate_subscription_parts(
             )));
         }
         parsed_entity_types.push(
-            hubuum_events_core::EntityType::from_db(value)
+            hubuum_events_core::EntityType::parse(value)
                 .map_err(|error| ApiError::BadRequest(format!("bad entity_type: {error}")))?,
         );
     }
@@ -312,7 +312,7 @@ pub fn validate_subscription_parts(
             )));
         }
         parsed_actions.push(
-            hubuum_events_core::Action::from_db(value)
+            hubuum_events_core::Action::parse(value)
                 .map_err(|error| ApiError::BadRequest(format!("bad action: {error}")))?,
         );
     }

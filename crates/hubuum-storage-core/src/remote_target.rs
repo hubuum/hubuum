@@ -231,11 +231,11 @@ impl fmt::Debug for StorageRemoteTargetListQuery {
                 "allowed_collection_count",
                 &self.allowed_collection_ids.len(),
             )
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -628,7 +628,12 @@ mod tests {
             .expect("valid timestamp")
             .naive_utc();
         let target = StorageRemoteTarget::new(
-            StorageRecordMetadata::new(1, now, now, 1),
+            StorageRecordMetadata::new(
+                hubuum_domain::ResourceId::new(1).unwrap(),
+                now,
+                now,
+                hubuum_domain::ResourceRevision::new(1).unwrap(),
+            ),
             2,
             "secret target name",
             definition(),
@@ -637,7 +642,7 @@ mod tests {
             2,
             "secret create name",
             definition(),
-            EventContext::user(3, None, None),
+            EventContext::user(hubuum_domain::PrincipalId::new(3).unwrap(), None, None),
         );
 
         let debug = format!("{target:?} {request:?}");

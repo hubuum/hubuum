@@ -5,14 +5,12 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
-use hubuum_storage_core::{
-    StorageCollection, StorageCollectionCreate, StorageCollectionUpdate, StorageRecordMetadata,
-};
+use hubuum_storage_core::{StorageCollection, StorageCollectionCreate, StorageCollectionUpdate};
 use serde_json::json;
 
 use crate::operations::authorization::insert_full_collection_grant;
 use crate::operations::event_record::append_event;
-use crate::revision::RevisionOwner;
+use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::{assert_locked_revision_precondition, require_existing_revision_target};
 use crate::{
     PostgresConnection, PostgresFailpoint, PostgresRevision, PostgresRuntime, PostgresStorageError,
@@ -34,12 +32,7 @@ pub(crate) struct CollectionRow {
 impl CollectionRow {
     pub(crate) fn into_storage(self) -> StorageCollection {
         StorageCollection::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.name,
             self.description,
             self.parent_collection_id,
@@ -113,10 +106,6 @@ pub async fn create_collection(
     command: StorageCollectionCreate,
     context: Option<&EventContext>,
 ) -> Result<StorageCollection, PostgresStorageError> {
-    validate_positive_id(command.owner_group_id(), "group id")?;
-    if let Some(parent_id) = command.parent_collection_id() {
-        validate_positive_id(parent_id, "parent collection id")?;
-    }
     let context = context.cloned();
     runtime
         .with_transaction(async move |connection| {
@@ -130,16 +119,17 @@ pub(crate) async fn create_collection_on(
     command: StorageCollectionCreate,
     context: Option<&EventContext>,
 ) -> Result<StorageCollection, PostgresStorageError> {
-    validate_positive_id(command.owner_group_id(), "group id")?;
-    if let Some(parent_id) = command.parent_collection_id() {
-        validate_positive_id(parent_id, "parent collection id")?;
-    }
-    let parent_id =
-        resolve_parent_collection_id(connection, command.parent_collection_id()).await?;
+    let parent_id = resolve_parent_collection_id(
+        connection,
+        command
+            .parent_collection_id()
+            .map(hubuum_domain::CollectionId::id),
+    )
+    .await?;
     let created =
         insert_collection(connection, command.name(), command.description(), parent_id).await?;
     insert_collection_closure_rows(connection, created.id, parent_id).await?;
-    insert_full_collection_grant(connection, created.id, command.owner_group_id()).await?;
+    insert_full_collection_grant(connection, created.id, command.owner_group_id().id()).await?;
 
     if let Some(context) = context {
         check_failpoint(PostgresFailpoint::CollectionCreateAfterRecords)?;
@@ -572,12 +562,12 @@ fn collection_event(
         summary,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
-    .map(|event| {
-        event
+    .and_then(|event| {
+        Ok(event
             .with_context(context)
-            .with_entity_id(collection.id)
+            .with_entity_id(hubuum_events_core::EventEntityId::new(collection.id)?)
             .with_entity_name(&collection.name)
-            .with_collection_id(collection.id)
+            .with_collection_id(hubuum_domain::CollectionId::new(collection.id)?))
     })
 }
 

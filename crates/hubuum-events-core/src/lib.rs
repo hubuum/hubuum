@@ -15,6 +15,7 @@
 use std::fmt;
 
 use chrono::NaiveDateTime;
+pub use hubuum_domain::{CollectionId, PrincipalId, TaskId};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "schema")]
@@ -43,7 +44,7 @@ impl ActorKind {
         }
     }
 
-    pub fn from_db(value: &str) -> Result<Self, EventCatalogError> {
+    pub fn parse(value: &str) -> Result<Self, EventCatalogError> {
         match value {
             "user" => Ok(ActorKind::User),
             "system" => Ok(ActorKind::System),
@@ -61,7 +62,7 @@ impl ActorKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct ProvenancePrincipal {
-    pub principal_id: i32,
+    pub principal_id: PrincipalId,
     pub name: Option<String>,
 }
 
@@ -79,7 +80,7 @@ pub struct ProvenanceActor {
 pub struct Provenance {
     pub actor: ProvenanceActor,
     pub initiator: Option<ProvenancePrincipal>,
-    pub task_id: Option<i32>,
+    pub task_id: Option<TaskId>,
 }
 
 /// Typed mutation attribution propagated through database task-local state.
@@ -90,17 +91,21 @@ pub struct Provenance {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MutationProvenance {
     actor_kind: ActorKind,
-    actor_user_id: Option<i32>,
-    initiator_user_id: Option<i32>,
-    task_id: Option<i32>,
+    actor_user_id: Option<PrincipalId>,
+    initiator_user_id: Option<PrincipalId>,
+    task_id: Option<TaskId>,
 }
 
 impl MutationProvenance {
-    pub fn user(actor_user_id: i32) -> Self {
+    pub fn user(actor_user_id: PrincipalId) -> Self {
         Self::new(ActorKind::User, Some(actor_user_id), None, None)
     }
 
-    pub fn user_for_task(actor_user_id: i32, initiator_user_id: Option<i32>, task_id: i32) -> Self {
+    pub fn user_for_task(
+        actor_user_id: PrincipalId,
+        initiator_user_id: Option<PrincipalId>,
+        task_id: TaskId,
+    ) -> Self {
         Self::new(
             ActorKind::User,
             Some(actor_user_id),
@@ -113,11 +118,11 @@ impl MutationProvenance {
         Self::new(ActorKind::System, None, None, None)
     }
 
-    pub fn system_for_task(initiator_user_id: Option<i32>, task_id: i32) -> Self {
+    pub fn system_for_task(initiator_user_id: Option<PrincipalId>, task_id: TaskId) -> Self {
         Self::new(ActorKind::System, None, initiator_user_id, Some(task_id))
     }
 
-    pub fn worker(initiator_user_id: Option<i32>, task_id: i32) -> Self {
+    pub fn worker(initiator_user_id: Option<PrincipalId>, task_id: TaskId) -> Self {
         Self::new(ActorKind::Worker, None, initiator_user_id, Some(task_id))
     }
 
@@ -125,23 +130,23 @@ impl MutationProvenance {
         self.actor_kind
     }
 
-    pub fn actor_user_id(&self) -> Option<i32> {
+    pub fn actor_user_id(&self) -> Option<PrincipalId> {
         self.actor_user_id
     }
 
-    pub fn initiator_user_id(&self) -> Option<i32> {
+    pub fn initiator_user_id(&self) -> Option<PrincipalId> {
         self.initiator_user_id
     }
 
-    pub fn task_id(&self) -> Option<i32> {
+    pub fn task_id(&self) -> Option<TaskId> {
         self.task_id
     }
 
     fn new(
         actor_kind: ActorKind,
-        actor_user_id: Option<i32>,
-        initiator_user_id: Option<i32>,
-        task_id: Option<i32>,
+        actor_user_id: Option<PrincipalId>,
+        initiator_user_id: Option<PrincipalId>,
+        task_id: Option<TaskId>,
     ) -> Self {
         Self {
             actor_kind,
@@ -170,7 +175,7 @@ impl EventContext {
     }
 
     pub fn user(
-        actor_user_id: i32,
+        actor_user_id: PrincipalId,
         request_id: Option<Uuid>,
         correlation_id: Option<String>,
     ) -> Self {
@@ -189,15 +194,15 @@ impl EventContext {
         self.mutation.actor_kind()
     }
 
-    pub fn actor_user_id(&self) -> Option<i32> {
+    pub fn actor_user_id(&self) -> Option<PrincipalId> {
         self.mutation.actor_user_id()
     }
 
-    pub fn initiator_user_id(&self) -> Option<i32> {
+    pub fn initiator_user_id(&self) -> Option<PrincipalId> {
         self.mutation.initiator_user_id()
     }
 
-    pub fn task_id(&self) -> Option<i32> {
+    pub fn task_id(&self) -> Option<TaskId> {
         self.mutation.task_id()
     }
 
@@ -276,7 +281,7 @@ impl EntityType {
         }
     }
 
-    pub fn from_db(value: &str) -> Result<Self, EventCatalogError> {
+    pub fn parse(value: &str) -> Result<Self, EventCatalogError> {
         match value {
             "collection" => Ok(EntityType::Collection),
             "class" => Ok(EntityType::Class),
@@ -356,7 +361,7 @@ impl Action {
         }
     }
 
-    pub fn from_db(value: &str) -> Result<Self, EventCatalogError> {
+    pub fn parse(value: &str) -> Result<Self, EventCatalogError> {
         match value {
             "created" => Ok(Action::Created),
             "updated" => Ok(Action::Updated),
@@ -418,18 +423,129 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EventIdentifierError;
+
+impl fmt::Display for EventIdentifierError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("event identifiers must be positive")
+    }
+}
+
+impl std::error::Error for EventIdentifierError {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(try_from = "i64", into = "i64")]
+pub struct EventSequence(i64);
+
+impl EventSequence {
+    pub const fn new(value: i64) -> Result<Self, EventIdentifierError> {
+        if value <= 0 {
+            return Err(EventIdentifierError);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl TryFrom<i64> for EventSequence {
+    type Error = EventIdentifierError;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<EventSequence> for i64 {
+    fn from(value: EventSequence) -> Self {
+        value.get()
+    }
+}
+
+#[cfg(feature = "schema")]
+impl utoipa::PartialSchema for EventSequence {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{SchemaFormat, Type};
+        use utoipa::openapi::{KnownFormat, ObjectBuilder};
+
+        ObjectBuilder::new()
+            .schema_type(Type::Integer)
+            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int64)))
+            .minimum(Some(1))
+            .description(Some("Validated positive event sequence."))
+            .into()
+    }
+}
+
+#[cfg(feature = "schema")]
+impl utoipa::ToSchema for EventSequence {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(try_from = "i32", into = "i32")]
+pub struct EventEntityId(i32);
+
+impl EventEntityId {
+    pub const fn new(value: i32) -> Result<Self, EventIdentifierError> {
+        if value <= 0 {
+            return Err(EventIdentifierError);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
+
+impl TryFrom<i32> for EventEntityId {
+    type Error = EventIdentifierError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<EventEntityId> for i32 {
+    fn from(value: EventEntityId) -> Self {
+        value.get()
+    }
+}
+
+#[cfg(feature = "schema")]
+impl utoipa::PartialSchema for EventEntityId {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{SchemaFormat, Type};
+        use utoipa::openapi::{KnownFormat, ObjectBuilder};
+
+        ObjectBuilder::new()
+            .schema_type(Type::Integer)
+            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int32)))
+            .minimum(Some(1))
+            .description(Some("Validated positive event entity id."))
+            .into()
+    }
+}
+
+#[cfg(feature = "schema")]
+impl utoipa::ToSchema for EventEntityId {}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventEnvelope {
-    pub id: i64,
+    pub id: EventSequence,
     pub event_id: Uuid,
     pub occurred_at: NaiveDateTime,
     pub entity_type: String,
-    pub entity_id: Option<i32>,
+    pub entity_id: Option<EventEntityId>,
     pub entity_name: Option<String>,
-    pub collection_id: Option<i32>,
+    pub collection_id: Option<CollectionId>,
     pub action: String,
-    pub actor_user_id: Option<i32>,
+    pub actor_user_id: Option<PrincipalId>,
     pub actor_kind: String,
     pub provenance: Provenance,
     pub request_id: Option<Uuid>,
@@ -468,7 +584,7 @@ impl fmt::Debug for EventEnvelope {
 }
 
 impl EventEnvelope {
-    pub fn related_collection_ids(&self) -> Vec<i32> {
+    pub fn related_collection_ids(&self) -> Vec<CollectionId> {
         self.metadata
             .get("related_collection_ids")
             .and_then(serde_json::Value::as_array)
@@ -480,6 +596,7 @@ impl EventEnvelope {
                             .as_i64()
                             .and_then(|value| i32::try_from(value).ok())
                             .or_else(|| value.as_str().and_then(|value| value.parse::<i32>().ok()))
+                            .and_then(|value| CollectionId::new(value).ok())
                     })
                     .collect()
             })
@@ -497,19 +614,19 @@ impl EventEnvelope {
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventSubscriptionFilter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collection_ids: Vec<i32>,
+    pub collection_ids: Vec<CollectionId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub related_collection_ids: Vec<i32>,
+    pub related_collection_ids: Vec<CollectionId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub entity_ids: Vec<i32>,
+    pub entity_ids: Vec<EventEntityId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entity_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actor_kinds: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub actor_user_ids: Vec<i32>,
+    pub actor_user_ids: Vec<PrincipalId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub initiator_user_ids: Vec<i32>,
+    pub initiator_user_ids: Vec<PrincipalId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub request_ids: Vec<Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -518,16 +635,16 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
-        matches_optional_i32(&self.collection_ids, event.collection_id)
-            && matches_any_i32(
+        matches_optional(&self.collection_ids, event.collection_id)
+            && matches_any(
                 &self.related_collection_ids,
                 &event.related_collection_ids(),
             )
-            && matches_optional_i32(&self.entity_ids, event.entity_id)
+            && matches_optional(&self.entity_ids, event.entity_id)
             && matches_optional_str(&self.entity_names, event.entity_name.as_deref())
             && matches_str(&self.actor_kinds, &event.actor_kind)
-            && matches_optional_i32(&self.actor_user_ids, event.actor_user_id)
-            && matches_optional_i32(
+            && matches_optional(&self.actor_user_ids, event.actor_user_id)
+            && matches_optional(
                 &self.initiator_user_ids,
                 event
                     .provenance
@@ -540,37 +657,22 @@ impl EventSubscriptionFilter {
     }
 
     pub fn validate(&self) -> Result<(), EventFilterError> {
-        ensure_unique_i32("collection_ids", &self.collection_ids)?;
-        ensure_unique_i32("related_collection_ids", &self.related_collection_ids)?;
-        ensure_unique_i32("entity_ids", &self.entity_ids)?;
+        ensure_unique("collection_ids", &self.collection_ids)?;
+        ensure_unique("related_collection_ids", &self.related_collection_ids)?;
+        ensure_unique("entity_ids", &self.entity_ids)?;
         ensure_unique_str("entity_names", &self.entity_names)?;
         ensure_unique_str("actor_kinds", &self.actor_kinds)?;
-        ensure_unique_i32("actor_user_ids", &self.actor_user_ids)?;
-        ensure_unique_i32("initiator_user_ids", &self.initiator_user_ids)?;
+        ensure_unique("actor_user_ids", &self.actor_user_ids)?;
+        ensure_unique("initiator_user_ids", &self.initiator_user_ids)?;
         ensure_unique_uuid("request_ids", &self.request_ids)?;
         ensure_unique_str("correlation_ids", &self.correlation_ids)?;
 
-        for value in &self.collection_ids {
-            ensure_positive("collection_ids", *value)?;
-        }
-        for value in &self.related_collection_ids {
-            ensure_positive("related_collection_ids", *value)?;
-        }
-        for value in &self.entity_ids {
-            ensure_positive("entity_ids", *value)?;
-        }
-        for value in &self.actor_user_ids {
-            ensure_positive("actor_user_ids", *value)?;
-        }
-        for value in &self.initiator_user_ids {
-            ensure_positive("initiator_user_ids", *value)?;
-        }
         for value in &self.entity_names {
             ensure_non_empty("entity_names", value)?;
         }
         for value in &self.actor_kinds {
             ensure_non_empty("actor_kinds", value)?;
-            ActorKind::from_db(value).map_err(|_| EventFilterError::InvalidActorKind {
+            ActorKind::parse(value).map_err(|_| EventFilterError::InvalidActorKind {
                 value: value.clone(),
             })?;
         }
@@ -585,7 +687,6 @@ impl EventSubscriptionFilter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventFilterError {
     DuplicateValue { field: &'static str, value: String },
-    NonPositiveValue { field: &'static str, value: i32 },
     EmptyString { field: &'static str },
     InvalidActorKind { value: String },
 }
@@ -595,9 +696,6 @@ impl fmt::Display for EventFilterError {
         match self {
             Self::DuplicateValue { field, value } => {
                 write!(f, "filter.{field} contains duplicate '{value}'")
-            }
-            Self::NonPositiveValue { field, value } => {
-                write!(f, "filter.{field} contains non-positive id {value}")
             }
             Self::EmptyString { field } => {
                 write!(f, "filter.{field} contains an empty string")
@@ -614,11 +712,11 @@ impl fmt::Display for EventFilterError {
 
 impl std::error::Error for EventFilterError {}
 
-fn matches_optional_i32(filter_values: &[i32], event_value: Option<i32>) -> bool {
+fn matches_optional<T: PartialEq>(filter_values: &[T], event_value: Option<T>) -> bool {
     filter_values.is_empty() || event_value.is_some_and(|value| filter_values.contains(&value))
 }
 
-fn matches_any_i32(filter_values: &[i32], event_values: &[i32]) -> bool {
+fn matches_any<T: PartialEq>(filter_values: &[T], event_values: &[T]) -> bool {
     filter_values.is_empty()
         || event_values
             .iter()
@@ -639,13 +737,6 @@ fn matches_optional_uuid(filter_values: &[Uuid], event_value: Option<Uuid>) -> b
     filter_values.is_empty() || event_value.is_some_and(|value| filter_values.contains(&value))
 }
 
-fn ensure_positive(field: &'static str, value: i32) -> Result<(), EventFilterError> {
-    if value <= 0 {
-        return Err(EventFilterError::NonPositiveValue { field, value });
-    }
-    Ok(())
-}
-
 fn ensure_non_empty(field: &'static str, value: &str) -> Result<(), EventFilterError> {
     if value.trim().is_empty() {
         return Err(EventFilterError::EmptyString { field });
@@ -653,13 +744,16 @@ fn ensure_non_empty(field: &'static str, value: &str) -> Result<(), EventFilterE
     Ok(())
 }
 
-fn ensure_unique_i32(field: &'static str, values: &[i32]) -> Result<(), EventFilterError> {
+fn ensure_unique<T>(field: &'static str, values: &[T]) -> Result<(), EventFilterError>
+where
+    T: Copy + Eq + std::hash::Hash + fmt::Debug,
+{
     let mut seen = std::collections::HashSet::new();
     for value in values {
         if !seen.insert(*value) {
             return Err(EventFilterError::DuplicateValue {
                 field,
-                value: value.to_string(),
+                value: format!("{value:?}"),
             });
         }
     }
@@ -803,14 +897,14 @@ impl From<EventId> for Uuid {
 pub struct NewEvent {
     event_id: EventId,
     entity_type: EntityType,
-    entity_id: Option<i32>,
+    entity_id: Option<EventEntityId>,
     entity_name: Option<String>,
-    collection_id: Option<i32>,
+    collection_id: Option<CollectionId>,
     action: Action,
-    actor_user_id: Option<i32>,
+    actor_user_id: Option<PrincipalId>,
     actor_kind: ActorKind,
-    initiator_user_id: Option<i32>,
-    task_id: Option<i32>,
+    initiator_user_id: Option<PrincipalId>,
+    task_id: Option<TaskId>,
     request_id: Option<Uuid>,
     correlation_id: Option<String>,
     summary: String,
@@ -881,7 +975,7 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub fn with_entity_id(mut self, entity_id: i32) -> Self {
+    pub fn with_entity_id(mut self, entity_id: EventEntityId) -> Self {
         self.entity_id = Some(entity_id);
         self
     }
@@ -893,13 +987,13 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub fn with_collection_id(mut self, collection_id: i32) -> Self {
+    pub fn with_collection_id(mut self, collection_id: CollectionId) -> Self {
         self.collection_id = Some(collection_id);
         self
     }
 
     #[must_use]
-    pub fn with_actor_user_id(mut self, actor_user_id: i32) -> Self {
+    pub fn with_actor_user_id(mut self, actor_user_id: PrincipalId) -> Self {
         self.actor_user_id = Some(actor_user_id);
         self
     }
@@ -977,7 +1071,7 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub const fn entity_id(&self) -> Option<i32> {
+    pub const fn entity_id(&self) -> Option<EventEntityId> {
         self.entity_id
     }
 
@@ -987,7 +1081,7 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> Option<i32> {
+    pub const fn collection_id(&self) -> Option<CollectionId> {
         self.collection_id
     }
 
@@ -1002,17 +1096,17 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub const fn actor_user_id(&self) -> Option<i32> {
+    pub const fn actor_user_id(&self) -> Option<PrincipalId> {
         self.actor_user_id
     }
 
     #[must_use]
-    pub const fn initiator_user_id(&self) -> Option<i32> {
+    pub const fn initiator_user_id(&self) -> Option<PrincipalId> {
         self.initiator_user_id
     }
 
     #[must_use]
-    pub const fn task_id(&self) -> Option<i32> {
+    pub const fn task_id(&self) -> Option<TaskId> {
         self.task_id
     }
 
@@ -1211,9 +1305,9 @@ mod tests {
             EntityType::Restore,
         ];
         for t in all {
-            assert_eq!(EntityType::from_db(t.as_str()).unwrap(), t);
+            assert_eq!(EntityType::parse(t.as_str()).unwrap(), t);
         }
-        assert!(EntityType::from_db("hubuumclass").is_err());
+        assert!(EntityType::parse("hubuumclass").is_err());
     }
 
     #[test]
@@ -1240,9 +1334,9 @@ mod tests {
             Action::Disabled,
         ];
         for a in all {
-            assert_eq!(Action::from_db(a.as_str()).unwrap(), a);
+            assert_eq!(Action::parse(a.as_str()).unwrap(), a);
         }
-        assert!(Action::from_db("patched").is_err());
+        assert!(Action::parse("patched").is_err());
     }
 
     #[test]
@@ -1307,9 +1401,9 @@ mod tests {
     #[test]
     fn actor_kind_round_trips() {
         for k in [ActorKind::User, ActorKind::System, ActorKind::Worker] {
-            assert_eq!(ActorKind::from_db(k.as_str()).unwrap(), k);
+            assert_eq!(ActorKind::parse(k.as_str()).unwrap(), k);
         }
-        assert!(ActorKind::from_db("anonymous").is_err());
+        assert!(ActorKind::parse("anonymous").is_err());
     }
 
     #[test]
@@ -1325,12 +1419,12 @@ mod tests {
             ..envelope()
         };
         let filter = EventSubscriptionFilter {
-            collection_ids: vec![10],
-            related_collection_ids: vec![20],
-            entity_ids: vec![30],
+            collection_ids: vec![CollectionId::new(10).unwrap()],
+            related_collection_ids: vec![CollectionId::new(20).unwrap()],
+            entity_ids: vec![EventEntityId::new(30).unwrap()],
             entity_names: vec!["test entity".to_string()],
             actor_kinds: vec!["user".to_string()],
-            actor_user_ids: vec![40],
+            actor_user_ids: vec![PrincipalId::new(40).unwrap()],
             initiator_user_ids: vec![],
             request_ids: vec![request_id],
             correlation_ids: vec!["correlation".to_string()],
@@ -1342,7 +1436,7 @@ mod tests {
     #[test]
     fn subscription_filter_rejects_non_matching_dimension() {
         let filter = EventSubscriptionFilter {
-            actor_user_ids: vec![999],
+            actor_user_ids: vec![PrincipalId::new(999).unwrap()],
             ..EventSubscriptionFilter::default()
         };
 
@@ -1353,11 +1447,11 @@ mod tests {
     fn subscription_filter_matches_task_initiator() {
         let mut event = envelope();
         event.provenance.initiator = Some(ProvenancePrincipal {
-            principal_id: 77,
+            principal_id: PrincipalId::new(77).unwrap(),
             name: Some("submitter".to_string()),
         });
         let filter = EventSubscriptionFilter {
-            initiator_user_ids: vec![77],
+            initiator_user_ids: vec![PrincipalId::new(77).unwrap()],
             ..EventSubscriptionFilter::default()
         };
 
@@ -1377,7 +1471,10 @@ mod tests {
         ));
 
         let filter = EventSubscriptionFilter {
-            collection_ids: vec![10, 10],
+            collection_ids: vec![
+                CollectionId::new(10).unwrap(),
+                CollectionId::new(10).unwrap(),
+            ],
             ..EventSubscriptionFilter::default()
         };
 
@@ -1389,18 +1486,18 @@ mod tests {
 
     fn envelope() -> EventEnvelope {
         EventEnvelope {
-            id: 1,
+            id: EventSequence::new(1).unwrap(),
             event_id: Uuid::new_v4(),
             occurred_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
             entity_type: "collection".to_string(),
-            entity_id: Some(30),
+            entity_id: Some(EventEntityId::new(30).unwrap()),
             entity_name: Some("test entity".to_string()),
-            collection_id: Some(10),
+            collection_id: Some(CollectionId::new(10).unwrap()),
             action: "created".to_string(),
-            actor_user_id: Some(40),
+            actor_user_id: Some(PrincipalId::new(40).unwrap()),
             actor_kind: "user".to_string(),
             provenance: Provenance::default(),
             request_id: None,

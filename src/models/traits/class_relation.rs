@@ -10,13 +10,13 @@ use crate::models::{
     PreparedClassRelation, PreparedObjectRelation, RelatedObjectGraphRow,
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
-use crate::services::storage_boundary::collection_from_storage;
 use crate::services::storage_boundary::{
     class_relation_create_to_storage, class_relation_from_storage,
     object_relation_create_selector_to_storage, object_relation_selector_to_storage,
     prepared_class_relation_from_storage, prepared_object_relation_from_storage,
     resolved_class_relation_from_storage, resolved_object_relation_from_storage,
 };
+use crate::services::storage_boundary::{collection_from_storage, collection_id_to_storage};
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{
     ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter, ObjectAdapter,
@@ -86,12 +86,16 @@ async fn relation_collections(
 ) -> Result<(Collection, Collection), ApiError> {
     let storage = storage_handle(backend).collection_store();
     let from_collection = storage
-        .get_collection(CollectionID::new(from_collection_id)?.id())
+        .get_collection(collection_id_to_storage(
+            CollectionID::new(from_collection_id)?.id(),
+        ))
         .await
         .map_err(ApiError::from)
         .and_then(collection_from_storage)?;
     let to_collection = storage
-        .get_collection(CollectionID::new(to_collection_id)?.id())
+        .get_collection(collection_id_to_storage(
+            CollectionID::new(to_collection_id)?.id(),
+        ))
         .await
         .map_err(ApiError::from)
         .and_then(collection_from_storage)?;

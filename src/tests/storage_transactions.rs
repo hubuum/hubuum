@@ -6,6 +6,7 @@ use diesel_async::RunQueryDsl;
 
 use crate::events::{EntityType, EventContext};
 use crate::models::NewGroup;
+use crate::services::storage_boundary::{collection_id_to_storage, object_id_to_storage};
 use crate::storage::postgres::{PostgresPool, with_connection};
 use crate::storage::{
     ClassRelationStore, ClassStore, CollectionStore, MemoryStorageModel, ObjectRelationStore,
@@ -90,7 +91,8 @@ where
                         .create(StorageCollectionCreate::new(
                             transaction_collection_name,
                             "transaction contract collection",
-                            owner_group_id,
+                            hubuum_domain::GroupId::new(owner_group_id)
+                                .expect("validated group id must be positive"),
                             None,
                         ))
                         .await?;
@@ -99,7 +101,7 @@ where
                         .create(
                             StorageClassCreate::builder(
                                 format!("{transaction_label}_from_class"),
-                                collection.id(),
+                                collection_id_to_storage(collection.id()),
                                 "transaction contract from class",
                             )
                             .build(),
@@ -110,7 +112,7 @@ where
                         .create(
                             StorageClassCreate::builder(
                                 format!("{transaction_label}_to_class"),
-                                collection.id(),
+                                collection_id_to_storage(collection.id()),
                                 "transaction contract to class",
                             )
                             .build(),
@@ -128,8 +130,8 @@ where
                         .class_relations()
                         .prepare(
                             StorageClassRelationCreate::builder(
-                                from_class.class().id(),
-                                to_class.class().id(),
+                                from_class.class().id().id(),
+                                to_class.class().id().id(),
                             )
                             .build(),
                         )
@@ -144,7 +146,7 @@ where
                             &from_class,
                             StorageObjectCreate::new(
                                 transaction_from_name,
-                                collection.id(),
+                                collection_id_to_storage(collection.id()),
                                 from_class.class().id(),
                                 serde_json::json!({"side": "from"}),
                                 "transaction contract from object",
@@ -157,7 +159,7 @@ where
                             &to_class,
                             StorageObjectCreate::new(
                                 format!("{transaction_label}_to_object"),
-                                collection.id(),
+                                collection_id_to_storage(collection.id()),
                                 to_class.class().id(),
                                 serde_json::json!({"side": "to"}),
                                 "transaction contract to object",
@@ -170,7 +172,7 @@ where
                             StorageObjectRelationCreate::new(
                                 from_object.id(),
                                 to_object.id(),
-                                class_relation.relation().metadata().id(),
+                                class_relation.relation().metadata().id().id(),
                             ),
                         ))
                         .await?;
@@ -191,7 +193,7 @@ where
 
     assert_eq!(
         storage
-            .get_collection(collection.id())
+            .get_collection(collection_id_to_storage(collection.id()))
             .await
             .expect("committed collection should be visible")
             .name(),
@@ -215,10 +217,10 @@ where
     );
     let committed_ids = TransactionEntityIds {
         collection: AtomicI32::new(collection.id()),
-        class: AtomicI32::new(from_class.class().id()),
-        class_relation: AtomicI32::new(class_relation.relation().metadata().id()),
+        class: AtomicI32::new(from_class.class().id().id()),
+        class_relation: AtomicI32::new(class_relation.relation().metadata().id().id()),
         object: AtomicI32::new(from_object.id()),
-        object_relation: AtomicI32::new(object_relation.relation().metadata().id()),
+        object_relation: AtomicI32::new(object_relation.relation().metadata().id().id()),
     };
     committed_ids.assert_populated();
 
@@ -233,7 +235,8 @@ where
                     .create(StorageCollectionCreate::new(
                         format!("{rollback_label}_collection"),
                         "rolled-back transaction collection",
-                        owner_group_id,
+                        hubuum_domain::GroupId::new(owner_group_id)
+                            .expect("validated group id must be positive"),
                         None,
                     ))
                     .await?;
@@ -245,7 +248,7 @@ where
                     .create(
                         StorageClassCreate::builder(
                             format!("{rollback_label}_from_class"),
-                            rollback_collection.id(),
+                            collection_id_to_storage(rollback_collection.id()),
                             "rolled-back from class",
                         )
                         .build(),
@@ -253,13 +256,13 @@ where
                     .await?;
                 rollback_ids_from_work
                     .class
-                    .store(rollback_from_class.id(), Ordering::Relaxed);
+                    .store(rollback_from_class.id().id(), Ordering::Relaxed);
                 let rollback_to_class = transaction
                     .classes()
                     .create(
                         StorageClassCreate::builder(
                             format!("{rollback_label}_to_class"),
-                            rollback_collection.id(),
+                            collection_id_to_storage(rollback_collection.id()),
                             "rolled-back to class",
                         )
                         .build(),
@@ -277,8 +280,8 @@ where
                     .class_relations()
                     .prepare(
                         StorageClassRelationCreate::builder(
-                            rollback_from_class.class().id(),
-                            rollback_to_class.class().id(),
+                            rollback_from_class.class().id().id(),
+                            rollback_to_class.class().id().id(),
                         )
                         .build(),
                     )
@@ -288,7 +291,7 @@ where
                     .create(&prepared_class_relation)
                     .await?;
                 rollback_ids_from_work.class_relation.store(
-                    rollback_class_relation.relation().metadata().id(),
+                    rollback_class_relation.relation().metadata().id().id(),
                     Ordering::Relaxed,
                 );
                 let object = transaction
@@ -297,7 +300,7 @@ where
                         &rollback_from_class,
                         StorageObjectCreate::new(
                             format!("{rollback_label}_from_object"),
-                            rollback_collection.id(),
+                            collection_id_to_storage(rollback_collection.id()),
                             rollback_from_class.class().id(),
                             serde_json::json!({"rolled_back": true}),
                             "transaction contract rollback object",
@@ -313,7 +316,7 @@ where
                         &rollback_to_class,
                         StorageObjectCreate::new(
                             format!("{rollback_label}_to_object"),
-                            rollback_collection.id(),
+                            collection_id_to_storage(rollback_collection.id()),
                             rollback_to_class.class().id(),
                             serde_json::json!({"rolled_back": true}),
                             "transaction contract rollback object",
@@ -326,7 +329,7 @@ where
                         StorageObjectRelationCreate::new(
                             object.id(),
                             to_object.id(),
-                            rollback_class_relation.relation().metadata().id(),
+                            rollback_class_relation.relation().metadata().id().id(),
                         ),
                     ))
                     .await?;
@@ -335,7 +338,7 @@ where
                     .create(&prepared_object_relation)
                     .await?;
                 rollback_ids_from_work.object_relation.store(
-                    rollback_object_relation.relation().metadata().id(),
+                    rollback_object_relation.relation().metadata().id().id(),
                     Ordering::Relaxed,
                 );
                 Err::<(), _>(StorageError::internal("transaction contract rollback"))
@@ -346,7 +349,9 @@ where
     assert_eq!(rollback.kind(), StorageErrorKind::Internal);
     rolled_back_ids.assert_populated();
     let missing_collection = match storage
-        .get_collection(rolled_back_ids.id_for(EntityType::Collection))
+        .get_collection(collection_id_to_storage(
+            rolled_back_ids.id_for(EntityType::Collection),
+        ))
         .await
     {
         Ok(_) => panic!("rolled-back collection must not be visible"),
@@ -360,7 +365,7 @@ where
         .expect("object relation cleanup should succeed");
     for object_id in [from_object.id(), to_object.id()] {
         let object = storage
-            .get_object(object_id)
+            .get_object(object_id_to_storage(object_id))
             .await
             .expect("object cleanup target should resolve");
         storage
@@ -379,7 +384,10 @@ where
             .expect("class cleanup should succeed");
     }
     storage
-        .delete_collection(collection.id(), Some(&event_context))
+        .delete_collection(
+            collection_id_to_storage(collection.id()),
+            Some(&event_context),
+        )
         .await
         .expect("collection cleanup should succeed");
 

@@ -254,7 +254,7 @@ pub async fn sync_external_user(
             )
             .map_err(|error| PostgresStorageError::database(error.to_string()))?
             .with_context(&context)
-            .with_entity_id(principal.id)
+            .with_entity_id(hubuum_events_core::EventEntityId::new(principal.id)?)
             .with_entity_name(name)
             .with_metadata(json!({
                 "principal_id": principal.id,

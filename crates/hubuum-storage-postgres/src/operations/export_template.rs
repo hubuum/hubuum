@@ -7,12 +7,12 @@ use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
     StorageExportTemplate, StorageExportTemplateCreate, StorageExportTemplateDefinition,
     StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplatePage,
-    StorageExportTemplateReplace, StorageRecordMetadata,
+    StorageExportTemplateReplace,
 };
 use serde_json::{Value, json};
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
-use crate::revision::RevisionOwner;
+use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -43,12 +43,7 @@ struct ExportTemplateRow {
 impl ExportTemplateRow {
     fn into_storage(self) -> StorageExportTemplate {
         StorageExportTemplate::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.collection_id,
             self.name,
             StorageExportTemplateDefinition::new(
@@ -278,11 +273,11 @@ pub async fn list_export_templates(
     if collection_ids.as_ref().is_some_and(Vec::is_empty) {
         return Ok(StorageExportTemplatePage::new(
             Vec::new(),
-            options.include_total.then_some(0),
+            options.include_total().then_some(0),
         ));
     }
 
-    if options.include_total {
+    if options.include_total() {
         runtime
             .with_read_only_snapshot(async |connection| {
                 let total = build_list_query(collection_ids.as_deref(), &options)?
@@ -528,7 +523,7 @@ async fn load_export_template_rows(
 ) -> Result<Vec<StorageExportTemplate>, PostgresStorageError> {
     let mut records = build_list_query(collection_ids, options)?;
     let fields = options
-        .sort
+        .sort()
         .iter()
         .map(|sort| export_template_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
@@ -557,7 +552,7 @@ fn build_list_query<'a>(
     if let Some(collection_ids) = collection_ids {
         query = query.filter(collection_id.eq_any(collection_ids));
     }
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),
@@ -594,24 +589,34 @@ fn build_list_query<'a>(
 fn normalize_query_options(
     mut options: QueryOptions,
 ) -> Result<QueryOptions, PostgresStorageError> {
-    let mut sorts = if options.sort.is_empty() {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
-    } else {
-        options.sort.clone()
-    };
-    for sort in &sorts {
+    if options.sort().is_empty() {
+        options.set_sort(
+            vec![SortParam {
+                field: FilterField::Id,
+                descending: false,
+            }]
+            .try_into()
+            .map_err(|error: hubuum_query::QueryError| {
+                PostgresStorageError::bad_request(error.to_string())
+            })?,
+        );
+    }
+    for sort in options.sort() {
         export_template_cursor_field(&sort.field)?;
     }
-    if !sorts.iter().any(|sort| sort.field == FilterField::Id) {
-        sorts.push(SortParam {
-            field: FilterField::Id,
-            descending: false,
-        });
+    if !options
+        .sort()
+        .iter()
+        .any(|sort| sort.field == FilterField::Id)
+    {
+        options
+            .sort_mut()
+            .append_tie_breaker(SortParam {
+                field: FilterField::Id,
+                descending: false,
+            })
+            .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
     }
-    options.sort = sorts;
     Ok(options)
 }
 
@@ -665,9 +670,9 @@ async fn append_export_template_audit(
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
-    .with_entity_id(after.id)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
-    .with_collection_id(after.collection_id)
+    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
     .with_before_opt(before.map(ExportTemplateRow::audit_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| after.audit_snapshot()));
     append_event(connection, &event).await.map(|_| ())

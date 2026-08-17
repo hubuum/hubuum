@@ -2,6 +2,7 @@ use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::Next;
 use actix_web::{Error, HttpMessage};
+use hubuum_domain::PrincipalId;
 
 use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
@@ -66,7 +67,11 @@ pub async fn actor_context(
         record_principal_on_current_span(principal_id);
     }
     req.extensions_mut().insert(resolved);
-    let provenance = actor.map(MutationProvenance::user);
+    let provenance = actor
+        .map(PrincipalId::new)
+        .transpose()
+        .map_err(actix_web::error::ErrorInternalServerError)?
+        .map(MutationProvenance::user);
     let res = with_mutation_provenance(&backend, provenance, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
 }

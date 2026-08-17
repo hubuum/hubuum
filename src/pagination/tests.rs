@@ -79,13 +79,7 @@ fn in_memory_pagination_accepts_non_clone_rows() {
             NonCloneCursorItem(1),
             NonCloneCursorItem(2),
         ],
-        &QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(2),
-            cursor: None,
-            include_total: false,
-        },
+        &QueryOptions::new(Vec::new(), Vec::new(), Some(2), None, false).unwrap(),
     )
     .unwrap();
 
@@ -120,13 +114,7 @@ fn test_paginate_collections_with_cursor() {
 
     let first_page = finalize_page(
         collections.clone(),
-        &QueryOptions {
-            filters: vec![],
-            sort: vec![],
-            limit: Some(2),
-            cursor: None,
-            include_total: true,
-        },
+        &QueryOptions::new(vec![], vec![], Some(2), None, true).unwrap(),
     )
     .unwrap();
 
@@ -140,30 +128,29 @@ fn test_paginate_collections_with_cursor() {
     );
     assert!(first_page.next_cursor.is_some());
 
-    let prepared_query = prepare_db_pagination::<Collection>(&QueryOptions {
-        filters: vec![],
-        sort: vec![],
-        limit: Some(2),
-        cursor: first_page.next_cursor.clone(),
-        include_total: true,
-    })
+    let prepared_query = prepare_db_pagination::<Collection>(
+        &QueryOptions::new(
+            vec![],
+            vec![],
+            Some(2),
+            first_page.next_cursor.clone(),
+            true,
+        )
+        .unwrap(),
+    )
     .unwrap();
 
-    let cursor_sql =
-        cursor_filter_sql::<CollectionRow>(&prepared_query.sort, prepared_query.cursor.as_deref())
-            .unwrap();
+    let cursor_sql = cursor_filter_sql::<CollectionRow>(
+        prepared_query.sort(),
+        prepared_query.cursor().map(|cursor| cursor.as_str()),
+    )
+    .unwrap();
 
     assert_eq!(cursor_sql, Some("((collections.id > 2))".to_string()));
 
     let second_page = finalize_page(
         vec![collection(3, "gamma")],
-        &QueryOptions {
-            filters: vec![],
-            sort: vec![],
-            limit: Some(2),
-            cursor: first_page.next_cursor,
-            include_total: true,
-        },
+        &QueryOptions::new(vec![], vec![], Some(2), first_page.next_cursor, true).unwrap(),
     )
     .unwrap();
 
@@ -188,16 +175,17 @@ fn test_paginate_collections_descending() {
 
     let page = finalize_page(
         collections,
-        &QueryOptions {
-            filters: vec![],
-            sort: vec![SortParam {
+        &QueryOptions::new(
+            vec![],
+            vec![SortParam {
                 field: FilterField::Name,
                 descending: true,
             }],
-            limit: Some(2),
-            cursor: None,
-            include_total: true,
-        },
+            Some(2),
+            None,
+            true,
+        )
+        .unwrap(),
     )
     .unwrap();
 
@@ -218,16 +206,17 @@ fn cursor_encoding_rejects_an_oversized_token() {
             collection(1, &"a".repeat(MAX_ENCODED_CURSOR_BYTES)),
             collection(2, "z"),
         ],
-        &QueryOptions {
-            filters: vec![],
-            sort: vec![SortParam {
+        &QueryOptions::new(
+            vec![],
+            vec![SortParam {
                 field: FilterField::Name,
                 descending: false,
             }],
-            limit: Some(1),
-            cursor: None,
-            include_total: true,
-        },
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap(),
     )
     .unwrap_err();
 
@@ -243,16 +232,17 @@ fn cursor_encoding_rejects_an_oversized_token() {
 fn cursor_encoding_rejects_a_string_with_an_embedded_nul() {
     let error = finalize_page(
         vec![collection(1, "a\0b"), collection(2, "z")],
-        &QueryOptions {
-            filters: vec![],
-            sort: vec![SortParam {
+        &QueryOptions::new(
+            vec![],
+            vec![SortParam {
                 field: FilterField::Name,
                 descending: false,
             }],
-            limit: Some(1),
-            cursor: None,
-            include_total: true,
-        },
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap(),
     )
     .unwrap_err();
 
@@ -277,16 +267,17 @@ fn cursor_encoding_rejects_json_that_decoding_would_reject() {
                 value: serde_json::json!([]),
             },
         ],
-        &QueryOptions {
-            filters: vec![],
-            sort: vec![SortParam {
+        &QueryOptions::new(
+            vec![],
+            vec![SortParam {
                 field: FilterField::JsonData,
                 descending: false,
             }],
-            limit: Some(1),
-            cursor: None,
-            include_total: true,
-        },
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap(),
     )
     .unwrap_err();
 
@@ -318,33 +309,30 @@ fn cursor_decoding_rejects_an_oversized_token_before_parsing() {
 
 #[test]
 fn test_prepare_db_pagination_adds_limit_and_tie_breaker() {
-    let prepared = prepare_db_pagination::<UserWithNameQueryRow>(&QueryOptions {
-        filters: vec![],
-        sort: vec![SortParam {
-            field: FilterField::Username,
-            descending: false,
-        }],
-        limit: None,
-        cursor: None,
-        include_total: true,
-    })
+    let prepared = prepare_db_pagination::<UserWithNameQueryRow>(
+        &QueryOptions::new(
+            vec![],
+            vec![SortParam {
+                field: FilterField::Username,
+                descending: false,
+            }],
+            None,
+            None,
+            true,
+        )
+        .unwrap(),
+    )
     .unwrap();
 
-    assert_eq!(prepared.limit, Some(DEFAULT_PAGE_LIMIT + 1));
-    assert_eq!(prepared.sort.len(), 2);
-    assert_eq!(prepared.sort[0].field, FilterField::Username);
-    assert_eq!(prepared.sort[1].field, FilterField::Id);
+    assert_eq!(prepared.limit(), Some(DEFAULT_PAGE_LIMIT + 1));
+    assert_eq!(prepared.sort().len(), 2);
+    assert_eq!(prepared.sort()[0].field, FilterField::Username);
+    assert_eq!(prepared.sort()[1].field, FilterField::Id);
 }
 
 #[tokio::test]
 async fn exact_total_count_can_be_skipped() {
-    let options = QueryOptions {
-        filters: vec![],
-        sort: vec![],
-        limit: None,
-        cursor: None,
-        include_total: false,
-    };
+    let options = QueryOptions::new(vec![], vec![], None, None, false).unwrap();
     let count = exact_count_or_skipped(&options, async || {
         panic!("count query must not execute when include_total is false")
     })
@@ -410,18 +398,12 @@ fn sql_cursor_filter_rejects_a_value_with_the_wrong_resolved_type() {
         nullable: false,
     }];
     let cursor = encoded_cursor(&sort, CursorValue::String("true".to_string()));
-    let query_options = QueryOptions {
-        filters: vec![],
-        sort: vec![sort],
-        limit: Some(2),
-        cursor: Some(cursor),
-        include_total: true,
-    };
+    let query_options = QueryOptions::new(vec![], vec![sort], Some(2), Some(cursor), true).unwrap();
 
     let error = cursor_filter_sql_for_fields(
-        &query_options.sort,
+        query_options.sort(),
         &fields,
-        query_options.cursor.as_deref(),
+        query_options.cursor().map(|cursor| cursor.as_str()),
     )
     .unwrap_err();
 
@@ -473,18 +455,12 @@ fn sql_json_cursor_rejects_values_postgres_jsonb_cannot_represent(#[case] json: 
     }];
     let value = serde_json::from_str(json).unwrap();
     let cursor = encoded_cursor(&sort, CursorValue::Json(value));
-    let query_options = QueryOptions {
-        filters: vec![],
-        sort: vec![sort],
-        limit: Some(2),
-        cursor: Some(cursor),
-        include_total: true,
-    };
+    let query_options = QueryOptions::new(vec![], vec![sort], Some(2), Some(cursor), true).unwrap();
 
     let error = cursor_filter_sql_for_fields(
-        &query_options.sort,
+        query_options.sort(),
         &fields,
-        query_options.cursor.as_deref(),
+        query_options.cursor().map(|cursor| cursor.as_str()),
     )
     .unwrap_err();
 
@@ -734,13 +710,7 @@ fn in_memory_pagination_extracts_each_sort_key_once() {
 
     paginate_in_memory(
         items,
-        &QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        },
+        &QueryOptions::new(Vec::new(), Vec::new(), None, None, false).unwrap(),
     )
     .unwrap();
 
@@ -762,13 +732,7 @@ fn in_memory_pagination_propagates_sort_key_errors() {
                 fail: true,
             },
         ],
-        &QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        },
+        &QueryOptions::new(Vec::new(), Vec::new(), None, None, false).unwrap(),
     )
     .unwrap_err();
 

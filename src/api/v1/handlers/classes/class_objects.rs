@@ -97,7 +97,7 @@ async fn list_objects_in_class(
 
     // The path is authoritative even if the caller supplied a conflicting
     // class_id/classes filter.
-    scope_object_query_to_class(&mut params, &class_id);
+    scope_object_query_to_class(&mut params, &class_id)?;
 
     debug!(
         message = "Getting objects in class",
@@ -107,11 +107,11 @@ async fn list_objects_in_class(
     );
 
     let computed_querying = params
-        .sort
+        .sort()
         .iter()
         .any(|sort| sort.field.computed_query().is_some())
         || params
-            .filters
+            .filters()
             .iter()
             .any(|filter| filter.field.computed_query().is_some());
 
@@ -177,14 +177,15 @@ async fn load_raw_object_page(
             context.permission_backend(),
             &principal,
             requestor.scopes(),
-            &params.filters,
+            params.filters(),
         )
         .await?;
         let mut candidate_options = count_query_options(params);
         candidate_options
-            .filters
-            .retain(|filter| filter.field.related_query().is_none());
-        candidate_options.include_total = false;
+            .filters_mut()
+            .try_retain(|filter| filter.field.related_query().is_none())
+            .expect("removing every related filter preserves query invariants");
+        candidate_options.set_include_total(false);
         let mut candidates = if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
             Vec::new()
         } else {

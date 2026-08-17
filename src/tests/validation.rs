@@ -148,7 +148,10 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     };
 
     let validate = PostgresStorage::new(pool.get_ref().clone())
-        .validate_object_update(object.id, object_update_to_storage(update_object))
+        .validate_object_update(
+            crate::services::storage_boundary::object_id_to_storage(object.id),
+            object_update_to_storage(update_object),
+        )
         .await;
     assert_validation_result(
         validate.map_err(ApiError::from),

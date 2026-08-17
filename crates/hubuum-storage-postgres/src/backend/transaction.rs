@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
     ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
@@ -65,9 +66,9 @@ impl StorageTransaction for PostgresTransaction<'_> {
 
 #[async_trait]
 impl CollectionStore for PostgresTransaction<'_> {
-    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
+    async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::collection::get_collection_on(&mut connection, id)
+        crate::operations::collection::get_collection_on(&mut connection, id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -85,52 +86,63 @@ impl CollectionStore for PostgresTransaction<'_> {
 
     async fn update_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::collection::update_collection_on(&mut connection, id, changes, context)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::collection::update_collection_on(
+            &mut connection,
+            id.id(),
+            changes,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::collection::delete_collection_on(&mut connection, id, context)
+        crate::operations::collection::delete_collection_on(&mut connection, id.id(), context)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+    async fn collection_children(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::collection::collection_children_on(&mut connection, id)
+        crate::operations::collection::collection_children_on(&mut connection, id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+    async fn collection_ancestors(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::collection::collection_ancestors_on(&mut connection, id)
+        crate::operations::collection::collection_ancestors_on(&mut connection, id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn move_collection(
         &self,
-        id: i32,
-        new_parent_id: i32,
+        id: CollectionId,
+        new_parent_id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::collection::move_collection_on(
             &mut connection,
-            id,
-            new_parent_id,
+            id.id(),
+            new_parent_id.id(),
             context,
         )
         .await
@@ -184,11 +196,25 @@ impl ClassStore for PostgresTransaction<'_> {
             .map_err(StorageError::from)
     }
 
-    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+    async fn class_names(
+        &self,
+        class_ids: Vec<ClassId>,
+    ) -> Result<Vec<(ClassId, String)>, StorageError> {
         let mut connection = self.connection.lock().await;
+        let class_ids = class_ids.into_iter().map(ClassId::id).collect();
         crate::operations::class::class_names_on(&mut connection, class_ids)
             .await
             .map_err(StorageError::from)
+            .and_then(|rows| {
+                rows.into_iter()
+                    .map(|(id, name)| {
+                        ClassId::new(id)
+                            .map(|id| (id, name))
+                            .map_err(crate::PostgresStorageError::from)
+                            .map_err(StorageError::from)
+                    })
+                    .collect()
+            })
     }
 }
 
@@ -265,9 +291,9 @@ impl ClassRelationStore for PostgresTransaction<'_> {
 
 #[async_trait]
 impl ObjectStore for PostgresTransaction<'_> {
-    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
+    async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::object::get_object_on(&mut connection, object_id)
+        crate::operations::object::get_object_on(&mut connection, object_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -366,13 +392,13 @@ impl ObjectStore for PostgresTransaction<'_> {
 
     async fn validate_object_update(
         &self,
-        object_id: i32,
+        object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::validate_object_update_command_on(
             &mut connection,
-            object_id,
+            object_id.id(),
             changes,
         )
         .await

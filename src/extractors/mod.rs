@@ -259,7 +259,14 @@ impl AccessEventContext for ManagementAccess {
 fn user_event_context(req: &HttpRequest, actor_user_id: i32) -> EventContext {
     RequestProvenance::from_request(req)
         .map(|provenance| provenance.user_event_context(actor_user_id))
-        .unwrap_or_else(|| EventContext::user(actor_user_id, None, None))
+        .unwrap_or_else(|| {
+            EventContext::user(
+                hubuum_domain::PrincipalId::new(actor_user_id)
+                    .expect("authenticated principal id must be positive"),
+                None,
+                None,
+            )
+        })
 }
 
 fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {

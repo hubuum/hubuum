@@ -232,11 +232,11 @@ impl fmt::Debug for StorageAuditEventListQuery {
             )
             .field("include_collection_less", &self.include_collection_less)
             .field("filters", &self.filters)
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -409,11 +409,11 @@ impl fmt::Debug for StorageEventSinkListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageEventSinkListQuery")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -889,11 +889,11 @@ impl fmt::Debug for StorageEventSubscriptionListQuery {
         formatter
             .debug_struct("StorageEventSubscriptionListQuery")
             .field("collection_id", &"<redacted>")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -1518,11 +1518,11 @@ impl fmt::Debug for StorageEventDeliveryListQuery {
         formatter
             .debug_struct("StorageEventDeliveryListQuery")
             .field("has_subscription_id", &self.subscription_id.is_some())
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -1563,13 +1563,14 @@ mod tests {
 
     #[test]
     fn event_administration_query_debug_is_bounded_and_redacted() {
-        let options = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(20),
-            cursor: Some("secret-cursor".to_string()),
-            include_total: true,
-        };
+        let options = QueryOptions::new(
+            Vec::new(),
+            Vec::new(),
+            Some(20),
+            Some("secret-cursor".to_string()),
+            true,
+        )
+        .unwrap();
         let query = StorageAuditEventListQuery::new(
             vec![99, 42, 99],
             false,

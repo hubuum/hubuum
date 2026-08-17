@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hubuum_domain::{
-    EventDeliverySettings, EventFanoutSettings, EventRetentionSettings, MaintenanceState,
-    TokenRetentionSettings,
+    ClassId, CollectionId, EventDeliverySettings, EventFanoutSettings, EventRetentionSettings,
+    MaintenanceState, ObjectId, TokenRetentionSettings,
 };
 use hubuum_events_core::{EventContext, MutationProvenance};
 use hubuum_query::QueryOptions;

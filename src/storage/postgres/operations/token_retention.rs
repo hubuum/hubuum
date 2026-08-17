@@ -471,13 +471,8 @@ mod tests {
                     crate::services::identity::list_retained_tokens(
                         &reader_pool,
                         principal_id.id(),
-                        QueryOptions {
-                            filters: Vec::new(),
-                            sort: Vec::new(),
-                            limit: None,
-                            cursor: None,
-                            include_total: false,
-                        },
+                        QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+                            .expect("test query must be valid"),
                         TokenListState::Revoked,
                     )
                     .await

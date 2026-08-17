@@ -13,7 +13,7 @@ use tracing::debug;
 use crate::errors::ApiError;
 use crate::models::search::{Operator, ParsedQueryParam};
 use crate::utilities::extensions::CustomStringExtensions;
-use hubuum_query::{JsonFieldPathRef, SQLMappedType, get_jsonb_field_type_from_value_and_operator};
+use hubuum_query::{FilterField, JsonFieldPathRef, QueryScalarType, infer_query_scalar_type};
 
 pub(crate) trait ParsedQueryParamSqlExt {
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError>;
@@ -126,9 +126,17 @@ pub(crate) enum SQLValue {
     Boolean(bool),
 }
 
+pub(crate) fn json_column(field: &FilterField) -> Option<&'static str> {
+    match field {
+        FilterField::JsonSchema => Some("json_schema"),
+        FilterField::JsonData | FilterField::JsonDataFrom | FilterField::JsonDataTo => Some("data"),
+        _ => None,
+    }
+}
+
 impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
-        let json_column = self.field.json_column().ok_or_else(|| {
+        let json_column = json_column(&self.field).ok_or_else(|| {
             ApiError::InternalServerError(format!("Attempt to filter '{}' as JSON!", self.field))
         })?;
         self.as_json_sql_for_field_expr(json_column)
@@ -198,19 +206,19 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
             return self.as_json_in_sql(jsonb_field_expr, &field_expr, path, value, neg);
         }
 
-        let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
+        let sql_type = infer_query_scalar_type(value, op.clone());
 
         // TODO: Add JSON Schema usage type support via
-        // get_jsonb_field_type_from_json_schema(schema, key)
+        // infer_query_scalar_type_from_schema(schema, key)
 
         match sql_type {
-            Some(SQLMappedType::Numeric) => {
+            Some(QueryScalarType::Numeric) => {
                 return self.as_json_numeric_sql(&field_expr, value, op, neg);
             }
-            Some(SQLMappedType::Date) => {
+            Some(QueryScalarType::Date) => {
                 return self.as_json_date_sql(&field_expr, value, op, neg);
             }
-            Some(SQLMappedType::Boolean) => {
+            Some(QueryScalarType::Boolean) => {
                 return self.as_json_boolean_sql(&field_expr, value, op, neg);
             }
             _ => {}
@@ -245,13 +253,13 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
                     path, self.operator
                 )));
             }
-            Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
+            Some(QueryScalarType::String) | Some(QueryScalarType::None) => {
                 bind_variables.push(SQLValue::String(value));
                 format!("{}{} {} ?", neg_str, field_expr, sql_op)
             }
-            Some(SQLMappedType::Numeric)
-            | Some(SQLMappedType::Date)
-            | Some(SQLMappedType::Boolean) => unreachable!(),
+            Some(QueryScalarType::Numeric)
+            | Some(QueryScalarType::Date)
+            | Some(QueryScalarType::Boolean) => unreachable!(),
         };
 
         debug!(message = "SQL JSONB generation", sql = %sql, bind_varaibles = ?bind_variables);

@@ -19,7 +19,7 @@ pub async fn list_audit_events(
     runtime: &PostgresRuntime,
     query: StorageAuditEventListQuery,
 ) -> Result<StorageEventPage<StorageAuditEvent>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(
             async |connection| -> Result<StorageEventPage<StorageAuditEvent>, PostgresStorageError> {
@@ -47,7 +47,7 @@ pub async fn list_audit_events(
                 )?;
                 let fields = query
                     .options()
-                    .sort
+                    .sort()
                     .iter()
                     .map(|sort| audit_event_cursor_field(&sort.field))
                     .collect::<Result<Vec<_>, _>>()?;
@@ -70,7 +70,7 @@ pub async fn list_audit_events(
                         }) || (query.include_collection_less() && event.collection_id.is_none());
                         event.into_audit_event(&principal_names, !directly_visible)
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(StorageEventPage::new(rows, total))
             },
         )
@@ -175,7 +175,7 @@ fn build_audit_event_query(
         query = query.filter(occurred_at.le(value));
     }
 
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::BeforeRevision => {
                 crate::postgres_revision_filter!(query, parameter, before_revision)

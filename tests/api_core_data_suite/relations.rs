@@ -234,13 +234,13 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
-        // Filter only on relations created from this test.
+        // Filter only on relations created from this test. Concurrent tests may
+        // create a cross-collection relation with one endpoint in this fixture.
         let relations_in_collection: Vec<HubuumClassRelation> = relations_fetched_all
             .iter()
             .filter(|r| {
-                classes
-                    .iter()
-                    .any(|c| c.id == r.from_hubuum_class_id || c.id == r.to_hubuum_class_id)
+                classes.iter().any(|c| c.id == r.from_hubuum_class_id)
+                    && classes.iter().any(|c| c.id == r.to_hubuum_class_id)
             })
             .cloned()
             .collect();

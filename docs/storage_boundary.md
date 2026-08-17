@@ -140,22 +140,42 @@ adapter obligations in detail.
 
 ## Current Workspace Shape
 
-Three layers are already distinct:
+The application, reusable contracts, and native adapter are distinct:
 
 ```text
 hubuum application
 |-- hubuum-domain
+|-- hubuum-query
+|-- hubuum-events-core
+|-- hubuum-task-core
 |-- hubuum-storage-core
 `-- hubuum-storage-postgres
 ```
 
-- `hubuum-domain` owns backend-independent validated domain values extracted from the root application.
-- `hubuum-storage-core` owns the complete storage contract, DTOs, errors, cursors, and backend identity. It has no Actix, Diesel, global configuration, or `ApiError` dependency.
+- `hubuum-domain` owns backend-independent validated identifiers, revisions,
+  patches, and policy values extracted from the root application.
+- `hubuum-query` owns bounded query options, filters, sorts, cursors, scalar
+  inference, and parsing. It describes query intent and does not expose SQL or
+  database type names.
+- `hubuum-events-core` owns typed event identity, envelopes, mutation
+  provenance, and event integration traits. Its public identifiers reuse
+  `hubuum-domain` newtypes instead of raw database integers.
+- `hubuum-task-core` owns task values shared by storage and worker code.
+- `hubuum-storage-core` owns the complete storage contract, private-field DTOs,
+  semantic errors, and backend identity. It has no Actix, Diesel, global
+  configuration, or `ApiError` dependency. Resource lifecycle, revision,
+  metadata, and principal boundaries use domain IDs and revisions rather than
+  persistence-shaped strings and integers.
 - `hubuum-storage-postgres` owns the native pool, TLS, endpoint diagnostics, generated schema, migrations, JSONB validation, query instrumentation, and all production PostgreSQL operations.
 - The root crate owns application services and static composition. It constructs the PostgreSQL adapter with telemetry and dedicated operational pools, then places it behind the opaque handle.
 - The root crate retains a legacy PostgreSQL row-and-SQL harness for old tests. It is compiled only for unit tests or the explicit `integration-test-support` feature and is not part of a production build.
 
-The backend-neutral contracts needed by an out-of-tree adapter are publishable crates. Backend registration remains explicit, exhaustive, and application-owned. An adapter may therefore be supplied by a crates.io, Git, or path dependency. Hubuum does not load storage plugins dynamically.
+The backend-neutral contracts needed by an out-of-tree adapter are publishable
+crates. An external-crate integration test compiles the transaction ports and
+representative typed DTO/query APIs without crate-private access. Backend
+registration remains explicit, exhaustive, and application-owned. An adapter
+may therefore be supplied by a crates.io, Git, or path dependency. Hubuum does
+not load storage plugins dynamically.
 
 Moving a file does not by itself improve the boundary. Dependencies must continue to point from the application to contracts and from adapters to contracts, never from a contract or adapter back into the application.
 

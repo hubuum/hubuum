@@ -1,21 +1,22 @@
 use chrono::NaiveDateTime;
+use hubuum_domain::{ResourceId, ResourceRevision};
 
 /// Backend-neutral identity and revision metadata shared by stored records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageRecordMetadata {
-    id: i32,
+    id: ResourceId,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageRecordMetadata {
     #[must_use]
     pub const fn new(
-        id: i32,
+        id: ResourceId,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             id,
@@ -26,12 +27,12 @@ impl StorageRecordMetadata {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (i32, NaiveDateTime, NaiveDateTime, i64) {
+    pub const fn into_parts(self) -> (ResourceId, NaiveDateTime, NaiveDateTime, ResourceRevision) {
         (self.id, self.created_at, self.updated_at, self.revision)
     }
 
     #[must_use]
-    pub const fn id(self) -> i32 {
+    pub const fn id(self) -> ResourceId {
         self.id
     }
 
@@ -46,7 +47,7 @@ impl StorageRecordMetadata {
     }
 
     #[must_use]
-    pub const fn revision(self) -> i64 {
+    pub const fn revision(self) -> ResourceRevision {
         self.revision
     }
 }

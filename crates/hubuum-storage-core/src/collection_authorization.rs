@@ -79,10 +79,10 @@ impl fmt::Debug for AuthorizationPrincipalCollectionPageQuery {
         formatter
             .debug_struct("AuthorizationPrincipalCollectionPageQuery")
             .field("principal", &self.principal)
-            .field("filter_count", &self.query_options.filters.len())
-            .field("sort_count", &self.query_options.sort.len())
-            .field("limit", &self.query_options.limit)
-            .field("has_cursor", &self.query_options.cursor.is_some())
+            .field("filter_count", &self.query_options.filters().len())
+            .field("sort_count", &self.query_options.sort().len())
+            .field("limit", &self.query_options.limit())
+            .field("has_cursor", &self.query_options.cursor().is_some())
             .finish()
     }
 }
@@ -258,9 +258,9 @@ impl fmt::Debug for AuthorizationCollectionGroupsPageQuery {
         formatter
             .debug_struct("AuthorizationCollectionGroupsPageQuery")
             .field("groups", &self.groups)
-            .field("filter_count", &self.query_options.filters.len())
-            .field("sort_count", &self.query_options.sort.len())
-            .field("limit", &self.query_options.limit)
+            .field("filter_count", &self.query_options.filters().len())
+            .field("sort_count", &self.query_options.sort().len())
+            .field("limit", &self.query_options.limit())
             .finish()
     }
 }

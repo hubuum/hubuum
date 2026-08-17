@@ -346,7 +346,7 @@ fn query_permissions(
     query: &QueryOptions,
     required: &[Permissions],
 ) -> Result<PermissionsList, ApiError> {
-    let mut permissions = query.filters.permissions()?;
+    let mut permissions = query.filters().permissions()?;
     permissions.ensure_contains(required);
     Ok(permissions)
 }
@@ -594,7 +594,7 @@ where
 
     async fn collections(&self, mut query: QueryOptions) -> Result<Vec<Collection>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            query.include_total = false;
+            query.set_include_total(false);
             return catalog_service::list_collections(
                 self.pool(),
                 self.subject.principal_id(),
@@ -606,7 +606,7 @@ where
             .map(|(rows, _)| rows);
         }
         let mut candidate_options = count_query_options(&query);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = catalog_service::list_collections(
             self.pool(),
             self.subject.principal_id(),
@@ -623,7 +623,7 @@ where
 
     async fn classes(&self, mut query: QueryOptions) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            query.include_total = false;
+            query.set_include_total(false);
             return catalog_service::list_classes(
                 self.pool(),
                 self.subject.principal_id(),
@@ -635,7 +635,7 @@ where
             .map(|(rows, _)| rows);
         }
         let mut candidate_options = count_query_options(&query);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = catalog_service::list_classes(
             self.pool(),
             self.subject.principal_id(),
@@ -663,7 +663,7 @@ where
 
     async fn objects(&self, mut query: QueryOptions) -> Result<Vec<HubuumObject>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            query.include_total = false;
+            query.set_include_total(false);
             return catalog_service::list_objects(
                 self.pool(),
                 self.subject.principal_id(),
@@ -675,7 +675,7 @@ where
             .map(|(rows, _)| rows);
         }
         let mut candidate_options = count_query_options(&query);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = catalog_service::list_objects(
             self.pool(),
             self.subject.principal_id(),
@@ -1595,7 +1595,7 @@ fn export_template_context(
 
 fn prepare_query_options(export: &ExportRequest) -> Result<QueryOptions, ApiError> {
     let mut query_options = parse_query_parameter(export.query.as_deref().unwrap_or_default())?;
-    if query_options.cursor.is_some() {
+    if query_options.cursor().is_some() {
         return Err(ApiError::BadRequest(
             "Exports do not support cursor pagination".to_string(),
         ));
@@ -1609,10 +1609,10 @@ fn prepare_query_options(export: &ExportRequest) -> Result<QueryOptions, ApiErro
         .as_ref()
         .and_then(|limits| limits.max_items)
         .unwrap_or(page_limits.default_limit());
-    let requested_limit = query_options.limit.unwrap_or(configured_limit);
+    let requested_limit = query_options.limit().unwrap_or(configured_limit);
     let effective_limit = page_limits.clamp(requested_limit.min(configured_limit));
 
-    query_options.limit = Some(effective_limit.saturating_add(1));
+    query_options.set_limit(Some(effective_limit.saturating_add(1)));
     Ok(query_options)
 }
 
@@ -1692,13 +1692,13 @@ fn resolve_relation_hydration_plan(
                     .unwrap_or(2),
             )?;
             query_options
-                .filters
-                .retain(|filter| filter.field != FilterField::Depth);
-            query_options.filters.push(ParsedQueryParam::new(
+                .filters_mut()
+                .try_retain(|filter| filter.field != FilterField::Depth)?;
+            query_options.filters_mut().try_push(ParsedQueryParam::new(
                 "depth",
                 Some(SearchOperator::Lte { is_negated: false }),
                 &depth_limit.to_string(),
-            )?);
+            )?)?;
             Ok(Some(RelationHydrationPlan {
                 depth_limit,
                 enabled_for_scope: true,
@@ -2114,11 +2114,18 @@ async fn ensure_class_name_ids(
 
     for (class_id, class_name) in storage_handle(pool)
         .class_store()
-        .class_names(missing.as_slice().to_vec())
+        .class_names(
+            missing
+                .as_slice()
+                .iter()
+                .copied()
+                .map(crate::services::storage_boundary::class_id_to_storage)
+                .collect(),
+        )
         .await
         .map_err(ApiError::from)?
     {
-        class_names.insert(class_id, class_name);
+        class_names.insert(class_id.id(), class_name);
     }
 
     for class_id in missing.as_slice() {
@@ -2669,7 +2676,7 @@ where
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
-    let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
+    let item_limit = query_options.limit().unwrap_or(1).saturating_sub(1).max(1);
 
     let data = match scope {
         ValidatedExportScope::Collections => {
@@ -2851,7 +2858,7 @@ fn push_exact_filter(
     field: FilterField,
     value: i32,
 ) -> Result<(), ApiError> {
-    if query_options.filters.iter().any(|param| {
+    if query_options.filters().iter().any(|param| {
         param.field == field
             && matches!(
                 param.operator,
@@ -2862,11 +2869,11 @@ fn push_exact_filter(
         return Ok(());
     }
 
-    query_options.filters.push(ParsedQueryParam::new(
+    query_options.filters_mut().try_push(ParsedQueryParam::new(
         &field.to_string(),
         None,
         &value.to_string(),
-    )?);
+    )?)?;
     Ok(())
 }
 
@@ -3042,13 +3049,10 @@ mod tests {
             .await
             .unwrap();
         let objects = exporter
-            .objects(QueryOptions {
-                filters: Vec::new(),
-                sort: Vec::new(),
-                limit: Some(10),
-                cursor: None,
-                include_total: false,
-            })
+            .objects(
+                QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, false)
+                    .expect("test query must be valid"),
+            )
             .await
             .unwrap();
 

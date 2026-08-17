@@ -232,7 +232,7 @@ impl StorageIdentityGroupBuilder {
     #[must_use]
     pub fn build(self) -> StorageIdentityGroup {
         StorageIdentityGroup {
-            id: self.metadata.id(),
+            id: self.metadata.id().into(),
             name: self.name,
             description: self.description,
             identity_scope_id: self.identity_scope_id,
@@ -242,7 +242,7 @@ impl StorageIdentityGroupBuilder {
             last_sync_success_at: self.last_sync_success_at,
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),
-            revision: self.metadata.revision(),
+            revision: self.metadata.revision().into(),
         }
     }
 }
@@ -286,11 +286,11 @@ impl fmt::Debug for StoragePrincipalGroupListQuery {
         formatter
             .debug_struct("StoragePrincipalGroupListQuery")
             .field("principal_id", &"<redacted>")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -321,10 +321,10 @@ impl fmt::Debug for StorageGroupListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageGroupListQuery")
-            .field("filter_count", &self.records.filters.len())
-            .field("sort_count", &self.records.sort.len())
-            .field("limit", &self.records.limit)
-            .field("has_cursor", &self.records.cursor.is_some())
+            .field("filter_count", &self.records.filters().len())
+            .field("sort_count", &self.records.sort().len())
+            .field("limit", &self.records.limit())
+            .field("has_cursor", &self.records.cursor().is_some())
             .field("include_total", &self.count.is_some())
             .finish()
     }
@@ -500,11 +500,11 @@ impl fmt::Debug for StorageTokenListQuery {
         formatter
             .debug_struct("StorageTokenListQuery")
             .field("principal_id", &"<redacted>")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .field("state", &self.state)
             .field("observation", &self.observation)
             .finish()
@@ -953,11 +953,11 @@ impl fmt::Debug for StorageServiceAccountListQuery {
             .debug_struct("StorageServiceAccountListQuery")
             .field("requestor_id", &"<redacted>")
             .field("administrator", &self.administrator)
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -1700,7 +1700,12 @@ mod tests {
         let created_at = NaiveDateTime::default();
         let updated_at = created_at + chrono::Duration::seconds(1);
         let group = StorageIdentityGroup::builder(
-            StorageRecordMetadata::new(7, created_at, updated_at, 3),
+            StorageRecordMetadata::new(
+                hubuum_domain::ResourceId::new(7).unwrap(),
+                created_at,
+                updated_at,
+                hubuum_domain::ResourceRevision::new(3).unwrap(),
+            ),
             "operators",
             "Operations team",
             2,
@@ -1723,13 +1728,14 @@ mod tests {
 
     #[test]
     fn query_debug_output_redacts_identity_and_cursor_values() {
-        let options = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(20),
-            cursor: Some("sensitive-cursor".to_string()),
-            include_total: true,
-        };
+        let options = QueryOptions::new(
+            Vec::new(),
+            Vec::new(),
+            Some(20),
+            Some("sensitive-cursor".to_string()),
+            true,
+        )
+        .unwrap();
         let debug = format!(
             "{:?}",
             StorageServiceAccountListQuery::new(42, false, options)

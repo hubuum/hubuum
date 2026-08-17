@@ -147,7 +147,7 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
     let computed_filter_snapshot = paging.computed_filter_snapshot.as_ref();
     let sort_key_sql = direct_aggregate_sort_key(spec);
     let measures_sql = direct_measure_response_sql(spec, "hubuumobject");
-    let total = if query_options.include_total {
+    let total = if query_options.include_total() {
         let query = visible_filtered_object_query!(
             target.collection_id,
             visibility.resources(),
@@ -415,7 +415,7 @@ fn computed_filter_clause(
     let mut clauses = Vec::new();
     let mut binds = Vec::new();
     for filter in query_options
-        .filters
+        .filters()
         .iter()
         .filter(|filter| filter.field.computed_query().is_some())
     {

@@ -47,6 +47,7 @@ use crate::events::MutationProvenance;
 use crate::observability::metrics::{self, ResultKind};
 use crate::storage::{
     StorageCallSite, StorageError, StorageQueryBudget, StorageRevisionPrecondition,
+    StorageRevisionTarget,
 };
 
 /// Verify both database connectivity and the schema version required by this
@@ -247,6 +248,58 @@ fn ambient_revision_precondition() -> Option<StorageRevisionPrecondition> {
         .unwrap_or(None)
 }
 
+#[cfg(any(test, feature = "integration-test-support"))]
+#[derive(Clone, Copy)]
+pub(crate) enum RevisionOwner {
+    Class,
+    Collection,
+}
+
+#[cfg(any(test, feature = "integration-test-support"))]
+impl RevisionOwner {
+    pub(crate) fn key(self, id: i32) -> String {
+        let table = match self {
+            Self::Class => "hubuumclass",
+            Self::Collection => "collections",
+        };
+        format!("{table}:{id}")
+    }
+}
+
+fn revision_owner_key(target: StorageRevisionTarget) -> String {
+    match target {
+        StorageRevisionTarget::IdentityScope(id) => format!("identity_scopes:{}", id.id()),
+        StorageRevisionTarget::Group(id) => format!("groups:{}", id.id()),
+        StorageRevisionTarget::Principal(id) => format!("principals:{}", id.id()),
+        StorageRevisionTarget::Membership {
+            principal_id,
+            group_id,
+        } => format!("group_memberships:{}:{}", principal_id.id(), group_id.id()),
+        StorageRevisionTarget::Collection(id) => format!("collections:{}", id.id()),
+        StorageRevisionTarget::CollectionPermissions(id) => {
+            format!("collection_authorization_state:{}", id.id())
+        }
+        StorageRevisionTarget::Class(id) => format!("hubuumclass:{}", id.id()),
+        StorageRevisionTarget::Object(id) => format!("hubuumobject:{}", id.id()),
+        StorageRevisionTarget::ClassRelation(id) => {
+            format!("hubuumclass_relation:{}", id.id())
+        }
+        StorageRevisionTarget::ObjectRelation(id) => {
+            format!("hubuumobject_relation:{}", id.id())
+        }
+        StorageRevisionTarget::ExportTemplate(id) => format!("export_templates:{}", id.id()),
+        StorageRevisionTarget::RemoteTarget(id) => format!("remote_targets:{}", id.id()),
+        StorageRevisionTarget::EventSink(id) => format!("event_sinks:{}", id.id()),
+        StorageRevisionTarget::EventSubscription(id) => {
+            format!("event_subscriptions:{}", id.id())
+        }
+        StorageRevisionTarget::ComputedField(id) => {
+            format!("computed_field_definitions:{}", id.id())
+        }
+        StorageRevisionTarget::Token(id) => format!("tokens:{}", id.id()),
+    }
+}
+
 async fn set_local_revision_precondition(
     conn: &mut PostgresConnection,
     precondition: &StorageRevisionPrecondition,
@@ -257,7 +310,7 @@ async fn set_local_revision_precondition(
          set_config('hubuum.if_match_revisions', $2, true), \
          set_config('hubuum.if_match_checked', '', true)",
     )
-    .bind::<diesel::sql_types::Text, _>(precondition.owner_key())
+    .bind::<diesel::sql_types::Text, _>(revision_owner_key(precondition.target()))
     .bind::<diesel::sql_types::Text, _>(
         precondition
             .revisions()
@@ -299,7 +352,7 @@ pub(crate) fn assert_revision_precondition_allows_missing_target(
 ) -> Result<(), crate::errors::ApiError> {
     if ambient_revision_precondition()
         .as_ref()
-        .is_some_and(|precondition| precondition.owner_key() == owner_key)
+        .is_some_and(|precondition| revision_owner_key(precondition.target()) == owner_key)
     {
         return Err(crate::errors::ApiError::PreconditionFailed(
             "The resource changed since the supplied validator was issued".to_string(),

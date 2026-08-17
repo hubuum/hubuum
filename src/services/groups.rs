@@ -16,7 +16,9 @@ pub(crate) async fn list(
     options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError> {
     let records = prepare_db_pagination::<Group>(options)?;
-    let count = options.include_total.then(|| count_query_options(options));
+    let count = options
+        .include_total()
+        .then(|| count_query_options(options));
     let (groups, total_count) = storage_handle(backend)
         .list_groups(StorageGroupListQuery::new(records, count))
         .await?

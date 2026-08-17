@@ -97,7 +97,7 @@ pub async fn get_collections(
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) =
             catalog_service::list_collections(&context, user.id(), true, None, candidate_options)
                 .await?;
@@ -1081,7 +1081,7 @@ pub async fn get_collection_principal_permissions(
     )
     .await?;
 
-    if permissions.is_empty() && query_options.cursor.is_none() {
+    if permissions.is_empty() && query_options.cursor().is_none() {
         return Err(ApiError::NotFound("No permissions found".to_string()));
     }
 
@@ -1300,7 +1300,7 @@ pub async fn get_collection_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!(
             "collection {entity_id} not found"
         )));

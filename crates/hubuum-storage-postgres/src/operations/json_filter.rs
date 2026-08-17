@@ -4,8 +4,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 use hubuum_query::{
-    JsonFieldPathRef, Operator, ParsedQueryParam, SQLMappedType,
-    get_jsonb_field_type_from_value_and_operator,
+    JsonFieldPathRef, Operator, ParsedQueryParam, QueryScalarType, infer_query_scalar_type,
 };
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 
@@ -102,9 +101,9 @@ pub(crate) fn json_filter_sql(
         _ => {}
     }
 
-    let mapped_type = get_jsonb_field_type_from_value_and_operator(value, operator.clone());
+    let mapped_type = infer_query_scalar_type(value, operator.clone());
     match mapped_type {
-        Some(SQLMappedType::Numeric) => {
+        Some(QueryScalarType::Numeric) => {
             let values = hubuum_query::parse_integer_list(value)
                 .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
                 .into_iter()
@@ -118,7 +117,7 @@ pub(crate) fn json_filter_sql(
                 parameter,
             )
         }
-        Some(SQLMappedType::Date) => {
+        Some(QueryScalarType::Date) => {
             let values = hubuum_query::parse_datetime_list(value)
                 .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
                 .into_iter()
@@ -132,7 +131,7 @@ pub(crate) fn json_filter_sql(
                 parameter,
             )
         }
-        Some(SQLMappedType::Boolean) => {
+        Some(QueryScalarType::Boolean) => {
             let value = hubuum_query::parse_boolean_value(value)
                 .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
             typed_json_filter(
@@ -143,7 +142,7 @@ pub(crate) fn json_filter_sql(
                 parameter,
             )
         }
-        Some(SQLMappedType::String | SQLMappedType::None) => {
+        Some(QueryScalarType::String | QueryScalarType::None) => {
             let (sql_operator, value) = match operator {
                 Operator::Equals => ("=", value.to_string()),
                 Operator::IEquals => ("ILIKE", value.to_string()),

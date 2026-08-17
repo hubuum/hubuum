@@ -151,7 +151,7 @@ pub async fn get_templates(
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let candidates = ExportTemplate::list_candidates(&context, &candidate_options).await?;
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
@@ -514,7 +514,7 @@ pub async fn get_template_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!(
             "template {entity_id} not found"
         )));

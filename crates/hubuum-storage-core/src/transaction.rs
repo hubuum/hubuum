@@ -2,6 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
 
 use crate::{
@@ -23,7 +24,12 @@ pub struct TransactionalCollections<'transaction> {
 }
 
 impl<'transaction> TransactionalCollections<'transaction> {
-    #[doc(hidden)]
+    /// Bind collection operations to an adapter-owned transaction and its
+    /// required audit context.
+    ///
+    /// Storage adapters call this from their [`StorageTransaction`]
+    /// implementation; application code normally obtains this value through
+    /// [`StorageTransaction::collections`].
     #[must_use]
     pub const fn new(
         storage: &'transaction dyn CollectionStore,
@@ -35,7 +41,10 @@ impl<'transaction> TransactionalCollections<'transaction> {
         }
     }
 
-    pub async fn get(&self, collection_id: i32) -> Result<StorageCollection, StorageError> {
+    pub async fn get(
+        &self,
+        collection_id: CollectionId,
+    ) -> Result<StorageCollection, StorageError> {
         self.storage.get_collection(collection_id).await
     }
 
@@ -50,7 +59,7 @@ impl<'transaction> TransactionalCollections<'transaction> {
 
     pub async fn update(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         changes: StorageCollectionUpdate,
     ) -> Result<StorageCollection, StorageError> {
         self.storage
@@ -58,7 +67,7 @@ impl<'transaction> TransactionalCollections<'transaction> {
             .await
     }
 
-    pub async fn delete(&self, collection_id: i32) -> Result<(), StorageError> {
+    pub async fn delete(&self, collection_id: CollectionId) -> Result<(), StorageError> {
         self.storage
             .delete_collection(collection_id, Some(self.event_context))
             .await
@@ -66,22 +75,22 @@ impl<'transaction> TransactionalCollections<'transaction> {
 
     pub async fn children(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.storage.collection_children(collection_id).await
     }
 
     pub async fn ancestors(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.storage.collection_ancestors(collection_id).await
     }
 
     pub async fn move_to(
         &self,
-        collection_id: i32,
-        new_parent_id: i32,
+        collection_id: CollectionId,
+        new_parent_id: CollectionId,
     ) -> Result<StorageCollection, StorageError> {
         self.storage
             .move_collection(collection_id, new_parent_id, Some(self.event_context))
@@ -96,7 +105,12 @@ pub struct TransactionalClasses<'transaction> {
 }
 
 impl<'transaction> TransactionalClasses<'transaction> {
-    #[doc(hidden)]
+    /// Bind class operations to an adapter-owned transaction and its required
+    /// audit context.
+    ///
+    /// Storage adapters call this from their [`StorageTransaction`]
+    /// implementation; application code normally obtains this value through
+    /// [`StorageTransaction::classes`].
     #[must_use]
     pub const fn new(
         storage: &'transaction dyn ClassStore,
@@ -140,7 +154,10 @@ impl<'transaction> TransactionalClasses<'transaction> {
             .await
     }
 
-    pub async fn names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+    pub async fn names(
+        &self,
+        class_ids: Vec<ClassId>,
+    ) -> Result<Vec<(ClassId, String)>, StorageError> {
         self.storage.class_names(class_ids).await
     }
 }
@@ -152,7 +169,12 @@ pub struct TransactionalClassRelations<'transaction> {
 }
 
 impl<'transaction> TransactionalClassRelations<'transaction> {
-    #[doc(hidden)]
+    /// Bind class-relation operations to an adapter-owned transaction and its
+    /// required audit context.
+    ///
+    /// Storage adapters call this from their [`StorageTransaction`]
+    /// implementation; application code normally obtains this value through
+    /// [`StorageTransaction::class_relations`].
     #[must_use]
     pub const fn new(
         storage: &'transaction dyn ClassRelationStore,
@@ -221,7 +243,12 @@ pub struct TransactionalObjects<'transaction> {
 }
 
 impl<'transaction> TransactionalObjects<'transaction> {
-    #[doc(hidden)]
+    /// Bind object operations to an adapter-owned transaction and its required
+    /// audit context.
+    ///
+    /// Storage adapters call this from their [`StorageTransaction`]
+    /// implementation; application code normally obtains this value through
+    /// [`StorageTransaction::objects`].
     #[must_use]
     pub const fn new(
         storage: &'transaction dyn ObjectStore,
@@ -233,7 +260,7 @@ impl<'transaction> TransactionalObjects<'transaction> {
         }
     }
 
-    pub async fn get(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
+    pub async fn get(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         self.storage.get_object(object_id).await
     }
 
@@ -290,7 +317,7 @@ impl<'transaction> TransactionalObjects<'transaction> {
 
     pub async fn validate_update(
         &self,
-        object_id: i32,
+        object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
         self.storage
@@ -306,7 +333,12 @@ pub struct TransactionalObjectRelations<'transaction> {
 }
 
 impl<'transaction> TransactionalObjectRelations<'transaction> {
-    #[doc(hidden)]
+    /// Bind object-relation operations to an adapter-owned transaction and its
+    /// required audit context.
+    ///
+    /// Storage adapters call this from their [`StorageTransaction`]
+    /// implementation; application code normally obtains this value through
+    /// [`StorageTransaction::object_relations`].
     #[must_use]
     pub const fn new(
         storage: &'transaction dyn ObjectRelationStore,

@@ -154,11 +154,11 @@ impl fmt::Debug for ComputedObjectListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ComputedObjectListQuery")
-            .field("filter_count", &self.options.requested.filters.len())
-            .field("sort_count", &self.options.requested.sort.len())
-            .field("limit", &self.options.requested.limit)
-            .field("has_cursor", &self.options.requested.cursor.is_some())
-            .field("include_total", &self.options.requested.include_total)
+            .field("filter_count", &self.options.requested.filters().len())
+            .field("sort_count", &self.options.requested.sort().len())
+            .field("limit", &self.options.requested.limit())
+            .field("has_cursor", &self.options.requested.cursor().is_some())
+            .field("include_total", &self.options.requested.include_total())
             .field("visibility", &self.visibility)
             .field("projection", &self.projection)
             .finish_non_exhaustive()
@@ -371,28 +371,30 @@ mod tests {
             7,
             Some(9),
             ComputedObjectQueryOptions::new(
-                QueryOptions {
-                    filters: vec![ParsedQueryParam {
-                        field: FilterField::Name,
-                        operator: SearchOperator::Equals { is_negated: false },
-                        value: "secret object".to_string(),
-                    }],
-                    sort: Vec::new(),
-                    limit: Some(20),
-                    cursor: Some("secret cursor".to_string()),
-                    include_total: true,
-                },
-                QueryOptions {
-                    filters: vec![ParsedQueryParam {
-                        field: FilterField::Name,
-                        operator: SearchOperator::Equals { is_negated: false },
-                        value: "secret object".to_string(),
-                    }],
-                    sort: Vec::new(),
-                    limit: Some(21),
-                    cursor: Some("secret cursor".to_string()),
-                    include_total: true,
-                },
+                QueryOptions::new(
+                    vec![ParsedQueryParam::from_parts(
+                        FilterField::Name,
+                        SearchOperator::Equals { is_negated: false },
+                        "secret object",
+                    )],
+                    Vec::new(),
+                    Some(20),
+                    Some("secret cursor".to_string()),
+                    true,
+                )
+                .unwrap(),
+                QueryOptions::new(
+                    vec![ParsedQueryParam::from_parts(
+                        FilterField::Name,
+                        SearchOperator::Equals { is_negated: false },
+                        "secret object",
+                    )],
+                    Vec::new(),
+                    Some(21),
+                    Some("secret cursor".to_string()),
+                    true,
+                )
+                .unwrap(),
             ),
             ComputedObjectVisibility::authorized_object_ids(42, [11, 12]),
             ComputedObjectProjection::All,

@@ -10,14 +10,14 @@ use hubuum_storage_core::{
     StorageClassRelation, StorageClassRelationCreate, StorageObject, StorageObjectRelation,
     StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
     StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePreparedClassRelation,
-    StoragePreparedObjectRelation, StorageRecordMetadata, StorageResolvedClassRelation,
-    StorageResolvedObjectRelation,
+    StoragePreparedObjectRelation, StorageResolvedClassRelation, StorageResolvedObjectRelation,
 };
 use serde_json::json;
 
 use crate::operations::class::ClassRow;
 use crate::operations::event_record::append_event;
 use crate::operations::object::ObjectRow;
+use crate::revision::record_metadata;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 #[derive(Clone, Queryable, Selectable)]
@@ -38,12 +38,7 @@ pub(crate) struct ClassRelationRow {
 impl ClassRelationRow {
     pub(crate) fn into_storage(self) -> StorageClassRelation {
         StorageClassRelation::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.from_hubuum_class_id,
             self.to_hubuum_class_id,
         )
@@ -106,12 +101,7 @@ pub(crate) struct ObjectRelationRow {
 impl ObjectRelationRow {
     pub(crate) fn into_storage(self) -> StorageObjectRelation {
         StorageObjectRelation::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.from_hubuum_object_id,
             self.to_hubuum_object_id,
             self.class_relation_id,
@@ -247,7 +237,7 @@ pub async fn delete_class_relation(
     target: &StorageResolvedClassRelation,
     context: Option<&EventContext>,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(target.relation().metadata().id(), "class relation id")?;
+    validate_positive_id(target.relation().metadata().id().id(), "class relation id")?;
     let target = target.clone();
     let context = context.cloned();
     runtime
@@ -262,8 +252,8 @@ pub(crate) async fn delete_class_relation_on(
     target: &StorageResolvedClassRelation,
     context: Option<&EventContext>,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(target.relation().metadata().id(), "class relation id")?;
-    let relation = lock_class_relation(connection, target.relation().metadata().id()).await?;
+    validate_positive_id(target.relation().metadata().id().id(), "class relation id")?;
+    let relation = lock_class_relation(connection, target.relation().metadata().id().id()).await?;
     let from_class = lock_class(connection, relation.from_hubuum_class_id).await?;
     let to_class = lock_class(connection, relation.to_hubuum_class_id).await?;
     if relation.clone().into_storage() != *target.relation()
@@ -405,7 +395,7 @@ pub(crate) async fn prepare_object_relation_on(
             let command = normalize_object_relation_create(StorageObjectRelationCreate::new(
                 route_from.id,
                 route_to.id,
-                class_relation.relation().metadata().id(),
+                class_relation.relation().metadata().id().id(),
             ))?;
             let (from_object, to_object) = order_object_endpoints(command, route_from, route_to)?;
             (command, from_object, to_object, class_relation)
@@ -548,7 +538,7 @@ pub async fn delete_object_relation(
     target: &StorageResolvedObjectRelation,
     context: Option<&EventContext>,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(target.relation().metadata().id(), "object relation id")?;
+    validate_positive_id(target.relation().metadata().id().id(), "object relation id")?;
     let target = target.clone();
     let context = context.cloned();
     runtime
@@ -563,8 +553,8 @@ pub(crate) async fn delete_object_relation_on(
     target: &StorageResolvedObjectRelation,
     context: Option<&EventContext>,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(target.relation().metadata().id(), "object relation id")?;
-    let relation = lock_object_relation(connection, target.relation().metadata().id()).await?;
+    validate_positive_id(target.relation().metadata().id().id(), "object relation id")?;
+    let relation = lock_object_relation(connection, target.relation().metadata().id().id()).await?;
     let (from_object, to_object) = load_object_endpoints(
         connection,
         relation.from_hubuum_object_id,
@@ -827,7 +817,7 @@ fn validate_object_relation_membership(
 ) -> Result<(), PostgresStorageError> {
     if command.from_object_id() != from_object.id
         || command.to_object_id() != to_object.id
-        || command.class_relation_id() != class_relation.relation().metadata().id()
+        || command.class_relation_id() != class_relation.relation().metadata().id().id()
     {
         return Err(PostgresStorageError::internal(
             "Object relation aggregate does not match its command",
@@ -1141,15 +1131,15 @@ fn class_relation_event(
         ),
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
-    .map(|event| {
-        event
+    .and_then(|event| {
+        Ok(event
             .with_context(context)
-            .with_entity_id(relation.id)
+            .with_entity_id(hubuum_events_core::EventEntityId::new(relation.id)?)
             .with_metadata(json!({
                 "from_class_id": from_class.id,
                 "to_class_id": to_class.id,
                 "related_collection_ids": [from_class.collection_id, to_class.collection_id],
-            }))
+            })))
     })
 }
 
@@ -1172,10 +1162,10 @@ fn object_relation_event(
         ),
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
-    .map(|event| {
-        event
+    .and_then(|event| {
+        Ok(event
             .with_context(context)
-            .with_entity_id(relation.id)
+            .with_entity_id(hubuum_events_core::EventEntityId::new(relation.id)?)
             .with_metadata(json!({
                 "class_relation_id": relation.class_relation_id,
                 "from_object_id": from_object.id,
@@ -1183,7 +1173,7 @@ fn object_relation_event(
                 "from_class_id": from_object.hubuum_class_id,
                 "to_class_id": to_object.hubuum_class_id,
                 "related_collection_ids": [from_object.collection_id, to_object.collection_id],
-            }))
+            })))
     })
 }
 

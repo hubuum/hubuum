@@ -9,14 +9,13 @@ use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup,
     StorageIdentityPage, StoragePrincipal, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageRecordMetadata,
 };
 use serde_json::{Value, json};
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::operations::event_record::append_event;
 use crate::operations::principal::PrincipalRow;
-use crate::revision::RevisionOwner;
+use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::{
     assert_locked_revision_precondition, assert_revision_precondition_allows_missing_target,
 };
@@ -29,7 +28,7 @@ const OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT: i64 = 10;
 
 macro_rules! apply_group_filters {
     ($query:ident, $options:expr, $allow_revision:expr) => {
-        for parameter in &$options.filters {
+        for parameter in $options.filters() {
             match parameter.field {
                 FilterField::Id => {
                     crate::postgres_integer_filter!($query, parameter, crate::schema::groups::id)
@@ -105,12 +104,7 @@ pub(crate) struct GroupRow {
 impl GroupRow {
     fn into_storage(self) -> StorageIdentityGroup {
         StorageIdentityGroup::builder(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.groupname,
             self.description,
             self.identity_scope_id,
@@ -238,14 +232,14 @@ pub async fn list_principal_groups(
                 Ok(records)
             };
 
-            let total = if options.include_total {
+            let total = if options.include_total() {
                 Some(build_query()?.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
             let mut records = build_query()?.select(GroupRow::as_select());
             let fields = options
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| group_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -286,7 +280,7 @@ pub async fn list_groups(
             };
             let mut records = build_query(&options)?.select(GroupRow::as_select());
             let fields = options
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| group_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -461,7 +455,7 @@ pub async fn group_members_page(
                 .into_boxed();
             query = apply_member_filters(query, &options)?;
             let fields = options
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| member_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -840,7 +834,7 @@ fn apply_member_filters<'query>(
     mut query: GroupMemberQuery<'query>,
     options: &QueryOptions,
 ) -> Result<GroupMemberQuery<'query>, PostgresStorageError> {
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, crate::schema::principals::id)
@@ -929,11 +923,11 @@ fn group_event(
 ) -> Result<NewEvent, PostgresStorageError> {
     NewEvent::new(EntityType::Group, action, context.actor_kind(), summary)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
-        .map(|event| {
-            event
+        .and_then(|event| {
+            Ok(event
                 .with_context(context)
-                .with_entity_id(group.id)
-                .with_entity_name(group.groupname.clone())
+                .with_entity_id(hubuum_events_core::EventEntityId::new(group.id)?)
+                .with_entity_name(group.groupname.clone()))
         })
 }
 

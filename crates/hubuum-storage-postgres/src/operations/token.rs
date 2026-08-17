@@ -134,7 +134,7 @@ type TokenQuery<'query> = crate::schema::tokens::BoxedQuery<'query, Pg>;
 
 macro_rules! apply_token_filters {
     ($query:ident, $options:expr) => {
-        for parameter in &$options.filters {
+        for parameter in $options.filters() {
             match parameter.field {
                 FilterField::IssuedAt => crate::postgres_datetime_filter!(
                     $query,
@@ -181,14 +181,14 @@ pub async fn list_retained_tokens(
             let build_query = || -> Result<TokenQuery<'_>, PostgresStorageError> {
                 build_token_query(principal_id, &options, state, observation)
             };
-            let total = if options.include_total {
+            let total = if options.include_total() {
                 Some(build_query()?.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
             let mut records = build_query()?;
             let fields = options
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| token_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -994,12 +994,12 @@ fn token_event(
     }
     NewEvent::new(EntityType::Token, action, context.actor_kind(), summary)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
-        .map(|event| {
-            event
+        .and_then(|event| {
+            Ok(event
                 .with_context(context)
-                .with_entity_id(token.id)
+                .with_entity_id(hubuum_events_core::EventEntityId::new(token.id)?)
                 .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
-                .with_metadata(metadata)
+                .with_metadata(metadata))
         })
 }
 

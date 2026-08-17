@@ -476,8 +476,10 @@ async fn append_permission_event(
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(details.context)
-    .with_entity_id(details.after.id)
-    .with_collection_id(details.after.collection_id)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(details.after.id)?)
+    .with_collection_id(hubuum_domain::CollectionId::new(
+        details.after.collection_id,
+    )?)
     .with_metadata(metadata)
     .with_before(match details.before {
         Some(before) => permission_snapshot(before, details.before_revision),

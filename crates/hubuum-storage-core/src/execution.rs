@@ -2,6 +2,11 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
+use hubuum_domain::{
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventSinkId,
+    EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId, ObjectRelationId,
+    PrincipalId, RemoteTargetId, ResourceRevision, TokenId,
+};
 use hubuum_events_core::MutationProvenance;
 
 /// Bounded attribution for storage work initiated by one application
@@ -50,67 +55,84 @@ impl StorageCallSite {
 ///
 /// An empty revision list represents an existence-only wildcard assertion.
 /// Non-empty lists contain the positive revisions accepted by the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageRevisionTarget {
+    IdentityScope(IdentityScopeId),
+    Group(GroupId),
+    Principal(PrincipalId),
+    Membership {
+        principal_id: PrincipalId,
+        group_id: GroupId,
+    },
+    Collection(CollectionId),
+    CollectionPermissions(CollectionId),
+    Class(ClassId),
+    Object(ObjectId),
+    ClassRelation(ClassRelationId),
+    ObjectRelation(ObjectRelationId),
+    ExportTemplate(ExportTemplateId),
+    RemoteTarget(RemoteTargetId),
+    EventSink(EventSinkId),
+    EventSubscription(EventSubscriptionId),
+    ComputedField(ComputedFieldDefinitionId),
+    Token(TokenId),
+}
+
+impl StorageRevisionTarget {
+    const fn kind(self) -> &'static str {
+        match self {
+            Self::IdentityScope(_) => "identity_scope",
+            Self::Group(_) => "group",
+            Self::Principal(_) => "principal",
+            Self::Membership { .. } => "membership",
+            Self::Collection(_) => "collection",
+            Self::CollectionPermissions(_) => "collection_permissions",
+            Self::Class(_) => "class",
+            Self::Object(_) => "object",
+            Self::ClassRelation(_) => "class_relation",
+            Self::ObjectRelation(_) => "object_relation",
+            Self::ExportTemplate(_) => "export_template",
+            Self::RemoteTarget(_) => "remote_target",
+            Self::EventSink(_) => "event_sink",
+            Self::EventSubscription(_) => "event_subscription",
+            Self::ComputedField(_) => "computed_field",
+            Self::Token(_) => "token",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRevisionPrecondition {
-    owner_key: String,
-    revisions: Vec<i64>,
+    target: StorageRevisionTarget,
+    revisions: Vec<ResourceRevision>,
 }
 
 impl fmt::Debug for StorageRevisionPrecondition {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageRevisionPrecondition")
-            .field("owner_key", &"<redacted>")
+            .field("target_kind", &self.target.kind())
             .field("revision_count", &self.revisions.len())
             .finish()
     }
 }
 
 impl StorageRevisionPrecondition {
-    pub fn new(
-        owner_key: impl Into<String>,
-        revisions: Vec<i64>,
-    ) -> Result<Self, StorageRevisionPreconditionError> {
-        let owner_key = owner_key.into();
-        if owner_key.is_empty() {
-            return Err(StorageRevisionPreconditionError::EmptyOwnerKey);
-        }
-        if revisions.iter().any(|revision| *revision <= 0) {
-            return Err(StorageRevisionPreconditionError::InvalidRevision);
-        }
-        Ok(Self {
-            owner_key,
-            revisions,
-        })
+    #[must_use]
+    pub const fn new(target: StorageRevisionTarget, revisions: Vec<ResourceRevision>) -> Self {
+        Self { target, revisions }
     }
 
     #[must_use]
-    pub fn owner_key(&self) -> &str {
-        &self.owner_key
+    pub const fn target(&self) -> StorageRevisionTarget {
+        self.target
     }
 
     #[must_use]
-    pub fn revisions(&self) -> &[i64] {
+    pub fn revisions(&self) -> &[ResourceRevision] {
         &self.revisions
     }
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StorageRevisionPreconditionError {
-    EmptyOwnerKey,
-    InvalidRevision,
-}
-
-impl fmt::Display for StorageRevisionPreconditionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::EmptyOwnerKey => "revision precondition owner key cannot be empty",
-            Self::InvalidRevision => "revision precondition revisions must be positive",
-        })
-    }
-}
-
-impl std::error::Error for StorageRevisionPreconditionError {}
 
 /// Execution context every selectable backend must honor.
 ///
@@ -197,20 +219,21 @@ mod tests {
 
     #[test]
     fn wildcard_revision_preconditions_are_valid() {
-        let precondition = StorageRevisionPrecondition::new("collection:7", Vec::new()).unwrap();
+        let precondition = StorageRevisionPrecondition::new(
+            StorageRevisionTarget::Collection(CollectionId::new(7).unwrap()),
+            Vec::new(),
+        );
 
         assert!(precondition.revisions().is_empty());
     }
 
     #[test]
-    fn revision_preconditions_reject_invalid_parts() {
-        assert_eq!(
-            StorageRevisionPrecondition::new("", vec![1]).unwrap_err(),
-            StorageRevisionPreconditionError::EmptyOwnerKey
-        );
-        assert_eq!(
-            StorageRevisionPrecondition::new("collection:7", vec![0]).unwrap_err(),
-            StorageRevisionPreconditionError::InvalidRevision
-        );
+    fn revision_preconditions_retain_typed_parts() {
+        let target = StorageRevisionTarget::Collection(CollectionId::new(7).unwrap());
+        let revision = ResourceRevision::new(3).unwrap();
+        let precondition = StorageRevisionPrecondition::new(target, vec![revision]);
+
+        assert_eq!(precondition.target(), target);
+        assert_eq!(precondition.revisions(), &[revision]);
     }
 }

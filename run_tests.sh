@@ -7,6 +7,7 @@ DB_USER="${HUBUUM_TEST_DB_USER:-postgres}"  # Default to 'postgres' if not set
 DB_PASSWORD="${HUBUUM_TEST_DB_PASSWORD:-}"  # No default for password
 DB_HOST="${HUBUUM_TEST_DB_HOST:-localhost}" # Default to 'localhost' if not set
 DB_PORT="${HUBUUM_TEST_DB_PORT:-5432}"      # Default to '5432' if not set
+TEST_THREADS="${HUBUUM_TEST_THREADS:-16}"
 TEST_DB_PREFIX="hubuum_test_db_"
 MIGRATIONS_DIR="./crates/hubuum-storage-postgres/migrations" # Adapter migrations
 CA_CERT="aiven.pem"
@@ -53,6 +54,9 @@ echo "Created test database: $TEST_DB_NAME"
 
 
 export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+# Every integration test owns a small connection pool. Bound parallelism so a
+# high-core test host cannot exhaust PostgreSQL while retaining parallel tests.
+export RUST_TEST_THREADS="$TEST_THREADS"
 
 
 # Run migrations, lock the schema as we define views in the sql and those go bye-bye with print-schema.

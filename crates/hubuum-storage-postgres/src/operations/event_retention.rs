@@ -125,8 +125,8 @@ fn archive_callback_error(error: StorageError) -> PostgresStorageError {
     // transaction. Preserve its already-bounded classification so the caller
     // receives the original failure after PostgreSQL rolls the transaction
     // back; no driver or application error type crosses either boundary.
-    let (kind, message, current_etag) = error.into_parts();
-    PostgresStorageError::new(kind, message, current_etag)
+    let (kind, message, current_revision) = error.into_parts();
+    PostgresStorageError::new(kind, message, current_revision)
 }
 
 async fn select_events_for_retention_purge(

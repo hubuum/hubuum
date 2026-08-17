@@ -1,9 +1,8 @@
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::prelude::*;
 
-use crate::api::etag::RevisionOwner;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent};
+use crate::events::{Action, CollectionId, EntityType, EventContext, EventEntityId, NewEvent};
 use crate::models::{
     ClassSelector, ClassSelectorKind, Collection, HubuumClass, HubuumClassExpanded, HubuumClassID,
     HubuumClassRelation, HubuumClassRelationID, NewHubuumClass, NewHubuumClassRelation,
@@ -13,6 +12,7 @@ use crate::storage::postgres::operations::GetClass;
 use crate::storage::postgres::operations::collection::CollectionRow;
 use crate::storage::postgres::operations::event_record::emit_event;
 use crate::storage::postgres::operations::relation_rows::HubuumClassRelationRow;
+use crate::storage::postgres::runtime::RevisionOwner;
 use crate::storage::postgres::{with_connection, with_transaction};
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -204,9 +204,12 @@ fn class_event(
     Ok(
         NewEvent::new(EntityType::Class, action, context.actor_kind(), summary)?
             .with_context(context)
-            .with_entity_id(class.id)
+            .with_entity_id(EventEntityId::new(class.id).expect("stored class id must be positive"))
             .with_entity_name(class.name.clone())
-            .with_collection_id(class.collection_id),
+            .with_collection_id(
+                CollectionId::new(class.collection_id)
+                    .expect("stored collection id must be positive"),
+            ),
     )
 }
 

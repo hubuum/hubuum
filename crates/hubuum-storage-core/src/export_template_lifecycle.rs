@@ -233,11 +233,11 @@ impl fmt::Debug for StorageExportTemplateListQuery {
                 "collection_count",
                 &self.collection_ids.as_ref().map(Vec::len),
             )
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -465,7 +465,11 @@ mod tests {
             7,
             "secret template name",
             definition,
-            Some(EventContext::user(3, None, None)),
+            Some(EventContext::user(
+                hubuum_domain::PrincipalId::new(3).unwrap(),
+                None,
+                None,
+            )),
         );
 
         let debug = format!("{request:?}");

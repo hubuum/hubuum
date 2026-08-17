@@ -153,13 +153,7 @@ mod test {
             relations_constraint_query(&relations),
         ];
 
-        let query = QueryOptions {
-            filters: query,
-            sort: vec![],
-            limit: None,
-            cursor: None,
-            include_total: true,
-        };
+        let query = QueryOptions::new(query, vec![], None, None, true).unwrap();
 
         let result = context
             .admin_user

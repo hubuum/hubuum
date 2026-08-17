@@ -4,10 +4,15 @@ use actix_web::HttpRequest;
 use actix_web::http::header;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use hubuum_domain::{
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventSinkId,
+    EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId, ObjectRelationId,
+    PositiveIdError, PrincipalId, RemoteTargetId, TokenId,
+};
 
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
-use crate::storage::StorageRevisionPrecondition;
+use crate::storage::{StorageRevisionPrecondition, StorageRevisionTarget};
 
 const ETAG_PREFIX: &str = "hubuum-v1";
 const MAX_IF_MATCH_BYTES: usize = 2 * 1024;
@@ -35,58 +40,6 @@ enum EtagResourceKind {
     EventSubscription,
     ComputedField,
     Token,
-}
-
-/// Authoritative database rows that own resource revisions.
-///
-/// HTTP representations and mutation backends share this vocabulary so a
-/// table-name typo cannot silently detach an `If-Match` assertion from the row
-/// it is intended to protect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum RevisionOwner {
-    IdentityScope,
-    Group,
-    Principal,
-    Membership,
-    Collection,
-    CollectionPermissions,
-    Class,
-    Object,
-    ClassRelation,
-    ObjectRelation,
-    ExportTemplate,
-    RemoteTarget,
-    EventSink,
-    EventSubscription,
-    ComputedField,
-    Token,
-}
-
-impl RevisionOwner {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::IdentityScope => "identity_scopes",
-            Self::Group => "groups",
-            Self::Principal => "principals",
-            Self::Membership => "group_memberships",
-            Self::Collection => "collections",
-            Self::CollectionPermissions => "collection_authorization_state",
-            Self::Class => "hubuumclass",
-            Self::Object => "hubuumobject",
-            Self::ClassRelation => "hubuumclass_relation",
-            Self::ObjectRelation => "hubuumobject_relation",
-            Self::ExportTemplate => "export_templates",
-            Self::RemoteTarget => "remote_targets",
-            Self::EventSink => "event_sinks",
-            Self::EventSubscription => "event_subscriptions",
-            Self::ComputedField => "computed_field_definitions",
-            Self::Token => "tokens",
-        }
-    }
-
-    pub(crate) fn key(self, resource_key: impl fmt::Display) -> String {
-        format!("{}:{resource_key}", self.as_str())
-    }
 }
 
 impl EtagResourceKind {
@@ -138,29 +91,16 @@ impl EtagResourceKind {
             _ => return None,
         })
     }
+}
 
-    const fn revision_owner(self) -> RevisionOwner {
-        match self {
-            Self::IdentityScope => RevisionOwner::IdentityScope,
-            Self::Group => RevisionOwner::Group,
-            Self::Principal | Self::User | Self::ServiceAccount | Self::PrincipalSettings => {
-                RevisionOwner::Principal
-            }
-            Self::Membership => RevisionOwner::Membership,
-            Self::Collection => RevisionOwner::Collection,
-            Self::CollectionPermissions => RevisionOwner::CollectionPermissions,
-            Self::Class => RevisionOwner::Class,
-            Self::Object => RevisionOwner::Object,
-            Self::ClassRelation => RevisionOwner::ClassRelation,
-            Self::ObjectRelation => RevisionOwner::ObjectRelation,
-            Self::ExportTemplate => RevisionOwner::ExportTemplate,
-            Self::RemoteTarget => RevisionOwner::RemoteTarget,
-            Self::EventSink => RevisionOwner::EventSink,
-            Self::EventSubscription => RevisionOwner::EventSubscription,
-            Self::ComputedField => RevisionOwner::ComputedField,
-            Self::Token => RevisionOwner::Token,
-        }
-    }
+fn parse_resource_id<T>(
+    key: &str,
+    constructor: impl FnOnce(i32) -> Result<T, PositiveIdError>,
+) -> Result<T, ApiError> {
+    let id = key.parse::<i32>().map_err(|_| {
+        ApiError::InternalServerError("ETag resource key is not a valid identifier".to_string())
+    })?;
+    constructor(id).map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -260,8 +200,69 @@ impl EntityTag {
         self.kind == other.kind && self.key == other.key
     }
 
-    fn revision_owner_key(&self) -> String {
-        self.kind.revision_owner().key(&self.key)
+    fn revision_target(&self) -> Result<StorageRevisionTarget, ApiError> {
+        Ok(match self.kind {
+            EtagResourceKind::IdentityScope => StorageRevisionTarget::IdentityScope(
+                parse_resource_id(&self.key, IdentityScopeId::new)?,
+            ),
+            EtagResourceKind::Group => {
+                StorageRevisionTarget::Group(parse_resource_id(&self.key, GroupId::new)?)
+            }
+            EtagResourceKind::Principal
+            | EtagResourceKind::User
+            | EtagResourceKind::ServiceAccount
+            | EtagResourceKind::PrincipalSettings => {
+                StorageRevisionTarget::Principal(parse_resource_id(&self.key, PrincipalId::new)?)
+            }
+            EtagResourceKind::Membership => {
+                let (principal_id, group_id) = self.key.split_once(':').ok_or_else(|| {
+                    ApiError::InternalServerError("ETag membership key is malformed".to_string())
+                })?;
+                StorageRevisionTarget::Membership {
+                    principal_id: parse_resource_id(principal_id, PrincipalId::new)?,
+                    group_id: parse_resource_id(group_id, GroupId::new)?,
+                }
+            }
+            EtagResourceKind::Collection => {
+                StorageRevisionTarget::Collection(parse_resource_id(&self.key, CollectionId::new)?)
+            }
+            EtagResourceKind::CollectionPermissions => {
+                StorageRevisionTarget::CollectionPermissions(parse_resource_id(
+                    &self.key,
+                    CollectionId::new,
+                )?)
+            }
+            EtagResourceKind::Class => {
+                StorageRevisionTarget::Class(parse_resource_id(&self.key, ClassId::new)?)
+            }
+            EtagResourceKind::Object => {
+                StorageRevisionTarget::Object(parse_resource_id(&self.key, ObjectId::new)?)
+            }
+            EtagResourceKind::ClassRelation => StorageRevisionTarget::ClassRelation(
+                parse_resource_id(&self.key, ClassRelationId::new)?,
+            ),
+            EtagResourceKind::ObjectRelation => StorageRevisionTarget::ObjectRelation(
+                parse_resource_id(&self.key, ObjectRelationId::new)?,
+            ),
+            EtagResourceKind::ExportTemplate => StorageRevisionTarget::ExportTemplate(
+                parse_resource_id(&self.key, ExportTemplateId::new)?,
+            ),
+            EtagResourceKind::RemoteTarget => StorageRevisionTarget::RemoteTarget(
+                parse_resource_id(&self.key, RemoteTargetId::new)?,
+            ),
+            EtagResourceKind::EventSink => {
+                StorageRevisionTarget::EventSink(parse_resource_id(&self.key, EventSinkId::new)?)
+            }
+            EtagResourceKind::EventSubscription => StorageRevisionTarget::EventSubscription(
+                parse_resource_id(&self.key, EventSubscriptionId::new)?,
+            ),
+            EtagResourceKind::ComputedField => StorageRevisionTarget::ComputedField(
+                parse_resource_id(&self.key, ComputedFieldDefinitionId::new)?,
+            ),
+            EtagResourceKind::Token => {
+                StorageRevisionTarget::Token(parse_resource_id(&self.key, TokenId::new)?)
+            }
+        })
     }
 }
 
@@ -365,17 +366,10 @@ impl IfMatchCondition {
                 tags.iter().map(EntityTag::revision).collect()
             }
         };
-        let revisions = revisions
-            .into_iter()
-            .map(ResourceRevision::get)
-            .collect::<Vec<_>>();
-        StorageRevisionPrecondition::new(current.revision_owner_key(), revisions)
-            .map(Some)
-            .map_err(|error| {
-                ApiError::InternalServerError(format!(
-                    "Could not build validated revision precondition: {error}"
-                ))
-            })
+        Ok(Some(StorageRevisionPrecondition::new(
+            current.revision_target()?,
+            revisions,
+        )))
     }
 }
 
@@ -554,7 +548,13 @@ mod tests {
             .to_http_request();
         let parsed = IfMatchCondition::from_request(&request).unwrap();
         let precondition = parsed.database_precondition(&tag(17)).unwrap().unwrap();
-        assert_eq!(precondition.revisions(), [16, 17]);
+        assert_eq!(
+            precondition.revisions(),
+            [
+                ResourceRevision::new(16).unwrap(),
+                ResourceRevision::new(17).unwrap(),
+            ]
+        );
 
         let request = TestRequest::default()
             .insert_header((header::IF_MATCH, "*"))

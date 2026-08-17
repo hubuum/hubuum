@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn target_seed_applies_class_resource_scope() {
         let options = query_options("related.room.class.id=7&related.room.object.name=foo");
-        let groups = related_filter_groups(&options.filters).unwrap();
+        let groups = related_filter_groups(options.filters()).unwrap();
         let visibility = StorageVisibility::new(
             11,
             false,
@@ -710,7 +710,7 @@ mod tests {
         let options = query_options(
             "related.room.class.id=7&related.room.object.name=foo&related.site.class.name=site",
         );
-        let groups = related_filter_groups(&options.filters).unwrap();
+        let groups = related_filter_groups(options.filters()).unwrap();
         let visibility =
             StorageVisibility::new(11, true, None::<Vec<AuthorizationPermission>>, None);
 

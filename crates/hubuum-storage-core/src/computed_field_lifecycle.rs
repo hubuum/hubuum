@@ -491,11 +491,11 @@ impl fmt::Debug for StoragePersonalComputedFieldListQuery {
         formatter
             .debug_struct("StoragePersonalComputedFieldListQuery")
             .field("has_class_filter", &self.class_id.is_some())
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish_non_exhaustive()
     }
 }
@@ -828,7 +828,12 @@ mod tests {
     fn definition_debug_redacts_identifiers_and_expression_content() {
         let now = chrono::Utc::now().naive_utc();
         let definition = StorageComputedFieldDefinition::new(
-            StorageRecordMetadata::new(71, now, now, 5),
+            StorageRecordMetadata::new(
+                hubuum_domain::ResourceId::new(71).unwrap(),
+                now,
+                now,
+                hubuum_domain::ResourceRevision::new(5).unwrap(),
+            ),
             72,
             StorageComputedFieldVisibility::Personal { owner_id: 73 },
             StorageComputedFieldDefinitionContent::new(

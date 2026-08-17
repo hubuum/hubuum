@@ -216,7 +216,7 @@ pub async fn apply_import_best_effort(
 }
 
 fn record_revision_condition(runtime: &PostgresRuntime, error: &PostgresStorageError) {
-    if error.kind() == StorageErrorKind::PreconditionFailed {
+    if error.kind() == StorageErrorKind::RevisionConflict {
         runtime.record_revision_condition("async_stale");
     }
 }
@@ -440,7 +440,7 @@ async fn resolve_object(
                 parts.class_key.as_ref(),
             )
             .await?;
-            object_by_name_on_connection(connection, class.id(), &parts.name)
+            object_by_name_on_connection(connection, class.id().id(), &parts.name)
                 .await?
                 .ok_or_else(|| {
                     PostgresStorageError::not_found(format!(
@@ -738,8 +738,8 @@ async fn create_object(
             diesel::insert_into(crate::schema::hubuumobject::table)
                 .values((
                     crate::schema::hubuumobject::name.eq(parts.name),
-                    crate::schema::hubuumobject::collection_id.eq(class.collection_id()),
-                    crate::schema::hubuumobject::hubuum_class_id.eq(class.id()),
+                    crate::schema::hubuumobject::collection_id.eq(class.collection_id().id()),
+                    crate::schema::hubuumobject::hubuum_class_id.eq(class.id().id()),
                     crate::schema::hubuumobject::data.eq(parts.data),
                     crate::schema::hubuumobject::description.eq(parts.description),
                     crate::schema::hubuumobject::created_at.eq(created_at),
@@ -752,8 +752,8 @@ async fn create_object(
             diesel::insert_into(crate::schema::hubuumobject::table)
                 .values((
                     crate::schema::hubuumobject::name.eq(parts.name),
-                    crate::schema::hubuumobject::collection_id.eq(class.collection_id()),
-                    crate::schema::hubuumobject::hubuum_class_id.eq(class.id()),
+                    crate::schema::hubuumobject::collection_id.eq(class.collection_id().id()),
+                    crate::schema::hubuumobject::hubuum_class_id.eq(class.id().id()),
                     crate::schema::hubuumobject::data.eq(parts.data),
                     crate::schema::hubuumobject::description.eq(parts.description),
                 ))
@@ -906,7 +906,7 @@ fn should_abort_for_policy(
     include_precondition: bool,
 ) -> bool {
     match error.kind() {
-        StorageErrorKind::Forbidden | StorageErrorKind::Unauthorized => {
+        StorageErrorKind::PermissionDenied | StorageErrorKind::AuthenticationRequired => {
             mode.permission_policy()
                 .unwrap_or(StorageImportPermissionPolicy::Abort)
                 == StorageImportPermissionPolicy::Abort
@@ -916,7 +916,7 @@ fn should_abort_for_policy(
                 .unwrap_or(StorageImportCollisionPolicy::Abort)
                 == StorageImportCollisionPolicy::Abort
         }
-        StorageErrorKind::PreconditionFailed if include_precondition => {
+        StorageErrorKind::RevisionConflict if include_precondition => {
             mode.collision_policy()
                 .unwrap_or(StorageImportCollisionPolicy::Abort)
                 == StorageImportCollisionPolicy::Abort
@@ -1762,7 +1762,7 @@ async fn execute_computed_field(
         ),
     };
     let existing = crate::schema::computed_field_definitions::table
-        .filter(crate::schema::computed_field_definitions::class_id.eq(class.id()))
+        .filter(crate::schema::computed_field_definitions::class_id.eq(class.id().id()))
         .filter(crate::schema::computed_field_definitions::visibility.eq(visibility))
         .filter(crate::schema::computed_field_definitions::key.eq(&parts.key))
         .filter(
@@ -1814,7 +1814,7 @@ async fn execute_computed_field(
             let (created_at, updated_at) = imported_timestamps(parts.timestamps);
             diesel::insert_into(crate::schema::computed_field_definitions::table)
                 .values((
-                    crate::schema::computed_field_definitions::class_id.eq(class.id()),
+                    crate::schema::computed_field_definitions::class_id.eq(class.id().id()),
                     crate::schema::computed_field_definitions::visibility.eq(visibility),
                     crate::schema::computed_field_definitions::owner_user_id.eq(owner_id),
                     crate::schema::computed_field_definitions::key.eq(parts.key),
@@ -1836,7 +1836,7 @@ async fn execute_computed_field(
         }
     };
     if changed && parts.visibility == StorageImportComputedFieldVisibility::Shared {
-        advance_revision_and_enqueue_on_connection(connection, class.id(), None).await?;
+        advance_revision_and_enqueue_on_connection(connection, class.id().id(), None).await?;
     }
     Ok(())
 }
@@ -1915,7 +1915,7 @@ async fn create_class_relation(
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
     let command = normalize_class_relation_create(
-        StorageClassRelationCreate::builder(from.id(), to.id())
+        StorageClassRelationCreate::builder(from.id().id(), to.id().id())
             .template_aliases(parts.forward_template_alias, parts.reverse_template_alias)
             .relation_limits(parts.from_max_relations, parts.to_max_relations)
             .build(),
@@ -1974,7 +1974,7 @@ async fn update_class_relation_timestamps(
 ) -> Result<(), PostgresStorageError> {
     let (from, to) = resolve_class_relation_endpoints(connection, state, input).await?;
     let parts = input.clone().into_parts();
-    let pair = normalize_pair(from.id(), to.id());
+    let pair = normalize_pair(from.id().id(), to.id().id());
     assert_relation_condition(
         class_relation_revision(connection, pair).await?,
         parts.condition,
@@ -2004,7 +2004,7 @@ async fn check_class_relation_condition(
 ) -> Result<(), PostgresStorageError> {
     let (from, to) = resolve_class_relation_endpoints(connection, state, input).await?;
     assert_relation_condition(
-        class_relation_revision(connection, normalize_pair(from.id(), to.id())).await?,
+        class_relation_revision(connection, normalize_pair(from.id().id(), to.id().id())).await?,
         input.clone().into_parts().condition,
     )
 }
@@ -2255,7 +2255,7 @@ async fn upsert_export_template(
         )
         .await?;
         ensure_class_collection(&class, &collection, "Export template")?;
-        Some(class.id())
+        Some(class.id().id())
     } else {
         None
     };
@@ -2383,7 +2383,7 @@ async fn validate_import_template_composition(
             Err(error)
                 if matches!(
                     error.kind(),
-                    StorageErrorKind::BadRequest | StorageErrorKind::NotFound
+                    StorageErrorKind::InvalidInput | StorageErrorKind::NotFound
                 ) => {}
             Err(error) => return Err(error),
         }
@@ -2458,7 +2458,7 @@ async fn upsert_remote_target(
         )
         .await?;
         ensure_class_collection(&class, &collection, "Remote target")?;
-        Some(class.id())
+        Some(class.id().id())
     } else {
         None
     };
@@ -2760,7 +2760,7 @@ fn ensure_class_collection(
     collection: &StorageCollection,
     resource: &str,
 ) -> Result<(), PostgresStorageError> {
-    if class.collection_id() == collection.id() {
+    if class.collection_id().id() == collection.id() {
         Ok(())
     } else {
         Err(PostgresStorageError::bad_request(format!(
@@ -2921,7 +2921,7 @@ async fn observed_revision(
                 ),
             };
             crate::schema::computed_field_definitions::table
-                .filter(crate::schema::computed_field_definitions::class_id.eq(class.id()))
+                .filter(crate::schema::computed_field_definitions::class_id.eq(class.id().id()))
                 .filter(crate::schema::computed_field_definitions::visibility.eq(visibility))
                 .filter(crate::schema::computed_field_definitions::key.eq(parts.key))
                 .filter(
@@ -2936,7 +2936,8 @@ async fn observed_revision(
         StorageImportOperation::UpdateClassRelationTimestamps { input, .. }
         | StorageImportOperation::CheckClassRelationCondition(input) => {
             let (from, to) = resolve_class_relation_endpoints(connection, state, input).await?;
-            class_relation_revision(connection, normalize_pair(from.id(), to.id())).await?
+            class_relation_revision(connection, normalize_pair(from.id().id(), to.id().id()))
+                .await?
         }
         StorageImportOperation::UpdateObjectRelationTimestamps { input, .. }
         | StorageImportOperation::CheckObjectRelationCondition(input) => {

@@ -15,8 +15,9 @@ use super::delivery::process_event_delivery_work_item;
 use crate::errors::ApiError;
 use crate::events::retention::process_event_retention_batch;
 use crate::events::{
-    Action, ActorKind, EntityType, Event, EventContext, EventDeliverySettings, EventFanoutSettings,
-    EventRetentionSettings, NewEvent, RequestProvenance,
+    Action, ActorKind, CollectionId, EntityType, Event, EventContext, EventDeliverySettings,
+    EventEntityId, EventFanoutSettings, EventRetentionSettings, NewEvent, PrincipalId,
+    RequestProvenance, TaskId,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
@@ -65,6 +66,10 @@ use hubuum_storage_postgres::PostgresRuntime;
 
 static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
 static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
+
+fn principal_id(id: i32) -> PrincipalId {
+    PrincipalId::new(id).expect("test principal id must be positive")
+}
 
 async fn process_claimed_event_delivery(
     pool: &crate::storage::postgres::PostgresPool,
@@ -121,7 +126,7 @@ async fn audit_revision_is_null_filters_nullable_revisions(
         "legacy revision-null event",
     )
     .unwrap()
-    .with_entity_id(entity_id);
+    .with_entity_id(EventEntityId::new(entity_id).unwrap());
     with_transaction(&scope.pool, async |conn| emit_event(conn, &event).await)
         .await
         .unwrap();
@@ -175,8 +180,8 @@ async fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
         "test event",
     )
     .unwrap()
-    .with_collection_id(1)
-    .with_entity_id(1)
+    .with_collection_id(CollectionId::new(1).unwrap())
+    .with_entity_id(EventEntityId::new(1).unwrap())
     .with_entity_name("collection_fixture-test")
     .with_request_id(Uuid::new_v4())
     .with_correlation_id("client-provided-correlation-id")
@@ -266,7 +271,7 @@ fn new_event_applies_event_context() {
     .with_context(&context);
 
     assert_eq!(ev.actor_kind(), ActorKind::User);
-    assert_eq!(ev.actor_user_id(), Some(42));
+    assert_eq!(ev.actor_user_id().map(PrincipalId::id), Some(42));
     assert_eq!(ev.request_id(), Some(request_id));
     assert_eq!(ev.correlation_id(), Some("client-correlation"));
 }
@@ -386,8 +391,8 @@ async fn emit_collection_created_event(scope: &TestScope, collection_id: i32) ->
         "collection fanout test",
     )
     .unwrap()
-    .with_collection_id(collection_id)
-    .with_entity_id(collection_id)
+    .with_collection_id(CollectionId::new(collection_id).unwrap())
+    .with_entity_id(EventEntityId::new(collection_id).unwrap())
     .with_entity_name(scope.scoped_name("fanout_collection"));
 
     with_connection(&scope.pool, async |conn| emit_event(conn, &event).await)
@@ -408,8 +413,8 @@ async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queri
         "legacy task queued",
     )
     .unwrap()
-    .with_entity_id(task_id)
-    .with_actor_user_id(initiator.id);
+    .with_entity_id(EventEntityId::new(task_id).unwrap())
+    .with_actor_user_id(principal_id(initiator.id));
     let running = NewEvent::new(
         EntityType::Task,
         Action::Running,
@@ -417,7 +422,7 @@ async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queri
         "legacy task running",
     )
     .unwrap()
-    .with_entity_id(task_id);
+    .with_entity_id(EventEntityId::new(task_id).unwrap());
     with_transaction(&scope.pool, async |conn| {
         emit_event(conn, &queued).await?;
         emit_event(conn, &running).await?;
@@ -430,13 +435,8 @@ async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queri
         initiator_user_id: Some(initiator.id),
         ..EventListFilters::default()
     };
-    let query_options = QueryOptions {
-        filters: Vec::new(),
-        sort: Vec::new(),
-        limit: None,
-        cursor: None,
-        include_total: false,
-    };
+    let query_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+        .expect("test query must be valid");
     let (result, queries) = capture_queries(list_events_with_total_count(
         &scope.pool,
         &[],
@@ -449,13 +449,13 @@ async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queri
 
     assert_eq!(event_responses.len(), 2);
     for event in event_responses {
-        assert_eq!(event.provenance.task_id, Some(task_id));
+        assert_eq!(event.provenance.task_id.map(TaskId::id), Some(task_id));
         assert_eq!(
             event
                 .provenance
                 .initiator
                 .as_ref()
-                .map(|principal| principal.principal_id),
+                .map(|principal| principal.principal_id.id()),
             Some(initiator.id)
         );
         assert_eq!(
@@ -731,7 +731,7 @@ async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
         "fanout_filter_match",
         true,
         hubuum_events_core::EventSubscriptionFilter {
-            entity_ids: vec![fixture.collection.id],
+            entity_ids: vec![EventEntityId::new(fixture.collection.id).unwrap()],
             ..hubuum_events_core::EventSubscriptionFilter::default()
         },
     )
@@ -742,7 +742,7 @@ async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
         "fanout_filter_miss",
         true,
         hubuum_events_core::EventSubscriptionFilter {
-            entity_ids: vec![fixture.collection.id + 10_000],
+            entity_ids: vec![EventEntityId::new(fixture.collection.id + 10_000).unwrap()],
             ..hubuum_events_core::EventSubscriptionFilter::default()
         },
     )
@@ -1304,7 +1304,11 @@ async fn event_delivery_failed_mark_respects_claim_token() {
 async fn collection_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
-    let context = EventContext::user(7, Some(Uuid::new_v4()), Some("audit-correlation".into()));
+    let context = EventContext::user(
+        principal_id(7),
+        Some(Uuid::new_v4()),
+        Some("audit-correlation".into()),
+    );
     let collection_name = scope.scoped_name("audited_collection");
 
     let collection = NewCollectionWithAssignee {
@@ -1376,7 +1380,7 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
 async fn moving_a_collection_to_its_current_parent_is_a_noop() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
-    let context = EventContext::user(8, Some(Uuid::new_v4()), None);
+    let context = EventContext::user(principal_id(8), Some(Uuid::new_v4()), None);
     let collection = fixture.collection.clone();
     let parent_id = collection.parent_collection_id.unwrap();
     let event_count = events_for(&scope, "collection", collection.id).await.len();
@@ -1397,7 +1401,11 @@ async fn moving_a_collection_to_its_current_parent_is_a_noop() {
 async fn class_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
-    let context = EventContext::user(9, Some(Uuid::new_v4()), Some("class-correlation".into()));
+    let context = EventContext::user(
+        principal_id(9),
+        Some(Uuid::new_v4()),
+        Some("class-correlation".into()),
+    );
     let class_name = scope.scoped_name("audited_class");
 
     let class = NewHubuumClass {
@@ -1466,7 +1474,11 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
 async fn object_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
-    let context = EventContext::user(11, Some(Uuid::new_v4()), Some("object-correlation".into()));
+    let context = EventContext::user(
+        principal_id(11),
+        Some(Uuid::new_v4()),
+        Some("object-correlation".into()),
+    );
     let class_name = scope.scoped_name("object_event_class");
     let object_name = scope.scoped_name("audited_object");
 
@@ -1556,7 +1568,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
     let context = EventContext::user(
-        13,
+        principal_id(13),
         Some(Uuid::new_v4()),
         Some("class-relation-correlation".into()),
     );
@@ -1655,7 +1667,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
     let context = EventContext::user(
-        15,
+        principal_id(15),
         Some(Uuid::new_v4()),
         Some("object-relation-correlation".into()),
     );
@@ -1771,7 +1783,11 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
 #[actix_web::test]
 async fn group_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
-    let context = EventContext::user(21, Some(Uuid::new_v4()), Some("group-correlation".into()));
+    let context = EventContext::user(
+        principal_id(21),
+        Some(Uuid::new_v4()),
+        Some("group-correlation".into()),
+    );
 
     let group = NewGroup {
         identity_scope: None,
@@ -1840,7 +1856,7 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
 async fn group_membership_writes_emit_added_removed_events_when_changed() {
     let scope = test_scope();
     let context = EventContext::user(
-        22,
+        principal_id(22),
         Some(Uuid::new_v4()),
         Some("membership-correlation".into()),
     );
@@ -1902,7 +1918,11 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
 #[actix_web::test]
 async fn user_writes_emit_lifecycle_events_without_password_material() {
     let scope = test_scope();
-    let context = EventContext::user(23, Some(Uuid::new_v4()), Some("user-correlation".into()));
+    let context = EventContext::user(
+        principal_id(23),
+        Some(Uuid::new_v4()),
+        Some("user-correlation".into()),
+    );
     let username = scope.scoped_name("event_user");
 
     let user = NewUser {
@@ -1978,7 +1998,11 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
 #[actix_web::test]
 async fn token_writes_emit_created_revoked_events_without_token_material() {
     let scope = test_scope();
-    let context = EventContext::user(24, Some(Uuid::new_v4()), Some("token-correlation".into()));
+    let context = EventContext::user(
+        principal_id(24),
+        Some(Uuid::new_v4()),
+        Some("token-correlation".into()),
+    );
 
     let user = NewUser {
         identity_scope: None,
@@ -2044,7 +2068,11 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
 #[actix_web::test]
 async fn token_renewal_event_links_source_and_copies_hash_free_scope() {
     let scope = test_scope();
-    let context = EventContext::user(24, Some(Uuid::new_v4()), Some("token-renewal".into()));
+    let context = EventContext::user(
+        principal_id(24),
+        Some(Uuid::new_v4()),
+        Some("token-renewal".into()),
+    );
     let user = NewUser {
         identity_scope: None,
         name: scope.scoped_name("event_token_renewal_user"),
@@ -2099,7 +2127,7 @@ async fn permission_writes_emit_granted_revoked_events() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
     let context = EventContext::user(
-        25,
+        principal_id(25),
         Some(Uuid::new_v4()),
         Some("permission-correlation".into()),
     );
@@ -2239,7 +2267,7 @@ async fn export_template_writes_emit_lifecycle_events() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
     let context = EventContext::user(
-        26,
+        principal_id(26),
         Some(Uuid::new_v4()),
         Some("export-template-correlation".into()),
     );
@@ -2343,7 +2371,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     let fixture = scope.with_collection().await;
     let backend = PostgresStorage::new(scope.pool.get_ref().clone());
     let context = EventContext::user(
-        27,
+        principal_id(27),
         Some(Uuid::new_v4()),
         Some("remote-target-correlation".into()),
     );
@@ -2372,7 +2400,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         ))
         .await
         .unwrap();
-    let target_id = created.metadata().id();
+    let target_id = created.metadata().id().id();
 
     let updated = backend
         .update_remote_target(StorageRemoteTargetUpdate::new(

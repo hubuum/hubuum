@@ -531,7 +531,10 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     );
 
     backend
-        .delete_collection(collection.id(), None)
+        .delete_collection(
+            crate::services::storage_boundary::collection_id_to_storage(collection.id()),
+            None,
+        )
         .await
         .unwrap();
     parent.cleanup().await.unwrap();
@@ -787,12 +790,12 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
     ];
     let objects = [
         backend
-            .import_object_by_name(classes[0].id(), &object_inputs[0].name)
+            .import_object_by_name(classes[0].id().id(), &object_inputs[0].name)
             .await
             .unwrap()
             .expect("first imported object should exist"),
         backend
-            .import_object_by_name(classes[1].id(), &object_inputs[1].name)
+            .import_object_by_name(classes[1].id().id(), &object_inputs[1].name)
             .await
             .unwrap()
             .expect("second imported object should exist"),
@@ -801,8 +804,8 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         use crate::schema::hubuumclass_relation::dsl as cr;
         use crate::schema::hubuumobject_relation::dsl as or;
         let class_relation_id = cr::hubuumclass_relation
-            .filter(cr::from_hubuum_class_id.eq(classes[0].id()))
-            .filter(cr::to_hubuum_class_id.eq(classes[1].id()))
+            .filter(cr::from_hubuum_class_id.eq(classes[0].id().id()))
+            .filter(cr::to_hubuum_class_id.eq(classes[1].id().id()))
             .select(cr::id)
             .first::<i32>(conn)
             .await?;
@@ -840,7 +843,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
             input: collection_input,
         },
         CoreTemporalEntity::Class => PlannedExecution::UpdateClass {
-            class_id: classes[0].id(),
+            class_id: classes[0].id().id(),
             input: class_inputs[0].clone(),
         },
         CoreTemporalEntity::Object => PlannedExecution::UpdateObject {
@@ -882,7 +885,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         CoreTemporalEntity::Class => {
             use crate::schema::hubuumclass_history::dsl as h;
             h::hubuumclass_history
-                .filter(h::id.eq(classes[0].id()))
+                .filter(h::id.eq(classes[0].id().id()))
                 .count()
                 .get_result::<i64>(conn)
                 .await
@@ -918,7 +921,10 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
     assert_eq!(history_count, 1);
 
     backend
-        .delete_collection(collection.id(), None)
+        .delete_collection(
+            crate::services::storage_boundary::collection_id_to_storage(collection.id()),
+            None,
+        )
         .await
         .unwrap();
     parent.cleanup().await.unwrap();
@@ -1027,12 +1033,12 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     ];
     let objects = [
         backend
-            .import_object_by_name(classes[0].id(), &object_names[0])
+            .import_object_by_name(classes[0].id().id(), &object_names[0])
             .await
             .unwrap()
             .expect("first imported object should exist"),
         backend
-            .import_object_by_name(classes[1].id(), &object_names[1])
+            .import_object_by_name(classes[1].id().id(), &object_names[1])
             .await
             .unwrap()
             .expect("second imported object should exist"),
@@ -1041,8 +1047,8 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         use crate::schema::hubuumclass_relation::dsl as cr;
         use crate::schema::hubuumobject_relation::dsl as or;
         let class_relation = cr::hubuumclass_relation
-            .filter(cr::from_hubuum_class_id.eq(classes[0].id()))
-            .filter(cr::to_hubuum_class_id.eq(classes[1].id()))
+            .filter(cr::from_hubuum_class_id.eq(classes[0].id().id()))
+            .filter(cr::to_hubuum_class_id.eq(classes[1].id().id()))
             .select((cr::created_at, cr::updated_at))
             .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
@@ -1070,7 +1076,10 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     assert_eq!(actual, [(expected, expected); 7]);
 
     backend
-        .delete_collection(collection.id(), None)
+        .delete_collection(
+            crate::services::storage_boundary::collection_id_to_storage(collection.id()),
+            None,
+        )
         .await
         .unwrap();
     parent.cleanup().await.unwrap();
@@ -1830,13 +1839,8 @@ async fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_er
 
             let (events, _) = (task.list_events_with_total_count(
                 &context.pool,
-                &crate::models::search::QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                },
+                &crate::models::search::QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
+                    .expect("test query must be valid"),
             ))
             .await
             .unwrap();
@@ -2650,7 +2654,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
         .unwrap();
 
     let updated = updated.expect("class should remain available after update");
-    assert_eq!(updated.id(), class.id);
+    assert_eq!(updated.id().id(), class.id);
     assert_eq!(updated.name(), class.name);
 }
 

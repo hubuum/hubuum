@@ -3,7 +3,8 @@ use diesel::deserialize::{FromSql, Result as DeserializeResult};
 use diesel::pg::Pg;
 use diesel::serialize::{Output, Result as SerializeResult, ToSql};
 use diesel::sql_types::BigInt;
-use hubuum_domain::{ResourceRevision, ResourceRevisionError};
+use hubuum_domain::{ResourceId, ResourceRevision, ResourceRevisionError};
+use hubuum_storage_core::{StorageRecordMetadata, StorageRevisionTarget};
 
 /// Adapter-private Diesel representation of a domain resource revision.
 ///
@@ -28,6 +29,7 @@ pub struct PostgresRevision(ResourceRevision);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RevisionOwner {
     Class,
+    ClassRelation,
     Collection,
     CollectionPermissions,
     ComputedField,
@@ -35,7 +37,9 @@ pub(crate) enum RevisionOwner {
     EventSubscription,
     ExportTemplate,
     Group,
+    IdentityScope,
     Object,
+    ObjectRelation,
     Principal,
     RemoteTarget,
     Token,
@@ -45,14 +49,17 @@ impl RevisionOwner {
     const fn table_name(self) -> &'static str {
         match self {
             Self::Class => "hubuumclass",
+            Self::ClassRelation => "hubuumclass_relation",
             Self::Collection => "collections",
-            Self::CollectionPermissions => "collection_permissions",
+            Self::CollectionPermissions => "collection_authorization_state",
             Self::ComputedField => "computed_field_definitions",
             Self::EventSink => "event_sinks",
             Self::EventSubscription => "event_subscriptions",
             Self::ExportTemplate => "export_templates",
             Self::Group => "groups",
+            Self::IdentityScope => "identity_scopes",
             Self::Object => "hubuumobject",
+            Self::ObjectRelation => "hubuumobject_relation",
             Self::Principal => "principals",
             Self::RemoteTarget => "remote_targets",
             Self::Token => "tokens",
@@ -65,6 +72,34 @@ impl RevisionOwner {
 
     pub(crate) fn membership_key(principal_id: i32, group_id: i32) -> String {
         format!("group_memberships:{principal_id}:{group_id}")
+    }
+}
+
+pub(crate) fn revision_owner_key(target: StorageRevisionTarget) -> String {
+    match target {
+        StorageRevisionTarget::IdentityScope(id) => RevisionOwner::IdentityScope.key(id.id()),
+        StorageRevisionTarget::Group(id) => RevisionOwner::Group.key(id.id()),
+        StorageRevisionTarget::Principal(id) => RevisionOwner::Principal.key(id.id()),
+        StorageRevisionTarget::Membership {
+            principal_id,
+            group_id,
+        } => RevisionOwner::membership_key(principal_id.id(), group_id.id()),
+        StorageRevisionTarget::Collection(id) => RevisionOwner::Collection.key(id.id()),
+        StorageRevisionTarget::CollectionPermissions(id) => {
+            RevisionOwner::CollectionPermissions.key(id.id())
+        }
+        StorageRevisionTarget::Class(id) => RevisionOwner::Class.key(id.id()),
+        StorageRevisionTarget::Object(id) => RevisionOwner::Object.key(id.id()),
+        StorageRevisionTarget::ClassRelation(id) => RevisionOwner::ClassRelation.key(id.id()),
+        StorageRevisionTarget::ObjectRelation(id) => RevisionOwner::ObjectRelation.key(id.id()),
+        StorageRevisionTarget::ExportTemplate(id) => RevisionOwner::ExportTemplate.key(id.id()),
+        StorageRevisionTarget::RemoteTarget(id) => RevisionOwner::RemoteTarget.key(id.id()),
+        StorageRevisionTarget::EventSink(id) => RevisionOwner::EventSink.key(id.id()),
+        StorageRevisionTarget::EventSubscription(id) => {
+            RevisionOwner::EventSubscription.key(id.id())
+        }
+        StorageRevisionTarget::ComputedField(id) => RevisionOwner::ComputedField.key(id.id()),
+        StorageRevisionTarget::Token(id) => RevisionOwner::Token.key(id.id()),
     }
 }
 
@@ -87,6 +122,34 @@ impl PostgresRevision {
     pub const fn into_domain(self) -> ResourceRevision {
         self.0
     }
+}
+
+pub(crate) fn record_metadata(
+    id: i32,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    revision: PostgresRevision,
+) -> StorageRecordMetadata {
+    StorageRecordMetadata::new(
+        ResourceId::new(id).expect("persisted resource id must be positive"),
+        created_at,
+        updated_at,
+        revision.into_domain(),
+    )
+}
+
+pub(crate) fn record_metadata_from_raw_revision(
+    id: i32,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    revision: i64,
+) -> StorageRecordMetadata {
+    record_metadata(
+        id,
+        created_at,
+        updated_at,
+        PostgresRevision::new(revision).expect("persisted resource revision must be positive"),
+    )
 }
 
 impl From<ResourceRevision> for PostgresRevision {

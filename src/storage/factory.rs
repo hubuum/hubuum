@@ -75,7 +75,7 @@ impl StorageSettingsBuilder {
         let settings = PostgresPoolSettings::builder(self.connection_url)
             .max_size(self.max_connections.ok_or_else(|| {
                 StorageError::new(
-                    StorageErrorKind::BadRequest,
+                    StorageErrorKind::InvalidInput,
                     "storage maximum connection count is required",
                     None,
                 )
@@ -83,7 +83,7 @@ impl StorageSettingsBuilder {
             .statement_timeout_ms(self.statement_timeout_ms)
             .acquire_timeout_ms(self.acquire_timeout_ms.ok_or_else(|| {
                 StorageError::new(
-                    StorageErrorKind::BadRequest,
+                    StorageErrorKind::InvalidInput,
                     "storage acquire timeout is required",
                     None,
                 )
@@ -134,7 +134,7 @@ fn storage_initialization_error(error: PostgresPoolBuildError) -> StorageError {
         PostgresPoolBuildError::InvalidSettings(_)
         | PostgresPoolBuildError::InvalidUrl(_)
         | PostgresPoolBuildError::UnsupportedDatabaseType
-        | PostgresPoolBuildError::UnsupportedTlsMode(_) => StorageErrorKind::BadRequest,
+        | PostgresPoolBuildError::UnsupportedTlsMode(_) => StorageErrorKind::InvalidInput,
         PostgresPoolBuildError::Tls(_) => StorageErrorKind::Unavailable,
     };
     StorageError::new(kind, error.to_string(), None)
@@ -175,6 +175,6 @@ mod tests {
             .build()
             .expect_err("missing connection limits should fail");
 
-        assert_eq!(error.kind(), StorageErrorKind::BadRequest);
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
     }
 }

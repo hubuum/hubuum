@@ -3,7 +3,7 @@ use diesel::{Insertable, Queryable, Selectable};
 use std::fmt;
 
 use crate::errors::ApiError;
-use crate::events::MutationProvenance;
+use crate::events::{MutationProvenance, PrincipalId, TaskId};
 use crate::models::search::FilterField;
 use crate::models::{PrincipalID, TaskResponse};
 use crate::pagination::{
@@ -44,15 +44,28 @@ pub struct TaskRow {
 
 impl TaskRow {
     pub fn worker_provenance(&self) -> MutationProvenance {
-        MutationProvenance::worker(self.initiator_user_id, self.id)
+        MutationProvenance::worker(
+            self.initiator_user_id
+                .map(|id| PrincipalId::new(id).expect("stored principal id must be positive")),
+            TaskId::new(self.id).expect("stored task id must be positive"),
+        )
     }
 
     pub fn system_provenance(&self) -> MutationProvenance {
-        MutationProvenance::system_for_task(self.initiator_user_id, self.id)
+        MutationProvenance::system_for_task(
+            self.initiator_user_id
+                .map(|id| PrincipalId::new(id).expect("stored principal id must be positive")),
+            TaskId::new(self.id).expect("stored task id must be positive"),
+        )
     }
 
     pub fn user_provenance(&self, actor: PrincipalID) -> MutationProvenance {
-        MutationProvenance::user_for_task(actor.id(), self.initiator_user_id, self.id)
+        MutationProvenance::user_for_task(
+            PrincipalId::new(actor.id()).expect("validated principal id must be positive"),
+            self.initiator_user_id
+                .map(|id| PrincipalId::new(id).expect("stored principal id must be positive")),
+            TaskId::new(self.id).expect("stored task id must be positive"),
+        )
     }
 }
 

@@ -4,7 +4,9 @@ mod tests {
     use rstest::rstest;
     use serde_json::json;
 
-    use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent};
+    use crate::events::{
+        Action, ActorKind, CollectionId, EntityType, EventEntityId, EventResponse, NewEvent,
+    };
     use crate::models::{GroupID, NewHubuumClass, NewHubuumObject, Permissions, PermissionsList};
     use crate::test_support::create_audit_event;
     use crate::tests::TestContext;
@@ -14,6 +16,14 @@ mod tests {
     use crate::traits::{CanSave, PermissionController};
 
     const EVENTS_ENDPOINT: &str = "/api/v1/events";
+
+    fn collection_id(id: i32) -> CollectionId {
+        CollectionId::new(id).expect("test collection id must be positive")
+    }
+
+    fn event_entity_id(id: i32) -> EventEntityId {
+        EventEntityId::new(id).expect("test event entity id must be positive")
+    }
 
     async fn emit_test_event(
         pool: &impl crate::test_support::AuditEventFixture,
@@ -40,8 +50,8 @@ mod tests {
                 "collection audit permission test",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name(&collection.collection.name),
         )
         .await;
@@ -117,8 +127,8 @@ mod tests {
                 "collection audit filter test",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name(&collection.collection.name),
         )
         .await;
@@ -189,8 +199,8 @@ mod tests {
                 "collection route audit test",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name(&collection.collection.name),
         )
         .await;
@@ -203,8 +213,8 @@ mod tests {
                 "object should not appear in collection route",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name("not-the-collection"),
         )
         .await;
@@ -266,8 +276,8 @@ mod tests {
                 "related collection audit test",
             )
             .unwrap()
-            .with_collection_id(source_collection.id)
-            .with_entity_id(source_collection.id)
+            .with_collection_id(collection_id(source_collection.id))
+            .with_entity_id(event_entity_id(source_collection.id))
             .with_before(json!({"secret": "source-before"}))
             .with_after(json!({"secret": "source-after"}))
             .with_metadata(json!({

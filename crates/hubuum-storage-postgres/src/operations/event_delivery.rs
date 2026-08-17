@@ -261,7 +261,7 @@ async fn load_work_items(
 
             Ok(EventDeliveryWorkItem::new(
                 EventDeliveryClaim::new(delivery.id, delivery.attempts, claim_token),
-                event.into_envelope(&principal_names),
+                event.into_envelope(&principal_names)?,
                 EventDeliverySubscription::new(
                     subscription.id,
                     subscription.name.clone(),
@@ -402,7 +402,7 @@ pub async fn list_event_deliveries(
     runtime: &PostgresRuntime,
     query: StorageEventDeliveryListQuery,
 ) -> Result<StorageEventPage<StorageEventDelivery>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(
             async |connection| -> Result<StorageEventPage<StorageEventDelivery>, PostgresStorageError> {
@@ -425,7 +425,7 @@ pub async fn list_event_deliveries(
                 )?;
                 let fields = query
                     .options()
-                    .sort
+                    .sort()
                     .iter()
                     .map(|sort| administration_delivery_cursor_field(&sort.field))
                     .collect::<Result<Vec<_>, _>>()?;
@@ -539,7 +539,7 @@ fn build_administration_delivery_query(
     if let Some(subscription_filter) = subscription_filter {
         query = query.filter(subscription_id.eq(subscription_filter));
     }
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => {
                 let values = hubuum_query::parse_integer_list(&parameter.value)

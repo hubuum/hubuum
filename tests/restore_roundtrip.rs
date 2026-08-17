@@ -2,7 +2,9 @@ use diesel::ExpressionMethods;
 use diesel_async::RunQueryDsl;
 use hubuum::backups::create_backup_document;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
-use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent};
+use hubuum::events::{
+    Action, ActorKind, EntityType, EventEntityId, MutationProvenance, NewEvent, PrincipalId, TaskId,
+};
 use hubuum::models::{
     BackupRequest, NewHubuumClass, NewHubuumClassRelation, ObjectRelationLimit,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobID,
@@ -51,8 +53,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let first_class = with_mutation_provenance(
         &pool,
         Some(MutationProvenance::worker(
-            Some(provenance_initiator_id),
-            provenance_task_id,
+            Some(PrincipalId::new(provenance_initiator_id).unwrap()),
+            TaskId::new(provenance_task_id).unwrap(),
         )),
         NewHubuumClass {
             name: "restore_roundtrip_first".to_string(),
@@ -123,10 +125,10 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         "Historical task completed",
     )
     .unwrap()
-    .with_entity_id(historical_task_id)
+    .with_entity_id(EventEntityId::new(historical_task_id).unwrap())
     .with_mutation_provenance(&MutationProvenance::worker(
-        Some(provenance_initiator_id),
-        historical_task_id,
+        Some(PrincipalId::new(provenance_initiator_id).unwrap()),
+        TaskId::new(historical_task_id).unwrap(),
     ));
     let historical_task_event_id = historical_task_event.event_id();
     create_audit_event(&pool, &historical_task_event)

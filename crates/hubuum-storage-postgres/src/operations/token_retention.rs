@@ -507,15 +507,15 @@ fn token_purge_event(
         ),
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
-    .map(|event| {
-        event
-            .with_entity_id(token.id)
+    .and_then(|event| {
+        Ok(event
+            .with_entity_id(hubuum_events_core::EventEntityId::new(token.id)?)
             .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
             .with_before(snapshot)
             .with_metadata(serde_json::json!({
                 "principal_id": token.principal_id,
                 "retention_basis": basis.as_str(),
-            }))
+            })))
     })
 }
 
@@ -532,6 +532,6 @@ fn resource_scope_snapshot(
 }
 
 fn storage_error_to_postgres(error: StorageError) -> PostgresStorageError {
-    let (kind, message, current_etag) = error.into_parts();
-    PostgresStorageError::new(kind, message, current_etag)
+    let (kind, message, current_revision) = error.into_parts();
+    PostgresStorageError::new(kind, message, current_revision)
 }

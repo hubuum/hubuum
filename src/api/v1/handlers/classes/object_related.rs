@@ -90,15 +90,15 @@ async fn read_related_objects(
     );
 
     if related_options.ignore_self_class {
-        params.filters.add_filter(
+        params.filters_mut().add_filter(
             FilterField::ClassId,
             SearchOperator::Equals { is_negated: true },
             &object.hubuum_class_id.to_string(),
-        );
+        )?;
     }
 
     if !related_options.ignore_classes.is_empty() {
-        params.filters.add_filter(
+        params.filters_mut().add_filter(
             FilterField::ClassId,
             SearchOperator::Equals { is_negated: true },
             &related_options
@@ -107,7 +107,7 @@ async fn read_related_objects(
                 .map(i32::to_string)
                 .collect::<Vec<_>>()
                 .join(","),
-        );
+        )?;
     }
 
     debug!(
@@ -233,14 +233,14 @@ async fn read_related_object_relations(
         )
         .await?
     } else {
-        let mut required = params.filters.permissions()?;
+        let mut required = params.filters().permissions()?;
         required.ensure_contains(&[Permissions::ReadObjectRelation]);
         let required = required.iter().copied().collect::<Vec<_>>();
         if !scope_allows(requestor.scopes(), &required) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_object_relations_touching(
             &context,
             relation_queries::RelationAccess::new(user.id(), true, None),

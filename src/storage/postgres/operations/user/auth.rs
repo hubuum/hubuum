@@ -113,7 +113,11 @@ mod tests {
         let scope = TestScope::new();
         let (user, tokens) = user_with_tokens(&scope, "password_update_revokes").await;
         assert_tokens_active(&scope.pool, &tokens).await;
-        let context = EventContext::user(user.id, None, None);
+        let context = EventContext::user(
+            crate::events::PrincipalId::new(user.id).expect("stored user id must be positive"),
+            None,
+            None,
+        );
 
         UpdateUser {
             password: Some("replacement-password".to_string()),
@@ -132,7 +136,11 @@ mod tests {
     async fn profile_update_preserves_active_tokens() {
         let scope = TestScope::new();
         let (user, tokens) = user_with_tokens(&scope, "profile_update_preserves").await;
-        let context = EventContext::user(user.id, None, None);
+        let context = EventContext::user(
+            crate::events::PrincipalId::new(user.id).expect("stored user id must be positive"),
+            None,
+            None,
+        );
 
         UpdateUser {
             password: None,

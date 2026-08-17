@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use tracing::{Instrument, debug, debug_span, warn};
 
 use super::{
@@ -134,7 +135,7 @@ impl<S> CollectionStore for ObservedStorage<S>
 where
     S: CollectionStore + StorageIdentity,
 {
-    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
+    async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         self.call("collections", "get", self.inner.get_collection(id))
             .await
     }
@@ -154,7 +155,7 @@ where
 
     async fn update_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
@@ -168,7 +169,7 @@ where
 
     async fn delete_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
         self.call(
@@ -179,7 +180,10 @@ where
         .await
     }
 
-    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+    async fn collection_children(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "children",
@@ -188,7 +192,10 @@ where
         .await
     }
 
-    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
+    async fn collection_ancestors(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "ancestors",
@@ -199,8 +206,8 @@ where
 
     async fn move_collection(
         &self,
-        id: i32,
-        new_parent_id: i32,
+        id: CollectionId,
+        new_parent_id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
         self.call(
@@ -265,7 +272,10 @@ where
         .await
     }
 
-    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+    async fn class_names(
+        &self,
+        class_ids: Vec<ClassId>,
+    ) -> Result<Vec<(ClassId, String)>, StorageError> {
         self.call("classes", "names", self.inner.class_names(class_ids))
             .await
     }
@@ -276,7 +286,7 @@ impl<S> ObjectStore for ObservedStorage<S>
 where
     S: ObjectStore + StorageIdentity,
 {
-    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
+    async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         self.call("objects", "get", self.inner.get_object(object_id))
             .await
     }
@@ -363,7 +373,7 @@ where
 
     async fn validate_object_update(
         &self,
-        object_id: i32,
+        object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
         self.call(

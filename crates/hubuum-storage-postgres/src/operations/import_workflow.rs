@@ -466,7 +466,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            hubuum_storage_core::StorageErrorKind::BadRequest
+            hubuum_storage_core::StorageErrorKind::InvalidInput
         );
     }
 
@@ -482,7 +482,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            hubuum_storage_core::StorageErrorKind::BadRequest
+            hubuum_storage_core::StorageErrorKind::InvalidInput
         );
     }
 }

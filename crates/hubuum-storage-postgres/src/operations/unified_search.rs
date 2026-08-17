@@ -5,10 +5,11 @@ use diesel::sql_types::{Array, BigInt, Bool, Integer, Text};
 use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
-    AuthorizationPermission, StorageRecordMetadata, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchResourceScope,
+    AuthorizationPermission, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchResourceScope,
 };
 
+use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 const COLLECTION_SEARCH_SQL: &str = r#"
@@ -128,7 +129,7 @@ struct CollectionRow {
 impl From<CollectionRow> for UnifiedSearchCollection {
     fn from(row: CollectionRow) -> Self {
         Self::new(
-            StorageRecordMetadata::new(row.id, row.created_at, row.updated_at, row.revision.get()),
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision),
             row.name,
             row.description,
             row.parent_collection_id,
@@ -165,12 +166,7 @@ impl ClassRow {
                 ))
             })?;
         Ok(UnifiedSearchClass::builder(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.name,
             collection,
             self.description,
@@ -198,7 +194,7 @@ struct ObjectRow {
 impl From<ObjectRow> for UnifiedSearchObject {
     fn from(row: ObjectRow) -> Self {
         Self::new(
-            StorageRecordMetadata::new(row.id, row.created_at, row.updated_at, row.revision.get()),
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision),
             row.name,
             row.collection_id,
             row.hubuum_class_id,

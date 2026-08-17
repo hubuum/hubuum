@@ -81,7 +81,7 @@ impl ObjectAggregateCandidateBatch {
         self,
         query_options: &QueryOptions,
     ) -> Result<ObjectAggregateCandidatePage, PostgresStorageError> {
-        let limit = query_options.limit.ok_or_else(|| {
+        let limit = query_options.limit().ok_or_else(|| {
             PostgresStorageError::internal("aggregate candidate page is missing its limit")
         })?;
         if limit == 0 {
@@ -139,7 +139,7 @@ pub(super) async fn load_aggregate_candidate_batch(
         None,
     )?;
     for parameter in query_options
-        .filters
+        .filters()
         .iter()
         .filter(|parameter| parameter.field.computed_query().is_some())
     {

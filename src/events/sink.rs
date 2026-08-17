@@ -223,13 +223,13 @@ mod tests {
     #[actix_rt::test]
     async fn sink_trait_can_be_mocked_without_worker_storage() {
         let envelope = EventEnvelope {
-            id: 1,
+            id: crate::events::EventSequence::new(1).unwrap(),
             event_id: Uuid::new_v4(),
             occurred_at: chrono::Utc::now().naive_utc(),
             entity_type: "collection".to_string(),
-            entity_id: Some(10),
+            entity_id: Some(crate::events::EventEntityId::new(10).unwrap()),
             entity_name: Some("example".to_string()),
-            collection_id: Some(10),
+            collection_id: Some(crate::events::CollectionId::new(10).unwrap()),
             action: "created".to_string(),
             actor_user_id: None,
             actor_kind: "system".to_string(),

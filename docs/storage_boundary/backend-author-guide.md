@@ -79,6 +79,11 @@ Adapter boundary types must not expose:
 Keep persistence rows private to the adapter and write explicit conversions.
 Use private fields, validating constructors, and typed builders for contract
 requests with several settings or meaningful invalid combinations.
+Use the `hubuum-domain` identifier and revision newtypes carried by the
+contract. Convert them to native keys only inside the adapter. Treat
+`QueryOptions`, `QueryFilters`, `QuerySort`, and `QueryCursor` as validated
+query intent; do not reinterpret their private representation or add SQL
+concepts to the shared query crate.
 
 Do not mirror tables with one repository trait per table. Capability methods
 are shaped around application operations and consistency boundaries. A method

@@ -127,7 +127,7 @@ pub fn parse_transitive_filter_params(
 ) -> Result<TransitiveFilterParams, ApiError> {
     let mut params = TransitiveFilterParams::default();
 
-    for param in &query_options.filters {
+    for param in query_options.filters() {
         match param.field {
             FilterField::Depth => {
                 if params.depth_op.is_some() {
@@ -240,7 +240,7 @@ where
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::*;
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
         let mut base_query = hubuumclass_relation.into_boxed();
         for param in query_params {
             let operator = param.operator.clone();
@@ -431,7 +431,7 @@ where
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
     let filter = parse_transitive_filter_params(query_options)?;
-    let sorts = normalized_sorts::<HubuumClassRelationTransitiveRow>(&query_options.sort)?;
+    let sorts = normalized_sorts::<HubuumClassRelationTransitiveRow>(query_options.sort())?;
     let mut raw_sql = String::from(
         "SELECT ancestor_class_id, descendant_class_id, depth, path
          FROM get_bidirectionally_related_classes(
@@ -442,7 +442,7 @@ where
 
     if let Some(cursor_sql) = cursor_filter_sql::<HubuumClassRelationTransitiveRow>(
         &sorts,
-        query_options.cursor.as_deref(),
+        query_options.cursor().map(|cursor| cursor.as_str()),
     )? {
         raw_sql.push_str("\n  AND ");
         raw_sql.push_str(&cursor_sql);
@@ -455,7 +455,7 @@ where
         .join(", ");
     raw_sql.push_str(&format!("\nORDER BY {order_by}"));
 
-    if let Some(limit) = query_options.limit {
+    if let Some(limit) = query_options.limit() {
         raw_sql.push_str(&format!("\nLIMIT {limit}"));
     }
 

@@ -127,7 +127,7 @@ where
 /// Load every non-permission-filtered candidate before external authorization.
 pub fn history_candidate_query_options(query_options: &QueryOptions) -> QueryOptions {
     let mut candidates = count_query_options(query_options);
-    candidates.include_total = false;
+    candidates.set_include_total(false);
     candidates
 }
 

@@ -2142,7 +2142,7 @@ fn storage_error_translation_has_one_way_dependency_direction() {
     for required in [
         "kind: StorageErrorKind",
         "message: String",
-        "current_etag: Option<String>",
+        "current_revision: Option<ResourceRevision>",
     ] {
         assert!(
             postgres_error_source.contains(required),

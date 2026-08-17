@@ -67,7 +67,7 @@ pub(crate) async fn list_computed_objects(
     projection: ComputedObjectProjection,
 ) -> Result<ComputedObjectListResult, ApiError> {
     let computed_sorting = options
-        .sort
+        .sort()
         .iter()
         .any(|sort| sort.field.computed_query().is_some());
     let execution_options = if computed_sorting {

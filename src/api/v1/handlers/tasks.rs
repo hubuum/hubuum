@@ -129,7 +129,7 @@ pub async fn get_tasks(
         .await?
     } else {
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = list_tasks(
             &context,
             submitted_by_filter,

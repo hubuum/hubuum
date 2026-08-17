@@ -7,6 +7,7 @@
 //! inside the same database transaction as the domain write.
 
 use actix_web::{HttpMessage, HttpRequest};
+use hubuum_domain::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -52,7 +53,7 @@ impl RequestProvenance {
 
     pub fn user_event_context(&self, actor_user_id: i32) -> EventContext {
         EventContext::user(
-            actor_user_id,
+            PrincipalId::new(actor_user_id).expect("authenticated principal id must be positive"),
             Some(self.request_id),
             self.correlation_id.clone(),
         )

@@ -64,7 +64,7 @@ async fn get_class_relations(
         user.class_relations_page(&context, search_params, requestor.scopes())
             .await?
     } else {
-        let mut required = params.filters.permissions()?;
+        let mut required = params.filters().permissions()?;
         required.ensure_contains(&[Permissions::ReadClassRelation]);
         let required = required.iter().copied().collect::<Vec<_>>();
         if !scope_allows(requestor.scopes(), &required) {
@@ -72,7 +72,7 @@ async fn get_class_relations(
         }
 
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_class_relations(
             &context,
             relation_queries::RelationAccess::new(user.id(), true, None),
@@ -307,7 +307,7 @@ async fn get_object_relations(
         user.object_relations_page(&context, search_params, requestor.scopes())
             .await?
     } else {
-        let mut required = params.filters.permissions()?;
+        let mut required = params.filters().permissions()?;
         required.ensure_contains(&[Permissions::ReadObjectRelation]);
         let required = required.iter().copied().collect::<Vec<_>>();
         if !scope_allows(requestor.scopes(), &required) {
@@ -315,7 +315,7 @@ async fn get_object_relations(
         }
 
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
+        candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_object_relations(
             &context,
             relation_queries::RelationAccess::new(user.id(), true, None),

@@ -430,7 +430,7 @@ mod tests {
     async fn resolver_exports_unsupported_sink_kind() {
         let now = chrono::Utc::now().naive_utc();
         let envelope = EventEnvelope {
-            id: 1,
+            id: crate::events::EventSequence::new(1).unwrap(),
             event_id: uuid::Uuid::new_v4(),
             occurred_at: now,
             entity_type: "collection".to_string(),
@@ -462,7 +462,7 @@ mod tests {
     async fn resolver_passes_through_transport_error() {
         let now = chrono::Utc::now().naive_utc();
         let envelope = EventEnvelope {
-            id: 1,
+            id: crate::events::EventSequence::new(1).unwrap(),
             event_id: uuid::Uuid::new_v4(),
             occurred_at: now,
             entity_type: "collection".to_string(),

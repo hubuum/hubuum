@@ -9,9 +9,10 @@ use hubuum_query::ComputedQueryValueType;
 use hubuum_storage_core::{
     StorageComputedFieldDefinition, StorageComputedFieldDefinitionContent,
     StorageComputedFieldDefinitionInput, StorageComputedFieldProvenance,
-    StorageComputedFieldVisibility, StorageRecordMetadata,
+    StorageComputedFieldVisibility,
 };
 
+use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresStorageError};
 
 pub(crate) const PERSONAL_VISIBILITY: &str = "personal";
@@ -154,12 +155,7 @@ impl ComputedDefinitionRow {
             }
         };
         Ok(StorageComputedFieldDefinition::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.class_id,
             visibility,
             StorageComputedFieldDefinitionContent::new(

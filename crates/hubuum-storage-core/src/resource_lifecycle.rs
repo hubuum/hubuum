@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use hubuum_domain::{BoundedJsonPatch, JsonPatchErrorKind};
+use hubuum_domain::{
+    BoundedJsonPatch, ClassId, CollectionId, GroupId, JsonPatchErrorKind, ObjectId,
+    ResourceRevision,
+};
 use hubuum_events_core::EventContext;
 use serde_json::Value;
 
@@ -14,15 +17,15 @@ use crate::{StorageCollection, StorageError, StorageObject, StorageRecordMetadat
 /// otherwise unnecessary collection lookup.
 #[derive(Clone, PartialEq)]
 pub struct StorageClassRecord {
-    id: i32,
+    id: ClassId,
     name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
     json_schema: Option<Value>,
     validate_schema: bool,
     description: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageClassRecord {
@@ -30,7 +33,7 @@ impl StorageClassRecord {
     pub fn builder(
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
-        collection_id: i32,
+        collection_id: CollectionId,
         description: impl Into<String>,
     ) -> StorageClassRecordBuilder {
         StorageClassRecordBuilder {
@@ -44,7 +47,7 @@ impl StorageClassRecord {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ClassId {
         self.id
     }
 
@@ -54,7 +57,7 @@ impl StorageClassRecord {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -84,7 +87,7 @@ impl StorageClassRecord {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 
@@ -93,15 +96,15 @@ impl StorageClassRecord {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        ClassId,
         String,
-        i32,
+        CollectionId,
         Option<Value>,
         bool,
         String,
         NaiveDateTime,
         NaiveDateTime,
-        i64,
+        ResourceRevision,
     ) {
         (
             self.id,
@@ -120,7 +123,7 @@ impl StorageClassRecord {
 pub struct StorageClassRecordBuilder {
     metadata: StorageRecordMetadata,
     name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
     description: String,
     json_schema: Option<Value>,
     validate_schema: bool,
@@ -142,7 +145,8 @@ impl StorageClassRecordBuilder {
     #[must_use]
     pub fn build(self) -> StorageClassRecord {
         StorageClassRecord {
-            id: self.metadata.id(),
+            id: ClassId::new(self.metadata.id().id())
+                .expect("resource metadata id must be positive"),
             name: self.name,
             collection_id: self.collection_id,
             json_schema: self.json_schema,
@@ -160,8 +164,8 @@ impl StorageClassRecordBuilder {
 pub struct StorageCollectionCreate {
     name: String,
     description: String,
-    owner_group_id: i32,
-    parent_collection_id: Option<i32>,
+    owner_group_id: GroupId,
+    parent_collection_id: Option<CollectionId>,
 }
 
 impl StorageCollectionCreate {
@@ -169,8 +173,8 @@ impl StorageCollectionCreate {
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
-        owner_group_id: i32,
-        parent_collection_id: Option<i32>,
+        owner_group_id: GroupId,
+        parent_collection_id: Option<CollectionId>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -191,12 +195,12 @@ impl StorageCollectionCreate {
     }
 
     #[must_use]
-    pub const fn owner_group_id(&self) -> i32 {
+    pub const fn owner_group_id(&self) -> GroupId {
         self.owner_group_id
     }
 
     #[must_use]
-    pub const fn parent_collection_id(&self) -> Option<i32> {
+    pub const fn parent_collection_id(&self) -> Option<CollectionId> {
         self.parent_collection_id
     }
 }
@@ -228,7 +232,7 @@ impl StorageCollectionUpdate {
 /// Explicit route-selected address for a class.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageClassSelector {
-    Id(i32),
+    Id(ClassId),
     Name(String),
 }
 
@@ -236,7 +240,7 @@ pub enum StorageClassSelector {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageClassCreate {
     name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
     json_schema: Option<Value>,
     validate_schema: bool,
     description: String,
@@ -246,7 +250,7 @@ impl StorageClassCreate {
     #[must_use]
     pub fn builder(
         name: impl Into<String>,
-        collection_id: i32,
+        collection_id: CollectionId,
         description: impl Into<String>,
     ) -> StorageClassCreateBuilder {
         StorageClassCreateBuilder {
@@ -266,7 +270,7 @@ impl StorageClassCreate {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -313,7 +317,7 @@ impl StorageClassCreateBuilder {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StorageClassUpdate {
     name: Option<String>,
-    collection_id: Option<i32>,
+    collection_id: Option<CollectionId>,
     json_schema: Option<Value>,
     validate_schema: Option<bool>,
     description: Option<String>,
@@ -333,7 +337,7 @@ impl StorageClassUpdate {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> Option<i32> {
+    pub const fn collection_id(&self) -> Option<CollectionId> {
         self.collection_id
     }
 
@@ -365,7 +369,7 @@ impl StorageClassUpdateBuilder {
     }
 
     #[must_use]
-    pub const fn collection_id(mut self, collection_id: Option<i32>) -> Self {
+    pub const fn collection_id(mut self, collection_id: Option<CollectionId>) -> Self {
         self.update.collection_id = collection_id;
         self
     }
@@ -427,8 +431,8 @@ impl StorageResolvedClass {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageObjectSelector {
     Ids {
-        class_id: i32,
-        object_id: i32,
+        class_id: ClassId,
+        object_id: ObjectId,
     },
     Names {
         class_name: String,
@@ -440,8 +444,8 @@ pub enum StorageObjectSelector {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageObjectCreate {
     name: String,
-    collection_id: i32,
-    class_id: i32,
+    collection_id: CollectionId,
+    class_id: ClassId,
     data: Value,
     description: String,
 }
@@ -450,8 +454,8 @@ impl StorageObjectCreate {
     #[must_use]
     pub fn new(
         name: impl Into<String>,
-        collection_id: i32,
-        class_id: i32,
+        collection_id: CollectionId,
+        class_id: ClassId,
         data: Value,
         description: impl Into<String>,
     ) -> Self {
@@ -470,12 +474,12 @@ impl StorageObjectCreate {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> i32 {
+    pub const fn class_id(&self) -> ClassId {
         self.class_id
     }
 
@@ -494,8 +498,8 @@ impl StorageObjectCreate {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StorageObjectUpdate {
     name: Option<String>,
-    collection_id: Option<i32>,
-    class_id: Option<i32>,
+    collection_id: Option<CollectionId>,
+    class_id: Option<ClassId>,
     data: Option<Value>,
     description: Option<String>,
 }
@@ -514,12 +518,12 @@ impl StorageObjectUpdate {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> Option<i32> {
+    pub const fn collection_id(&self) -> Option<CollectionId> {
         self.collection_id
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> Option<i32> {
+    pub const fn class_id(&self) -> Option<ClassId> {
         self.class_id
     }
 
@@ -546,13 +550,13 @@ impl StorageObjectUpdateBuilder {
     }
 
     #[must_use]
-    pub const fn collection_id(mut self, collection_id: Option<i32>) -> Self {
+    pub const fn collection_id(mut self, collection_id: Option<CollectionId>) -> Self {
         self.update.collection_id = collection_id;
         self
     }
 
     #[must_use]
-    pub const fn class_id(mut self, class_id: Option<i32>) -> Self {
+    pub const fn class_id(mut self, class_id: Option<ClassId>) -> Self {
         self.update.class_id = class_id;
         self
     }
@@ -592,9 +596,9 @@ impl StorageObjectDataPatch {
         self.patch.apply(document).map_err(|error| {
             let (kind, message) = error.into_parts();
             let kind = match kind {
-                JsonPatchErrorKind::BadRequest => crate::StorageErrorKind::BadRequest,
+                JsonPatchErrorKind::BadRequest => crate::StorageErrorKind::InvalidInput,
                 JsonPatchErrorKind::Conflict => crate::StorageErrorKind::Conflict,
-                JsonPatchErrorKind::PayloadTooLarge => crate::StorageErrorKind::PayloadTooLarge,
+                JsonPatchErrorKind::PayloadTooLarge => crate::StorageErrorKind::InputTooLarge,
             };
             StorageError::new(kind, message, None)
         })
@@ -651,7 +655,7 @@ impl StorageResolvedObject {
 /// application mutations use an audited service or [`crate::TransactionalStorage`].
 #[async_trait]
 pub trait CollectionStore: Send + Sync {
-    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError>;
+    async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError>;
 
     async fn create_collection(
         &self,
@@ -661,25 +665,31 @@ pub trait CollectionStore: Send + Sync {
 
     async fn update_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError>;
 
     async fn delete_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError>;
 
-    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError>;
+    async fn collection_children(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError>;
 
-    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError>;
+    async fn collection_ancestors(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError>;
 
     async fn move_collection(
         &self,
-        id: i32,
-        new_parent_id: i32,
+        id: CollectionId,
+        new_parent_id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError>;
 }
@@ -719,7 +729,10 @@ pub trait ClassStore: Send + Sync {
     ///
     /// Implementations must return one row for every distinct requested ID or
     /// fail rather than silently returning a partial mapping.
-    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError>;
+    async fn class_names(
+        &self,
+        class_ids: Vec<ClassId>,
+    ) -> Result<Vec<(ClassId, String)>, StorageError>;
 }
 
 /// Complete object lifecycle required from a selectable backend.
@@ -730,7 +743,7 @@ pub trait ClassStore: Send + Sync {
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     /// Load one object and its class by object ID.
-    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError>;
+    async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError>;
 
     async fn resolve_object(
         &self,
@@ -776,7 +789,7 @@ pub trait ObjectStore: Send + Sync {
     /// Validate an object update against the current stored record.
     async fn validate_object_update(
         &self,
-        object_id: i32,
+        object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError>;
 }

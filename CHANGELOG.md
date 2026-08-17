@@ -72,6 +72,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   traits. External adapter authors must provide an atomic callback runner and
   all transaction-scoped lifecycle accessors; applications continue to select
   adapters statically, with no dynamic plugin interface.
+- **Breaking (experimental Rust API):** the publishable domain, query, event,
+  and storage contracts now keep database and application implementation
+  details behind their crate boundaries. External adapter authors must replace
+  raw lifecycle, event, principal, metadata, and revision integers with the
+  matching `hubuum-domain` IDs and `ResourceRevision`; use
+  `StorageRevisionTarget` instead of formatted revision-owner keys; construct
+  and mutate `QueryOptions` through its bounded collection and cursor APIs;
+  replace `SQLMappedType` and the JSONB-named inference helpers with
+  `QueryScalarType` and the `infer_*` helpers; use semantic event `parse`
+  methods instead of `from_db`; and update matches to the semantic
+  `StorageErrorKind` names. HTTP shapes, database schemas, and persisted event
+  documents are unchanged by this Rust boundary cleanup.
 - Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;
   PostgreSQL pool statistics are converted into private, structured contract
   values at the adapter boundary rather than being represented by root-owned

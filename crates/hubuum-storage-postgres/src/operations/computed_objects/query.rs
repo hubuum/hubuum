@@ -4,7 +4,8 @@ use diesel::SelectableHelper;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_query::{
-    ComputedFieldScope, ComputedQueryValueType, FilterField, Operator, ParsedQueryParam, SortParam,
+    ComputedFieldScope, ComputedQueryValueType, FilterField, Operator, ParsedQueryParam,
+    QueryFilters, QuerySort, SortParam,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -76,8 +77,8 @@ pub(crate) async fn resolve_computed_query_fields(
     connection: &mut PostgresConnection,
     target_class_id: i32,
     personal_owner_id: Option<i32>,
-    filters: &mut [ParsedQueryParam],
-    sorts: &mut [SortParam],
+    filters: &mut QueryFilters,
+    sorts: &mut QuerySort,
 ) -> Result<ComputedQuerySnapshot, PostgresStorageError> {
     validate_positive_id(target_class_id, "computed field class id")?;
     if let Some(owner_id) = personal_owner_id {
@@ -165,31 +166,23 @@ pub(crate) async fn resolve_computed_query_fields(
     }))?;
 
     let mut query_fields = HashMap::new();
-    for field in filters
-        .iter_mut()
-        .filter_map(|filter| filter.field.computed_query_mut())
-        .chain(
-            sorts
-                .iter_mut()
-                .filter_map(|sort| sort.field.computed_query_mut()),
-        )
-    {
+    for (scope, key) in &requested {
         let definition = definitions_by_key
-            .get(&(field.scope(), field.key().to_string()))
+            .get(&(*scope, key.clone()))
             .ok_or_else(|| {
                 PostgresStorageError::bad_request(format!(
                     "Enabled {} computed field '{}' was not found for this class",
-                    field.scope().as_str(),
-                    field.key()
+                    scope.as_str(),
+                    key
                 ))
             })?;
         let value_type = definition.query_value_type()?;
-        let scope_sql = match field.scope() {
+        let scope_sql = match scope {
             ComputedFieldScope::Shared => &shared_scope_sql,
             ComputedFieldScope::Personal => &personal_scope_sql,
         };
         query_fields.insert(
-            (field.scope(), field.key().to_string()),
+            (*scope, key.clone()),
             ResolvedComputedQueryField {
                 sql_expression: computed_query_value_sql(
                     definition,
@@ -199,8 +192,21 @@ pub(crate) async fn resolve_computed_query_fields(
                 value_type,
             },
         );
-        field.resolve(value_type);
     }
+
+    let resolve_type = |field: &hubuum_query::ComputedQueryField| {
+        query_fields
+            .get(&(field.scope(), field.key().to_string()))
+            .map(|resolved| resolved.value_type)
+            .ok_or_else(|| {
+                PostgresStorageError::internal(format!(
+                    "Computed field '{}' was not resolved",
+                    field.key()
+                ))
+            })
+    };
+    filters.try_resolve_computed_fields(resolve_type)?;
+    sorts.try_resolve_computed_fields(resolve_type)?;
 
     Ok(ComputedQuerySnapshot {
         class_id: target_class_id,
@@ -214,29 +220,18 @@ pub(super) fn resolve_query_option_types(
     options: &mut hubuum_query::QueryOptions,
     snapshot: &ComputedQuerySnapshot,
 ) -> Result<(), PostgresStorageError> {
-    for field in options
-        .filters
-        .iter_mut()
-        .filter_map(|filter| filter.field.computed_query_mut())
-        .chain(
-            options
-                .sort
-                .iter_mut()
-                .filter_map(|sort| sort.field.computed_query_mut()),
-        )
-    {
-        let resolved = snapshot
+    options.try_resolve_computed_fields(|field| {
+        snapshot
             .query_fields
             .get(&(field.scope(), field.key().to_string()))
+            .map(|resolved| resolved.value_type)
             .ok_or_else(|| {
                 PostgresStorageError::internal(format!(
                     "Computed field '{}' was not resolved for response pagination",
                     field.key()
                 ))
-            })?;
-        field.resolve(resolved.value_type);
-    }
-    Ok(())
+            })
+    })
 }
 
 fn validate_computed_filter_count(filter_count: usize) -> Result<(), PostgresStorageError> {

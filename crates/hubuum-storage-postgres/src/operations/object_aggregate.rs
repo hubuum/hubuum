@@ -65,7 +65,7 @@ struct ObjectAggregatePaging {
 impl ObjectAggregatePaging {
     fn has_computed_filter(&self) -> bool {
         self.query_options
-            .filters
+            .filters()
             .iter()
             .any(|filter| filter.field.computed_query().is_some())
     }
@@ -79,12 +79,12 @@ impl ObjectAggregatePaging {
         if !self.has_computed_filter() {
             return Ok(());
         }
-        let mut no_sorts = [];
+        let mut no_sorts = Default::default();
         let snapshot = resolve_computed_query_fields(
             connection,
             class_id,
             personal_owner_id,
-            &mut self.query_options.filters,
+            self.query_options.filters_mut(),
             &mut no_sorts,
         )
         .await?;
@@ -124,8 +124,8 @@ pub async fn aggregate_objects(
     let cursor_max_encoded_bytes = query.cursor_max_encoded_bytes();
     let effective_limit = query.page_limit();
     let decoded_cursor = query_options
-        .cursor
-        .as_deref()
+        .cursor()
+        .map(|cursor| cursor.as_str())
         .map(|cursor| spec.decode_cursor(cursor, cursor_max_encoded_bytes))
         .transpose()?;
     let required_permissions = query.required_permissions().to_vec();
@@ -134,8 +134,8 @@ pub async fn aggregate_objects(
         backend = "postgresql",
         dimension_count = spec.dimensions().len(),
         measure_count = spec.measures().len(),
-        filter_count = query_options.filters.len(),
-        include_total = query_options.include_total,
+        filter_count = query_options.filters().len(),
+        include_total = query_options.include_total(),
         authorization_mode = ?query.authorization_mode(),
         "grouping visible filtered objects"
     );
@@ -241,7 +241,7 @@ async fn local_computed_filter_has_visible_candidates(
 ) -> Result<bool, PostgresStorageError> {
     let mut candidate_options =
         object_aggregate_authorization_chunk_options(&execution.paging.query_options);
-    candidate_options.limit = Some(1);
+    candidate_options.set_limit(Some(1));
     let database_options = candidate_execution_options(&candidate_options)?;
     let candidate_query = ObjectAggregateCandidateQuery::new(
         &database_options,
@@ -274,7 +274,7 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
     let mut object_cursor = None;
 
     loop {
-        chunk_options.cursor.clone_from(&object_cursor);
+        chunk_options.set_validated_cursor(object_cursor.clone());
         let database_options = candidate_execution_options(&chunk_options)?;
         let candidate_query = ObjectAggregateCandidateQuery::new(
             &database_options,
@@ -308,7 +308,13 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
             merge_aggregate_rows(connection, grouped, &paging.spec).await?;
         }
 
-        object_cursor = candidate_page.next_cursor;
+        object_cursor = candidate_page
+            .next_cursor
+            .map(TryInto::try_into)
+            .transpose()
+            .map_err(|error: hubuum_query::QueryError| {
+                PostgresStorageError::internal(error.to_string())
+            })?;
         if object_cursor.is_none() {
             break;
         }
@@ -359,7 +365,7 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
     let mut object_cursor = None;
 
     loop {
-        chunk_options.cursor.clone_from(&object_cursor);
+        chunk_options.set_validated_cursor(object_cursor.clone());
         let database_options = candidate_execution_options(&chunk_options)?;
         let candidate_query = ObjectAggregateCandidateQuery::new(
             &database_options,
@@ -385,10 +391,10 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
             && filters_computed_values
             && paging.computed_filter_snapshot.is_none()
         {
-            let mut filters = std::mem::take(&mut paging.query_options.filters);
+            let mut filters = std::mem::take(paging.query_options.filters_mut());
             let snapshot = runtime
                 .with_read_only_snapshot(async |connection| {
-                    let mut no_sorts = [];
+                    let mut no_sorts = Default::default();
                     resolve_computed_query_fields(
                         connection,
                         target.class_id,
@@ -399,7 +405,7 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
                     .await
                 })
                 .await?;
-            paging.query_options.filters = filters;
+            paging.query_options.set_filters(filters);
             paging.computed_filter_snapshot = Some(snapshot);
         }
         if !authorized.is_empty() && computed_definitions.is_none() {
@@ -433,7 +439,13 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
             accumulator.add_rows(runtime, grouped, &paging.spec).await?;
         }
 
-        object_cursor = candidate_page.next_cursor;
+        object_cursor = candidate_page
+            .next_cursor
+            .map(TryInto::try_into)
+            .transpose()
+            .map_err(|error: hubuum_query::QueryError| {
+                PostgresStorageError::internal(error.to_string())
+            })?;
         if object_cursor.is_none() {
             break;
         }
@@ -448,17 +460,21 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
 
 fn object_aggregate_chunk_options(query_options: &QueryOptions) -> QueryOptions {
     let mut chunk_options = query_options.clone();
-    chunk_options.sort = candidate::candidate_sorts();
-    chunk_options.limit = Some(OBJECT_AGGREGATE_CANDIDATE_BATCH_SIZE);
-    chunk_options.cursor = None;
-    chunk_options.include_total = false;
+    chunk_options.set_sort(
+        candidate::candidate_sorts()
+            .try_into()
+            .expect("the fixed aggregate candidate sort must be valid"),
+    );
+    chunk_options.set_limit(Some(OBJECT_AGGREGATE_CANDIDATE_BATCH_SIZE));
+    chunk_options.clear_cursor();
+    chunk_options.set_include_total(false);
     chunk_options
 }
 
 fn candidate_execution_options(
     query_options: &QueryOptions,
 ) -> Result<QueryOptions, PostgresStorageError> {
-    let limit = query_options.limit.ok_or_else(|| {
+    let limit = query_options.limit().ok_or_else(|| {
         PostgresStorageError::internal("aggregate candidate query is missing its limit")
     })?;
     if limit == 0 {
@@ -467,15 +483,16 @@ fn candidate_execution_options(
         ));
     }
     let mut options = query_options.clone();
-    options.limit = Some(limit.saturating_add(1));
+    options.set_limit(Some(limit.saturating_add(1)));
     Ok(options)
 }
 
 fn object_aggregate_authorization_chunk_options(query_options: &QueryOptions) -> QueryOptions {
     let mut chunk_options = object_aggregate_chunk_options(query_options);
     chunk_options
-        .filters
-        .retain(|filter| filter.field.computed_query().is_none());
+        .filters_mut()
+        .try_retain(|filter| filter.field.computed_query().is_none())
+        .expect("removing computed filters preserves related-filter invariants");
     chunk_options
 }
 
@@ -484,7 +501,7 @@ fn empty_aggregate_page(
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
     Ok(StorageObjectAggregatePage::new(
         Vec::new(),
-        query_options.include_total.then_some(0),
+        query_options.include_total().then_some(0),
         None,
     ))
 }
@@ -505,7 +522,7 @@ fn validate_candidate_target(
 
 fn reject_unsupported_filters(options: &QueryOptions) -> Result<(), PostgresStorageError> {
     if let Some(field) = options
-        .filters
+        .filters()
         .iter()
         .map(|filter| &filter.field)
         .find(|field| field.related_query().is_some())

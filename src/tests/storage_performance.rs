@@ -5,6 +5,7 @@
 //! N+1 introduced while storage capabilities are extracted.
 
 use diesel::sql_types::{Integer, Json, Text};
+use hubuum_domain::PrincipalId;
 use serde_json::Value;
 
 use crate::events::{EventContext, MutationProvenance};
@@ -1507,7 +1508,9 @@ async fn collection_history_query_count_is_constant_with_page_size() {
     for version in 0..12 {
         with_mutation_provenance(
             &scope.pool,
-            Some(MutationProvenance::user(actor.id)),
+            Some(MutationProvenance::user(
+                PrincipalId::new(actor.id).expect("persisted principal id must be positive"),
+            )),
             UpdateCollection {
                 name: None,
                 description: Some(format!("query budget history version {version}")),

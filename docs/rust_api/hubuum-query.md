@@ -24,6 +24,15 @@ panic. Parsing is synchronous, performs no I/O, uses no global state, and has no
 runtime or cancellation requirement. Query debug output must remain bounded and
 must not reveal filter values where a type promises redaction.
 
+`QueryOptions` has a private representation. Its `QueryFilters`, `QuerySort`,
+and `QueryCursor` components validate their bounds and expose only
+invariant-preserving mutation. `SortParam` and `ParsedQueryParam` remain simple
+leaf DTOs with public fields as an intentional construction surface; placing
+them into the bounded collections still performs collection-level validation.
+Scalar inference uses application-neutral value categories. SQL expressions,
+column names, and database type identifiers belong to adapters and are not part
+of this crate's API.
+
 ## Ownership and Verification
 
 Hubuum maintainers own releases. CI builds rustdoc with warnings denied, tests a

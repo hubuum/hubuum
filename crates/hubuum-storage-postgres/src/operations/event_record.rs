@@ -37,14 +37,14 @@ impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
         Self {
             event_id: event.event_id().as_uuid(),
             entity_type: event.entity_type().as_str(),
-            entity_id: event.entity_id(),
+            entity_id: event.entity_id().map(Into::into),
             entity_name: event.entity_name(),
-            collection_id: event.collection_id(),
+            collection_id: event.collection_id().map(Into::into),
             action: event.action().as_str(),
-            actor_user_id: event.actor_user_id(),
+            actor_user_id: event.actor_user_id().map(Into::into),
             actor_kind: event.actor_kind().as_str(),
-            initiator_user_id: event.initiator_user_id(),
-            task_id: event.task_id(),
+            initiator_user_id: event.initiator_user_id().map(Into::into),
+            task_id: event.task_id().map(Into::into),
             request_id: event.request_id(),
             correlation_id: event.correlation_id(),
             summary: event.summary(),
@@ -67,7 +67,7 @@ pub async fn append_event(
         .get_result::<StoredEventProjection>(connection)
         .await?;
     log_event_append(&row);
-    Ok(row.into_audit_event(&HashMap::new(), false))
+    row.into_audit_event(&HashMap::new(), false)
 }
 
 /// Append a bounded batch of validated events in one PostgreSQL statement.
@@ -87,10 +87,10 @@ pub async fn append_events(
     for event in &persisted {
         log_event_append(event);
     }
-    Ok(persisted
+    persisted
         .into_iter()
         .map(|event| event.into_audit_event(&HashMap::new(), false))
-        .collect())
+        .collect()
 }
 
 fn log_event_append(event: &StoredEventProjection) {

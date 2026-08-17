@@ -286,7 +286,7 @@ fn history_cursor_fields(
     table: &'static str,
 ) -> Result<Vec<CursorSqlField<String>>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| {
             let column = match sort.field {
@@ -308,7 +308,7 @@ fn history_cursor_fields(
 }
 
 fn validate_history_filters(options: &QueryOptions) -> Result<(), PostgresStorageError> {
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         if parameter.field != FilterField::Revision {
             return Err(PostgresStorageError::bad_request(format!(
                 "Field '{}' is not searchable for history",
@@ -346,10 +346,10 @@ macro_rules! history_operations {
                     if let HistoryCollectionScope::Visible(collection_ids) = &scope {
                         count_query = count_query.filter($visibility_column.eq_any(collection_ids));
                     }
-                    for parameter in &options.filters {
+                    for parameter in options.filters() {
                         crate::postgres_revision_filter!(count_query, parameter, revision);
                     }
-                    let total = if options.include_total {
+                    let total = if options.include_total() {
                         count_query.count().get_result::<i64>(connection).await?
                     } else {
                         SKIPPED_TOTAL_COUNT
@@ -361,7 +361,7 @@ macro_rules! history_operations {
                     if let HistoryCollectionScope::Visible(collection_ids) = &scope {
                         records = records.filter($visibility_column.eq_any(collection_ids));
                     }
-                    for parameter in &options.filters {
+                    for parameter in options.filters() {
                         crate::postgres_revision_filter!(records, parameter, revision);
                     }
                     crate::apply_query_options_with_fields!(records, options, fields);
@@ -458,10 +458,10 @@ pub async fn list_object_history(
             if let HistoryCollectionScope::Visible(collection_ids) = &scope {
                 count_query = count_query.filter(history::collection_id.eq_any(collection_ids));
             }
-            for parameter in &options.filters {
+            for parameter in options.filters() {
                 crate::postgres_revision_filter!(count_query, parameter, history::revision);
             }
-            let total = if options.include_total {
+            let total = if options.include_total() {
                 count_query.count().get_result::<i64>(connection).await?
             } else {
                 SKIPPED_TOTAL_COUNT
@@ -474,7 +474,7 @@ pub async fn list_object_history(
             if let HistoryCollectionScope::Visible(collection_ids) = &scope {
                 records = records.filter(history::collection_id.eq_any(collection_ids));
             }
-            for parameter in &options.filters {
+            for parameter in options.filters() {
                 crate::postgres_revision_filter!(records, parameter, history::revision);
             }
             crate::apply_query_options_with_fields!(records, options, fields);

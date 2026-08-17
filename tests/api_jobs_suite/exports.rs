@@ -1840,9 +1840,12 @@ mod tests {
                     .initiator
                     .as_ref()
                     .map(|principal| principal.principal_id),
-                Some(context.admin_user.id)
+                Some(crate::events::PrincipalId::new(context.admin_user.id).unwrap())
             );
-            assert_eq!(event.provenance.task_id, Some(task.id));
+            assert_eq!(
+                event.provenance.task_id,
+                Some(crate::events::TaskId::new(task.id).unwrap())
+            );
             event
         };
         assert_provenance("queued", "user");

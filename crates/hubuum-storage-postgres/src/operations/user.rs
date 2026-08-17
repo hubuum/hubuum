@@ -24,7 +24,7 @@ const LOCAL_IDENTITY_SCOPE: &str = "local";
 
 macro_rules! apply_user_filters {
     ($query:ident, $options:expr) => {
-        for parameter in &$options.filters {
+        for parameter in $options.filters() {
             match parameter.field {
                 FilterField::Id => {
                     crate::postgres_integer_filter!($query, parameter, crate::schema::users::id)
@@ -225,14 +225,14 @@ pub async fn list_users(
                 apply_user_filters!(records, options);
                 Ok(records)
             };
-            let total = if options.include_total {
+            let total = if options.include_total() {
                 Some(build_query()?.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
             let mut records = build_query()?;
             let fields = options
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| user_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -641,11 +641,11 @@ fn user_event(
 ) -> Result<NewEvent, PostgresStorageError> {
     NewEvent::new(EntityType::User, action, context.actor_kind(), summary)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
-        .map(|event| {
-            event
+        .and_then(|event| {
+            Ok(event
                 .with_context(context)
-                .with_entity_id(user.id)
-                .with_entity_name(name.to_string())
+                .with_entity_id(hubuum_events_core::EventEntityId::new(user.id)?)
+                .with_entity_name(name.to_string()))
         })
 }
 

@@ -46,7 +46,7 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        query_options.include_total = true;
+        query_options.set_include_total(true);
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
         crate::services::catalog::list_collections(
             backend,
@@ -90,7 +90,7 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        query_options.include_total = true;
+        query_options.set_include_total(true);
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
         crate::services::catalog::list_classes(
             backend,
@@ -134,7 +134,7 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        query_options.include_total = true;
+        query_options.set_include_total(true);
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
         crate::services::catalog::list_objects(
             backend,
@@ -519,13 +519,7 @@ pub trait GroupAccessors: AuthzSubject {
     where
         C: StorageContext,
     {
-        let options = QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: None,
-            cursor: None,
-            include_total: false,
-        };
+        let options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)?;
         crate::services::identity::list_principal_groups(backend, self.principal_id(), options)
             .await
             .map(|(groups, _)| groups)
@@ -611,13 +605,8 @@ mod test {
     use rstest::rstest;
 
     fn make_query_options_from_query_param(filter: &ParsedQueryParam) -> QueryOptions {
-        QueryOptions {
-            filters: vec![filter.clone()],
-            sort: vec![],
-            limit: None,
-            cursor: None,
-            include_total: true,
-        }
+        QueryOptions::new(vec![filter.clone()], vec![], None, None, true)
+            .expect("test query must be valid")
     }
 
     #[rstest]
@@ -751,13 +740,8 @@ mod test {
         let classlist = test_user_1
             .search_classes(
                 &context.pool,
-                QueryOptions {
-                    filters: vec![],
-                    sort: vec![],
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                },
+                QueryOptions::new(vec![], vec![], None, None, true)
+                    .expect("test query must be valid"),
                 None,
             )
             .await

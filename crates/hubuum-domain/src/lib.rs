@@ -23,9 +23,9 @@ pub use event_policy::{
 };
 pub use identifier::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventDeliveryId,
-    EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, ObjectId, ObjectRelationId,
-    PositiveIdError, PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId,
-    UserId,
+    EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId,
+    ObjectRelationId, PositiveIdError, PrincipalId, RemoteTargetId, ResourceId, RestoreJobId,
+    ServiceAccountId, TaskId, TokenId, UserId,
 };
 pub use identity::{
     EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,

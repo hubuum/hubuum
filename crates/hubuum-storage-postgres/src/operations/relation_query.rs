@@ -7,6 +7,7 @@ use crate::operations::dynamic_sql::SqlValue;
 use crate::operations::json_filter::json_filter_sql;
 use crate::operations::relation::{ClassRelationRow, ObjectRelationRow};
 use crate::operations::visibility::{authorized_collection_ids, required_permissions};
+use crate::revision::record_metadata_from_raw_revision;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 use diesel::dsl::not;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
@@ -18,9 +19,8 @@ use hubuum_storage_core::{
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation,
     StorageGraphClass, StorageGraphObject, StorageGraphResource, StorageObjectGraphRow,
-    StorageObjectRelation, StorageRecordMetadata, StorageRelatedDirection,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRelatedSort,
-    StorageVisibility,
+    StorageObjectRelation, StorageRelatedDirection, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRelatedSort, StorageVisibility,
 };
 
 const CLASS_RELATION_PERMISSION: AuthorizationPermission =
@@ -50,7 +50,7 @@ pub async fn list_class_relations(
     runtime: &PostgresRuntime,
     query: RelationListQuery,
 ) -> Result<RelationPage<StorageClassRelation>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
@@ -98,7 +98,7 @@ pub async fn list_object_relations(
     runtime: &PostgresRuntime,
     query: RelationListQuery,
 ) -> Result<RelationPage<StorageObjectRelation>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
@@ -136,7 +136,7 @@ pub async fn list_class_relations_touching(
     runtime: &PostgresRuntime,
     query: RelationTouchingQuery,
 ) -> Result<RelationPage<StorageClassRelation>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (class_id, options, visibility) = query.into_parts();
     validate_positive_id(class_id, "class id")?;
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
@@ -183,7 +183,7 @@ pub async fn list_object_relations_touching(
     runtime: &PostgresRuntime,
     query: RelationTouchingQuery,
 ) -> Result<RelationPage<StorageObjectRelation>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (object_id, options, visibility) = query.into_parts();
     validate_positive_id(object_id, "object id")?;
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
@@ -317,7 +317,7 @@ pub async fn related_classes(
     runtime: &PostgresRuntime,
     query: RelationGraphQuery,
 ) -> Result<RelationPage<StorageClassGraphRow>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
     validate_positive_id(root_id, "class id")?;
     let permissions = required_permissions(
@@ -358,9 +358,9 @@ pub async fn related_classes(
             let paged = apply_raw_sql_pagination(base, &options, GraphKind::Class)?;
             tracing::debug!(
                 operation = "related_classes",
-                filter_count = options.filters.len(),
-                sort_count = options.sort.len(),
-                has_cursor = options.cursor.is_some(),
+                filter_count = options.filters().len(),
+                sort_count = options.sort().len(),
+                has_cursor = options.cursor().is_some(),
                 include_total,
                 "executing PostgreSQL relation graph query"
             );
@@ -380,7 +380,7 @@ pub async fn related_objects(
     runtime: &PostgresRuntime,
     query: RelationGraphQuery,
 ) -> Result<RelationPage<StorageObjectGraphRow>, PostgresStorageError> {
-    let include_total = query.options().include_total;
+    let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
     validate_positive_id(root_id, "object id")?;
     let permissions = required_permissions(
@@ -421,9 +421,9 @@ pub async fn related_objects(
             let paged = apply_raw_sql_pagination(base, &options, GraphKind::Object)?;
             tracing::debug!(
                 operation = "related_objects",
-                filter_count = options.filters.len(),
-                sort_count = options.sort.len(),
-                has_cursor = options.cursor.is_some(),
+                filter_count = options.filters().len(),
+                sort_count = options.sort().len(),
+                has_cursor = options.cursor().is_some(),
                 include_total,
                 "executing PostgreSQL relation graph query"
             );
@@ -626,7 +626,7 @@ fn build_related_graph_query_spec(
 ) -> Result<RawSqlQuerySpec, PostgresStorageError> {
     let mut bind_variables = vec![SqlValue::Integer(root_id)];
     let collection_array_sql = sql_integer_array(collection_ids, &mut bind_variables);
-    let max_depth = related_depth_upper_bound(&options.filters)?;
+    let max_depth = related_depth_upper_bound(options.filters())?;
     let depth_sql = if let Some(max_depth) = max_depth {
         bind_variables.push(SqlValue::Integer(max_depth));
         "?"
@@ -644,7 +644,7 @@ fn build_related_graph_query_spec(
 
     let mut clauses = Vec::new();
     append_graph_scope_clause(kind, &mut clauses, visibility, &mut bind_variables);
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         if let Some(clause) = build_graph_filter_clause(kind, parameter, &mut bind_variables)? {
             clauses.push(clause);
         }
@@ -1059,13 +1059,16 @@ fn apply_raw_sql_pagination(
     options: &QueryOptions,
     kind: GraphKind,
 ) -> Result<RawSqlQuerySpec, PostgresStorageError> {
-    let sorts = normalized_graph_sorts(kind, &options.sort)?;
+    let sorts = normalized_graph_sorts(kind, options.sort())?;
     let fields = sorts
         .iter()
         .map(|sort| graph_cursor_field(kind, &sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(cursor) = cursor_filter_sql_for_fields(&sorts, &fields, options.cursor.as_deref())?
-    {
+    if let Some(cursor) = cursor_filter_sql_for_fields(
+        &sorts,
+        &fields,
+        options.cursor().map(|cursor| cursor.as_str()),
+    )? {
         if spec.sql.contains("\nWHERE ") {
             spec.sql.push_str("\n  AND ");
         } else {
@@ -1081,7 +1084,7 @@ fn apply_raw_sql_pagination(
         .join(", ");
     spec.sql.push_str("\nORDER BY ");
     spec.sql.push_str(&order);
-    if let Some(limit) = options.limit {
+    if let Some(limit) = options.limit() {
         spec.sql.push_str(&format!("\nLIMIT {limit}"));
     }
     Ok(spec)
@@ -1543,7 +1546,7 @@ struct ClassGraphQueryRow {
 impl ClassGraphQueryRow {
     fn into_storage(self) -> StorageClassGraphRow {
         let ancestor_resource = StorageGraphResource::new(
-            StorageRecordMetadata::new(
+            record_metadata_from_raw_revision(
                 self.ancestor_class_id,
                 self.ancestor_created_at,
                 self.ancestor_updated_at,
@@ -1554,7 +1557,7 @@ impl ClassGraphQueryRow {
             self.ancestor_description,
         );
         let descendant_resource = StorageGraphResource::new(
-            StorageRecordMetadata::new(
+            record_metadata_from_raw_revision(
                 self.descendant_class_id,
                 self.descendant_created_at,
                 self.descendant_updated_at,
@@ -1729,8 +1732,12 @@ struct GraphObjectParts {
 
 impl GraphObjectParts {
     fn into_storage(self) -> StorageGraphObject {
-        let metadata =
-            StorageRecordMetadata::new(self.id, self.created_at, self.updated_at, self.revision);
+        let metadata = record_metadata_from_raw_revision(
+            self.id,
+            self.created_at,
+            self.updated_at,
+            self.revision,
+        );
         let resource =
             StorageGraphResource::new(metadata, self.name, self.collection_id, self.description);
         StorageGraphObject::new(resource, self.class_id, self.data)
@@ -1837,7 +1844,7 @@ fn build_class_relation_query<'query>(
     if let Some(ids) = to_name_ids {
         records = records.filter(hubuumclass_relation::to_hubuum_class_id.eq_any(ids));
     }
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, hubuumclass_relation::id)
@@ -1917,7 +1924,7 @@ fn build_object_relation_query<'query>(
             .filter(hubuumobject_relation::from_hubuum_object_id.eq_any(scoped_object_ids()))
             .filter(hubuumobject_relation::to_hubuum_object_id.eq_any(scoped_object_ids()));
     }
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, hubuumobject_relation::id)
@@ -1970,11 +1977,11 @@ async fn class_name_filter_ids(
     visibility: &StorageVisibility,
 ) -> Result<(Option<Vec<i32>>, Option<Vec<i32>>), PostgresStorageError> {
     let from = options
-        .filters
+        .filters()
         .iter()
         .find(|parameter| parameter.field == FilterField::ClassFromName);
     let to = options
-        .filters
+        .filters()
         .iter()
         .find(|parameter| parameter.field == FilterField::ClassToName);
     if from.is_none() && to.is_none() {
@@ -2021,13 +2028,8 @@ async fn class_name_filter_ids(
 }
 
 fn empty_options() -> QueryOptions {
-    QueryOptions {
-        filters: Vec::new(),
-        sort: Vec::new(),
-        limit: None,
-        cursor: None,
-        include_total: false,
-    }
+    QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
+        .expect("empty query options must be valid")
 }
 
 #[derive(Clone, Copy)]
@@ -2041,7 +2043,7 @@ fn relation_cursor_fields(
     kind: RelationKind,
 ) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
-        .sort
+        .sort()
         .iter()
         .map(|sort| relation_cursor_field(&sort.field, kind))
         .collect()

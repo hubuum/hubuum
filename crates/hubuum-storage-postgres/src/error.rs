@@ -2,7 +2,8 @@ use std::fmt;
 
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
-use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind};
+use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
+use hubuum_events_core::EventIdentifierError;
 use hubuum_storage_core::{StorageError, StorageErrorKind};
 use tracing::{debug, error};
 
@@ -17,20 +18,43 @@ const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_card
 pub struct PostgresStorageError {
     kind: StorageErrorKind,
     message: String,
-    current_etag: Option<String>,
+    current_revision: Option<ResourceRevision>,
 }
 
 impl PostgresStorageError {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
+        Self::invalid_input(message)
+    }
+
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
+        Self::permission_denied(message)
+    }
+
+    pub(crate) fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::input_too_large(message)
+    }
+
+    pub(crate) fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::rate_limited(message)
+    }
+
+    pub(crate) fn precondition_failed(
+        message: impl Into<String>,
+        current_revision: Option<ResourceRevision>,
+    ) -> Self {
+        Self::revision_conflict(message, current_revision)
+    }
+
     #[must_use]
     pub fn new(
         kind: StorageErrorKind,
         message: impl Into<String>,
-        current_etag: Option<String>,
+        current_revision: Option<ResourceRevision>,
     ) -> Self {
         Self {
             kind,
             message: message.into(),
-            current_etag,
+            current_revision,
         }
     }
 
@@ -45,8 +69,8 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::BadRequest, message, None)
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::InvalidInput, message, None)
     }
 
     #[must_use]
@@ -55,8 +79,8 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn forbidden(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::Forbidden, message, None)
+    pub fn permission_denied(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::PermissionDenied, message, None)
     }
 
     #[must_use]
@@ -65,13 +89,13 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn payload_too_large(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::PayloadTooLarge, message, None)
+    pub fn input_too_large(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::InputTooLarge, message, None)
     }
 
     #[must_use]
-    pub fn too_many_requests(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::TooManyRequests, message, None)
+    pub fn rate_limited(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::RateLimited, message, None)
     }
 
     #[must_use]
@@ -90,8 +114,15 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn precondition_failed(message: impl Into<String>, current_etag: Option<String>) -> Self {
-        Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
+    pub fn revision_conflict(
+        message: impl Into<String>,
+        current_revision: Option<ResourceRevision>,
+    ) -> Self {
+        Self::new(
+            StorageErrorKind::RevisionConflict,
+            message,
+            current_revision,
+        )
     }
 }
 
@@ -99,9 +130,21 @@ impl From<JsonSchemaError> for PostgresStorageError {
     fn from(error: JsonSchemaError) -> Self {
         let (kind, message) = error.into_parts();
         match kind {
-            JsonSchemaErrorKind::InvalidSchema => Self::bad_request(message),
+            JsonSchemaErrorKind::InvalidSchema => Self::invalid_input(message),
             JsonSchemaErrorKind::InvalidValue => Self::validation(message),
         }
+    }
+}
+
+impl From<PositiveIdError> for PostgresStorageError {
+    fn from(error: PositiveIdError) -> Self {
+        Self::database(format!("Invalid persisted identifier: {error}"))
+    }
+}
+
+impl From<EventIdentifierError> for PostgresStorageError {
+    fn from(error: EventIdentifierError) -> Self {
+        Self::database(format!("Invalid persisted event identifier: {error}"))
     }
 }
 
@@ -115,8 +158,8 @@ impl std::error::Error for PostgresStorageError {}
 
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, current_etag) = error.into_parts();
-        Self::new(kind, message, current_etag)
+        let (kind, message, current_revision) = error.into_parts();
+        Self::new(kind, message, current_revision)
     }
 }
 
@@ -154,7 +197,7 @@ impl From<DieselError> for PostgresStorageError {
                     return Self::new(StorageErrorKind::Conflict, info.message(), None);
                 }
                 Self::new(
-                    StorageErrorKind::BadRequest,
+                    StorageErrorKind::InvalidInput,
                     "Check constraint not met",
                     None,
                 )
@@ -162,13 +205,13 @@ impl From<DieselError> for PostgresStorageError {
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
                 if message == "hubuum_stale_resource" {
-                    return Self::precondition_failed(
+                    return Self::revision_conflict(
                         "The resource changed since the supplied validator was issued",
                         None,
                     );
                 }
                 if message.starts_with("Invalid object relation:") {
-                    return Self::new(StorageErrorKind::BadRequest, message, None);
+                    return Self::new(StorageErrorKind::InvalidInput, message, None);
                 }
                 error!(
                     message = "PostgreSQL query failed",
@@ -191,7 +234,7 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
-        Self::new(error.kind, error.message, error.current_etag)
+        Self::new(error.kind, error.message, error.current_revision)
     }
 }
 
@@ -202,15 +245,15 @@ mod tests {
     #[test]
     fn postgres_errors_cross_the_boundary_as_storage_errors() {
         let error = StorageError::from(PostgresStorageError::new(
-            StorageErrorKind::PreconditionFailed,
+            StorageErrorKind::RevisionConflict,
             "stale resource",
-            Some("etag".to_string()),
+            Some(ResourceRevision::new(2).unwrap()),
         ));
 
-        let (kind, message, current_etag) = error.into_parts();
-        assert_eq!(kind, StorageErrorKind::PreconditionFailed);
+        let (kind, message, current_revision) = error.into_parts();
+        assert_eq!(kind, StorageErrorKind::RevisionConflict);
         assert_eq!(message, "stale resource");
-        assert_eq!(current_etag.as_deref(), Some("etag"));
+        assert_eq!(current_revision, Some(ResourceRevision::new(2).unwrap()));
     }
 
     #[test]

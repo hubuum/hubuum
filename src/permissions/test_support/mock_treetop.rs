@@ -469,7 +469,7 @@ impl PermissionBackend for MockTreetopBackend {
         }
 
         let perms = Permissions::all();
-        let mut effective_filter = page.filters.permissions()?;
+        let mut effective_filter = page.filters().permissions()?;
         effective_filter.ensure_contains(permissions_filter);
         let mut all_results: Vec<GroupPermission> = Vec::new();
 

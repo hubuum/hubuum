@@ -7,15 +7,15 @@ use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageRecordMetadata, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetPatch,
-    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    StorageRemoteTarget, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPage, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
 };
 use serde_json::{Value, json};
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
-use crate::revision::RevisionOwner;
+use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -76,12 +76,7 @@ impl RemoteTargetRow {
     fn into_storage(self) -> Result<StorageRemoteTarget, PostgresStorageError> {
         let allowed_subject_types = decode_subject_types(self.allowed_subject_types)?;
         Ok(StorageRemoteTarget::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.collection_id,
             self.name,
             StorageRemoteTargetDefinition::new(
@@ -340,7 +335,7 @@ pub async fn list_remote_targets(
     query: StorageRemoteTargetListQuery,
 ) -> Result<StorageRemoteTargetPage, PostgresStorageError> {
     let (allowed_collection_ids, options) = query.into_parts();
-    if options.include_total {
+    if options.include_total() {
         runtime
             .with_read_only_snapshot(async |connection| {
                 let total = build_list_query(&allowed_collection_ids, &options)?
@@ -479,9 +474,9 @@ pub async fn record_remote_target_invocation(
             )
             .map_err(|error| PostgresStorageError::database(error.to_string()))?
             .with_context(&event_context)
-            .with_entity_id(target.id)
+            .with_entity_id(hubuum_events_core::EventEntityId::new(target.id)?)
             .with_entity_name(&target.name)
-            .with_collection_id(target.collection_id)
+            .with_collection_id(hubuum_domain::CollectionId::new(target.collection_id)?)
             .with_metadata(json!({
                 "task_id": task_id,
                 "subject_type": subject_type,
@@ -512,7 +507,7 @@ async fn load_remote_target_rows(
 ) -> Result<Vec<StorageRemoteTarget>, PostgresStorageError> {
     let mut records = build_list_query(allowed_collection_ids, options)?;
     let fields = options
-        .sort
+        .sort()
         .iter()
         .map(|sort| remote_target_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
@@ -540,9 +535,9 @@ async fn append_remote_target_audit(
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
-    .with_entity_id(after.id)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
-    .with_collection_id(after.collection_id)
+    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
     .with_before_opt(before.map(RemoteTargetRow::audit_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| after.audit_snapshot()));
     append_event(connection, &event).await.map(|_| ())
@@ -560,7 +555,7 @@ fn build_list_query<'a>(
     let mut query = remote_targets
         .filter(collection_id.eq_any(allowed_collection_ids))
         .into_boxed();
-    for parameter in &options.filters {
+    for parameter in options.filters() {
         match parameter.field {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),

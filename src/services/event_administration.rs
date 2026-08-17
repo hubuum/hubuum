@@ -31,15 +31,15 @@ fn revision(value: i64, resource: &str) -> Result<ResourceRevision, ApiError> {
 fn audit_event_from_storage(event: StorageAuditEvent) -> Result<EventResponse, ApiError> {
     let (event, before_revision, after_revision) = event.into_parts();
     Ok(EventResponse {
-        id: event.id,
+        id: event.id.get(),
         event_id: event.event_id,
         occurred_at: event.occurred_at,
         entity_type: event.entity_type,
-        entity_id: event.entity_id,
+        entity_id: event.entity_id.map(|id| id.get()),
         entity_name: event.entity_name,
-        collection_id: event.collection_id,
+        collection_id: event.collection_id.map(|id| id.id()),
         action: event.action,
-        actor_user_id: event.actor_user_id,
+        actor_user_id: event.actor_user_id.map(|id| id.id()),
         actor_kind: event.actor_kind,
         provenance: event.provenance,
         request_id: event.request_id,
@@ -87,11 +87,10 @@ pub(crate) fn parse_audit_event_filters(
     passthrough: &mut HashMap<String, Vec<String>>,
     entity_filter: Option<(EntityType, i32)>,
 ) -> Result<StorageAuditEventFilters, ApiError> {
-    let entity_type =
-        parse_optional_catalog_filter(passthrough, "entity_type", EntityType::from_db)?;
+    let entity_type = parse_optional_catalog_filter(passthrough, "entity_type", EntityType::parse)?;
     let entity_id = parse_optional_i32_filter(passthrough, "entity_id")?;
-    let action = parse_optional_catalog_filter(passthrough, "action", Action::from_db)?;
-    let actor_kind = parse_optional_catalog_filter(passthrough, "actor_kind", ActorKind::from_db)?;
+    let action = parse_optional_catalog_filter(passthrough, "action", Action::parse)?;
+    let actor_kind = parse_optional_catalog_filter(passthrough, "actor_kind", ActorKind::parse)?;
     let actor_user_id = parse_optional_i32_filter(passthrough, "actor_user_id")?;
     let initiator_user_id = parse_optional_i32_filter(passthrough, "initiator_user_id")?;
     let collection_id = parse_optional_i32_filter(passthrough, "collection_id")?;

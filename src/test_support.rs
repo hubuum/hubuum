@@ -11,7 +11,9 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use crate::auth::ConfiguredLdapScope;
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent};
+use crate::events::{
+    Action, ActorKind, CollectionId, EntityType, EventEntityId, EventResponse, NewEvent,
+};
 use crate::models::user::User;
 use crate::models::{
     CollectionID, EventDeliveryResponse, EventDeliveryStatus, NewEventSink, NewEventSubscription,
@@ -192,8 +194,8 @@ pub async fn create_collection_event_delivery(
         ActorKind::System,
         "delivery api test",
     )?
-    .with_collection_id(collection_id)
-    .with_entity_id(collection_id)
+    .with_collection_id(CollectionId::new(collection_id)?)
+    .with_entity_id(EventEntityId::new(collection_id)?)
     .with_entity_name(entity_name);
     let event = with_connection(pool, async |conn| emit_event(conn, &event).await).await?;
     fanout_event(pool, event.id).await?;

@@ -371,7 +371,11 @@ async fn concurrent_patches_compose_from_the_latest_row_locked_data(
                 .patch_object_data(
                     &first_pool,
                     &first_target,
-                    &EventContext::user(actor_id, None, None),
+                    &EventContext::user(
+                        crate::events::PrincipalId::new(actor_id).unwrap(),
+                        None,
+                        None,
+                    ),
                 )
                 .await
         });
@@ -380,7 +384,11 @@ async fn concurrent_patches_compose_from_the_latest_row_locked_data(
                 .patch_object_data(
                     &second_pool,
                     &target,
-                    &EventContext::user(actor_id, None, None),
+                    &EventContext::user(
+                        crate::events::PrincipalId::new(actor_id).unwrap(),
+                        None,
+                        None,
+                    ),
                 )
                 .await
         });

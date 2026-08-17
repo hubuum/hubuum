@@ -45,11 +45,11 @@ impl fmt::Debug for CatalogListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CatalogListQuery")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .field("visibility", &self.visibility)
             .finish()
     }
@@ -101,17 +101,18 @@ mod tests {
 
     #[test]
     fn debug_output_reports_only_bounded_query_shape() {
-        let options = QueryOptions {
-            filters: vec![hubuum_query::ParsedQueryParam {
-                field: hubuum_query::FilterField::Name,
-                operator: hubuum_query::SearchOperator::Equals { is_negated: false },
-                value: "secret catalog name".to_string(),
-            }],
-            sort: Vec::new(),
-            limit: Some(20),
-            cursor: Some("secret cursor".to_string()),
-            include_total: true,
-        };
+        let options = QueryOptions::new(
+            vec![hubuum_query::ParsedQueryParam::from_parts(
+                hubuum_query::FilterField::Name,
+                hubuum_query::SearchOperator::Equals { is_negated: false },
+                "secret catalog name",
+            )],
+            Vec::new(),
+            Some(20),
+            Some("secret cursor".to_string()),
+            true,
+        )
+        .unwrap();
         let visibility = StorageVisibility::new(
             42,
             false,

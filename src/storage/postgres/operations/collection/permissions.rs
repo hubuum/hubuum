@@ -203,11 +203,11 @@ pub async fn principal_on_paginated_with_total_count_from_backend<S: AuthzSubjec
             .filter(group_id.eq_any(group_ids_subquery))
             .into_boxed();
 
-        for perm in query_options.filters.permissions()?.iter().cloned() {
+        for perm in query_options.filters().permissions()?.iter().cloned() {
             crate::apply_permission_filter!(query, perm, true);
         }
 
-        for param in &query_options.filters {
+        for param in query_options.filters() {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(query, param, operator, permission_id),
@@ -518,7 +518,7 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
             )
             .into_boxed();
 
-        for param in &query_options.filters {
+        for param in query_options.filters() {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(query, param, operator, group_table_id),
@@ -574,7 +574,7 @@ pub async fn groups_on_from_backend(
     };
     use crate::{date_search, numeric_search};
 
-    let query_params = query_options.filters;
+    let query_params = query_options.filters().clone();
 
     let mut permission_filters = query_params.permissions()?;
     permission_filters.ensure_contains(&permissions_filter);
@@ -607,7 +607,7 @@ pub async fn groups_on_from_backend(
         }
     }
 
-    for order in &query_options.sort {
+    for order in query_options.sort() {
         match (&order.field, &order.descending) {
             (FilterField::Id, false) => base_query = base_query.order_by(permission_id.asc()),
             (FilterField::Id, true) => base_query = base_query.order_by(permission_id.desc()),
@@ -632,7 +632,7 @@ pub async fn groups_on_from_backend(
         }
     }
 
-    if let Some(limit) = query_options.limit {
+    if let Some(limit) = query_options.limit() {
         base_query = base_query.limit(limit as i64);
     }
 
@@ -683,7 +683,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend(
     };
     use crate::{date_search, numeric_search, string_search};
 
-    let mut permission_filters = query_options.filters.permissions()?;
+    let mut permission_filters = query_options.filters().permissions()?;
     permission_filters.ensure_contains(&permissions_filter);
 
     let build_query = || -> Result<_, ApiError> {
@@ -696,7 +696,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend(
             crate::apply_permission_filter!(query, perm, true);
         }
 
-        for param in &query_options.filters {
+        for param in query_options.filters() {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(query, param, operator, permission_id),

@@ -4,9 +4,10 @@ use chrono::{NaiveDateTime, Utc};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, JoinOnDsl, QueryDsl};
 use diesel::{QueryResult, Queryable};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{EventDeliveryStatus, EventFanoutSettings};
+use hubuum_domain::{CollectionId, EventDeliveryStatus, EventFanoutSettings, PrincipalId, TaskId};
 use hubuum_events_core::{
-    EventEnvelope, EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal,
+    EventEntityId, EventEnvelope, EventSequence, EventSubscriptionFilter, Provenance,
+    ProvenanceActor, ProvenancePrincipal,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -37,36 +38,38 @@ struct FanoutEventRow {
     task_id: Option<i32>,
 }
 
-impl From<FanoutEventRow> for EventEnvelope {
-    fn from(row: FanoutEventRow) -> Self {
+impl TryFrom<FanoutEventRow> for EventEnvelope {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: FanoutEventRow) -> Result<Self, Self::Error> {
+        let actor_user_id = row.actor_user_id.map(PrincipalId::new).transpose()?;
+        let initiator_user_id = row.initiator_user_id.map(PrincipalId::new).transpose()?;
         let actor = ProvenanceActor {
             kind: Some(row.actor_kind.clone()),
-            principal: row.actor_user_id.map(|principal_id| ProvenancePrincipal {
+            principal: actor_user_id.map(|principal_id| ProvenancePrincipal {
                 principal_id,
                 name: None,
             }),
         };
-        let initiator = row
-            .initiator_user_id
-            .map(|principal_id| ProvenancePrincipal {
-                principal_id,
-                name: None,
-            });
-        Self {
-            id: row.id,
+        let initiator = initiator_user_id.map(|principal_id| ProvenancePrincipal {
+            principal_id,
+            name: None,
+        });
+        Ok(Self {
+            id: EventSequence::new(row.id)?,
             event_id: row.event_id,
             occurred_at: row.occurred_at,
             entity_type: row.entity_type,
-            entity_id: row.entity_id,
+            entity_id: row.entity_id.map(EventEntityId::new).transpose()?,
             entity_name: row.entity_name,
-            collection_id: row.collection_id,
+            collection_id: row.collection_id.map(CollectionId::new).transpose()?,
             action: row.action,
-            actor_user_id: row.actor_user_id,
+            actor_user_id,
             actor_kind: row.actor_kind,
             provenance: Provenance {
                 actor,
                 initiator,
-                task_id: row.task_id,
+                task_id: row.task_id.map(TaskId::new).transpose()?,
             },
             request_id: row.request_id,
             correlation_id: row.correlation_id,
@@ -75,7 +78,7 @@ impl From<FanoutEventRow> for EventEnvelope {
             after: row.after,
             metadata: row.metadata,
             schema_version: row.schema_version,
-        }
+        })
     }
 }
 
@@ -90,7 +93,7 @@ struct FanoutSubscriptionRow {
 
 struct CompiledEventSubscription {
     id: i32,
-    collection_id: i32,
+    collection_id: CollectionId,
     entity_types: HashSet<String>,
     actions: HashSet<String>,
     filter: EventSubscriptionFilter,
@@ -105,7 +108,7 @@ impl TryFrom<FanoutSubscriptionRow> for CompiledEventSubscription {
         let filter = decode_persisted_json(subscription.filter, "filter")?;
         Ok(Self {
             id: subscription.id,
-            collection_id: subscription.collection_id,
+            collection_id: CollectionId::new(subscription.collection_id)?,
             entity_types,
             actions,
             filter,
@@ -262,8 +265,8 @@ pub async fn fanout_events(
                 .load::<FanoutEventRow>(connection)
                 .await?
                 .into_iter()
-                .map(EventEnvelope::from)
-                .collect::<Vec<_>>();
+                .map(EventEnvelope::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
             if envelopes.is_empty() {
                 return Ok(0);
             }
@@ -283,8 +286,8 @@ pub async fn fanout_events(
                     .map(|subscription| subscription.id)
                     .collect::<Vec<_>>();
                 inserted +=
-                    insert_delivery_rows(connection, envelope.id, &subscription_ids).await?;
-                processed_event_ids.push(envelope.id);
+                    insert_delivery_rows(connection, envelope.id.get(), &subscription_ids).await?;
+                processed_event_ids.push(envelope.id.get());
             }
 
             diesel::update(events.filter(id.eq_any(processed_event_ids)))
@@ -309,7 +312,7 @@ fn candidate_subscription_collection_ids(events: &[EventEnvelope]) -> Vec<i32> {
         collection_ids.extend(event.collection_id);
         collection_ids.extend(event.related_collection_ids());
     }
-    collection_ids.into_iter().collect()
+    collection_ids.into_iter().map(CollectionId::id).collect()
 }
 
 async fn load_enabled_subscriptions(

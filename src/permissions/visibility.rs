@@ -254,7 +254,7 @@ where
         candidate_count,
         authorized_count,
         0,
-        query_options.limit.unwrap_or(usize::MAX),
+        query_options.limit().unwrap_or(usize::MAX),
         rows.len(),
         start.elapsed(),
     );

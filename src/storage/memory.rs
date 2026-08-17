@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use tokio::sync::RwLock;
 
 use crate::events::{Action, EventContext};
@@ -608,8 +609,8 @@ impl TransactionalStorage for MemoryStorageModel {
 
 #[async_trait]
 impl CollectionStore for MemoryStorageModel {
-    async fn get_collection(&self, id: i32) -> Result<StorageCollection, StorageError> {
-        let id = CollectionID::new(id).map_err(map_memory_error)?;
+    async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
+        let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         self.state
             .read()
             .await
@@ -624,7 +625,10 @@ impl CollectionStore for MemoryStorageModel {
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
         let mut state = self.state.write().await;
-        let parent_id = command.parent_collection_id().unwrap_or(ROOT_COLLECTION_ID);
+        let parent_id = command
+            .parent_collection_id()
+            .map(CollectionId::id)
+            .unwrap_or(ROOT_COLLECTION_ID);
         if !state.collections.contains_key(&parent_id) {
             return Err(StorageError::not_found(format!(
                 "Parent collection {parent_id} was not found"
@@ -658,11 +662,11 @@ impl CollectionStore for MemoryStorageModel {
 
     async fn update_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         changes: StorageCollectionUpdate,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        let id = CollectionID::new(id).map_err(map_memory_error)?;
+        let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let changes = UpdateCollection {
             name: changes.name().map(str::to_string),
             description: changes.description().map(str::to_string),
@@ -705,10 +709,10 @@ impl CollectionStore for MemoryStorageModel {
 
     async fn delete_collection(
         &self,
-        id: i32,
+        id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<(), StorageError> {
-        let id = CollectionID::new(id).map_err(map_memory_error)?;
+        let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let collection = state.collection(id)?.clone();
         if collection.parent_collection_id.is_none() {
@@ -756,8 +760,11 @@ impl CollectionStore for MemoryStorageModel {
         Ok(())
     }
 
-    async fn collection_children(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        let id = CollectionID::new(id).map_err(map_memory_error)?;
+    async fn collection_children(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
+        let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let state = self.state.read().await;
         state.collection(id)?;
         let mut children = state
@@ -770,8 +777,11 @@ impl CollectionStore for MemoryStorageModel {
         Ok(children.into_iter().map(collection_to_storage).collect())
     }
 
-    async fn collection_ancestors(&self, id: i32) -> Result<Vec<StorageCollection>, StorageError> {
-        let id = CollectionID::new(id).map_err(map_memory_error)?;
+    async fn collection_ancestors(
+        &self,
+        id: CollectionId,
+    ) -> Result<Vec<StorageCollection>, StorageError> {
+        let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let state = self.state.read().await;
         let mut parent_id = state.collection(id)?.parent_collection_id;
         let mut ancestors = Vec::new();
@@ -787,12 +797,12 @@ impl CollectionStore for MemoryStorageModel {
 
     async fn move_collection(
         &self,
-        id: i32,
-        new_parent_id: i32,
+        id: CollectionId,
+        new_parent_id: CollectionId,
         context: Option<&EventContext>,
     ) -> Result<StorageCollection, StorageError> {
-        let id = CollectionID::new(id).map_err(map_memory_error)?;
-        let new_parent_id = CollectionID::new(new_parent_id).map_err(map_memory_error)?;
+        let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
+        let new_parent_id = CollectionID::new(new_parent_id.id()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let collection = state.collection(id)?.clone();
         if collection.parent_collection_id.is_none() {
@@ -804,7 +814,7 @@ impl CollectionStore for MemoryStorageModel {
             return Ok(collection_to_storage(collection));
         }
         if id == new_parent_id {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "A collection cannot be moved under itself",
             ));
         }
@@ -813,7 +823,7 @@ impl CollectionStore for MemoryStorageModel {
         let mut ancestor_id = Some(new_parent_id.id());
         while let Some(current_id) = ancestor_id {
             if current_id == id.id() {
-                return Err(StorageError::bad_request(
+                return Err(StorageError::invalid_input(
                     "A collection cannot be moved under one of its descendants",
                 ));
             }
@@ -856,7 +866,7 @@ impl ClassStore for MemoryStorageModel {
     ) -> Result<StorageResolvedClass, StorageError> {
         let selector = match selector {
             StorageClassSelector::Id(id) => ClassSelector::by_id(
-                crate::models::HubuumClassID::new(id).map_err(map_memory_error)?,
+                crate::models::HubuumClassID::new(id.id()).map_err(map_memory_error)?,
             ),
             StorageClassSelector::Name(name) => ClassSelector::by_name(name),
         };
@@ -864,7 +874,9 @@ impl ClassStore for MemoryStorageModel {
         let class = state.class_for_selector(&selector)?.clone();
         Ok(StorageResolvedClass::new(
             match selector.kind() {
-                ClassSelectorKind::ById(id) => StorageClassSelector::Id(id.id()),
+                ClassSelectorKind::ById(id) => StorageClassSelector::Id(
+                    ClassId::new(id.id()).expect("internal class id must be positive"),
+                ),
                 ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
             },
             class_record_to_storage(class),
@@ -886,7 +898,7 @@ impl ClassStore for MemoryStorageModel {
         }
         let command = NewHubuumClass {
             name: command.name().to_string(),
-            collection_id: command.collection_id(),
+            collection_id: command.collection_id().id(),
             json_schema: command.json_schema().cloned(),
             validate_schema: Some(command.validates_schema()),
             description: command.description().to_string(),
@@ -935,7 +947,7 @@ impl ClassStore for MemoryStorageModel {
         let target = resolved_class_from_storage(target.clone()).map_err(map_memory_error)?;
         let changes = UpdateHubuumClass {
             name: changes.name().map(str::to_string),
-            collection_id: changes.collection_id(),
+            collection_id: changes.collection_id().map(CollectionId::id),
             json_schema: changes.json_schema().cloned(),
             validate_schema: changes.validate_schema(),
             description: changes.description().map(str::to_string),
@@ -1020,13 +1032,11 @@ impl ClassStore for MemoryStorageModel {
         Ok(())
     }
 
-    async fn class_names(&self, class_ids: Vec<i32>) -> Result<Vec<(i32, String)>, StorageError> {
+    async fn class_names(
+        &self,
+        class_ids: Vec<ClassId>,
+    ) -> Result<Vec<(ClassId, String)>, StorageError> {
         let mut class_ids = class_ids;
-        if class_ids.iter().any(|id| *id <= 0) {
-            return Err(StorageError::bad_request(
-                "class ids must be greater than zero",
-            ));
-        }
         class_ids.sort_unstable();
         class_ids.dedup();
         let state = self.state.read().await;
@@ -1035,7 +1045,7 @@ impl ClassStore for MemoryStorageModel {
             .map(|id| {
                 state
                     .classes
-                    .get(&id)
+                    .get(&id.id())
                     .map(|class| (id, class.name.clone()))
                     .ok_or_else(|| StorageError::not_found(format!("Class {id} was not found")))
             })
@@ -1407,8 +1417,9 @@ impl ObjectRelationStore for MemoryStorageModel {
 
 #[async_trait]
 impl ObjectStore for MemoryStorageModel {
-    async fn get_object(&self, object_id: i32) -> Result<StorageResolvedObject, StorageError> {
-        let object_id = crate::models::HubuumObjectID::new(object_id).map_err(map_memory_error)?;
+    async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
+        let object_id =
+            crate::models::HubuumObjectID::new(object_id.id()).map_err(map_memory_error)?;
         let state = self.state.read().await;
         let object = state
             .objects
@@ -1420,8 +1431,8 @@ impl ObjectStore for MemoryStorageModel {
             .ok_or_else(|| StorageError::not_found("Object class was not found"))?;
         Ok(StorageResolvedObject::new(
             StorageObjectSelector::Ids {
-                class_id: class.id,
-                object_id: object.id,
+                class_id: ClassId::new(class.id).expect("internal class id must be positive"),
+                object_id: ObjectId::new(object.id).expect("internal object id must be positive"),
             },
             class_record_to_storage(class.clone()),
             object_to_storage(object.clone()),
@@ -1437,8 +1448,8 @@ impl ObjectStore for MemoryStorageModel {
                 class_id,
                 object_id,
             } => ObjectSelector::by_id(
-                crate::models::HubuumClassID::new(class_id).map_err(map_memory_error)?,
-                crate::models::HubuumObjectID::new(object_id).map_err(map_memory_error)?,
+                crate::models::HubuumClassID::new(class_id.id()).map_err(map_memory_error)?,
+                crate::models::HubuumObjectID::new(object_id.id()).map_err(map_memory_error)?,
             ),
             StorageObjectSelector::Names {
                 class_name,
@@ -1452,8 +1463,9 @@ impl ObjectStore for MemoryStorageModel {
                 class_id,
                 object_id,
             } => StorageObjectSelector::Ids {
-                class_id: class_id.id(),
-                object_id: object_id.id(),
+                class_id: ClassId::new(class_id.id()).expect("internal class id must be positive"),
+                object_id: ObjectId::new(object_id.id())
+                    .expect("internal object id must be positive"),
             },
             ObjectSelectorKind::ByName {
                 class_name,
@@ -1479,8 +1491,8 @@ impl ObjectStore for MemoryStorageModel {
         let class = resolved_class_from_storage(class.clone()).map_err(map_memory_error)?;
         let command = NewHubuumObject {
             name: command.name().to_string(),
-            collection_id: command.collection_id(),
-            hubuum_class_id: command.class_id(),
+            collection_id: command.collection_id().id(),
+            hubuum_class_id: command.class_id().id(),
             data: command.data().clone(),
             description: command.description().to_string(),
         };
@@ -1526,8 +1538,8 @@ impl ObjectStore for MemoryStorageModel {
         let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
         let changes = UpdateHubuumObject {
             name: changes.name().map(str::to_string),
-            collection_id: changes.collection_id(),
-            hubuum_class_id: changes.class_id(),
+            collection_id: changes.collection_id().map(CollectionId::id),
+            hubuum_class_id: changes.class_id().map(ClassId::id),
             data: changes.data().cloned(),
             description: changes.description().map(str::to_string),
         };
@@ -1640,8 +1652,8 @@ impl ObjectStore for MemoryStorageModel {
     ) -> Result<(), StorageError> {
         let command = NewHubuumObject {
             name: command.name().to_string(),
-            collection_id: command.collection_id(),
-            hubuum_class_id: command.class_id(),
+            collection_id: command.collection_id().id(),
+            hubuum_class_id: command.class_id().id(),
             data: command.data().clone(),
             description: command.description().to_string(),
         };
@@ -1655,14 +1667,15 @@ impl ObjectStore for MemoryStorageModel {
 
     async fn validate_object_update(
         &self,
-        object_id: i32,
+        object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
-        let object_id = crate::models::HubuumObjectID::new(object_id).map_err(map_memory_error)?;
+        let object_id =
+            crate::models::HubuumObjectID::new(object_id.id()).map_err(map_memory_error)?;
         let changes = UpdateHubuumObject {
             name: changes.name().map(str::to_string),
-            collection_id: changes.collection_id(),
-            hubuum_class_id: changes.class_id(),
+            collection_id: changes.collection_id().map(CollectionId::id),
+            hubuum_class_id: changes.class_id().map(ClassId::id),
             data: changes.data().cloned(),
             description: changes.description().map(str::to_string),
         };

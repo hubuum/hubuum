@@ -4,12 +4,11 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::validate_json_value;
+use hubuum_domain::{ClassId, ObjectId, validate_json_value};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageError, StorageObject, StorageObjectCreate, StorageObjectDataPatch,
-    StorageObjectSelector, StorageObjectUpdate, StorageRecordMetadata, StorageResolvedClass,
-    StorageResolvedObject,
+    StorageObjectSelector, StorageObjectUpdate, StorageResolvedClass, StorageResolvedObject,
 };
 use serde_json::json;
 
@@ -19,7 +18,7 @@ use crate::operations::computed_materialization::{
     materialize_object,
 };
 use crate::operations::event_record::append_event;
-use crate::revision::RevisionOwner;
+use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::{assert_locked_revision_precondition, require_existing_revision_target};
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -40,12 +39,7 @@ pub(crate) struct ObjectRow {
 impl ObjectRow {
     pub(crate) fn into_storage(self) -> StorageObject {
         StorageObject::new(
-            StorageRecordMetadata::new(
-                self.id,
-                self.created_at,
-                self.updated_at,
-                self.revision.get(),
-            ),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
             self.name,
             self.collection_id,
             self.hubuum_class_id,
@@ -83,8 +77,8 @@ impl<'value> From<&'value StorageObjectUpdate> for UpdateObjectRow<'value> {
     fn from(update: &'value StorageObjectUpdate) -> Self {
         Self {
             name: update.name(),
-            collection_id: update.collection_id(),
-            hubuum_class_id: update.class_id(),
+            collection_id: update.collection_id().map(hubuum_domain::CollectionId::id),
+            hubuum_class_id: update.class_id().map(ClassId::id),
             data: update.data(),
             description: update.description(),
         }
@@ -125,8 +119,8 @@ pub(crate) async fn get_object_on(
     let (class, object) = load_object_and_class_by_id(connection, object_id).await?;
     Ok(StorageResolvedObject::new(
         StorageObjectSelector::Ids {
-            class_id: class.id,
-            object_id: object.id,
+            class_id: ClassId::new(class.id).expect("persisted object class id must be positive"),
+            object_id: ObjectId::new(object.id).expect("persisted object id must be positive"),
         },
         class.into_storage(),
         object.into_storage(),
@@ -162,8 +156,6 @@ pub async fn create_object(
     command: StorageObjectCreate,
     context: Option<&EventContext>,
 ) -> Result<StorageObject, PostgresStorageError> {
-    validate_positive_id(command.class_id(), "class id")?;
-    validate_positive_id(command.collection_id(), "collection id")?;
     let target = target.clone();
     let context = context.cloned();
     let operation_runtime = runtime.clone();
@@ -188,9 +180,7 @@ pub(crate) async fn create_object_on(
     command: StorageObjectCreate,
     context: Option<&EventContext>,
 ) -> Result<StorageObject, PostgresStorageError> {
-    validate_positive_id(command.class_id(), "class id")?;
-    validate_positive_id(command.collection_id(), "collection id")?;
-    acquire_computed_class_shared_lock(connection, target.class().id()).await?;
+    acquire_computed_class_shared_lock(connection, target.class().id().id()).await?;
     let class = lock_resolved_class(connection, target).await?;
     validate_object_create(&command, &class)?;
     let object = insert_object(connection, &command).await?;
@@ -220,12 +210,6 @@ pub async fn update_object(
     context: Option<&EventContext>,
 ) -> Result<StorageObject, PostgresStorageError> {
     validate_positive_id(target.object().id(), "object id")?;
-    if let Some(class_id) = changes.class_id() {
-        validate_positive_id(class_id, "class id")?;
-    }
-    if let Some(collection_id) = changes.collection_id() {
-        validate_positive_id(collection_id, "collection id")?;
-    }
     let target = target.clone();
     let context = context.cloned();
     let operation_runtime = runtime.clone();
@@ -251,12 +235,6 @@ pub(crate) async fn update_object_on(
     context: Option<&EventContext>,
 ) -> Result<StorageObject, PostgresStorageError> {
     validate_positive_id(target.object().id(), "object id")?;
-    if let Some(class_id) = changes.class_id() {
-        validate_positive_id(class_id, "class id")?;
-    }
-    if let Some(collection_id) = changes.collection_id() {
-        validate_positive_id(collection_id, "collection id")?;
-    }
     let (class, before) = if context.is_some() {
         lock_resolved_object(connection, target).await?
     } else {
@@ -422,8 +400,6 @@ pub async fn validate_object_create_command(
     runtime: &PostgresRuntime,
     command: StorageObjectCreate,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(command.class_id(), "class id")?;
-    validate_positive_id(command.collection_id(), "collection id")?;
     runtime
         .with_connection(async move |connection| {
             validate_object_create_command_on(connection, command).await
@@ -435,9 +411,7 @@ pub(crate) async fn validate_object_create_command_on(
     connection: &mut PostgresConnection,
     command: StorageObjectCreate,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(command.class_id(), "class id")?;
-    validate_positive_id(command.collection_id(), "collection id")?;
-    let class = load_class(connection, command.class_id()).await?;
+    let class = load_class(connection, command.class_id().id()).await?;
     validate_object_create(&command, &class)
 }
 
@@ -447,12 +421,6 @@ pub async fn validate_object_update_command(
     changes: StorageObjectUpdate,
 ) -> Result<(), PostgresStorageError> {
     validate_positive_id(object_id, "object id")?;
-    if let Some(class_id) = changes.class_id() {
-        validate_positive_id(class_id, "class id")?;
-    }
-    if let Some(collection_id) = changes.collection_id() {
-        validate_positive_id(collection_id, "collection id")?;
-    }
     runtime
         .with_connection(async move |connection| {
             validate_object_update_command_on(connection, object_id, changes).await
@@ -466,14 +434,11 @@ pub(crate) async fn validate_object_update_command_on(
     changes: StorageObjectUpdate,
 ) -> Result<(), PostgresStorageError> {
     validate_positive_id(object_id, "object id")?;
-    if let Some(class_id) = changes.class_id() {
-        validate_positive_id(class_id, "class id")?;
-    }
-    if let Some(collection_id) = changes.collection_id() {
-        validate_positive_id(collection_id, "collection id")?;
-    }
     let object = load_object(connection, object_id).await?;
-    let class_id = changes.class_id().unwrap_or(object.hubuum_class_id);
+    let class_id = changes
+        .class_id()
+        .map(ClassId::id)
+        .unwrap_or(object.hubuum_class_id);
     let class = load_class(connection, class_id).await?;
     validate_object_update(&changes, &object, &class)
 }
@@ -508,8 +473,8 @@ async fn load_object_by_selector(
             class_id,
             object_id,
         } => query
-            .filter(crate::schema::hubuumobject::id.eq(*object_id))
-            .filter(crate::schema::hubuumobject::hubuum_class_id.eq(*class_id))
+            .filter(crate::schema::hubuumobject::id.eq(object_id.id()))
+            .filter(crate::schema::hubuumobject::hubuum_class_id.eq(class_id.id()))
             .select((ClassRow::as_select(), ObjectRow::as_select()))
             .first(connection)
             .await
@@ -558,8 +523,8 @@ async fn insert_object(
     diesel::insert_into(crate::schema::hubuumobject::table)
         .values((
             name.eq(command.name()),
-            collection_id.eq(command.collection_id()),
-            hubuum_class_id.eq(command.class_id()),
+            collection_id.eq(command.collection_id().id()),
+            hubuum_class_id.eq(command.class_id().id()),
             data.eq(command.data()),
             description.eq(command.description()),
         ))
@@ -574,7 +539,10 @@ async fn lock_object_and_update_class(
     changes: &StorageObjectUpdate,
 ) -> Result<(ClassRow, ObjectRow), PostgresStorageError> {
     let current = load_object(connection, object_id).await?;
-    let class_id = changes.class_id().unwrap_or(current.hubuum_class_id);
+    let class_id = changes
+        .class_id()
+        .map(ClassId::id)
+        .unwrap_or(current.hubuum_class_id);
     acquire_computed_class_shared_lock(connection, class_id).await?;
     let class = crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq(class_id))
@@ -598,21 +566,25 @@ async fn lock_resolved_object(
     let resolved_class = target.class();
     let resolved = target.object();
     let owner_key = RevisionOwner::Object.key(resolved.id());
-    acquire_computed_class_shared_lock(connection, resolved_class.id()).await?;
+    acquire_computed_class_shared_lock(connection, resolved_class.id().id()).await?;
     let locked_class = match target.selector() {
         StorageObjectSelector::Ids { class_id, .. } => crate::schema::hubuumclass::table
-            .filter(crate::schema::hubuumclass::id.eq(*class_id))
-            .filter(crate::schema::hubuumclass::id.eq(resolved_class.id()))
+            .filter(crate::schema::hubuumclass::id.eq(class_id.id()))
+            .filter(crate::schema::hubuumclass::id.eq(resolved_class.id().id()))
             .filter(crate::schema::hubuumclass::name.eq(resolved_class.name()))
-            .filter(crate::schema::hubuumclass::collection_id.eq(resolved_class.collection_id()))
+            .filter(
+                crate::schema::hubuumclass::collection_id.eq(resolved_class.collection_id().id()),
+            )
             .for_update()
             .first::<ClassRow>(connection)
             .await
             .optional()?,
         StorageObjectSelector::Names { class_name, .. } => crate::schema::hubuumclass::table
-            .filter(crate::schema::hubuumclass::id.eq(resolved_class.id()))
+            .filter(crate::schema::hubuumclass::id.eq(resolved_class.id().id()))
             .filter(crate::schema::hubuumclass::name.eq(class_name))
-            .filter(crate::schema::hubuumclass::collection_id.eq(resolved_class.collection_id()))
+            .filter(
+                crate::schema::hubuumclass::collection_id.eq(resolved_class.collection_id().id()),
+            )
             .for_update()
             .first::<ClassRow>(connection)
             .await
@@ -625,11 +597,11 @@ async fn lock_resolved_object(
             class_id,
             object_id,
         } => crate::schema::hubuumobject::table
-            .filter(crate::schema::hubuumobject::id.eq(*object_id))
+            .filter(crate::schema::hubuumobject::id.eq(object_id.id()))
             .filter(crate::schema::hubuumobject::id.eq(resolved.id()))
             .filter(crate::schema::hubuumobject::name.eq(resolved.name()))
             .filter(crate::schema::hubuumobject::collection_id.eq(resolved.collection_id()))
-            .filter(crate::schema::hubuumobject::hubuum_class_id.eq(*class_id))
+            .filter(crate::schema::hubuumobject::hubuum_class_id.eq(class_id.id()))
             .filter(crate::schema::hubuumobject::hubuum_class_id.eq(resolved.class_id()))
             .for_update()
             .first::<ObjectRow>(connection)
@@ -697,8 +669,8 @@ fn validate_object_create(
     class: &ClassRow,
 ) -> Result<(), PostgresStorageError> {
     validate_object_state(
-        command.class_id(),
-        command.collection_id(),
+        command.class_id().id(),
+        command.collection_id().id(),
         command.data(),
         class,
     )
@@ -710,8 +682,14 @@ fn validate_object_update(
     class: &ClassRow,
 ) -> Result<(), PostgresStorageError> {
     validate_object_state(
-        changes.class_id().unwrap_or(current.hubuum_class_id),
-        changes.collection_id().unwrap_or(current.collection_id),
+        changes
+            .class_id()
+            .map(ClassId::id)
+            .unwrap_or(current.hubuum_class_id),
+        changes
+            .collection_id()
+            .map(hubuum_domain::CollectionId::id)
+            .unwrap_or(current.collection_id),
         changes.data().unwrap_or(&current.data),
         class,
     )
@@ -751,13 +729,13 @@ fn object_event(
 ) -> Result<NewEvent, PostgresStorageError> {
     NewEvent::new(EntityType::Object, action, context.actor_kind(), summary)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
-        .map(|event| {
-            event
+        .and_then(|event| {
+            Ok(event
                 .with_context(context)
-                .with_entity_id(object.id)
+                .with_entity_id(hubuum_events_core::EventEntityId::new(object.id)?)
                 .with_entity_name(&object.name)
-                .with_collection_id(object.collection_id)
-                .with_metadata(json!({ "class_id": object.hubuum_class_id }))
+                .with_collection_id(hubuum_domain::CollectionId::new(object.collection_id)?)
+                .with_metadata(json!({ "class_id": object.hubuum_class_id })))
         })
 }
 
@@ -771,19 +749,12 @@ fn record_computed_evaluation(
 }
 
 fn postgres_error_from_storage(error: StorageError) -> PostgresStorageError {
-    let (kind, message, current_etag) = error.into_parts();
-    PostgresStorageError::new(kind, message, current_etag)
+    let (kind, message, current_revision) = error.into_parts();
+    PostgresStorageError::new(kind, message, current_revision)
 }
 
 fn validate_object_selector(selector: &StorageObjectSelector) -> Result<(), PostgresStorageError> {
-    if let StorageObjectSelector::Ids {
-        class_id,
-        object_id,
-    } = selector
-    {
-        validate_positive_id(*class_id, "class id")?;
-        validate_positive_id(*object_id, "object id")?;
-    }
+    let _ = selector;
     Ok(())
 }
 

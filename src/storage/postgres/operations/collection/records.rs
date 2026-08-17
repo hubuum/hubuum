@@ -1,8 +1,8 @@
 use super::*;
-use crate::api::etag::RevisionOwner;
-use crate::events::{Action, EntityType, EventContext, NewEvent};
+use crate::events::{Action, CollectionId, EntityType, EventContext, EventEntityId, NewEvent};
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 use crate::storage::postgres::operations::event_record::emit_event;
+use crate::storage::postgres::runtime::RevisionOwner;
 use crate::traits::{CursorPaginated, CursorValue};
 use chrono::NaiveDateTime;
 use diesel_async::RunQueryDsl;
@@ -410,9 +410,13 @@ fn collection_event(
         summary,
     )?
     .with_context(context)
-    .with_entity_id(collection.id)
+    .with_entity_id(
+        EventEntityId::new(collection.id).expect("stored collection id must be positive"),
+    )
     .with_entity_name(collection.name.clone())
-    .with_collection_id(collection.id))
+    .with_collection_id(
+        CollectionId::new(collection.id).expect("stored collection id must be positive"),
+    ))
 }
 
 async fn delete_collection_by_id(

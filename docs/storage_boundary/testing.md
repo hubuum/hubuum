@@ -56,6 +56,11 @@ not prove PostgreSQL transaction isolation.
 redaction, cursor values, error taxonomy, and other backend-neutral behavior.
 They are deterministic and require no database.
 
+`crates/hubuum-storage-core/tests/external_adapter_api.rs` is compiled as an
+external crate. It verifies that an out-of-tree adapter can construct every
+transaction-scoped resource port and use representative typed principal and
+query APIs without reaching into private fields.
+
 These tests prove that boundary values enforce their local invariants. They do
 not prove that an adapter applies the request correctly.
 

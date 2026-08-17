@@ -7,8 +7,8 @@ fn parses_ordered_multidimensional_group_query() {
     )
     .unwrap();
     let (options, spec) = query.into_parts();
-    assert_eq!(options.filters.len(), 1);
-    assert_eq!(options.limit, Some(50));
+    assert_eq!(options.filters().len(), 1);
+    assert_eq!(options.limit(), Some(50));
     assert_eq!(spec.sort(), ObjectAggregateSort::ObjectCountDescending);
     assert_eq!(
         spec.dimensions()

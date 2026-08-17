@@ -252,7 +252,7 @@ pub async fn get_group_members(
         requestor = requestor.user.id
     );
 
-    let total_count = if params.include_total {
+    let total_count = if params.include_total() {
         let count_params = count_query_options(&params);
         group
             .count_members_paginated(&context, &count_params)

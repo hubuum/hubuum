@@ -103,7 +103,7 @@ impl StorageClassRelation {
     ) {
         let (id, created_at, updated_at, revision) = self.metadata.into_parts();
         (
-            id,
+            id.id(),
             self.from_class_id,
             self.to_class_id,
             self.forward_template_alias,
@@ -112,7 +112,7 @@ impl StorageClassRelation {
             updated_at,
             self.from_max_relations,
             self.to_max_relations,
-            revision,
+            revision.get(),
         )
     }
 }
@@ -165,13 +165,13 @@ impl StorageObjectRelation {
     pub const fn into_parts(self) -> (i32, i32, i32, i32, NaiveDateTime, NaiveDateTime, i64) {
         let (id, created_at, updated_at, revision) = self.metadata.into_parts();
         (
-            id,
+            id.id(),
             self.from_object_id,
             self.to_object_id,
             self.class_relation_id,
             created_at,
             updated_at,
-            revision,
+            revision.get(),
         )
     }
 }
@@ -250,7 +250,7 @@ impl StorageGraphClass {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
         let (id, created_at, updated_at, revision) = metadata.into_parts();
         (
-            id,
+            id.into(),
             name,
             collection_id,
             self.json_schema,
@@ -258,7 +258,7 @@ impl StorageGraphClass {
             description,
             created_at,
             updated_at,
-            revision,
+            revision.into(),
         )
     }
 }
@@ -298,7 +298,7 @@ impl StorageGraphObject {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
         let (id, created_at, updated_at, revision) = metadata.into_parts();
         (
-            id,
+            id.into(),
             name,
             collection_id,
             self.class_id,
@@ -306,7 +306,7 @@ impl StorageGraphObject {
             self.data,
             created_at,
             updated_at,
-            revision,
+            revision.into(),
         )
     }
 }
@@ -839,11 +839,11 @@ fn query_debug(
 ) -> fmt::Result {
     formatter
         .debug_struct(name)
-        .field("filter_count", &options.filters.len())
-        .field("sort_count", &options.sort.len())
-        .field("limit", &options.limit)
-        .field("has_cursor", &options.cursor.is_some())
-        .field("include_total", &options.include_total)
+        .field("filter_count", &options.filters().len())
+        .field("sort_count", &options.sort().len())
+        .field("limit", &options.limit())
+        .field("has_cursor", &options.cursor().is_some())
+        .field("include_total", &options.include_total())
         .field("visibility", visibility)
         .finish()
 }
@@ -918,17 +918,18 @@ mod tests {
 
     #[test]
     fn query_debug_redacts_ids_filters_and_cursors() {
-        let options = QueryOptions {
-            filters: vec![hubuum_query::ParsedQueryParam {
-                field: hubuum_query::FilterField::Name,
-                operator: hubuum_query::SearchOperator::Equals { is_negated: false },
-                value: "secret relation".to_string(),
-            }],
-            sort: Vec::new(),
-            limit: Some(10),
-            cursor: Some("secret cursor".to_string()),
-            include_total: true,
-        };
+        let options = QueryOptions::new(
+            vec![hubuum_query::ParsedQueryParam::from_parts(
+                hubuum_query::FilterField::Name,
+                hubuum_query::SearchOperator::Equals { is_negated: false },
+                "secret relation",
+            )],
+            Vec::new(),
+            Some(10),
+            Some("secret cursor".to_string()),
+            true,
+        )
+        .unwrap();
         let visibility =
             StorageVisibility::new(42, true, None::<[crate::AuthorizationPermission; 0]>, None);
         let debug = format!("{:?}", RelationTouchingQuery::new(73, options, visibility));

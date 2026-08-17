@@ -286,7 +286,7 @@ pub(super) async fn page_external_aggregates(
     groups: AggregateRows,
     paging: &ObjectAggregatePaging,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
-    let total = if paging.query_options.include_total {
+    let total = if paging.query_options.include_total() {
         Some(i64::try_from(groups.len()).map_err(|_| accumulator_too_large())?)
     } else {
         None
@@ -335,7 +335,7 @@ pub(super) async fn page_accumulated_aggregates(
     connection: &mut PostgresConnection,
     paging: &ObjectAggregatePaging,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
-    let total = if paging.query_options.include_total {
+    let total = if paging.query_options.include_total() {
         Some(
             diesel::sql_query("SELECT COUNT(*) AS count FROM object_aggregate_accumulator")
                 .get_result::<ObjectAggregateCountRow>(connection)

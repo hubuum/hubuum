@@ -26,6 +26,10 @@ There is no asynchronous runtime requirement, I/O, credential handling, or
 cancellation behavior. JSON Schema validation rejects external references and
 uses a bounded process-local compilation cache; cache contents do not change
 validation results. Private fields and validating builders protect invariants.
+Positive resource identifiers and `ResourceRevision` are opaque newtypes with
+validated constructors and explicit primitive accessors. Generic storage
+metadata uses `ResourceId`; operation-specific contracts use the corresponding
+resource ID type so an adapter cannot silently mix identity domains.
 
 `BoundedJsonPatch` validates JSON Patch size, operation count, pointer depth,
 and cumulative application work before an adapter sees the document. Patch

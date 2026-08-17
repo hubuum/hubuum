@@ -15,6 +15,7 @@ use hubuum_storage_core::{
 };
 use tracing::{debug, warn};
 
+use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
@@ -465,7 +466,7 @@ pub(crate) fn assert_revision_precondition_allows_missing_target(
         .try_with(|precondition| {
             precondition
                 .as_ref()
-                .is_some_and(|precondition| precondition.owner_key() == owner_key)
+                .is_some_and(|precondition| revision_owner_key(precondition.target()) == owner_key)
         })
         .unwrap_or(false);
     if has_matching_precondition {
@@ -556,13 +557,14 @@ impl TransactionLocalContext {
             .await?;
         }
         if let Some(precondition) = &self.revision_precondition {
+            let owner_key = revision_owner_key(precondition.target());
             diesel::sql_query(
                 "SELECT \
                  set_config('hubuum.if_match_owner', $1, true), \
                  set_config('hubuum.if_match_revisions', $2, true), \
                  set_config('hubuum.if_match_checked', '', true)",
             )
-            .bind::<diesel::sql_types::Text, _>(precondition.owner_key())
+            .bind::<diesel::sql_types::Text, _>(owner_key)
             .bind::<diesel::sql_types::Text, _>(
                 precondition
                     .revisions()

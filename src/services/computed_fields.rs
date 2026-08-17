@@ -7,7 +7,6 @@ use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
     ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
     ComputedFieldErrorResponse, ComputedFieldMutationResponse, ComputedFieldPreviewResponse,
-    ResourceRevision,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
@@ -267,7 +266,7 @@ fn definition_from_storage(
         ),
     };
     Ok(ComputedFieldDefinition {
-        id: metadata.id(),
+        id: metadata.id().id(),
         class_id: definition.class_id(),
         visibility,
         owner_user_id,
@@ -277,7 +276,7 @@ fn definition_from_storage(
         operation: definition.operation().clone(),
         result_type: definition.result_type().to_string(),
         enabled: definition.enabled(),
-        revision: ResourceRevision::new(metadata.revision())?,
+        revision: metadata.revision(),
         semantics_version: definition.semantics_version(),
         created_by: definition.created_by(),
         updated_by: definition.updated_by(),

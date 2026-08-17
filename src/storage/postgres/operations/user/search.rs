@@ -37,11 +37,11 @@ pub struct ObjectQueryPlan(QueryOptions);
 impl ObjectQueryPlan {
     fn ordinary(options: QueryOptions) -> Result<Self, ApiError> {
         let has_computed_fields = options
-            .filters
+            .filters()
             .iter()
             .any(|filter| filter.field.computed_query().is_some())
             || options
-                .sort
+                .sort()
                 .iter()
                 .any(|sort| sort.field.computed_query().is_some());
         if has_computed_fields {
@@ -226,7 +226,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::permissions::dsl::{
             collection_id as permissions_collection_id, group_id, permissions,
         };
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         debug!(
             message = "Searching collections",
@@ -340,7 +340,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             return Ok(0);
         }
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
         // Validate any `permissions` query filters. The requested value does not
         // narrow collection visibility beyond the ReadCollection baseline applied
         // below — a collection is a collection, and ReadCollection is what gates
@@ -452,7 +452,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             validate_schema as class_validate_schema,
         };
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         debug!(
             message = "Searching classes",
@@ -575,7 +575,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             validate_schema as class_validate_schema,
         };
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
@@ -700,7 +700,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let query_options = query_plan.into_options();
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         debug!(
             message = "Searching objects",
@@ -845,7 +845,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let query_options = query_plan.into_options();
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         let mut permission_list = query_params.permissions()?;
         permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
@@ -1005,7 +1005,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             updated_at as class_relation_updated_at,
         };
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         debug!(
             message = "Searching class relations",
@@ -1044,13 +1044,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     operator: class_param.operator.clone(),
                     value: class_param.value.clone(),
                 };
-                let class_query_options = QueryOptions {
-                    filters: vec![qparam],
-                    sort: vec![],
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                };
+                let class_query_options =
+                    QueryOptions::new(vec![qparam], vec![], None, None, true)?;
                 let classes = self
                     .search_classes_from_backend_with_admin_status(
                         pool,
@@ -1088,7 +1083,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     _ => unreachable!(),
                 };
 
-                query_params.push(ParsedQueryParam {
+                query_params.try_push(ParsedQueryParam {
                     field,
                     operator: SearchOperator::Equals { is_negated: false },
                     value: class_ids
@@ -1096,7 +1091,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                         .map(|item| item.to_string())
                         .collect::<Vec<_>>()
                         .join(","),
-                });
+                })?;
             }
         }
 
@@ -1237,7 +1232,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
         use diesel::BoolExpressionMethods;
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
@@ -1578,7 +1573,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             to_hubuum_object_id, updated_at as relation_updated_at,
         };
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         debug!(
             message = "Searching object relations",
@@ -1745,7 +1740,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
         use diesel::BoolExpressionMethods;
 
-        let query_params = query_options.filters.clone();
+        let query_params = query_options.filters().clone();
 
         debug!(
             message = "Searching direct object relations touching object",
@@ -2570,7 +2565,7 @@ mod related_filter_tests {
             &[],
         )
         .unwrap();
-        let groups = related_filter_groups(&query.filters).unwrap();
+        let groups = related_filter_groups(query.filters()).unwrap();
         let scope = TokenScope::from_request_parts(
             None,
             Some(vec![TokenResourceScope::Object(
@@ -2600,7 +2595,7 @@ mod related_filter_tests {
         )
         .unwrap();
         let revision_filter = query
-            .filters
+            .filters()
             .iter()
             .find(|filter| {
                 filter.field.related_query().is_some_and(|field| {

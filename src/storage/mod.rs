@@ -128,9 +128,9 @@ pub(crate) use hubuum_storage_core::{
 };
 pub use hubuum_storage_core::{
     AuthenticatedToken, StorageCallSite, StorageExecution, StorageRevisionPrecondition,
-    StorageTransaction, StorageTransactionFuture, TransactionalClassRelations,
-    TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,
-    TransactionalObjects, TransactionalStorage,
+    StorageRevisionTarget, StorageTransaction, StorageTransactionFuture,
+    TransactionalClassRelations, TransactionalClasses, TransactionalCollections,
+    TransactionalObjectRelations, TransactionalObjects, TransactionalStorage,
 };
 pub(crate) use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot,

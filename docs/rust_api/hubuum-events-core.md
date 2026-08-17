@@ -19,6 +19,12 @@ implementations and is supported. Serialized event values are compatible only
 where their type documentation or Hubuum's persisted event format says so;
 ordinary Rust helper representations are not independent wire protocols.
 
+Event envelopes and subscription filters are intentional serialized
+integration DTOs. Their public fields use validated event sequence, entity,
+collection, principal, and task identifier types. Mutation helpers keep their
+representation private, and catalog parsing uses semantic `parse` methods;
+database column terminology is not part of the public API.
+
 ## Errors, Runtime, and Security
 
 The crate performs no I/O and requires no asynchronous runtime. Constructors

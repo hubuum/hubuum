@@ -164,14 +164,8 @@ async fn can_list_objects_in_class(
         .is_ok());
     }
 
-    let mut visibility_query = QueryOptions {
-        filters: Vec::new(),
-        sort: Vec::new(),
-        limit: Some(1),
-        cursor: None,
-        include_total: false,
-    };
-    scope_object_query_to_class(&mut visibility_query, &HubuumClassID::new(class.id)?);
+    let mut visibility_query = QueryOptions::new(Vec::new(), Vec::new(), Some(1), None, false)?;
+    scope_object_query_to_class(&mut visibility_query, &HubuumClassID::new(class.id)?)?;
     let is_admin = crate::traits::AuthzSubject::is_admin(&requestor.principal, context).await?;
     let (visible_objects, _) = catalog_service::list_objects(
         context,
@@ -189,14 +183,8 @@ async fn authorized_object_ids_in_class(
     requestor: &Authenticated,
     class: &HubuumClassID,
 ) -> Result<AuthorizedObjectIds, ApiError> {
-    let mut visibility_query = QueryOptions {
-        filters: Vec::new(),
-        sort: Vec::new(),
-        limit: None,
-        cursor: None,
-        include_total: false,
-    };
-    scope_object_query_to_class(&mut visibility_query, class);
+    let mut visibility_query = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)?;
+    scope_object_query_to_class(&mut visibility_query, class)?;
     let (candidates, _) = catalog_service::list_objects(
         context,
         requestor.principal.id(),
@@ -241,7 +229,7 @@ async fn computed_list_visibility(
         context.permission_backend(),
         &principal,
         requestor.scopes(),
-        &params.filters,
+        params.filters(),
     )
     .await?;
     let authorized_ids = match related_ids {
@@ -285,7 +273,7 @@ pub(super) async fn list_objects(
 
     let personal_owner = computed_personal_owner(context, requestor, class).await?;
     let computed_sorting = params
-        .sort
+        .sort()
         .iter()
         .any(|sort| sort.field.computed_query().is_some());
     let query = ResolvedComputedObjectQuery {

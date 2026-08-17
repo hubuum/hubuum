@@ -157,7 +157,7 @@ where
         use diesel::sql_types::Integer;
 
         let filter = parse_transitive_filter_params(query_options)?;
-        let sorts = normalized_sorts::<HubuumClassRelationTransitiveRow>(&query_options.sort)?;
+        let sorts = normalized_sorts::<HubuumClassRelationTransitiveRow>(query_options.sort())?;
 
         let mut raw_sql = String::from(
             "SELECT ancestor_class_id, descendant_class_id, depth, path
@@ -169,7 +169,7 @@ where
 
         if let Some(cursor_sql) = cursor_filter_sql::<HubuumClassRelationTransitiveRow>(
             &sorts,
-            query_options.cursor.as_deref(),
+            query_options.cursor().map(|cursor| cursor.as_str()),
         )? {
             raw_sql.push_str("\n  AND ");
             raw_sql.push_str(&cursor_sql);
@@ -182,7 +182,7 @@ where
             .join(", ");
         raw_sql.push_str(&format!("\nORDER BY {order_by}"));
 
-        if let Some(limit) = query_options.limit {
+        if let Some(limit) = query_options.limit() {
             raw_sql.push_str(&format!("\nLIMIT {limit}"));
         }
 

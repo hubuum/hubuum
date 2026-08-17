@@ -4,6 +4,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
@@ -30,7 +31,7 @@ const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC
 
 macro_rules! apply_service_account_filters {
     ($query:ident, $options:expr) => {
-        for parameter in &$options.filters {
+        for parameter in $options.filters() {
             match parameter.field {
                 FilterField::Id => crate::postgres_integer_filter!(
                     $query,
@@ -208,14 +209,14 @@ pub async fn list_manageable_service_accounts(
                 Ok(records)
             };
 
-            let total = if options.include_total {
+            let total = if options.include_total() {
                 Some(build_query()?.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
             let mut records = build_query()?;
             let fields = options
-                .sort
+                .sort()
                 .iter()
                 .map(|sort| service_account_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -524,12 +525,14 @@ async fn cancel_pending_tasks(
 
     if let Some(context) = context {
         for (task_id, task_kind, initiator_user_id) in &cancelled {
-            let provenance = context.actor_user_id().map_or_else(
-                || MutationProvenance::system_for_task(*initiator_user_id, *task_id),
-                |actor_user_id| {
-                    MutationProvenance::user_for_task(actor_user_id, *initiator_user_id, *task_id)
-                },
-            );
+            let task_id = TaskId::new(*task_id)?;
+            let initiator_user_id = initiator_user_id.map(PrincipalId::new).transpose()?;
+            let provenance = match context.actor_user_id() {
+                Some(actor_user_id) => {
+                    MutationProvenance::user_for_task(actor_user_id, initiator_user_id, task_id)
+                }
+                None => MutationProvenance::system_for_task(initiator_user_id, task_id),
+            };
             let event = NewEvent::new(
                 EntityType::Task,
                 Action::Cancelled,
@@ -537,7 +540,7 @@ async fn cancel_pending_tasks(
                 DISABLED_TASK_SUMMARY,
             )
             .map_err(|error| PostgresStorageError::database(error.to_string()))?
-            .with_entity_id(*task_id)
+            .with_entity_id(hubuum_events_core::EventEntityId::new(task_id.id())?)
             .with_metadata(json!({ "task_id": task_id, "task_kind": task_kind }))
             .with_mutation_provenance(&provenance);
             append_event(connection, &event).await?;
@@ -679,11 +682,11 @@ fn service_account_event(
         summary,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
-    .map(|event| {
-        event
+    .and_then(|event| {
+        Ok(event
             .with_context(context)
-            .with_entity_id(account.id)
-            .with_entity_name(name.to_string())
+            .with_entity_id(hubuum_events_core::EventEntityId::new(account.id)?)
+            .with_entity_name(name.to_string()))
     })
 }
 

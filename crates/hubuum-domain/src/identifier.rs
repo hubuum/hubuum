@@ -40,7 +40,7 @@ impl std::error::Error for PositiveIdError {}
 macro_rules! positive_id {
     ($(#[$meta:meta])* $name:ident, $noun:literal, $schema_name:literal) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(i32);
 
         impl $name {
@@ -56,6 +56,18 @@ macro_rules! positive_id {
             #[must_use]
             pub const fn id(self) -> i32 {
                 self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+
+        impl From<$name> for i32 {
+            fn from(value: $name) -> Self {
+                value.0
             }
         }
 
@@ -96,7 +108,7 @@ macro_rules! positive_id {
 macro_rules! positive_i64_id {
     ($(#[$meta:meta])* $name:ident, $noun:literal, $schema_name:literal) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(i64);
 
         impl $name {
@@ -112,6 +124,18 @@ macro_rules! positive_i64_id {
             #[must_use]
             pub const fn id(self) -> i64 {
                 self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+
+        impl From<$name> for i64 {
+            fn from(value: $name) -> Self {
+                value.0
             }
         }
 
@@ -149,6 +173,18 @@ macro_rules! positive_i64_id {
     };
 }
 
+positive_id!(
+    /// Resource-kind-neutral identifier used only by generic record metadata.
+    ResourceId,
+    "resource id",
+    "ResourceID"
+);
+positive_id!(
+    /// Identifier for an identity-provider scope.
+    IdentityScopeId,
+    "identity scope id",
+    "IdentityScopeID"
+);
 positive_id!(
     /// Identifier for a collection.
     CollectionId,
@@ -287,12 +323,15 @@ mod tests {
     fn schema_names_preserve_the_http_contract() {
         use super::{
             ClassId, ClassRelationId, ComputedFieldDefinitionId, EventDeliveryId, EventSinkId,
-            EventSubscriptionId, ExportTemplateId, GroupId, ObjectId, ObjectRelationId,
-            PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
+            EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId,
+            ObjectRelationId, PrincipalId, RemoteTargetId, ResourceId, RestoreJobId,
+            ServiceAccountId, TaskId, TokenId, UserId,
         };
         use utoipa::ToSchema;
 
         let names = [
+            ResourceId::name(),
+            IdentityScopeId::name(),
             CollectionId::name(),
             ClassId::name(),
             ObjectId::name(),
@@ -316,6 +355,8 @@ mod tests {
         assert_eq!(
             names.map(|name| name.into_owned()),
             [
+                "ResourceID",
+                "IdentityScopeID",
                 "CollectionID",
                 "HubuumClassID",
                 "HubuumObjectID",

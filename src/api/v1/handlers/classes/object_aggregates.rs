@@ -133,7 +133,7 @@ async fn read_object_aggregates(
         query = req.query_string()
     );
 
-    let mut required = query.query_options().filters.permissions()?;
+    let mut required = query.query_options().filters().permissions()?;
     required.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
     let required = required.iter().copied().collect::<Vec<_>>();
     let authorization = ObjectAggregateAuthorization::new(required, requestor.scopes().cloned())?;

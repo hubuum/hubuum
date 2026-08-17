@@ -339,11 +339,11 @@ impl fmt::Debug for StorageUserListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageUserListQuery")
-            .field("filter_count", &self.options.filters.len())
-            .field("sort_count", &self.options.sort.len())
-            .field("limit", &self.options.limit)
-            .field("has_cursor", &self.options.cursor.is_some())
-            .field("include_total", &self.options.include_total)
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
@@ -601,13 +601,16 @@ mod tests {
         assert!(!debug.contains("sensitive-name"));
         assert!(!debug.contains("sensitive-password-hash"));
 
-        let query = StorageUserListQuery::new(QueryOptions {
-            filters: Vec::new(),
-            sort: Vec::new(),
-            limit: Some(20),
-            cursor: Some("sensitive-cursor".to_string()),
-            include_total: true,
-        });
+        let query = StorageUserListQuery::new(
+            QueryOptions::new(
+                Vec::new(),
+                Vec::new(),
+                Some(20),
+                Some("sensitive-cursor".to_string()),
+                true,
+            )
+            .unwrap(),
+        );
         let debug = format!("{query:?}");
         assert!(!debug.contains("sensitive-cursor"));
         assert!(debug.contains("has_cursor: true"));

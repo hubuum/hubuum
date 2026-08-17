@@ -745,19 +745,13 @@ mod tests {
     fn history_queries_own_their_visibility_boundary() {
         let query = HistoryListQuery::new(
             17,
-            QueryOptions {
-                filters: Vec::new(),
-                sort: Vec::new(),
-                limit: Some(25),
-                cursor: None,
-                include_total: true,
-            },
+            QueryOptions::new(Vec::new(), Vec::new(), Some(25), None, true).unwrap(),
             HistoryCollectionScope::Visible(vec![3, 5]),
         );
 
         let (entity_id, options, scope) = query.into_parts();
         assert_eq!(entity_id, 17);
-        assert_eq!(options.limit, Some(25));
+        assert_eq!(options.limit(), Some(25));
         assert_eq!(scope, HistoryCollectionScope::Visible(vec![3, 5]));
     }
 
