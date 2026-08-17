@@ -19,6 +19,7 @@ artifacts=false
 benchmarks=false
 postgres_benchmark=false
 runtime_benchmark=false
+treetop_conformance=false
 
 for path in "$@"; do
   any=true
@@ -35,6 +36,20 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
+    .github/treetop-conformance.env | .github/workflows/ci.yml | \
+      Cargo.toml | Cargo.lock | docs/treetop/* | \
+      scripts/run-treetop-conformance.sh | scripts/serve-treetop-fixture.py | \
+      scripts/test-serve-treetop-fixture.py | \
+      src/config.rs | src/config/* | src/db/traits/authz.rs | src/permissions/* | \
+      src/models/permissions.rs | src/models/token.rs | \
+      src/models/token_scope.rs | src/models/unified_search.rs | \
+      src/api/v1/handlers/search.rs | src/tests/permissions/* | \
+      tests/api_core_data_suite/object_aggregates/external_authorization.rs)
+      treetop_conformance=true
+      ;;
+  esac
+
+  case "$path" in
     docs/openapi.json)
       openapi=true
       ;;
@@ -42,6 +57,10 @@ for path in "$@"; do
       code=true
       container=true
       artifacts=true
+      ;;
+    docs/treetop/schema.cedarschema | docs/treetop/schema.json | \
+      docs/treetop/test-fixture.cedar)
+      code=true
       ;;
     docs/querying.md)
       code=true
@@ -204,6 +223,7 @@ outputs=(
   "benchmarks=$benchmarks"
   "postgres_benchmark=$postgres_benchmark"
   "runtime_benchmark=$runtime_benchmark"
+  "treetop_conformance=$treetop_conformance"
 )
 
 printf '%s\n' "${outputs[@]}"

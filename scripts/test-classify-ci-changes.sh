@@ -48,6 +48,7 @@ assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" code false
 assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
+assert_flag "$docs_output" treetop_conformance false
 
 policy_fixture_root="$(mktemp -d)"
 trap 'rm -rf "$policy_fixture_root"' EXIT
@@ -169,6 +170,32 @@ assert_flag "$source_output" artifacts true
 assert_flag "$source_output" benchmarks true
 assert_flag "$source_output" postgres_benchmark true
 assert_flag "$source_output" runtime_benchmark true
+assert_flag "$source_output" treetop_conformance false
+
+treetop_output="$(bash "$classifier" \
+  .github/treetop-conformance.env \
+  docs/treetop/schema.json \
+  src/config/environment.rs \
+  src/permissions/treetop/mod.rs \
+  src/models/token_scope.rs \
+  scripts/run-treetop-conformance.sh \
+  scripts/serve-treetop-fixture.py \
+  scripts/test-serve-treetop-fixture.py)"
+assert_flag "$treetop_output" code true
+assert_flag "$treetop_output" markdown false
+assert_flag "$treetop_output" treetop_conformance true
+
+treetop_fixture_output="$(bash "$classifier" \
+  docs/treetop/schema.cedarschema \
+  docs/treetop/schema.json \
+  docs/treetop/test-fixture.cedar)"
+assert_flag "$treetop_fixture_output" code true
+assert_flag "$treetop_fixture_output" treetop_conformance true
+
+treetop_docs_output="$(bash "$classifier" docs/treetop/README.md)"
+assert_flag "$treetop_docs_output" code false
+assert_flag "$treetop_docs_output" markdown true
+assert_flag "$treetop_docs_output" treetop_conformance true
 
 benchmark_output="$(bash "$classifier" .github/workflows/benchmarks.yml)"
 assert_flag "$benchmark_output" benchmarks true

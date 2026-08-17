@@ -35,6 +35,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the client. The server, admin, and OpenAPI binaries now call narrow internal
   library entrypoints, and the library owns API/worker/all runtime composition.
 
+### Security
+
+- Treetop authorization failures now redact transport details, response bodies,
+  URL credentials, and failed batch-item diagnostics from public errors. A
+  pinned, hermetic real-service conformance gate now exercises these failure
+  paths and the complete shared authorization corpus before releases.
+
 ## [0.0.9] - 2026-08-07
 
 ### Added

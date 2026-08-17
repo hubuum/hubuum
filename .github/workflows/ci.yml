@@ -52,6 +52,7 @@ jobs:
       openapi: ${{ steps.paths.outputs.openapi }}
       container: ${{ steps.paths.outputs.container }}
       artifacts: ${{ steps.paths.outputs.artifacts }}
+      treetop_conformance: ${{ steps.paths.outputs.treetop_conformance }}
       run_format: ${{ steps.policy.outputs.run_format }}
       run_markdown: ${{ steps.policy.outputs.run_markdown }}
       run_default_suite: ${{ steps.policy.outputs.run_default_suite }}
@@ -542,6 +543,58 @@ jobs:
           cargo test --locked --lib
           'middlewares::rate_limit::tests::' -- --ignored
 
+  treetop-authorization-conformance:
+    name: Treetop authorization conformance
+    needs: changes
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.changes.outputs.treetop_conformance == 'true'
+      )
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Prepare conformance report directory
+        run: mkdir -p treetop-conformance
+      - name: Install conformance dependencies
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libpq-dev socat
+      - name: Set up database
+        run: |
+          bash scripts/install-diesel-cli.sh
+          DIESEL_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/diesel"
+          PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
+          "$DIESEL_BIN" migration run --database-url "$DATABASE_URL"
+      - name: Run the hermetic Treetop contract
+        env:
+          HUBUUM_TREETOP_REPORT_DIR: treetop-conformance
+        run: bash scripts/run-treetop-conformance.sh
+      - name: Upload Treetop diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: treetop-conformance-${{ github.run_id }}
+          path: treetop-conformance
+          if-no-files-found: error
+          retention-days: 30
+
   test:
     name: ${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }}
     needs: changes
@@ -966,6 +1019,7 @@ jobs:
       - openapi-contract
       - feature-permutations
       - valkey-rate-limit-contract
+      - treetop-authorization-conformance
       - test
       - all-features-release-build
       - container-build
@@ -1026,12 +1080,14 @@ jobs:
       needs.dependency-policy.result == 'success' &&
       needs.rust-api-policy.result == 'success' &&
       needs.openapi-contract.result == 'success' &&
+      needs.treetop-authorization-conformance.result == 'success' &&
       needs.container-build.result == 'success'
     needs:
       - verify-tag-main-ci-success
       - dependency-policy
       - rust-api-policy
       - openapi-contract
+      - treetop-authorization-conformance
       - container-build
     runs-on: ubuntu-24.04
     steps:

@@ -14,8 +14,8 @@
 // Principal entities
 // ============================================================================
 
-entity User;
 entity Group;
+entity User in [Group];
 
 // ============================================================================
 // Resource entities
@@ -23,7 +23,9 @@ entity Group;
 
 // Global singleton representing the system itself.
 // Used for admin authorization checks.
-entity HubuumSystem;
+entity HubuumSystem {
+    id: String
+};
 
 // A collection. The entity ID is the collection's database id.
 // `collection_id` is also exposed as an attribute (it always equals the entity
@@ -32,6 +34,7 @@ entity HubuumSystem;
 // the full collection row (most authorize paths); not when only the id is
 // known.
 entity HubuumCollection {
+    id: String,
     collection_id?: Long,
     name?: String
 };
@@ -39,6 +42,7 @@ entity HubuumCollection {
 // A class definition within a collection. `name` is populated when the full
 // class row was loaded by the request that triggered the authorization.
 entity HubuumClass {
+    id: String,
     collection_id: Long,
     name?: String
 };
@@ -46,6 +50,7 @@ entity HubuumClass {
 // An object instance within a collection and class. `name` is populated when
 // the full object row was loaded.
 entity HubuumObject {
+    id: String,
     collection_id: Long,
     class_id: Long,
     name?: String
@@ -54,6 +59,7 @@ entity HubuumObject {
 // A template within a collection. `name` is populated when the full template
 // row was loaded.
 entity HubuumTemplate {
+    id: String,
     collection_id: Long,
     name?: String
 };
@@ -64,6 +70,7 @@ entity HubuumTemplate {
 // endpoints share a collection, as a convenience for policies that don't need
 // to discriminate by direction.
 entity HubuumClassRelation {
+    id: String,
     from_collection_id: Long,
     to_collection_id: Long,
     from_class_id: Long,
@@ -74,6 +81,7 @@ entity HubuumClassRelation {
 // A relationship instance between two objects. Same `collection_id?` rule as
 // HubuumClassRelation: present iff `from_collection_id == to_collection_id`.
 entity HubuumObjectRelation {
+    id: String,
     from_collection_id: Long,
     to_collection_id: Long,
     from_class_id: Long,
@@ -87,6 +95,7 @@ entity HubuumObjectRelation {
 // A background task. `submitted_by` is the user id that submitted the task,
 // optional because legacy tasks may not have a recorded submitter.
 entity HubuumTask {
+    id: String,
     submitted_by?: Long
 };
 

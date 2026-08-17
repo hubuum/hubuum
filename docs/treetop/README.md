@@ -55,7 +55,11 @@ Follow these steps to switch an existing Hubuum deployment to Treetop mode (or t
 
 1. **Stand up a Treetop server.** See the Treetop project documentation for installation and deployment instructions.
 
-2. **Upload the Cedar schema.** Upload `docs/treetop/schema.cedarschema` to your Treetop instance. This tells Treetop which entity types and actions Hubuum will send. The schema must be loaded before Hubuum can authorize requests.
+2. **Upload the Cedar schema.** Upload `docs/treetop/schema.json` to your
+   Treetop instance. This is the Cedar JSON schema accepted by Treetop and tells
+   it which entity types and actions Hubuum will send. The companion
+   `schema.cedarschema` file is the human-readable Cedar schema. The schema must
+   be loaded before Hubuum can authorize requests.
 
 3. **Edit and upload the bootstrap policy.** Open `docs/treetop/bootstrap.cedar` and replace `REPLACE_ME` with your admin group's database id. To find the id, run:
 
@@ -160,19 +164,27 @@ To enforce AND semantics, replace the `||` with `&&`, or add a `forbid` clause t
 
 ## Verifying the integration
 
-Hubuum includes a live parity test suite that runs against an actual Treetop server. The tests verify that the Treetop integration behaves identically to the Local backend for a known set of entities and policies.
+Hubuum includes a mandatory conformance suite that runs a shared semantic corpus
+against the local PostgreSQL backend and a digest-pinned real Treetop server.
+It also exercises batching, pagination, private-CA TLS, service failure and
+recovery, fail-closed response validation, and diagnostic redaction.
 
-To run the parity tests:
+To run the hermetic suite locally after preparing the normal test database:
 
 ```bash
-HUBUUM_TREETOP_TEST_URL=https://your-treetop-instance \
-HUBUUM_DATABASE_URL=postgres://user:pass@localhost/hubuum \
-  cargo test tests::permissions::live_treetop_parity
+source .env
+./scripts/run-treetop-conformance.sh
 ```
 
-Without `HUBUUM_TREETOP_TEST_URL`, the tests skip cleanly (they do not fail).
+The runner owns the test service, strict schema and policies, private CA, and
+service lifecycle. Missing fixture inputs are fatal; the ignored Rust tests do
+not silently skip. See [`test-fixture.md`](test-fixture.md) for the exact corpus,
+failure matrix, immutable service pin, and diagnostics.
 
-The parity tests expect your Treetop server to have specific test entities and policies loaded. See [`test-fixture.md`](test-fixture.md) for the required setup (test user/group IDs, collection ID, and the exact Cedar policies the tests assert against).
+CI selects this release-blocking job for changes to Treetop configuration,
+authorization mappings, token scopes, visibility/search behavior, the fixture,
+or the harness. It also runs for every release tag. The aggregate CI gate and
+tag validation both require the job to pass.
 
 ## Admin override
 
@@ -188,7 +200,8 @@ If Treetop returns Allow, the user is an admin. If Deny, the user is not. The bo
 
 ## Further reading
 
-- `schema.cedarschema` — the Cedar entity schema Hubuum's exporter targets.
+- `schema.json` — the Cedar JSON schema accepted by Treetop.
+- `schema.cedarschema` — the human-readable Cedar schema Hubuum's exporter targets.
 - `bootstrap.cedar` — minimal policy file to upload before serving traffic.
 - `test-fixture.md` — the test entities and policies the parity suite expects.
 - `../permissions.md` — the on-the-wire permission model that both Local and Treetop backends conform to.

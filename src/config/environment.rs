@@ -180,6 +180,11 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_SKIP_MIGRATIONS", Operations),
     option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, sensitive),
     option!("HUBUUM_TREETOP_TEST_URL", Permissions, sensitive),
+    option!("HUBUUM_TREETOP_TEST_CONTAINER_NAME", Permissions),
+    option!("HUBUUM_TREETOP_TEST_IMAGE", Permissions),
+    option!("HUBUUM_TREETOP_TEST_REVISION", Permissions),
+    option!("HUBUUM_TREETOP_TLS_TEST_URL", Permissions, sensitive),
+    option!("HUBUUM_TREETOP_TEST_CA_CERT", Permissions),
 ];
 
 /// Registered dynamic secret namespaces. The suffix is a consumer-supplied

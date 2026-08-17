@@ -55,4 +55,3 @@ unknown-git = "deny"
 required-git-spec = "rev"
 unused-allowed-source = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/terjekv/treetop-client"]

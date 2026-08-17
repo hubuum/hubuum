@@ -1,5 +1,7 @@
 pub mod backend_trait;
 
+pub mod conformance;
+
 pub mod auth_target;
 
 pub mod visibility;

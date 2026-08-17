@@ -4228,7 +4228,6 @@ version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
 dependencies = [
- "serde",
  "zeroize",
 ]
 
@@ -5054,9 +5053,11 @@ dependencies = [
 
 [[package]]
 name = "treetop-client"
-version = "0.0.1"
-source = "git+https://github.com/terjekv/treetop-client?rev=5a1d176df790216983127b18af70f6ac6a91ce28#5a1d176df790216983127b18af70f6ac6a91ce28"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce539be9633f4e8708cc51fe72389595374cc08ad7f8e2a7d5e2b334af0d3a2"
 dependencies = [
+ "ipnet",
  "reqwest",
  "secrecy",
  "serde",

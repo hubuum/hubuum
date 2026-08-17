@@ -1,13 +1,13 @@
 use crate::models::Permissions;
 use crate::permissions::types::{PrincipalRef, ResourceKind, ResourceRef};
-use treetop_client::{Action, AttrValue, Resource, User};
+use treetop_client::{Action, AttrValue, Resource, User, ValidationError};
 
 /// Build a Cedar User principal from our PrincipalRef.
 ///
 /// Maps numeric user_id and group_ids to string IDs per the spec amendment
 /// (Phase 5, §4 — group identity is numeric, not by name).
-pub fn cedar_user(principal: &PrincipalRef) -> User {
-    let user = User::new(principal.user_id.to_string());
+pub fn cedar_user(principal: &PrincipalRef) -> Result<User, ValidationError> {
+    let user = User::new(principal.user_id.to_string())?;
     let group_strs: Vec<String> = principal.group_ids.iter().map(|g| g.to_string()).collect();
     let group_refs: Vec<&str> = group_strs.iter().map(String::as_str).collect();
     user.with_group_names(&group_refs)
@@ -19,7 +19,7 @@ pub fn cedar_user(principal: &PrincipalRef) -> User {
 /// the canonical v1 action IDs (ReadCollection, CreateClass, ReadObject,
 /// DeleteTemplate, etc.). This avoids ambiguity from generic read/update/delete
 /// actions across different resource kinds.
-pub fn cedar_action(perm: Permissions) -> Action {
+pub fn cedar_action(perm: Permissions) -> Result<Action, ValidationError> {
     Action::new(perm.to_string())
 }
 
@@ -36,7 +36,7 @@ pub fn cedar_action(perm: Permissions) -> Action {
 /// - Task → HubuumTask (with submitted_by attr)
 ///
 /// Attributes are added only when present in ResourceAttrs (no null/zero placeholders).
-pub fn cedar_resource(resource: &ResourceRef) -> Resource {
+pub fn cedar_resource(resource: &ResourceRef) -> Result<Resource, ValidationError> {
     let id_str = resource.id.to_string();
     let mut r = match resource.kind {
         ResourceKind::System => Resource::new("HubuumSystem", "global"),
@@ -50,43 +50,43 @@ pub fn cedar_resource(resource: &ResourceRef) -> Resource {
         ResourceKind::RemoteTarget => Resource::new("HubuumRemoteTarget", &id_str),
         ResourceKind::Audit => Resource::new("HubuumAudit", &id_str),
         ResourceKind::EventSubscription => Resource::new("HubuumEventSubscription", &id_str),
-    };
+    }?;
 
     let attrs = &resource.attrs;
     if let Some(ns) = attrs.collection_id {
-        r = r.with_attr("collection_id", AttrValue::Long(ns as i64));
+        r = r.with_attr("collection_id", AttrValue::Long(ns as i64))?;
     }
     if let Some(class_id) = attrs.class_id {
-        r = r.with_attr("class_id", AttrValue::Long(class_id as i64));
+        r = r.with_attr("class_id", AttrValue::Long(class_id as i64))?;
     }
     if let Some(from_ns) = attrs.from_collection_id {
-        r = r.with_attr("from_collection_id", AttrValue::Long(from_ns as i64));
+        r = r.with_attr("from_collection_id", AttrValue::Long(from_ns as i64))?;
     }
     if let Some(to_ns) = attrs.to_collection_id {
-        r = r.with_attr("to_collection_id", AttrValue::Long(to_ns as i64));
+        r = r.with_attr("to_collection_id", AttrValue::Long(to_ns as i64))?;
     }
     if let Some(from_class) = attrs.from_class_id {
-        r = r.with_attr("from_class_id", AttrValue::Long(from_class as i64));
+        r = r.with_attr("from_class_id", AttrValue::Long(from_class as i64))?;
     }
     if let Some(to_class) = attrs.to_class_id {
-        r = r.with_attr("to_class_id", AttrValue::Long(to_class as i64));
+        r = r.with_attr("to_class_id", AttrValue::Long(to_class as i64))?;
     }
     if let Some(from_obj) = attrs.from_object_id {
-        r = r.with_attr("from_object_id", AttrValue::Long(from_obj as i64));
+        r = r.with_attr("from_object_id", AttrValue::Long(from_obj as i64))?;
     }
     if let Some(to_obj) = attrs.to_object_id {
-        r = r.with_attr("to_object_id", AttrValue::Long(to_obj as i64));
+        r = r.with_attr("to_object_id", AttrValue::Long(to_obj as i64))?;
     }
     if let Some(class_rel) = attrs.class_relation_id {
-        r = r.with_attr("class_relation_id", AttrValue::Long(class_rel as i64));
+        r = r.with_attr("class_relation_id", AttrValue::Long(class_rel as i64))?;
     }
     if let Some(submitted_by) = attrs.submitted_by {
-        r = r.with_attr("submitted_by", AttrValue::Long(submitted_by as i64));
+        r = r.with_attr("submitted_by", AttrValue::Long(submitted_by as i64))?;
     }
     if let Some(ref name) = attrs.name {
-        r = r.with_attr("name", AttrValue::String(name.clone()));
+        r = r.with_attr("name", AttrValue::String(name.clone()))?;
     }
-    r
+    Ok(r)
 }
 
 #[cfg(test)]
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn collection_resource_carries_collection_id_attr() {
         let r = ResourceRef::collection(7);
-        let cedar = cedar_resource(&r);
+        let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumCollection");
         assert_eq!(json["id"], "7");
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn system_resource_is_global_singleton() {
         let r = ResourceRef::system();
-        let cedar = cedar_resource(&r);
+        let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumSystem");
         assert_eq!(json["id"], "global");
@@ -133,7 +133,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let cedar = cedar_resource(&r);
+        let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumClassRelation");
         assert_eq!(json["attrs"]["from_collection_id"]["value"], 5);
@@ -158,7 +158,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let cedar = cedar_resource(&r);
+        let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumObjectRelation");
         assert_eq!(json["attrs"]["from_collection_id"]["value"], 1);
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn permissions_action_uses_pascal_case_display_name() {
-        let action = cedar_action(Permissions::ReadObject);
+        let action = cedar_action(Permissions::ReadObject).unwrap();
         let json = to_value(&action).unwrap();
         assert_eq!(json["id"], "ReadObject");
     }
@@ -207,7 +207,7 @@ mod tests {
         ];
 
         for (perm, expected_name) in fixtures {
-            let action = cedar_action(perm);
+            let action = cedar_action(perm).unwrap();
             let json = to_value(&action).unwrap();
             assert_eq!(
                 json["id"], expected_name,
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn cedar_user_uses_numeric_user_and_group_ids() {
         let p = PrincipalRef::new(42, vec![100, 200]);
-        let user = cedar_user(&p);
+        let user = cedar_user(&p).unwrap();
         let json = to_value(&user).unwrap();
         assert_eq!(json["id"], "42");
         assert_eq!(json["groups"][0]["id"], "100");
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn cedar_user_with_no_groups() {
         let p = PrincipalRef::new(7, vec![]);
-        let user = cedar_user(&p);
+        let user = cedar_user(&p).unwrap();
         let json = to_value(&user).unwrap();
         assert_eq!(json["id"], "7");
         assert!(json["groups"].is_array());
@@ -246,7 +246,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let cedar = cedar_resource(&r);
+        let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumTask");
         assert_eq!(json["attrs"]["submitted_by"]["value"], 999);
@@ -263,7 +263,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let cedar = cedar_resource(&r);
+        let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["attrs"]["name"]["type"], "String");
         assert_eq!(json["attrs"]["name"]["value"], "HostClass");
