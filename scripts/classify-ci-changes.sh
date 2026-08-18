@@ -64,6 +64,11 @@ for path in "$@"; do
     docs/querying.md)
       code=true
       ;;
+    docs/storage_boundary.md | docs/storage_boundary/*)
+      # These files are dynamic inputs to the storage architecture and
+      # semantic-documentation tests in src/tests/application_boundary.rs.
+      code=true
+      ;;
     .markdownlint.json)
       markdown=true
       ;;

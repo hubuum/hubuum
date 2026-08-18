@@ -11,6 +11,10 @@ Backend crates may live outside this workspace and depend through crates.io,
 Git, or a path. Hubuum uses static Cargo composition; this is not a dynamic
 plugin ABI and has no runtime contract version handshake.
 
+The normative semantics of that Rust surface are documented in the
+[storage contract](../storage_boundary/contract.md). The Rust declarations,
+semantic coverage inventory, and contract documentation must change together.
+
 The crate also exposes the mandatory `TransactionalStorage` unit of work.
 Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by `StorageTransaction`; native connections and query

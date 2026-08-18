@@ -3,9 +3,9 @@
 This guide explains where storage-boundary code lives, how a request moves
 through it, and how to decide which layer owns a change.
 
-For contract responsibilities, see the
-[capability family map](capability-families.md). For adapter acceptance, see
-[testing and compatibility](testing.md).
+For normative guarantees, see the [storage contract](contract.md). For trait
+responsibilities, see the [capability family map](capability-families.md). For
+adapter acceptance, see [testing and compatibility](testing.md).
 
 ## Request Flow
 
@@ -62,6 +62,8 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Authorization-policy selection | `src/permissions/*` |
 | HTTP presentation and `ApiError` | `src/api/*`, `src/errors/*` |
 | Shared selectable-backend behavior | `src/tests/storage_contract.rs` |
+| Reusable five-part behavioral verifier | `crates/hubuum-storage-conformance/src/lib.rs` |
+| Sealed selectable-backend certification | `src/storage/contract.rs` |
 | Method, variant, and scenario inventory | `docs/storage_boundary/semantic-coverage.toml` |
 | Boundary architecture guards | `src/tests/application_boundary.rs`, `src/tests/workspace_boundaries.rs` |
 | PostgreSQL query budgets | `src/tests/storage_performance.rs` |
@@ -200,6 +202,16 @@ must be verified inside the same native transaction as the protected write.
 The transaction compatibility test must prove rollback of both state and audit
 events for every composable lifecycle family.
 
+Ordinary mutation APIs require `EventContext` and return `MutationOutcome`.
+Do not add an optional context, a boolean event switch, or an eventless helper.
+Compatibility code without a user actor uses explicit system attribution.
+Committed outcomes carry the receipt produced by the durable event write;
+genuine no-ops return `Unchanged` and append no event.
+
+Import and restore are the only operations grouped under
+`MaintenanceStorage`. Keep that surface typed and narrow. It is not a general
+way to bypass the ordinary audit contract.
+
 ## Errors
 
 The allowed direction is:
@@ -268,19 +280,22 @@ authentication configuration, or raw driver option string.
 - `hubuum-domain` owns extracted backend-independent domain values.
 - `hubuum-storage-core` owns the complete contract traits and DTOs, including
   backend-neutral metrics snapshots and pool diagnostics.
+- `hubuum-storage-conformance` owns the reusable five-part behavioral verifier.
+  It is a workspace-internal development dependency, not production code.
 - `hubuum-storage-postgres` owns pool construction, schema, migrations, native helpers, and production operation implementations.
 - The root crate owns application services, authorization-policy selection, adapter registration, telemetry wiring, settings projection, and exhaustive composition.
 
-There is not yet a `hubuum-storage-contract-tests` workspace crate. The shared
-suite currently lives in `src/tests/storage_contract.rs`. Extract it only after
-its inputs no longer require root application fixtures or root-owned domain
-types.
+The backend-independent five-part audit verifier has been extracted into
+`hubuum-storage-conformance`. The broader selectable-backend suite remains in
+`src/tests/storage_contract.rs` because its service, HTTP, administrator, and
+delivery fixtures still depend on root application composition.
 
-The remaining extraction sequence is for reusable compatibility testing, not production PostgreSQL behavior:
+The remaining extraction sequence is for broader reusable compatibility
+testing, not production PostgreSQL behavior:
 
 1. Replace legacy root SQL fixtures with public contract or adapter test-support operations.
 2. Define a backend fixture interface that can provision an administrator and representative resources without exposing a native client.
-3. Move the shared behavior harness into `hubuum-storage-contract-tests`.
+3. Move backend-neutral family scenarios into `hubuum-storage-conformance`.
 4. Delete the root legacy SQL harness when no integration target imports it.
 
 When workspace membership or manifests change, update the Docker manifest-copy
@@ -320,11 +335,15 @@ Before considering a boundary change complete:
 - [ ] DTOs express intent without mirroring a native schema.
 - [ ] Existing safe semantics are composed through the opaque unit of work.
 - [ ] Hidden invariants remain inside one adapter operation.
+- [ ] Ordinary mutations require attribution and return the correct outcome.
+- [ ] Maintenance APIs remain narrow and cannot bypass ordinary auditing.
 - [ ] Audited state and event side effects share one commit boundary.
 - [ ] Errors follow the one-way conversion path.
 - [ ] Dispatch is exhaustive and commonly observed.
+- [ ] Production composition supplies logical and adapter-native telemetry.
 - [ ] Labels and debug output are bounded and non-sensitive.
 - [ ] Shared and PostgreSQL-native tests cover the changed semantics.
+- [ ] The five-part conformance fixture and sealed certification remain aligned.
 - [ ] API, worker, administration, and configuration callers remain neutral.
 - [ ] Trait-family docs, OpenAPI, and changelog are updated where applicable.
 - [ ] All verification required by `AGENTS.md` passes.

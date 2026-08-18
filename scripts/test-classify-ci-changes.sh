@@ -102,6 +102,16 @@ assert_flag "$querying_docs_output" markdown true
 assert_flag "$querying_docs_output" code true
 assert_flag "$querying_docs_output" artifacts false
 
+storage_contract_docs_output="$(bash "$classifier" \
+  docs/storage_boundary.md \
+  docs/storage_boundary/contract.md \
+  docs/storage_boundary/semantic-coverage.toml)"
+assert_flag "$storage_contract_docs_output" markdown true
+assert_flag "$storage_contract_docs_output" code true
+assert_flag "$storage_contract_docs_output" container false
+assert_flag "$storage_contract_docs_output" artifacts false
+assert_flag "$storage_contract_docs_output" benchmarks false
+
 markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
 assert_flag "$markdown_config_output" code false

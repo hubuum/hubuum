@@ -1,8 +1,9 @@
 # Storage Backend Author Guide
 
-This guide describes the contract a new selectable backend must satisfy. Read
-the [capability family map](capability-families.md) first; it defines the
-responsibilities and relationships summarized here.
+This guide describes how to implement a selectable backend. Read the normative
+[storage contract](contract.md) and the
+[capability family map](capability-families.md) first; they define the
+guarantees, responsibilities, and relationships summarized here.
 
 ## Definition of a Backend
 
@@ -248,6 +249,13 @@ its value. Startup logs, backend-info metrics, and administrator configuration
 must agree on backend identity. Statically linked adapters use trait checking
 and crate versions; do not introduce duplicate runtime contract metadata.
 
+An adapter owns its schema migrations. Keep them inside the adapter crate and
+expose only the narrow runner needed by application or deployment composition.
+Do not add migration paths, schema rows, or a migration framework to
+`hubuum-storage-core`. Diesel adapters may use crate-relative
+`embed_migrations!` and pass the same directory explicitly to Diesel CLI
+workflows.
+
 ## Registration
 
 Adding an adapter requires explicit edits; there is deliberately no dynamic
@@ -325,12 +333,20 @@ A backend is selectable only when all of the following are true:
 - [ ] DTOs and errors contain no native implementation types.
 - [ ] Safe lifecycle compositions use one native unit of work.
 - [ ] Hidden state-machine invariants remain native atomic operations.
+- [ ] Ordinary audited mutations require `EventContext`.
+- [ ] Committed and unchanged mutations return correct `MutationOutcome`
+      variants and receipts.
+- [ ] Maintenance operations cannot serve as an ordinary eventless write path.
 - [ ] Transaction rollback removes both state and audit side effects.
 - [ ] Dispatch is exhaustive and has no fallback backend.
 - [ ] Common observation covers every entry point with bounded labels.
+- [ ] Production constructors require application-owned logical and native
+      telemetry; explicit no-op telemetry remains an opt-out.
 - [ ] Native diagnostics contain no sensitive data.
 - [ ] Administrator settings are useful and redacted.
 - [ ] Shared compatibility tests pass through `available_backends()`.
+- [ ] The five-part conformance verifier passes and the sealed certification
+      registry includes the adapter only afterward.
 - [ ] The service and HTTP smoke contract passes through the backend fixture registry.
 - [ ] `semantic-coverage.toml` exactly inventories methods, variants, and evidence.
 - [ ] Native failure, consistency, concurrency, and recovery tests pass.

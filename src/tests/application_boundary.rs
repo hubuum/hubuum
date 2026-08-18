@@ -185,6 +185,7 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
         .unwrap_or_else(|error| panic!("could not read {}: {error}", overview_path.display()));
 
     for document in [
+        "contract.md",
         "capability-families.md",
         "backend-author-guide.md",
         "maintainer-guide.md",
@@ -202,6 +203,35 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
             path.is_file(),
             "storage boundary guide is missing {}",
             path.display()
+        );
+    }
+
+    let contract_path = root.join("docs/storage_boundary/contract.md");
+    let contract = read_source(&contract_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
+    for obligation in [
+        "Attribution Is Mandatory",
+        "The Result Proves the Audit Write",
+        "State and Durable Side Effects Are Atomic",
+        "Observation Is Application-Owned and Mandatory",
+        "Selection Requires Behavioral Certification",
+    ] {
+        assert!(
+            contract.contains(obligation),
+            "normative storage contract must document {obligation}"
+        );
+    }
+    for contract_artifact in [
+        "MutationOutcome",
+        "MaintenanceStorage",
+        "StorageTelemetry",
+        "hubuum-storage-conformance",
+        "CertifiedStorageBackend",
+        "crates/hubuum-storage-postgres/migrations",
+    ] {
+        assert!(
+            contract.contains(contract_artifact),
+            "normative storage contract must reference {contract_artifact}"
         );
     }
 

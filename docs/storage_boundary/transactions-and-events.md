@@ -5,6 +5,9 @@ need to compose resource operations atomically. It does not expose a database
 connection, a Diesel transaction, or a general query interface.
 
 This is a mandatory part of every selectable `StorageBackend`.
+The normative five-part guarantee is defined in the
+[storage contract](contract.md); this guide expands its transaction and event
+semantics.
 
 ## The Shape
 
@@ -92,6 +95,11 @@ For every successful transactional mutation:
 If the callback returns `Err`, state, audit events, and transactional
 notifications roll back together. A backend that commits the state but loses
 the audit event does not satisfy the contract.
+
+External transport is not executed inside this transaction. After commit, the
+fan-out capability creates durable delivery rows, and delivery workers call the
+configured sinks with at-least-once semantics. Notifications reduce latency;
+polling the durable event and delivery state remains the recovery path.
 
 The lower-level lifecycle traits also require an `EventContext`; there is no
 optional-context escape hatch in the ordinary storage contract. A committed

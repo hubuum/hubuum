@@ -59,15 +59,22 @@ for package classifications, publishing policy, and promotion requirements.
   traits. These crates cannot depend on Actix, Diesel, global application
   configuration, or `ApiError`.
 - `src/storage/*`:
-  Complete backend composition, adapter implementations, and the opaque
-  application handle. `src/storage/factory.rs` is the only process-composition
-  path allowed to select a backend or inspect its connection settings. The
-  test-only memory resource model exercises focused logical behavior. It is not
-  a selectable backend and does not represent partial application support.
+  Complete backend composition, exhaustive dispatch, common observation, and
+  the opaque application handle. `src/storage/factory.rs` is the only
+  process-composition path allowed to select a backend or inspect its
+  connection settings. The test-only memory resource model exercises focused
+  logical behavior. It is not a selectable backend and does not represent
+  partial application support.
 - `crates/hubuum-storage-postgres`:
-  PostgreSQL-owned pool construction, TLS setup, endpoint parsing, and other
-  runtime primitives. It exposes private-field settings and backend-specific
-  initialization errors to the root adapter, never to application consumers.
+  The complete production PostgreSQL adapter: pool construction, TLS setup,
+  endpoint parsing, private rows and queries, native transactions, schema,
+  migrations, and operation implementations. It exposes private-field settings
+  and backend-specific initialization errors only at the application
+  composition edge.
+- `crates/hubuum-storage-conformance`:
+  The workspace-internal five-part behavioral verifier for audited mutation
+  receipts, no-ops, rollback, event delivery, and telemetry. It is a
+  development dependency and is not linked into production binaries.
 - `src/models/*`:
   Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
@@ -79,12 +86,10 @@ for package classifications, publishing policy, and promotion requirements.
   rebuilds a backend from a database pool. It deliberately has no authorization
   methods; policy-aware workflows accept the stronger `AuthorizationContext`.
 - `src/storage/postgres/operations/*`:
-  Diesel/Postgres-backed implementations behind model and storage adapters.
-  This is where query details, joins, filters, and transactions belong. Helpers
-  in this tree accept the adapter-owned `PostgresPool` explicitly, which makes
-  accidental calls from backend-neutral consumers fail at compile time.
-  Focused tests may opt into pool-shaped context compatibility; production
-  application modules cannot import or depend on it.
+  Legacy test-only PostgreSQL helpers retained for root unit and explicitly
+  feature-gated integration tests. Production queries and transactions belong
+  in `crates/hubuum-storage-postgres/src/operations`; do not add new production
+  behavior to the root legacy tree.
 
 Server, administration, and bootstrap entry points build validated
 `StorageSettings` and receive an opaque `StorageHandle`. They must not import
@@ -121,9 +126,10 @@ When adding a feature:
 1. Put new use-case orchestration in `src/services` when the surrounding slice
    has migrated.
 2. Express persistence as an aggregate- or query-shaped capability in
-   `src/storage`; avoid generic table repositories.
-3. Implement database details in `src/storage/postgres/operations` and adapt
-   them through the PostgreSQL storage implementation.
+   `hubuum-storage-core`; avoid generic table repositories.
+3. Implement database details in
+   `crates/hubuum-storage-postgres/src/operations` and delegate through its
+   complete PostgreSQL backend implementation.
 4. Keep model methods thin while they remain in unmigrated paths.
 5. Add shared logical contract tests and retain PostgreSQL-specific query,
    transaction, migration, recovery, and concurrency tests.
@@ -132,26 +138,28 @@ When adding a feature:
 
 ### Module layout notes
 
-To keep PostgreSQL adapter code navigable, its operations are split into focused modules:
+To keep PostgreSQL adapter code navigable, production operations are split into
+focused modules under `crates/hubuum-storage-postgres/src/operations`, including:
 
-- `src/storage/postgres/operations/user/`:
-  `auth.rs`, `membership.rs`, `permissions.rs`, `search.rs`
-- `src/storage/postgres/operations/collection/`:
-  `relations.rs`, `records.rs`, `permissions.rs`
+- lifecycle modules such as `collection.rs`, `class.rs`, `object.rs`, and
+  `relation.rs`;
+- identity modules such as `user.rs`, `service_account.rs`, `token.rs`,
+  `group.rs`, and `authorization/*`; and
+- workflow and operational modules for tasks, imports, restores, events,
+  retention, metrics, and computed data.
 
-The `mod.rs` files in these folders organize PostgreSQL operations and any
-adapter-private helpers. Application code must use application services and
-mandatory storage contracts instead of importing these modules directly.
+Application code must use application services and mandatory storage contracts
+instead of importing these adapter-private modules directly.
 
 ### Collection hierarchy implementation
 
-Recursive collections are implemented in the PostgreSQL adapter, not in a
-workspace crate. The implementation is coupled to Diesel schema modules,
-PostgreSQL closure-table SQL, temporal history, `ApiError`, and Hubuum's
-permission semantics. Keep hierarchy writes in
-`src/storage/postgres/operations/collection/records.rs` and permission reads in
-`src/storage/postgres/operations/collection/permissions.rs` or
-`src/storage/postgres/operations/user/*`.
+Recursive collections are implemented in the PostgreSQL workspace adapter.
+The implementation is coupled to Diesel schema modules, PostgreSQL
+closure-table SQL, temporal history, and Hubuum's permission facts, while its
+public result remains `StorageError` and backend-neutral DTOs. Keep production
+hierarchy writes in
+`crates/hubuum-storage-postgres/src/operations/collection.rs` and permission
+queries under that crate's authorization operations.
 
 Normal collection and class lifecycle handlers enter this implementation
 through their service and storage capabilities. Do not bypass those services

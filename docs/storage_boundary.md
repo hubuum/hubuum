@@ -7,6 +7,8 @@ PostgreSQL is currently the only selectable backend. The in-memory resource mode
 ## Choose a Reading Path
 
 - Start here for the invariants and the overall shape.
+- Read the normative [storage contract](storage_boundary/contract.md) for the
+  guarantees every selectable backend and application caller must preserve.
 - Use the [capability family map](storage_boundary/capability-families.md) to find the trait that owns an operation and the families it collaborates with.
 - Use the [backend author guide](storage_boundary/backend-author-guide.md) to implement or evaluate a backend.
 - Use the [maintainer guide](storage_boundary/maintainer-guide.md) to trace a call, locate its implementation, and change the boundary safely.
@@ -45,18 +47,24 @@ Dependencies point down the diagram. Calls and errors return upward through the 
 
 Values crossing the boundary are backend-neutral DTOs. An application consumer must never recover a pool, receive a Diesel row, build SQL, or handle a driver error.
 
-The boundary has four responsibilities:
+The boundary has five responsibilities:
 
 1. **The application** owns use cases, public API models, authorization-policy selection, persistence-independent validation, and conversion from `StorageError` to `ApiError`.
 2. **The storage contract** owns operation-shaped traits, composable transaction-scoped resource APIs, backend-neutral requests and results, and the bounded storage error taxonomy.
 3. **The opaque handle** owns exhaustive backend dispatch plus common tracing and metrics. Callers do not select an adapter for each operation.
 4. **Each adapter** owns persistence rows, queries, native transactions, locking, driver errors, notifications, and explicit conversion to contract DTOs and `StorageError`.
+5. **Certification** combines reusable semantic conformance, complete-backend
+   compatibility, native failure tests, and a sealed application registry.
+   Implementing the Rust trait shapes alone does not make an adapter selectable.
 
 ## Complete Means Complete
 
 `StorageBackend` is the aggregate trait in `crates/hubuum-storage-core/src/backend.rs`. Its supertraits are the complete compile-time contract, including the mandatory `TransactionalStorage` unit-of-work capability.
 
-An adapter opts in explicitly only after it implements every required family. Rust rejects the implementation if any method or family is missing.
+An adapter opts in structurally only after it implements every required family.
+Rust rejects the implementation if any method or family is missing. The
+application then admits it through the sealed `CertifiedStorageBackend`
+registry only after its shared and native behavioral evidence passes.
 
 The documentation groups those traits into 20 capability families:
 
@@ -117,6 +125,12 @@ The following rules are architectural invariants:
   similar workflows must not be reconstructed from lower-level calls.
 - Transaction-scoped mutations always inherit the transaction's
   `EventContext`. State and durable audit events commit or roll back together.
+- Ordinary audited mutations require `EventContext` and return
+  `MutationOutcome`: committed changes carry a durable `AuditReceipt`, while
+  genuine no-ops carry no receipt and append no event.
+- Imports and restores are restricted to `MaintenanceStorage`; that typed
+  surface preserves or reconstructs history and is not an unaudited shortcut
+  for ordinary writes.
 - Native mechanisms such as SQL cursors, statement timeouts, advisory locks,
   task-local database settings, and notification listeners remain private to
   the adapter.
@@ -130,7 +144,8 @@ The following rules are architectural invariants:
   Entity IDs, names, queries, URLs, credentials, and payloads never become log
   or metric labels.
 - A backend is selectable only after it passes the shared compatibility suite
-  and its own native consistency, concurrency, recovery, and failure tests.
+  and five-part conformance verifier plus its own native consistency,
+  concurrency, recovery, and failure tests.
 
 Architecture tests enforce these rules for the current source tree. The [maintainer guide](storage_boundary/maintainer-guide.md) locates those checks; the [testing guide](storage_boundary/testing.md) explains what they do and do not prove.
 
@@ -149,6 +164,7 @@ hubuum application
 |-- hubuum-events-core
 |-- hubuum-task-core
 |-- hubuum-storage-core
+|-- hubuum-storage-conformance
 `-- hubuum-storage-postgres
 ```
 
@@ -166,6 +182,9 @@ hubuum application
   configuration, or `ApiError` dependency. Resource lifecycle, revision,
   metadata, and principal boundaries use domain IDs and revisions rather than
   persistence-shaped strings and integers.
+- `hubuum-storage-conformance` owns the reusable five-part behavioral verifier
+  for receipts, no-ops, rollback, fan-out to a recording sink, and telemetry.
+  It is workspace-internal and used only as a development dependency.
 - `hubuum-storage-postgres` owns the native pool, TLS, endpoint diagnostics, generated schema, migrations, JSONB validation, query instrumentation, and all production PostgreSQL operations.
 - The root crate owns application services and static composition. It constructs the PostgreSQL adapter with telemetry and dedicated operational pools, then places it behind the opaque handle.
 - The root crate retains a legacy PostgreSQL row-and-SQL harness for old tests. It is compiled only for unit tests or the explicit `integration-test-support` feature and is not part of a production build.
@@ -183,8 +202,15 @@ Moving a file does not by itself improve the boundary. Dependencies must continu
 
 The PostgreSQL path is exercised against a real migrated database by shared backend contracts, PostgreSQL-specific tests, service tests, HTTP integration tests, destructive restore tests, query-budget tests, platform and feature builds, production-container tests, and benchmarks. CI also migrates representative data from the adjacent stable release, starts the new application, and restarts the previous application against the migrated schema.
 
-The contract's methods and selected input variants are inventoried mechanically. Every registered backend runs compact service, readiness, and authenticated HTTP point/list scenarios. Adapter-private deterministic failpoints prove rollback at representative compound-write and task-state-machine seams.
+The contract's methods and selected input variants are inventoried mechanically.
+Every registered backend runs the reusable five-part audit verifier plus
+compact service, readiness, and authenticated HTTP point/list scenarios.
+Adapter-private deterministic failpoints prove rollback at representative
+compound-write and task-state-machine seams.
 
-This is strong practical coverage, not a formal proof of portability. PostgreSQL is the only complete production adapter, and the compatibility suite still lives in the root test module instead of an independently consumable contract-test crate.
+This is strong practical coverage, not a formal proof of portability.
+PostgreSQL is the only complete production adapter. The portable five-part
+verifier is extracted, while the broader compatibility suite still uses root
+application fixtures and remains in the root test module.
 
 The [testing guide](storage_boundary/testing.md) gives the detailed assessment and the highest-value remaining improvements.

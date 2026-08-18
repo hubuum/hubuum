@@ -8,6 +8,13 @@ The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.
 
+At the storage boundary, ordinary audited mutations require an explicit actor
+context and return a committed receipt identifying that durable event. A
+receipt is non-sensitive proof of persistence, not an audit projection; event
+snapshots and provenance remain permission-scoped reads. The normative adapter
+guarantees and their reusable certification are documented in the
+[storage contract](storage_boundary/contract.md).
+
 Audited mutation paths compare the requested state with the stored state before
 writing. Requests that would leave domain state unchanged are no-ops: they do
 not advance `updated_at` or append lifecycle events. This includes identical

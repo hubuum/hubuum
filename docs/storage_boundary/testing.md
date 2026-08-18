@@ -7,6 +7,8 @@ production backend, so a second independent adapter has not yet demonstrated
 that every contract is equally implementable outside PostgreSQL.
 
 This document separates what each test layer proves from what it does not.
+The obligations being tested are defined by the normative
+[storage contract](contract.md).
 
 ## Confidence Summary
 
@@ -166,8 +168,8 @@ notably delivery claims and notification listeners—still receive their deepest
 coverage in PostgreSQL-specific tests, and the inventory records that evidence
 as native rather than pretending it is portable.
 
-`hubuum-storage-conformance` owns the reusable backend-independent five-part
-audit verifier. Each adapter supplies an isolated fixture through
+`hubuum-storage-conformance` owns the reusable, workspace-internal,
+backend-independent five-part audit verifier. Each adapter supplies an isolated fixture through
 `BackendAuditFixture`; the root registry invokes it for every
 `StorageBackendKind::ALL` entry. A selectable backend must demonstrate:
 
@@ -317,15 +319,18 @@ The current suite is solid, but these limitations should remain visible:
    suite tests important races and two deterministic rollback seams, but it
    does not systematically explore task schedules, connection loss, process
    death, or database failover at every transition.
-5. **The compatibility harness still uses root fixtures.** Until extracted, an
-   external adapter cannot consume it as a normal workspace dependency.
+5. **Only the five-part verifier is extracted.** The broader compatibility
+   harness still uses root application, administrator, HTTP, and delivery
+   fixtures, so an external adapter cannot consume that full suite as a
+   standalone crate.
 
 ## Highest-Value Improvements
 
 The next improvements should be:
 
-1. Extract `hubuum-storage-contract-tests` once the remaining root-domain DTOs
-   and fixture interface are neutral.
+1. Move additional backend-neutral family scenarios into
+   `hubuum-storage-conformance` once their root application DTOs and fixture
+   interfaces are neutral.
 2. Extend deterministic fault injection to event delivery, restore
    coordination, lease loss, and connection failure.
 3. Produce periodic line and branch coverage reports for diagnosis, focusing

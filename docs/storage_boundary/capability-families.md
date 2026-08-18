@@ -7,7 +7,8 @@ answer three questions:
 2. Which other capabilities supply its inputs or consume its results?
 3. Which semantics must every selectable backend preserve?
 
-For implementation steps, see the [backend author guide](backend-author-guide.md).
+For normative guarantees, see the [storage contract](contract.md). For
+implementation steps, see the [backend author guide](backend-author-guide.md).
 For source locations, see the [maintainer guide](maintainer-guide.md).
 
 ## How Families and Traits Relate
@@ -247,7 +248,7 @@ hashing, and retained task artifacts.
 
 ### `restores`
 
-Required trait: `RestoreStorage`.
+Required trait: `RestoreStorage`, aggregated through `MaintenanceStorage`.
 
 Owns durable artifact staging, compare-and-set lifecycle transitions, global
 drain coordination, rollback-safe state replacement, provenance, cleanup, and
@@ -256,7 +257,7 @@ backend owns destructive transactional application.
 
 ### `imports`
 
-Required trait: `ImportStorage`.
+Required trait: `ImportStorage`, aggregated through `MaintenanceStorage`.
 
 Owns planning lookups, rollback-only preflight, strict atomic application,
 best-effort per-item application, reference resolution, and durable result
@@ -307,6 +308,11 @@ Required traits:
 This family owns probes and administrative snapshots, logical metrics inputs,
 retention, worker claims and acknowledgements, native wake-up integration, and
 the execution context applied across requests and workers.
+
+Common logical observation is reported through application-owned
+`StorageTelemetry`. An adapter may also define native telemetry for pool,
+transaction, and query mechanics. Production composition supplies both; a
+no-op implementation is an explicit test, benchmark, or one-shot tool opt-out.
 
 Event workers form a pipeline:
 
