@@ -41,7 +41,7 @@ pub(crate) async fn principal_is_admin(
         .clone()
         .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     hubuum_storage_postgres::operations::authorization::authorization_principal_is_group_member(
-        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
         AuthorizationGroupMembershipQuery::new(
             principal_id,
             config.admin_groupname.clone(),

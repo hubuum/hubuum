@@ -60,13 +60,10 @@ impl UpdateResolvedClass for UpdateHubuumClass {
         let target = resolved_class_to_storage(target);
         storage_handle(backend)
             .class_store()
-            .update_class(
-                &target,
-                class_update_to_storage(self.clone()),
-                Some(context),
-            )
+            .update_class(&target, class_update_to_storage(self.clone()), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 }
@@ -93,9 +90,10 @@ impl DeleteResolvedClass for ResolvedClassTarget {
         let target = resolved_class_to_storage(self);
         storage_handle(backend)
             .class_store()
-            .delete_class(&target, Some(context))
+            .delete_class(&target, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -121,9 +119,14 @@ impl SaveAdapter for HubuumClass {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .class_store()
-            .update_class(&target, class_update_to_storage(update), None)
+            .update_class(
+                &target,
+                class_update_to_storage(update),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 
@@ -147,9 +150,10 @@ impl SaveAdapter for HubuumClass {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .class_store()
-            .update_class(&target, class_update_to_storage(update), Some(context))
+            .update_class(&target, class_update_to_storage(update), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 }
@@ -166,9 +170,10 @@ impl DeleteAdapter for HubuumClass {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .class_store()
-            .delete_class(&target, None)
+            .delete_class(&target, &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     async fn delete_adapter(
@@ -183,9 +188,10 @@ impl DeleteAdapter for HubuumClass {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .class_store()
-            .delete_class(&target, Some(context))
+            .delete_class(&target, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -198,9 +204,13 @@ impl SaveAdapter for NewHubuumClass {
     ) -> Result<HubuumClass, ApiError> {
         storage_handle(pool)
             .class_store()
-            .create_class(class_create_to_storage(self.clone()), None)
+            .create_class(
+                class_create_to_storage(self.clone()),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 
@@ -211,9 +221,10 @@ impl SaveAdapter for NewHubuumClass {
     ) -> Result<HubuumClass, ApiError> {
         storage_handle(pool)
             .class_store()
-            .create_class(class_create_to_storage(self.clone()), Some(context))
+            .create_class(class_create_to_storage(self.clone()), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 }
@@ -234,9 +245,14 @@ impl UpdateAdapter for UpdateHubuumClass {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .class_store()
-            .update_class(&target, class_update_to_storage(self.clone()), None)
+            .update_class(
+                &target,
+                class_update_to_storage(self.clone()),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 
@@ -253,13 +269,10 @@ impl UpdateAdapter for UpdateHubuumClass {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .class_store()
-            .update_class(
-                &target,
-                class_update_to_storage(self.clone()),
-                Some(context),
-            )
+            .update_class(&target, class_update_to_storage(self.clone()), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 }

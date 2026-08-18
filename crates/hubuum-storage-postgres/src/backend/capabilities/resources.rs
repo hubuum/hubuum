@@ -17,8 +17,8 @@ impl GroupStorage for PostgresStorage {
     async fn create_group(
         &self,
         command: StorageGroupCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageIdentityGroup, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
         crate::operations::group::create_group(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
@@ -28,8 +28,8 @@ impl GroupStorage for PostgresStorage {
         &self,
         group_id: i32,
         update: StorageGroupUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageIdentityGroup, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
         crate::operations::group::update_group(self.runtime(), group_id, update, context)
             .await
             .map_err(StorageError::from)
@@ -38,8 +38,8 @@ impl GroupStorage for PostgresStorage {
     async fn delete_group(
         &self,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<usize, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         crate::operations::group::delete_group(self.runtime(), group_id, context)
             .await
             .map_err(StorageError::from)
@@ -84,8 +84,8 @@ impl GroupStorage for PostgresStorage {
         &self,
         principal_id: i32,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<StoragePrincipalGroup, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
         crate::operations::group::add_group_member(self.runtime(), principal_id, group_id, context)
             .await
             .map_err(StorageError::from)
@@ -95,8 +95,8 @@ impl GroupStorage for PostgresStorage {
         &self,
         principal_id: i32,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::group::remove_group_member(
             self.runtime(),
             principal_id,
@@ -130,7 +130,7 @@ impl PrincipalStorage for PostgresStorage {
         principal_id: i32,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<StoragePrincipalSettings, StorageError> {
+    ) -> Result<MutationOutcome<StoragePrincipalSettings>, StorageError> {
         crate::operations::principal::mutate_principal_settings(
             self.runtime(),
             principal_id,
@@ -289,8 +289,8 @@ impl CollectionStore for PostgresStorage {
     async fn create_collection(
         &self,
         command: StorageCollectionCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         crate::operations::collection::create_collection(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
@@ -300,8 +300,8 @@ impl CollectionStore for PostgresStorage {
         &self,
         id: CollectionId,
         changes: StorageCollectionUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         crate::operations::collection::update_collection(self.runtime(), id.id(), changes, context)
             .await
             .map_err(StorageError::from)
@@ -310,8 +310,8 @@ impl CollectionStore for PostgresStorage {
     async fn delete_collection(
         &self,
         id: CollectionId,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::collection::delete_collection(self.runtime(), id.id(), context)
             .await
             .map_err(StorageError::from)
@@ -339,8 +339,8 @@ impl CollectionStore for PostgresStorage {
         &self,
         id: CollectionId,
         new_parent_id: CollectionId,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         crate::operations::collection::move_collection(
             self.runtime(),
             id.id(),
@@ -366,8 +366,8 @@ impl ClassStore for PostgresStorage {
     async fn create_class(
         &self,
         command: StorageClassCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRecord, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         crate::operations::class::create_class(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
@@ -377,8 +377,8 @@ impl ClassStore for PostgresStorage {
         &self,
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRecord, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         crate::operations::class::update_class(self.runtime(), target, changes, context)
             .await
             .map_err(StorageError::from)
@@ -387,8 +387,8 @@ impl ClassStore for PostgresStorage {
     async fn delete_class(
         &self,
         target: &StorageResolvedClass,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::class::delete_class(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -438,8 +438,8 @@ impl ClassRelationStore for PostgresStorage {
     async fn create_class_relation(
         &self,
         prepared: &StoragePreparedClassRelation,
-        context: Option<&EventContext>,
-    ) -> Result<StorageResolvedClassRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
         crate::operations::relation::create_class_relation(self.runtime(), prepared, context)
             .await
             .map_err(StorageError::from)
@@ -448,8 +448,8 @@ impl ClassRelationStore for PostgresStorage {
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::relation::delete_class_relation(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -458,8 +458,8 @@ impl ClassRelationStore for PostgresStorage {
     async fn create_class_relation_from_command(
         &self,
         command: StorageClassRelationCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
         crate::operations::relation::create_class_relation_from_command(
             self.runtime(),
             command,
@@ -472,8 +472,8 @@ impl ClassRelationStore for PostgresStorage {
     async fn delete_class_relation_by_id(
         &self,
         id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::relation::delete_class_relation_by_id(self.runtime(), id, context)
             .await
             .map_err(StorageError::from)
@@ -503,8 +503,8 @@ impl ObjectRelationStore for PostgresStorage {
     async fn create_object_relation(
         &self,
         prepared: &StoragePreparedObjectRelation,
-        context: Option<&EventContext>,
-    ) -> Result<StorageResolvedObjectRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         crate::operations::relation::create_object_relation(self.runtime(), prepared, context)
             .await
             .map_err(StorageError::from)
@@ -513,8 +513,8 @@ impl ObjectRelationStore for PostgresStorage {
     async fn delete_object_relation(
         &self,
         target: &StorageResolvedObjectRelation,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::relation::delete_object_relation(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -523,8 +523,8 @@ impl ObjectRelationStore for PostgresStorage {
     async fn create_object_relation_from_command(
         &self,
         command: StorageObjectRelationCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObjectRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
         crate::operations::relation::create_object_relation_from_command(
             self.runtime(),
             command,
@@ -537,8 +537,8 @@ impl ObjectRelationStore for PostgresStorage {
     async fn delete_object_relation_by_id(
         &self,
         id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::relation::delete_object_relation_by_id(self.runtime(), id, context)
             .await
             .map_err(StorageError::from)
@@ -566,8 +566,8 @@ impl ObjectStore for PostgresStorage {
         &self,
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObject, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         crate::operations::object::create_object(self.runtime(), class, command, context)
             .await
             .map_err(StorageError::from)
@@ -577,8 +577,8 @@ impl ObjectStore for PostgresStorage {
         &self,
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObject, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         crate::operations::object::update_object(self.runtime(), target, changes, context)
             .await
             .map_err(StorageError::from)
@@ -589,7 +589,7 @@ impl ObjectStore for PostgresStorage {
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<StorageObject, StorageError> {
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         crate::operations::object::patch_object_data(self.runtime(), target, patch, context)
             .await
             .map_err(StorageError::from)
@@ -598,8 +598,8 @@ impl ObjectStore for PostgresStorage {
     async fn delete_object(
         &self,
         target: &StorageResolvedObject,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::object::delete_object(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)

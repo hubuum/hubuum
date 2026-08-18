@@ -73,7 +73,7 @@ impl SaveServiceAccount for NewServiceAccount {
             event_context.clone(),
         );
         let account = hubuum_storage_postgres::operations::service_account::create_service_account(
-            &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+            &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
             request,
         )
         .await
@@ -90,7 +90,7 @@ impl SaveServiceAccount for NewServiceAccount {
         ensure_local_scope(self)?;
         let account =
             hubuum_storage_postgres::operations::service_account::create_service_account_without_events(
-                &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+                &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
                 self.name.clone(),
                 self.description.clone().unwrap_or_default(),
                 self.owner_group_id.id(),
@@ -121,7 +121,7 @@ impl DisableServiceAccount for ServiceAccountID {
         pool: &PostgresPool,
     ) -> Result<ServiceAccount, ApiError> {
         let outcome = hubuum_storage_postgres::operations::service_account::disable_service_account_without_events(
-            &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+            &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
             self.id(),
         )
         .await
@@ -139,7 +139,7 @@ impl DisableServiceAccount for ServiceAccountID {
         let request = StorageServiceAccountMutation::new(self.id(), event_context.clone());
         let outcome =
             hubuum_storage_postgres::operations::service_account::disable_service_account(
-                &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+                &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
                 request,
             )
             .await
@@ -156,7 +156,7 @@ pub async fn cancel_pending_tasks_for_principal(
 ) -> Result<usize, ApiError> {
     let task_kinds =
         hubuum_storage_postgres::operations::service_account::cancel_pending_tasks_for_principal(
-            &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+            &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
             principal_id,
         )
         .await
@@ -171,7 +171,7 @@ pub async fn load_service_account_by_id(
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
     let account = hubuum_storage_postgres::operations::service_account::load_service_account(
-        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
         service_account_id,
     )
     .await

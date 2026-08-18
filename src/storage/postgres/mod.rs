@@ -91,9 +91,8 @@ pub(crate) fn configured_postgres_storage(pool: PostgresPool) -> PostgresStorage
         .ok()
         .and_then(|config| NonZeroUsize::new(config.computed_reindex_batch_size))
         .unwrap_or(hubuum_storage_postgres::DEFAULT_COMPUTED_REINDEX_BATCH_SIZE);
-    PostgresStorage::new(pool)
+    PostgresStorage::new(pool, Arc::new(ApplicationPostgresTelemetry))
         .with_computed_reindex_batch_size(computed_reindex_batch_size)
-        .with_telemetry(Arc::new(ApplicationPostgresTelemetry))
 }
 
 pub(crate) fn configured_postgres_storage_with_operational_pools(

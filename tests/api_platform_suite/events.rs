@@ -122,7 +122,7 @@ mod tests {
             context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
-                Action::Created,
+                Action::Updated,
                 ActorKind::System,
                 "collection audit filter test",
             )
@@ -145,7 +145,7 @@ mod tests {
         .await;
 
         let endpoint = format!(
-            "{EVENTS_ENDPOINT}?entity_type=collection&action=created&collection_id={}",
+            "{EVENTS_ENDPOINT}?entity_type=collection&action=updated&collection_id={}",
             collection.collection.id
         );
         let resp = get_request(&context.pool, &user_token, &endpoint).await;

@@ -91,7 +91,7 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     assert_validation_result(schema_validate, expected, "Schema validation");
 
     // Then, test the full object validation that fetches the class from the DB.
-    let object_validate = PostgresStorage::new(pool.get_ref().clone())
+    let object_validate = PostgresStorage::unobserved(pool.get_ref().clone())
         .validate_object_create(object_create_to_storage(object))
         .await
         .map_err(ApiError::from);
@@ -147,7 +147,7 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
         data: Some(updated_data.clone()),
     };
 
-    let validate = PostgresStorage::new(pool.get_ref().clone())
+    let validate = PostgresStorage::unobserved(pool.get_ref().clone())
         .validate_object_update(
             crate::services::storage_boundary::object_id_to_storage(object.id),
             object_update_to_storage(update_object),

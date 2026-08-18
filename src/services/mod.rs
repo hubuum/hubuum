@@ -36,6 +36,8 @@ pub use objects::ObjectService;
 #[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
+use crate::storage::ApplicationStorageTelemetry;
 use crate::storage::StorageHandle;
 #[cfg(test)]
 use crate::storage::{
@@ -75,7 +77,10 @@ impl Services {
             + ObjectRelationStore
             + 'static,
     {
-        let storage = Arc::new(ObservedStorage::new(storage));
+        let storage = Arc::new(ObservedStorage::new(
+            storage,
+            Arc::new(ApplicationStorageTelemetry),
+        ));
         Self {
             classes: ClassService::new(storage.clone()),
             class_relations: ClassRelationService::new(storage.clone()),

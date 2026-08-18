@@ -256,12 +256,12 @@ pub async fn create_service_account(
         description,
         owner_group_id,
         created_by,
-        Some(context),
+        context,
     )
     .await
 }
 
-/// Create a fixture service account without adding an audit event.
+/// Create a fixture service account with system audit attribution.
 ///
 /// This is an integration-test bridge for the application's existing fixture
 /// traits. Production callers must use [`create_service_account`].
@@ -273,7 +273,15 @@ pub async fn create_service_account_without_events(
     owner_group_id: i32,
     created_by: Option<i32>,
 ) -> Result<StorageServiceAccount, PostgresStorageError> {
-    create_service_account_parts(runtime, name, description, owner_group_id, created_by, None).await
+    create_service_account_parts(
+        runtime,
+        name,
+        description,
+        owner_group_id,
+        created_by,
+        EventContext::system(),
+    )
+    .await
 }
 
 async fn create_service_account_parts(
@@ -282,7 +290,7 @@ async fn create_service_account_parts(
     description: String,
     owner_group_id: i32,
     created_by: Option<i32>,
-    context: Option<EventContext>,
+    context: EventContext,
 ) -> Result<StorageServiceAccount, PostgresStorageError> {
     validate_positive_id(owner_group_id, "owner group id")?;
     if let Some(created_by) = created_by {
@@ -310,21 +318,19 @@ async fn create_service_account_parts(
                 .get_result::<ServiceAccountRow>(connection)
                 .await?;
             let revision = principal_revision(connection, principal_id).await?;
-            if let Some(context) = context.as_ref() {
-                let event = service_account_event(
-                    &account,
-                    &name,
-                    Action::Created,
-                    context,
-                    format!("Service account '{name}' created"),
-                )?
-                .with_after(account.snapshot(&name, revision))
-                .with_metadata(json!({
-                    "owner_group_id": account.owner_group_id,
-                    "created_by": created_by,
-                }));
-                append_event(connection, &event).await?;
-            }
+            let event = service_account_event(
+                &account,
+                &name,
+                Action::Created,
+                &context,
+                format!("Service account '{name}' created"),
+            )?
+            .with_after(account.snapshot(&name, revision))
+            .with_metadata(json!({
+                "owner_group_id": account.owner_group_id,
+                "created_by": created_by,
+            }));
+            append_event(connection, &event).await?;
             Ok::<_, PostgresStorageError>(account.into_storage())
         })
         .await
@@ -383,10 +389,10 @@ pub async fn disable_service_account(
     request: StorageServiceAccountMutation,
 ) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
     let (service_account_id, context) = request.into_parts();
-    disable_service_account_parts(runtime, service_account_id, Some(context)).await
+    disable_service_account_parts(runtime, service_account_id, context).await
 }
 
-/// Disable a fixture service account without adding lifecycle audit events.
+/// Disable a fixture service account with system audit attribution.
 ///
 /// This is an integration-test bridge for the application's existing fixture
 /// traits. Production callers must use [`disable_service_account`].
@@ -395,13 +401,13 @@ pub async fn disable_service_account_without_events(
     runtime: &PostgresRuntime,
     service_account_id: i32,
 ) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
-    disable_service_account_parts(runtime, service_account_id, None).await
+    disable_service_account_parts(runtime, service_account_id, EventContext::system()).await
 }
 
 async fn disable_service_account_parts(
     runtime: &PostgresRuntime,
     service_account_id: i32,
-    context: Option<EventContext>,
+    context: EventContext,
 ) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
     validate_positive_id(service_account_id, "service account id")?;
     runtime
@@ -420,19 +426,17 @@ async fn disable_service_account_parts(
                 .await?;
                 let name = principal_name(connection, service_account_id).await?;
                 let after_revision = principal_revision(connection, service_account_id).await?;
-                if let Some(context) = context.as_ref() {
-                    let event = service_account_event(
-                        &disabled,
-                        &name,
-                        Action::Disabled,
-                        context,
-                        format!("Service account '{name}' disabled"),
-                    )?
-                    .with_before(before.snapshot(&name, before_revision))
-                    .with_after(disabled.snapshot(&name, after_revision))
-                    .with_metadata(json!({ "owner_group_id": disabled.owner_group_id }));
-                    append_event(connection, &event).await?;
-                }
+                let event = service_account_event(
+                    &disabled,
+                    &name,
+                    Action::Disabled,
+                    &context,
+                    format!("Service account '{name}' disabled"),
+                )?
+                .with_before(before.snapshot(&name, before_revision))
+                .with_after(disabled.snapshot(&name, after_revision))
+                .with_metadata(json!({ "owner_group_id": disabled.owner_group_id }));
+                append_event(connection, &event).await?;
                 disabled
             };
 
@@ -442,7 +446,7 @@ async fn disable_service_account_parts(
             )
             .await?;
             let cancelled_task_kinds =
-                cancel_pending_tasks(connection, service_account_id, context.as_ref()).await?;
+                cancel_pending_tasks(connection, service_account_id, &context).await?;
             Ok::<_, PostgresStorageError>(StorageServiceAccountDisableOutcome::new(
                 disabled.into_storage(),
                 cancelled_task_kinds,
@@ -486,7 +490,7 @@ pub async fn delete_service_account(
 async fn cancel_pending_tasks(
     connection: &mut PostgresConnection,
     principal_id: i32,
-    context: Option<&EventContext>,
+    context: &EventContext,
 ) -> Result<Vec<String>, PostgresStorageError> {
     let task_ids = crate::schema::tasks::table
         .filter(crate::schema::tasks::submitted_by.eq(principal_id))
@@ -523,28 +527,26 @@ async fn cancel_pending_tasks(
     .get_results::<(i32, String, Option<i32>)>(connection)
     .await?;
 
-    if let Some(context) = context {
-        for (task_id, task_kind, initiator_user_id) in &cancelled {
-            let task_id = TaskId::new(*task_id)?;
-            let initiator_user_id = initiator_user_id.map(PrincipalId::new).transpose()?;
-            let provenance = match context.actor_user_id() {
-                Some(actor_user_id) => {
-                    MutationProvenance::user_for_task(actor_user_id, initiator_user_id, task_id)
-                }
-                None => MutationProvenance::system_for_task(initiator_user_id, task_id),
-            };
-            let event = NewEvent::new(
-                EntityType::Task,
-                Action::Cancelled,
-                provenance.actor_kind(),
-                DISABLED_TASK_SUMMARY,
-            )
-            .map_err(|error| PostgresStorageError::database(error.to_string()))?
-            .with_entity_id(hubuum_events_core::EventEntityId::new(task_id.id())?)
-            .with_metadata(json!({ "task_id": task_id, "task_kind": task_kind }))
-            .with_mutation_provenance(&provenance);
-            append_event(connection, &event).await?;
-        }
+    for (task_id, task_kind, initiator_user_id) in &cancelled {
+        let task_id = TaskId::new(*task_id)?;
+        let initiator_user_id = initiator_user_id.map(PrincipalId::new).transpose()?;
+        let provenance = match context.actor_user_id() {
+            Some(actor_user_id) => {
+                MutationProvenance::user_for_task(actor_user_id, initiator_user_id, task_id)
+            }
+            None => MutationProvenance::system_for_task(initiator_user_id, task_id),
+        };
+        let event = NewEvent::new(
+            EntityType::Task,
+            Action::Cancelled,
+            provenance.actor_kind(),
+            DISABLED_TASK_SUMMARY,
+        )
+        .map_err(|error| PostgresStorageError::database(error.to_string()))?
+        .with_entity_id(hubuum_events_core::EventEntityId::new(task_id.id())?)
+        .with_metadata(json!({ "task_id": task_id, "task_kind": task_kind }))
+        .with_mutation_provenance(&provenance);
+        append_event(connection, &event).await?;
     }
 
     Ok(cancelled.into_iter().map(|(_, kind, _)| kind).collect())
@@ -561,7 +563,7 @@ pub async fn cancel_pending_tasks_for_principal(
     runtime
         .with_transaction(async move |connection| {
             let context = EventContext::system();
-            cancel_pending_tasks(connection, principal_id, Some(&context)).await
+            cancel_pending_tasks(connection, principal_id, &context).await
         })
         .await
 }

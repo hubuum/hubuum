@@ -860,7 +860,7 @@ pub struct AuthorizationGrantMutation {
     key: AuthorizationGrantKey,
     permissions: Vec<AuthorizationPermission>,
     replace_existing: bool,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl fmt::Debug for AuthorizationGrantMutation {
@@ -870,7 +870,7 @@ impl fmt::Debug for AuthorizationGrantMutation {
             .field("key", &self.key)
             .field("permission_count", &self.permissions.len())
             .field("replace_existing", &self.replace_existing)
-            .field("has_event_context", &self.event_context.is_some())
+            .field("event_context", &"[redacted]")
             .finish()
     }
 }
@@ -881,12 +881,13 @@ impl AuthorizationGrantMutation {
         key: AuthorizationGrantKey,
         permissions: impl IntoIterator<Item = AuthorizationPermission>,
         replace_existing: bool,
+        event_context: EventContext,
     ) -> Self {
         Self {
             key,
             permissions: normalized_permissions(permissions),
             replace_existing,
-            event_context: None,
+            event_context,
         }
     }
     #[must_use]
@@ -903,14 +904,8 @@ impl AuthorizationGrantMutation {
     }
 
     #[must_use]
-    pub fn event_context(mut self, event_context: EventContext) -> Self {
-        self.event_context = Some(event_context);
-        self
-    }
-
-    #[must_use]
-    pub const fn event_context_value(&self) -> Option<&EventContext> {
-        self.event_context.as_ref()
+    pub const fn event_context(&self) -> &EventContext {
+        &self.event_context
     }
 }
 
@@ -990,26 +985,17 @@ impl fmt::Debug for AuthorizationPermissionSet {
     }
 }
 
-/// Delete-all request with optional atomic event provenance.
+/// Delete-all request with mandatory atomic event provenance.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationGrantDelete {
     key: AuthorizationGrantKey,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl AuthorizationGrantDelete {
     #[must_use]
-    pub const fn new(key: AuthorizationGrantKey) -> Self {
-        Self {
-            key,
-            event_context: None,
-        }
-    }
-
-    #[must_use]
-    pub fn event_context(mut self, event_context: EventContext) -> Self {
-        self.event_context = Some(event_context);
-        self
+    pub const fn new(key: AuthorizationGrantKey, event_context: EventContext) -> Self {
+        Self { key, event_context }
     }
 
     #[must_use]
@@ -1018,8 +1004,8 @@ impl AuthorizationGrantDelete {
     }
 
     #[must_use]
-    pub const fn event_context_value(&self) -> Option<&EventContext> {
-        self.event_context.as_ref()
+    pub const fn event_context(&self) -> &EventContext {
+        &self.event_context
     }
 }
 
@@ -1028,7 +1014,7 @@ impl fmt::Debug for AuthorizationGrantDelete {
         formatter
             .debug_struct("AuthorizationGrantDelete")
             .field("key", &self.key)
-            .field("has_event_context", &self.event_context.is_some())
+            .field("event_context", &"[redacted]")
             .finish()
     }
 }
@@ -1402,10 +1388,13 @@ mod tests {
     fn permission_set_and_mutation_debug_redact_identifiers() {
         let key = AuthorizationGrantKey::new(987_654, 876_543);
         let query = AuthorizationPermissionSetQuery::new(987_654, Some(876_543));
-        let mutation =
-            AuthorizationGrantMutation::new(key, [AuthorizationPermission::ReadCollection], false)
-                .event_context(EventContext::system());
-        let delete = AuthorizationGrantDelete::new(key).event_context(EventContext::system());
+        let mutation = AuthorizationGrantMutation::new(
+            key,
+            [AuthorizationPermission::ReadCollection],
+            false,
+            EventContext::system(),
+        );
+        let delete = AuthorizationGrantDelete::new(key, EventContext::system());
         let debug = format!("{query:?} {mutation:?} {delete:?}");
 
         for sensitive in ["987654", "876543"] {

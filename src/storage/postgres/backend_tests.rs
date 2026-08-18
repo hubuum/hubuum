@@ -27,7 +27,7 @@ async fn lease_pool_remains_available_when_an_execution_pool_is_exhausted() {
     let execution_pool = init_postgres_pool_with_settings(&settings);
     let task_lease_pool = init_postgres_pool_with_settings(&settings);
     let backend =
-        PostgresStorage::new(execution_pool.clone()).with_task_lease_pool(task_lease_pool);
+        PostgresStorage::unobserved(execution_pool.clone()).with_task_lease_pool(task_lease_pool);
     let _execution_connection = execution_pool
         .get()
         .await
@@ -53,7 +53,7 @@ async fn lease_pool_remains_available_when_an_execution_pool_is_exhausted() {
 #[actix_rt::test]
 async fn restore_coordinator_tick_uses_one_pool_checkout() {
     let pool = get_test_pool();
-    let backend = PostgresStorage::new(pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(pool.get_ref().clone());
     let instance_id = Uuid::new_v4();
     let local_work_is_idle = || true;
 
@@ -72,7 +72,7 @@ async fn restore_coordinator_tick_uses_one_pool_checkout() {
 #[actix_rt::test]
 async fn restore_coordinator_does_not_sample_activity_before_observing_draining() {
     let pool = get_test_pool();
-    let backend = PostgresStorage::new(pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(pool.get_ref().clone());
     let instance_id = Uuid::new_v4();
     let sampled = Arc::new(AtomicBool::new(false));
     let sampled_by_tick = sampled.clone();

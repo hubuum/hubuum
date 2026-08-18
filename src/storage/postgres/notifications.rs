@@ -216,7 +216,7 @@ mod tests {
             .build()
             .expect("listener settings should be valid");
         let listener_pool = init_postgres_pool_with_settings(&listener_settings);
-        let _backend = PostgresStorage::new(execution_pool.clone())
+        let _backend = PostgresStorage::unobserved(execution_pool.clone())
             .with_notification_listener_pool(listener_pool.clone());
         let _listener_connection = listener_pool.get().await.unwrap();
 

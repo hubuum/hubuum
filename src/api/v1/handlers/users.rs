@@ -83,10 +83,7 @@ pub async fn create_user(
     );
 
     let event_context = requestor.event_context(&req);
-    let user = new_user
-        .into_inner()
-        .save(&context, Some(&event_context))
-        .await?;
+    let user = new_user.into_inner().save(&context, &event_context).await?;
     let response = user.to_point_response(&context).await?;
 
     let location = api_locations::user(user.id)?;
@@ -169,7 +166,7 @@ pub async fn update_user(
         precondition,
         updated_user
             .into_inner()
-            .save(user_id, &context, Some(&event_context)),
+            .save(user_id, &context, &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(user.to_point_response(&context).await?)
@@ -216,7 +213,7 @@ pub async fn delete_user(
     let delete_result = with_revision_precondition(
         &context,
         precondition,
-        user_id.delete(&context, Some(&event_context)),
+        user_id.delete(&context, &event_context),
     )
     .await;
 
@@ -259,7 +256,13 @@ pub async fn anonymize_user(
         .to_point_response(&context)
         .await?;
     let precondition = revision_precondition(&req, &current)?;
-    with_revision_precondition(&context, precondition, user_id.anonymize(&context)).await?;
+    let event_context = requestor.event_context(&req);
+    with_revision_precondition(
+        &context,
+        precondition,
+        user_id.anonymize(&context, &event_context),
+    )
+    .await?;
     let updated = user_id
         .user(&context)
         .await?

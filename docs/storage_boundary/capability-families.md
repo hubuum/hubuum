@@ -110,10 +110,10 @@ operation types for collections, classes, class relations, objects, and object
 relations. Transaction-scoped mutations inherit one required `EventContext`,
 so state and audit events commit or roll back together.
 
-The resource traits also include validation, bulk lookup, and explicitly
-event-suppressed adapter seams needed by imports, migrations, fixtures, and
-other dedicated workflows. Normal application mutations use an audited
-service method or the transaction-scoped operation types. See
+The resource traits also include validation and bulk lookup. Every ordinary
+mutation requires audit context and returns an explicit mutation outcome.
+Imports and restores use `MaintenanceStorage`; fixture compatibility helpers
+use system attribution. See
 [transactions and side effects](transactions-and-events.md).
 
 These are operation-shaped capabilities, not table repositories. A backend

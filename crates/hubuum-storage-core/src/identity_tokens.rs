@@ -17,7 +17,7 @@ pub type StorageTokenCreateParts = (
     Option<NaiveDateTime>,
     Option<AuthenticationTokenScope>,
     StorageTokenIssuancePolicy,
-    Option<EventContext>,
+    EventContext,
 );
 
 /// Validated application policy used to materialize token expiry at the
@@ -54,7 +54,7 @@ pub struct StorageTokenCreate {
     expires_at: Option<NaiveDateTime>,
     scope: Option<AuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageTokenCreate {
@@ -63,6 +63,7 @@ impl StorageTokenCreate {
         principal_id: i32,
         token_hash: impl Into<String>,
         policy: StorageTokenIssuancePolicy,
+        event_context: EventContext,
     ) -> Self {
         Self {
             principal_id,
@@ -72,7 +73,7 @@ impl StorageTokenCreate {
             expires_at: None,
             scope: None,
             policy,
-            event_context: None,
+            event_context,
         }
     }
 
@@ -101,12 +102,6 @@ impl StorageTokenCreate {
     }
 
     #[must_use]
-    pub fn event_context(mut self, value: Option<EventContext>) -> Self {
-        self.event_context = value;
-        self
-    }
-
-    #[must_use]
     pub fn into_parts(self) -> StorageTokenCreateParts {
         (
             self.principal_id,
@@ -131,7 +126,7 @@ impl fmt::Debug for StorageTokenCreate {
             .field("has_description", &self.description.is_some())
             .field("has_expiry", &self.expires_at.is_some())
             .field("has_scope", &self.scope.is_some())
-            .field("emit_event", &self.event_context.is_some())
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -145,7 +140,7 @@ pub struct StorageTokenRenew {
     token_hash: String,
     expires_at: Option<NaiveDateTime>,
     policy: StorageTokenIssuancePolicy,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageTokenRenew {
@@ -156,7 +151,7 @@ impl StorageTokenRenew {
         token_hash: impl Into<String>,
         expires_at: Option<NaiveDateTime>,
         policy: StorageTokenIssuancePolicy,
-        event_context: Option<EventContext>,
+        event_context: EventContext,
     ) -> Self {
         Self {
             source_token_id,
@@ -177,7 +172,7 @@ impl StorageTokenRenew {
         String,
         Option<NaiveDateTime>,
         StorageTokenIssuancePolicy,
-        Option<EventContext>,
+        EventContext,
     ) {
         (
             self.source_token_id,
@@ -198,7 +193,7 @@ impl fmt::Debug for StorageTokenRenew {
             .field("principal_id", &"<redacted>")
             .field("token_hash", &"<redacted>")
             .field("has_expiry", &self.expires_at.is_some())
-            .field("emit_event", &self.event_context.is_some())
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -208,16 +203,12 @@ impl fmt::Debug for StorageTokenRenew {
 pub struct StorageTokenRevoke {
     token_id: i32,
     principal_id: i32,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageTokenRevoke {
     #[must_use]
-    pub const fn new(
-        token_id: i32,
-        principal_id: i32,
-        event_context: Option<EventContext>,
-    ) -> Self {
+    pub const fn new(token_id: i32, principal_id: i32, event_context: EventContext) -> Self {
         Self {
             token_id,
             principal_id,
@@ -226,7 +217,7 @@ impl StorageTokenRevoke {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, Option<EventContext>) {
+    pub fn into_parts(self) -> (i32, i32, EventContext) {
         (self.token_id, self.principal_id, self.event_context)
     }
 }
@@ -237,7 +228,7 @@ impl fmt::Debug for StorageTokenRevoke {
             .debug_struct("StorageTokenRevoke")
             .field("token_id", &"<redacted>")
             .field("principal_id", &"<redacted>")
-            .field("emit_event", &self.event_context.is_some())
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -247,20 +238,26 @@ impl fmt::Debug for StorageTokenRevoke {
 pub struct StorageTokenHashRevoke {
     principal_id: Option<i32>,
     token_hash: String,
+    event_context: EventContext,
 }
 
 impl StorageTokenHashRevoke {
     #[must_use]
-    pub fn new(principal_id: Option<i32>, token_hash: impl Into<String>) -> Self {
+    pub fn new(
+        principal_id: Option<i32>,
+        token_hash: impl Into<String>,
+        event_context: EventContext,
+    ) -> Self {
         Self {
             principal_id,
             token_hash: token_hash.into(),
+            event_context,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<i32>, String) {
-        (self.principal_id, self.token_hash)
+    pub fn into_parts(self) -> (Option<i32>, String, EventContext) {
+        (self.principal_id, self.token_hash, self.event_context)
     }
 }
 
@@ -270,6 +267,39 @@ impl fmt::Debug for StorageTokenHashRevoke {
             .debug_struct("StorageTokenHashRevoke")
             .field("has_principal", &self.principal_id.is_some())
             .field("token_hash", &"<redacted>")
+            .field("event_context", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Revoke every active token for one principal with audit attribution.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoragePrincipalTokensRevoke {
+    principal_id: i32,
+    event_context: EventContext,
+}
+
+impl StoragePrincipalTokensRevoke {
+    #[must_use]
+    pub const fn new(principal_id: i32, event_context: EventContext) -> Self {
+        Self {
+            principal_id,
+            event_context,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, EventContext) {
+        (self.principal_id, self.event_context)
+    }
+}
+
+impl fmt::Debug for StoragePrincipalTokensRevoke {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoragePrincipalTokensRevoke")
+            .field("principal_id", &"<redacted>")
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -308,7 +338,10 @@ pub trait TokenStorage: Send + Sync {
         request: StorageTokenHashRevoke,
     ) -> Result<usize, StorageError>;
 
-    async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError>;
+    async fn revoke_all_principal_tokens(
+        &self,
+        request: StoragePrincipalTokensRevoke,
+    ) -> Result<usize, StorageError>;
 }
 
 #[cfg(test)]
@@ -321,6 +354,7 @@ mod tests {
             42,
             "sensitive-token-hash",
             StorageTokenIssuancePolicy::new(24, 48),
+            EventContext::system(),
         )
         .name(Some("sensitive-name".to_string()));
         let debug = format!("{request:?}");

@@ -112,7 +112,7 @@ pub async fn principal_group_by_ids(
     principal_id: i32,
     group_id: i32,
 ) -> Result<crate::models::PrincipalGroup, ApiError> {
-    let runtime = hubuum_storage_postgres::PostgresRuntime::new(pool.clone());
+    let runtime = hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone());
     hubuum_storage_postgres::operations::group::load_principal_group(
         &runtime,
         principal_id,

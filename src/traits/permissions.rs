@@ -105,10 +105,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// The permission object that holds the permissions for the group.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::grant`] so event subscribers observe the change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn grant_without_events<C>(
         &self,
@@ -127,6 +124,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
             key,
             permission_list.iter().copied().map(permission_to_storage),
             false,
+            EventContext::system(),
         );
         Ok(grant_from_storage(
             storage_handle(backend)
@@ -140,7 +138,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         group_id_for_grant: GroupID,
         permission_list: PermissionsList,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
         C: StorageContext,
@@ -154,11 +152,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// - When `replace_existing` is false, no permissions are removed from the group.
     /// - When `replace_existing` is true, any existing permissions are cleared first.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::apply_permissions`] so event subscribers observe
-    /// the change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn apply_permissions_without_events<C>(
         &self,
@@ -178,6 +172,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
             key,
             permission_list.iter().copied().map(permission_to_storage),
             replace_existing,
+            EventContext::system(),
         );
         Ok(grant_from_storage(
             storage_handle(backend)
@@ -192,7 +187,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         group_id_for_grant: GroupID,
         permission_list: PermissionsList,
         replace_existing: bool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
         C: StorageContext,
@@ -201,14 +196,12 @@ pub trait PermissionController: Serialize + CollectionAccessors {
             self.collection_id(backend).await?.id(),
             group_id_for_grant.id(),
         );
-        let mut mutation = AuthorizationGrantMutation::new(
+        let mutation = AuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             replace_existing,
+            context.clone(),
         );
-        if let Some(context) = context {
-            mutation = mutation.event_context(context.clone());
-        }
         Ok(grant_from_storage(
             storage_handle(backend)
                 .apply_local_collection_grant(mutation)
@@ -236,10 +229,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// The permission object that holds the permissions for the group. If the group
     /// did not have any permissions, an ApiError::NotFound is returned.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::revoke`] so event subscribers observe the change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_without_events<C>(
         &self,
@@ -258,6 +248,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
             key,
             permission_list.iter().copied().map(permission_to_storage),
             false,
+            EventContext::system(),
         );
         Ok(grant_from_storage(
             storage_handle(backend)
@@ -271,7 +262,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         group_id_for_revoke: GroupID,
         permission_list: PermissionsList,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
         C: StorageContext,
@@ -280,14 +271,12 @@ pub trait PermissionController: Serialize + CollectionAccessors {
             self.collection_id(backend).await?.id(),
             group_id_for_revoke.id(),
         );
-        let mut mutation = AuthorizationGrantMutation::new(
+        let mutation = AuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             false,
+            context.clone(),
         );
-        if let Some(context) = context {
-            mutation = mutation.event_context(context.clone());
-        }
         Ok(grant_from_storage(
             storage_handle(backend)
                 .revoke_local_collection_grant(mutation)
@@ -389,11 +378,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// The permission object that holds the permissions for the group.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::set_permissions`] so event subscribers observe
-    /// the change.
+    /// This compatibility path emits an event attributed to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn set_permissions_without_events<C>(
         &self,
@@ -413,7 +398,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         group_identifier: GroupID,
         permission_list: PermissionsList,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
         C: StorageContext,
@@ -437,11 +422,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// An empty result.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture cleanup, and
-    /// event-system tests. Normal application code should use
-    /// [`PermissionController::revoke_all`] so event subscribers observe the
-    /// change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_all_without_events<C>(
         &self,
@@ -451,10 +432,13 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let request = AuthorizationGrantDelete::new(AuthorizationGrantKey::new(
-            self.collection_id(backend).await?.id(),
-            group_id_for_revoke.id(),
-        ));
+        let request = AuthorizationGrantDelete::new(
+            AuthorizationGrantKey::new(
+                self.collection_id(backend).await?.id(),
+                group_id_for_revoke.id(),
+            ),
+            EventContext::system(),
+        );
         Ok(storage_handle(backend)
             .revoke_all_local_collection_grants(request)
             .await?)
@@ -464,18 +448,18 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_revoke: GroupID,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<(), ApiError>
     where
         C: StorageContext,
     {
-        let mut request = AuthorizationGrantDelete::new(AuthorizationGrantKey::new(
-            self.collection_id(backend).await?.id(),
-            group_id_for_revoke.id(),
-        ));
-        if let Some(context) = context {
-            request = request.event_context(context.clone());
-        }
+        let request = AuthorizationGrantDelete::new(
+            AuthorizationGrantKey::new(
+                self.collection_id(backend).await?.id(),
+                group_id_for_revoke.id(),
+            ),
+            context.clone(),
+        );
         Ok(storage_handle(backend)
             .revoke_all_local_collection_grants(request)
             .await?)

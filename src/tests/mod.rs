@@ -57,6 +57,8 @@ pub fn integration_test_config() -> Result<crate::config::AppConfig, crate::erro
     crate::test_support::integration_test_config().cloned()
 }
 
+#[cfg(any(test, feature = "integration-test-support"))]
+use crate::events::EventContext;
 use crate::storage::postgres::prelude::*;
 use actix_web::web;
 #[cfg(test)]
@@ -544,7 +546,7 @@ pub async fn create_user_with_params(pool: &PostgresPool, username: &str, passwo
                     password: TEST_USER_PASSWORD_HASH.clone(),
                     ..new_user
                 },
-                None,
+                &EventContext::system(),
             )
             .await
         }
@@ -555,7 +557,7 @@ pub async fn create_user_with_params(pool: &PostgresPool, username: &str, passwo
                     password: TEST_ADMIN_PASSWORD_HASH.clone(),
                     ..new_user
                 },
-                None,
+                &EventContext::system(),
             )
             .await
         }
@@ -660,7 +662,7 @@ async fn scoped_principal_token(
         PrincipalID::new(principal_id).expect("valid persisted principal id"),
     )
     .scope(Some(scope))
-    .create(pool, None)
+    .create(pool, &EventContext::system())
     .await
     .expect("failed to mint scoped token")
     .get_token()
@@ -698,7 +700,7 @@ pub async fn service_account_token(
     PrincipalTokenCreateRequest::new(PrincipalID::new(sa.id).expect("valid persisted principal id"))
         .expires_at(expires_at)
         .scope(scope)
-        .create(pool, None)
+        .create(pool, &EventContext::system())
         .await
         .expect("failed to mint service account token")
         .get_token()

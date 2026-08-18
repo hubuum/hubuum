@@ -95,7 +95,8 @@ where
                                 .expect("validated group id must be positive"),
                             None,
                         ))
-                        .await?;
+                        .await?
+                        .into_value();
                     let from_class_record = transaction
                         .classes()
                         .create(
@@ -106,7 +107,8 @@ where
                             )
                             .build(),
                         )
-                        .await?;
+                        .await?
+                        .into_value();
                     let to_class_record = transaction
                         .classes()
                         .create(
@@ -117,7 +119,8 @@ where
                             )
                             .build(),
                         )
-                        .await?;
+                        .await?
+                        .into_value();
                     let from_class = transaction
                         .classes()
                         .resolve(StorageClassSelector::Id(from_class_record.id()))
@@ -139,7 +142,8 @@ where
                     let class_relation = transaction
                         .class_relations()
                         .create(&prepared_class_relation)
-                        .await?;
+                        .await?
+                        .into_value();
                     let from_object = transaction
                         .objects()
                         .create(
@@ -152,7 +156,8 @@ where
                                 "transaction contract from object",
                             ),
                         )
-                        .await?;
+                        .await?
+                        .into_value();
                     let to_object = transaction
                         .objects()
                         .create(
@@ -165,7 +170,8 @@ where
                                 "transaction contract to object",
                             ),
                         )
-                        .await?;
+                        .await?
+                        .into_value();
                     let prepared = transaction
                         .object_relations()
                         .prepare(StorageObjectRelationCreateSelector::Explicit(
@@ -176,7 +182,11 @@ where
                             ),
                         ))
                         .await?;
-                    let relation = transaction.object_relations().create(&prepared).await?;
+                    let relation = transaction
+                        .object_relations()
+                        .create(&prepared)
+                        .await?
+                        .into_value();
                     Ok((
                         collection,
                         from_class,
@@ -239,7 +249,8 @@ where
                             .expect("validated group id must be positive"),
                         None,
                     ))
-                    .await?;
+                    .await?
+                    .into_value();
                 rollback_ids_from_work
                     .collection
                     .store(rollback_collection.id(), Ordering::Relaxed);
@@ -253,7 +264,8 @@ where
                         )
                         .build(),
                     )
-                    .await?;
+                    .await?
+                    .into_value();
                 rollback_ids_from_work
                     .class
                     .store(rollback_from_class.id().id(), Ordering::Relaxed);
@@ -267,7 +279,8 @@ where
                         )
                         .build(),
                     )
-                    .await?;
+                    .await?
+                    .into_value();
                 let rollback_from_class = transaction
                     .classes()
                     .resolve(StorageClassSelector::Id(rollback_from_class.id()))
@@ -289,7 +302,8 @@ where
                 let rollback_class_relation = transaction
                     .class_relations()
                     .create(&prepared_class_relation)
-                    .await?;
+                    .await?
+                    .into_value();
                 rollback_ids_from_work.class_relation.store(
                     rollback_class_relation.relation().metadata().id().id(),
                     Ordering::Relaxed,
@@ -306,7 +320,8 @@ where
                             "transaction contract rollback object",
                         ),
                     )
-                    .await?;
+                    .await?
+                    .into_value();
                 rollback_ids_from_work
                     .object
                     .store(object.id(), Ordering::Relaxed);
@@ -322,7 +337,8 @@ where
                             "transaction contract rollback object",
                         ),
                     )
-                    .await?;
+                    .await?
+                    .into_value();
                 let prepared_object_relation = transaction
                     .object_relations()
                     .prepare(StorageObjectRelationCreateSelector::Explicit(
@@ -336,7 +352,8 @@ where
                 let rollback_object_relation = transaction
                     .object_relations()
                     .create(&prepared_object_relation)
-                    .await?;
+                    .await?
+                    .into_value();
                 rollback_ids_from_work.object_relation.store(
                     rollback_object_relation.relation().metadata().id().id(),
                     Ordering::Relaxed,
@@ -360,36 +377,38 @@ where
     assert_eq!(missing_collection.kind(), StorageErrorKind::NotFound);
 
     storage
-        .delete_object_relation(&object_relation, Some(&event_context))
+        .delete_object_relation(&object_relation, &event_context)
         .await
-        .expect("object relation cleanup should succeed");
+        .expect("object relation cleanup should succeed")
+        .into_value();
     for object_id in [from_object.id(), to_object.id()] {
         let object = storage
             .get_object(object_id_to_storage(object_id))
             .await
             .expect("object cleanup target should resolve");
         storage
-            .delete_object(&object, Some(&event_context))
+            .delete_object(&object, &event_context)
             .await
-            .expect("object cleanup should succeed");
+            .expect("object cleanup should succeed")
+            .into_value();
     }
     storage
-        .delete_class_relation(&class_relation, Some(&event_context))
+        .delete_class_relation(&class_relation, &event_context)
         .await
-        .expect("class relation cleanup should succeed");
+        .expect("class relation cleanup should succeed")
+        .into_value();
     for class in [from_class, to_class] {
         storage
-            .delete_class(&class, Some(&event_context))
+            .delete_class(&class, &event_context)
             .await
-            .expect("class cleanup should succeed");
+            .expect("class cleanup should succeed")
+            .into_value();
     }
     storage
-        .delete_collection(
-            collection_id_to_storage(collection.id()),
-            Some(&event_context),
-        )
+        .delete_collection(collection_id_to_storage(collection.id()), &event_context)
         .await
-        .expect("collection cleanup should succeed");
+        .expect("collection cleanup should succeed")
+        .into_value();
 
     TransactionContractResult {
         committed_ids,
@@ -473,7 +492,7 @@ async fn memory_transaction_composes_resources_and_rolls_back_events() {
 async fn postgres_transaction_composes_resources_and_rolls_back_events() {
     let _permit = postgres_permit().await;
     let pool = pool();
-    let storage = PostgresStorage::new(pool.get_ref().clone());
+    let storage = PostgresStorage::unobserved(pool.get_ref().clone());
     let owner_group = NewGroup {
         identity_scope: None,
         groupname: prefix("postgres_transaction_owner"),

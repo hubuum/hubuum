@@ -1,0 +1,16 @@
+[package]
+name = "hubuum-storage-conformance"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Reusable behavioral conformance contract for Hubuum storage adapters."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+async-trait = "0.1"
+hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }

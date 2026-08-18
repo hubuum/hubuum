@@ -545,7 +545,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
         proper_name: Some("Anon User".into()),
         email: Some("a@example.com".into()),
     }
-    .save(&pool, None)
+    .save(&pool, &crate::events::EventContext::system())
     .await
     .unwrap();
     let token = user.create_token(&pool).await.unwrap();
@@ -575,7 +575,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
 
     UserID::new(user.id)
         .unwrap()
-        .anonymize(&pool)
+        .anonymize(&pool, &crate::events::EventContext::system())
         .await
         .unwrap();
 

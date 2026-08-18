@@ -7,15 +7,16 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use tracing::{Instrument, debug, debug_span, warn};
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
-    StorageClassCreate, StorageClassRecord, StorageClassRelation, StorageClassRelationCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageIdentity, StorageObject, StorageObjectCreate,
-    StorageObjectDataPatch, StorageObjectRelation, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
-    StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
+    ClassRelationStore, ClassStore, CollectionStore, MutationOutcome, ObjectRelationStore,
+    ObjectStore, StorageClassCreate, StorageClassRecord, StorageClassRelation,
+    StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
+    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageIdentity, StorageObject,
+    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelation,
+    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
+    StorageOperationObservation, StoragePreparedClassRelation, StoragePreparedObjectRelation,
     StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
-    StorageResolvedObjectRelation,
+    StorageResolvedObjectRelation, StorageTelemetry,
 };
 use crate::events::EventContext;
 
@@ -27,17 +28,34 @@ use crate::events::EventContext;
 pub(crate) struct ObservedStorage<S> {
     backend: &'static str,
     inner: Arc<S>,
+    telemetry: Arc<dyn StorageTelemetry>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ApplicationStorageTelemetry;
+
+impl StorageTelemetry for ApplicationStorageTelemetry {
+    fn operation_finished(&self, observation: &StorageOperationObservation) {
+        crate::observability::metrics::storage_operation_finished(
+            observation.backend(),
+            observation.capability(),
+            observation.operation(),
+            observation.result(),
+            observation.duration(),
+        );
+    }
 }
 
 impl<S> ObservedStorage<S>
 where
     S: StorageIdentity,
 {
-    pub(crate) fn new(storage: S) -> Self {
+    pub(crate) fn new(storage: S, telemetry: Arc<dyn StorageTelemetry>) -> Self {
         let backend = storage.storage_name();
         Self {
             backend,
             inner: Arc::new(storage),
+            telemetry,
         }
     }
 
@@ -47,12 +65,36 @@ where
         operation: &'static str,
         future: impl Future<Output = Result<T, StorageError>>,
     ) -> Result<T, StorageError> {
-        observe_storage_call(self.backend, capability, operation, future).await
+        observe_storage_call_with(
+            self.telemetry.as_ref(),
+            self.backend,
+            capability,
+            operation,
+            future,
+        )
+        .await
     }
 }
 
 /// Apply the common logical-storage diagnostics to any capability entrypoint.
 pub(super) async fn observe_storage_call<T>(
+    backend: &'static str,
+    capability: &'static str,
+    operation: &'static str,
+    future: impl Future<Output = Result<T, StorageError>>,
+) -> Result<T, StorageError> {
+    observe_storage_call_with(
+        &ApplicationStorageTelemetry,
+        backend,
+        capability,
+        operation,
+        future,
+    )
+    .await
+}
+
+async fn observe_storage_call_with<T>(
+    telemetry: &dyn StorageTelemetry,
     backend: &'static str,
     capability: &'static str,
     operation: &'static str,
@@ -67,13 +109,13 @@ pub(super) async fn observe_storage_call<T>(
             .as_ref()
             .map(|_| "ok")
             .unwrap_or_else(|error| error.kind().as_str());
-        crate::observability::metrics::storage_operation_finished(
+        telemetry.operation_finished(&StorageOperationObservation::new(
             backend,
             capability,
             operation,
             result_kind,
             duration,
-        );
+        ));
 
         match &result {
             Ok(_) => debug!(
@@ -143,8 +185,8 @@ where
     async fn create_collection(
         &self,
         command: StorageCollectionCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "create",
@@ -157,8 +199,8 @@ where
         &self,
         id: CollectionId,
         changes: StorageCollectionUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "update",
@@ -170,8 +212,8 @@ where
     async fn delete_collection(
         &self,
         id: CollectionId,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "collections",
             "delete",
@@ -208,8 +250,8 @@ where
         &self,
         id: CollectionId,
         new_parent_id: CollectionId,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "move",
@@ -235,8 +277,8 @@ where
     async fn create_class(
         &self,
         command: StorageClassCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRecord, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.call(
             "classes",
             "create",
@@ -249,8 +291,8 @@ where
         &self,
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRecord, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.call(
             "classes",
             "update",
@@ -262,8 +304,8 @@ where
     async fn delete_class(
         &self,
         target: &StorageResolvedClass,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "classes",
             "delete",
@@ -303,8 +345,8 @@ where
         &self,
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObject, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
             "objects",
             "create",
@@ -317,8 +359,8 @@ where
         &self,
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObject, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
             "objects",
             "update",
@@ -332,7 +374,7 @@ where
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<StorageObject, StorageError> {
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
             "objects",
             "patch_data",
@@ -344,8 +386,8 @@ where
     async fn delete_object(
         &self,
         target: &StorageResolvedObject,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "objects",
             "delete",
@@ -417,8 +459,8 @@ where
     async fn create_class_relation(
         &self,
         prepared: &StoragePreparedClassRelation,
-        context: Option<&EventContext>,
-    ) -> Result<StorageResolvedClassRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
         self.call(
             "class_relations",
             "create",
@@ -430,8 +472,8 @@ where
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "class_relations",
             "delete",
@@ -443,8 +485,8 @@ where
     async fn create_class_relation_from_command(
         &self,
         command: StorageClassRelationCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
         self.call(
             "class_relations",
             "create_from_command",
@@ -457,8 +499,8 @@ where
     async fn delete_class_relation_by_id(
         &self,
         id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "class_relations",
             "delete_by_id",
@@ -500,8 +542,8 @@ where
     async fn create_object_relation(
         &self,
         prepared: &StoragePreparedObjectRelation,
-        context: Option<&EventContext>,
-    ) -> Result<StorageResolvedObjectRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         self.call(
             "object_relations",
             "create",
@@ -513,8 +555,8 @@ where
     async fn delete_object_relation(
         &self,
         target: &StorageResolvedObjectRelation,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "object_relations",
             "delete",
@@ -526,8 +568,8 @@ where
     async fn create_object_relation_from_command(
         &self,
         command: StorageObjectRelationCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObjectRelation, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
         self.call(
             "object_relations",
             "create_from_command",
@@ -540,8 +582,8 @@ where
     async fn delete_object_relation_by_id(
         &self,
         id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             "object_relations",
             "delete_by_id",

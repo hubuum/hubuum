@@ -235,7 +235,7 @@ async fn token_metadata_batch_query_count_is_constant_with_batch_size() {
         TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
     let raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
         .scope(token_scope)
-        .create(&scope.pool, None)
+        .create(&scope.pool, &crate::events::EventContext::system())
         .await
         .expect("scoped token should be created");
     let token_hash = raw.storage_hash();
@@ -727,7 +727,9 @@ async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
         },
     ))
     .await;
-    created.expect("transactional object should save with an event");
+    let _ = created
+        .expect("transactional object should save with an event")
+        .into_value();
     assert_eq!(queries.total_queries(), 10, "{:#?}", queries.query_counts());
     assert_eq!(queries.domain_queries(), 8);
     assert_eq!(queries.control_queries(), 2);
@@ -1577,7 +1579,7 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
     use hubuum_storage_postgres::PostgresRuntime;
 
     let scope = TestScope::new();
-    let runtime = PostgresRuntime::new(scope.pool.get_ref().clone());
+    let runtime = PostgresRuntime::unobserved(scope.pool.get_ref().clone());
     let request = |label: &str, group_count: usize| {
         StorageExternalUserSync::builder(
             scope.scoped_name(&format!("external_budget_scope_{label}")),

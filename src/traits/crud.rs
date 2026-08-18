@@ -8,11 +8,10 @@ use crate::storage::StorageContext;
 /// This is the public model-facing delete API. The actual backend-specific work is delegated to
 /// hidden adapter traits so implementations can stay thin.
 pub trait CanDelete {
-    /// Delete without emitting domain events.
+    /// Delete with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`CanDelete::delete`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     async fn delete_without_events<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: StorageContext;
@@ -28,11 +27,10 @@ pub trait CanDelete {
 /// `Collection`, while saving an existing value may also return the updated persisted value.
 pub trait CanSave {
     type Output;
-    /// Persist without emitting domain events.
+    /// Persist with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`CanSave::save`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     async fn save_without_events<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
         C: StorageContext;
@@ -50,11 +48,10 @@ pub trait CanUpdate {
     type Output;
     /// Validated identifier for the persisted model updated by this request.
     type Identifier;
-    /// Update without emitting domain events.
+    /// Update with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`CanUpdate::update`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     async fn update_without_events<C>(
         &self,
         backend: &C,
@@ -83,10 +80,8 @@ pub trait DeleteAdapter {
     async fn delete_adapter(
         &self,
         pool: &impl crate::storage::StorageContext,
-        _context: &EventContext,
-    ) -> Result<(), ApiError> {
-        self.delete_adapter_without_events(pool).await
-    }
+        context: &EventContext,
+    ) -> Result<(), ApiError>;
 }
 
 impl<T> CanDelete for T
@@ -120,10 +115,8 @@ pub trait SaveAdapter {
     async fn save_adapter(
         &self,
         pool: &impl crate::storage::StorageContext,
-        _context: &EventContext,
-    ) -> Result<Self::Output, ApiError> {
-        self.save_adapter_without_events(pool).await
-    }
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError>;
 }
 
 impl<T> CanSave for T
@@ -162,10 +155,8 @@ pub trait UpdateAdapter {
         &self,
         pool: &impl crate::storage::StorageContext,
         entry_id: Self::Identifier,
-        _context: &EventContext,
-    ) -> Result<Self::Output, ApiError> {
-        self.update_adapter_without_events(pool, entry_id).await
-    }
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError>;
 }
 
 impl<T> CanUpdate for T

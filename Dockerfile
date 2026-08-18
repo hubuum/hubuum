@@ -26,6 +26,7 @@ COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
 COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
 COPY crates/hubuum-storage-core/Cargo.toml ./crates/hubuum-storage-core/Cargo.toml
+COPY crates/hubuum-storage-conformance/Cargo.toml ./crates/hubuum-storage-conformance/Cargo.toml
 COPY crates/hubuum-storage-postgres/Cargo.toml ./crates/hubuum-storage-postgres/Cargo.toml
 COPY crates/hubuum-task-core/Cargo.toml ./crates/hubuum-task-core/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml

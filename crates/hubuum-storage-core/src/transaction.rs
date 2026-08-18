@@ -6,15 +6,15 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
-    StorageClassCreate, StorageClassRecord, StorageClassRelation, StorageClassRelationCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
-    StorageObjectDataPatch, StorageObjectRelation, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
-    StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
-    StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
-    StorageResolvedObjectRelation,
+    ClassRelationStore, ClassStore, CollectionStore, MutationOutcome, ObjectRelationStore,
+    ObjectStore, StorageClassCreate, StorageClassRecord, StorageClassRelation,
+    StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
+    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageObject,
+    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelation,
+    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
+    StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClass,
+    StorageResolvedClassRelation, StorageResolvedObject, StorageResolvedObjectRelation,
 };
 
 /// Discoverable collection operations bound to one audited transaction.
@@ -51,9 +51,9 @@ impl<'transaction> TransactionalCollections<'transaction> {
     pub async fn create(
         &self,
         command: StorageCollectionCreate,
-    ) -> Result<StorageCollection, StorageError> {
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.storage
-            .create_collection(command, Some(self.event_context))
+            .create_collection(command, self.event_context)
             .await
     }
 
@@ -61,15 +61,18 @@ impl<'transaction> TransactionalCollections<'transaction> {
         &self,
         collection_id: CollectionId,
         changes: StorageCollectionUpdate,
-    ) -> Result<StorageCollection, StorageError> {
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.storage
-            .update_collection(collection_id, changes, Some(self.event_context))
+            .update_collection(collection_id, changes, self.event_context)
             .await
     }
 
-    pub async fn delete(&self, collection_id: CollectionId) -> Result<(), StorageError> {
+    pub async fn delete(
+        &self,
+        collection_id: CollectionId,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.storage
-            .delete_collection(collection_id, Some(self.event_context))
+            .delete_collection(collection_id, self.event_context)
             .await
     }
 
@@ -91,9 +94,9 @@ impl<'transaction> TransactionalCollections<'transaction> {
         &self,
         collection_id: CollectionId,
         new_parent_id: CollectionId,
-    ) -> Result<StorageCollection, StorageError> {
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.storage
-            .move_collection(collection_id, new_parent_id, Some(self.event_context))
+            .move_collection(collection_id, new_parent_id, self.event_context)
             .await
     }
 }
@@ -132,26 +135,25 @@ impl<'transaction> TransactionalClasses<'transaction> {
     pub async fn create(
         &self,
         command: StorageClassCreate,
-    ) -> Result<StorageClassRecord, StorageError> {
-        self.storage
-            .create_class(command, Some(self.event_context))
-            .await
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+        self.storage.create_class(command, self.event_context).await
     }
 
     pub async fn update(
         &self,
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
-    ) -> Result<StorageClassRecord, StorageError> {
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.storage
-            .update_class(target, changes, Some(self.event_context))
+            .update_class(target, changes, self.event_context)
             .await
     }
 
-    pub async fn delete(&self, target: &StorageResolvedClass) -> Result<(), StorageError> {
-        self.storage
-            .delete_class(target, Some(self.event_context))
-            .await
+    pub async fn delete(
+        &self,
+        target: &StorageResolvedClass,
+    ) -> Result<MutationOutcome<()>, StorageError> {
+        self.storage.delete_class(target, self.event_context).await
     }
 
     pub async fn names(
@@ -203,40 +205,44 @@ impl<'transaction> TransactionalClassRelations<'transaction> {
     pub async fn create(
         &self,
         prepared: &StoragePreparedClassRelation,
-    ) -> Result<StorageResolvedClassRelation, StorageError> {
+    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
         self.storage
-            .create_class_relation(prepared, Some(self.event_context))
+            .create_class_relation(prepared, self.event_context)
             .await
     }
 
-    pub async fn delete(&self, target: &StorageResolvedClassRelation) -> Result<(), StorageError> {
+    pub async fn delete(
+        &self,
+        target: &StorageResolvedClassRelation,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.storage
-            .delete_class_relation(target, Some(self.event_context))
+            .delete_class_relation(target, self.event_context)
             .await
     }
 
     pub async fn create_from_command(
         &self,
         command: StorageClassRelationCreate,
-    ) -> Result<StorageClassRelation, StorageError> {
+    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
         self.storage
-            .create_class_relation_from_command(command, Some(self.event_context))
+            .create_class_relation_from_command(command, self.event_context)
             .await
     }
 
-    pub async fn delete_by_id(&self, relation_id: i32) -> Result<(), StorageError> {
+    pub async fn delete_by_id(
+        &self,
+        relation_id: i32,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.storage
-            .delete_class_relation_by_id(relation_id, Some(self.event_context))
+            .delete_class_relation_by_id(relation_id, self.event_context)
             .await
     }
 }
 
 /// Discoverable object operations bound to one audited transaction.
 ///
-/// Mutating methods always forward the transaction's [`EventContext`]. The
-/// underlying optional-context adapter methods remain an implementation seam
-/// while migrations, restores, and tests are moved to dedicated APIs; normal
-/// transactional consumers cannot accidentally request an unaudited write.
+/// Mutating methods always forward the transaction's [`EventContext`] and
+/// return the backend's durable [`MutationOutcome`].
 pub struct TransactionalObjects<'transaction> {
     storage: &'transaction dyn ObjectStore,
     event_context: &'transaction EventContext,
@@ -275,9 +281,9 @@ impl<'transaction> TransactionalObjects<'transaction> {
         &self,
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
-    ) -> Result<StorageObject, StorageError> {
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.storage
-            .create_object(class, command, Some(self.event_context))
+            .create_object(class, command, self.event_context)
             .await
     }
 
@@ -285,9 +291,9 @@ impl<'transaction> TransactionalObjects<'transaction> {
         &self,
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
-    ) -> Result<StorageObject, StorageError> {
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.storage
-            .update_object(target, changes, Some(self.event_context))
+            .update_object(target, changes, self.event_context)
             .await
     }
 
@@ -295,16 +301,17 @@ impl<'transaction> TransactionalObjects<'transaction> {
         &self,
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
-    ) -> Result<StorageObject, StorageError> {
+    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.storage
             .patch_object_data(target, patch, self.event_context)
             .await
     }
 
-    pub async fn delete(&self, target: &StorageResolvedObject) -> Result<(), StorageError> {
-        self.storage
-            .delete_object(target, Some(self.event_context))
-            .await
+    pub async fn delete(
+        &self,
+        target: &StorageResolvedObject,
+    ) -> Result<MutationOutcome<()>, StorageError> {
+        self.storage.delete_object(target, self.event_context).await
     }
 
     pub async fn validate(&self, object: StorageObject) -> Result<(), StorageError> {
@@ -367,30 +374,36 @@ impl<'transaction> TransactionalObjectRelations<'transaction> {
     pub async fn create(
         &self,
         prepared: &StoragePreparedObjectRelation,
-    ) -> Result<StorageResolvedObjectRelation, StorageError> {
+    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         self.storage
-            .create_object_relation(prepared, Some(self.event_context))
+            .create_object_relation(prepared, self.event_context)
             .await
     }
 
-    pub async fn delete(&self, target: &StorageResolvedObjectRelation) -> Result<(), StorageError> {
+    pub async fn delete(
+        &self,
+        target: &StorageResolvedObjectRelation,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.storage
-            .delete_object_relation(target, Some(self.event_context))
+            .delete_object_relation(target, self.event_context)
             .await
     }
 
     pub async fn create_from_command(
         &self,
         command: StorageObjectRelationCreate,
-    ) -> Result<StorageObjectRelation, StorageError> {
+    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
         self.storage
-            .create_object_relation_from_command(command, Some(self.event_context))
+            .create_object_relation_from_command(command, self.event_context)
             .await
     }
 
-    pub async fn delete_by_id(&self, relation_id: i32) -> Result<(), StorageError> {
+    pub async fn delete_by_id(
+        &self,
+        relation_id: i32,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         self.storage
-            .delete_object_relation_by_id(relation_id, Some(self.event_context))
+            .delete_object_relation_by_id(relation_id, self.event_context)
             .await
     }
 }

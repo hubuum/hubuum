@@ -14,7 +14,8 @@ use crate::models::search::QueryOptions;
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::AppContext;
 use crate::storage::observed::{
-    ObservedStorage, observe_infallible_storage_call, observe_storage_call,
+    ApplicationStorageTelemetry, ObservedStorage, observe_infallible_storage_call,
+    observe_storage_call,
 };
 use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use crate::storage::{
@@ -32,68 +33,71 @@ use crate::storage::{
     AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
     AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, AuthorizationStorage,
     BackupSnapshotStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage,
-    CatalogStorage, ClassRelationStore, ClassStore, CollectionAuthorizationStorage,
-    CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
-    ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, EventArchive,
-    EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
-    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
-    ExportQueryStorage, ExportTemplateHistoryRecord, ExportTemplateStorage, GroupStorage,
-    HistoryAsOfQuery, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    IdentityStorage, ImportStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
+    CatalogStorage, CertifiedStorageBackend, ClassRelationStore, ClassStore,
+    CollectionAuthorizationStorage, CollectionStore, ComputedFieldLifecycleStorage,
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
+    ComputedObjectStorage, EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateHistoryRecord,
+    ExportTemplateStorage, GroupStorage, HistoryAsOfQuery, HistoryListQuery, HistoryPage,
+    HistoryPrincipalName, HistoryStorage, IdentityStorage, ImportStorage, InventoryGaugeSnapshot,
+    InventoryStorage, MetricsStorage, MutationOutcome, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
     ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalExportTemplateAuditEntry,
     OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
     OperationalTaskQueueSnapshot, PostgresStorage, PrincipalStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
     RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
-    StorageBackend, StorageBackendDescriptor, StorageBackendKind, StorageBackupOutput,
-    StorageBackupOutputSummary, StorageBackupSnapshot, StorageCallSite, StorageClass,
-    StorageClassComputationState, StorageClassGraphRow, StorageClassRecord, StorageClassRelation,
-    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
-    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
-    StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
-    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
-    StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
-    StorageExportTemplatePage, StorageExportTemplateReplace, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
-    StorageIdentity, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
-    StorageImportPlan, StorageImportPreflight, StorageImportResult, StorageImportTaskResultPage,
+    StorageBackendDescriptor, StorageBackendKind, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRecord, StorageClassRelation, StorageCollection,
+    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
+    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageDefaultAdminBootstrap,
+    StorageError, StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventPage,
+    StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
+    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecution, StorageExportOutput,
+    StorageExportOutputSummary, StorageExportTemplate, StorageExportTemplateCreate,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplatePage,
+    StorageExportTemplateReplace, StorageExternalPrincipalState, StorageExternalUserSync,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentity,
+    StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
+    StorageImportApply, StorageImportCollectionKey, StorageImportMode, StorageImportPlan,
+    StorageImportPreflight, StorageImportResult, StorageImportTaskResultPage,
     StorageInventoryCounts, StorageLocalPasswordReset, StorageNotification,
     StorageNotificationListener, StorageNotificationShutdown, StorageObject,
     StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StoragePrincipal, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StoragePrincipalSettings, StoragePrincipalSettingsMutation, StorageQueryBudget,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
-    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
-    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageRevisionPrecondition, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StoragePrincipalSettings, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
+    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRemoteTarget, StorageRemoteTargetCreate, StorageRemoteTargetDelete,
+    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPage,
+    StorageRemoteTargetUpdate, StorageRestoreApply, StorageRestoreCompletion,
+    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
+    StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
     StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
     StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure,
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate,
-    StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation,
-    StorageTokenRenew, StorageTokenRevoke, StorageTransaction, StorageTransactionFuture,
-    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, TaskExecutionStorage,
-    TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage, TransactionalStorage,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTelemetry,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageTransaction,
+    StorageTransactionFuture, StorageUser, StorageUserAnonymize, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage,
+    TokenRetentionStorage, TokenStorage, TransactionalStorage, UnifiedSearchClass,
+    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    UserStorage, WorkerNotificationStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -133,7 +137,7 @@ struct ResourceStoragePorts {
 }
 
 impl ResourceStoragePorts {
-    fn observed<S>(storage: S) -> Self
+    fn observed<S>(storage: S, telemetry: Arc<dyn StorageTelemetry>) -> Self
     where
         S: StorageIdentity
             + CollectionStore
@@ -143,7 +147,7 @@ impl ResourceStoragePorts {
             + ObjectRelationStore
             + 'static,
     {
-        let observed = Arc::new(ObservedStorage::new(storage));
+        let observed = Arc::new(ObservedStorage::new(storage, telemetry));
         Self {
             collections: observed.clone(),
             classes: observed.clone(),
@@ -158,7 +162,7 @@ impl ResourceStoragePorts {
 ///
 /// Keeping the exhaustive match here means adding a selectable backend has one
 /// dispatch change instead of one change per storage operation. The aggregate
-/// [`StorageBackend`] bound still makes missing capability implementations a
+/// [`hubuum_storage_core::StorageBackend`] bound still makes missing capability implementations a
 /// compile error before a backend can be composed.
 macro_rules! dispatch_backend {
     ($handle:expr, |$backend:ident| $call:expr) => {
@@ -204,9 +208,19 @@ impl StorageHandle {
     }
 
     fn from_postgres_backend(backend: PostgresStorage) -> Self {
+        Self::from_postgres_backend_with_storage_telemetry(
+            backend,
+            Arc::new(ApplicationStorageTelemetry),
+        )
+    }
+
+    pub(crate) fn from_postgres_backend_with_storage_telemetry(
+        backend: PostgresStorage,
+        telemetry: Arc<dyn StorageTelemetry>,
+    ) -> Self {
         let backend_kind = StorageBackendKind::Postgresql;
         assert_complete_storage_backend(&backend, backend_kind);
-        let resource_ports = ResourceStoragePorts::observed(backend.clone());
+        let resource_ports = ResourceStoragePorts::observed(backend.clone(), telemetry);
         Self {
             inner: Arc::new(StorageHandleInner {
                 implementation: BackendImplementation::Postgresql(backend),

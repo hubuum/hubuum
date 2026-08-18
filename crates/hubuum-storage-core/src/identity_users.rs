@@ -368,7 +368,7 @@ pub struct StorageUserCreate {
     password_hash: String,
     proper_name: Option<String>,
     email: Option<String>,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageUserCreate {
@@ -379,7 +379,7 @@ impl StorageUserCreate {
         password_hash: impl Into<String>,
         proper_name: Option<String>,
         email: Option<String>,
-        event_context: Option<EventContext>,
+        event_context: EventContext,
     ) -> Self {
         Self {
             identity_scope,
@@ -400,7 +400,7 @@ impl StorageUserCreate {
         String,
         Option<String>,
         Option<String>,
-        Option<EventContext>,
+        EventContext,
     ) {
         (
             self.identity_scope,
@@ -422,7 +422,7 @@ impl fmt::Debug for StorageUserCreate {
             .field("password_hash", &"<redacted>")
             .field("has_proper_name", &self.proper_name.is_some())
             .field("has_email", &self.email.is_some())
-            .field("emit_event", &self.event_context.is_some())
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -434,7 +434,7 @@ pub struct StorageUserUpdate {
     password_hash: Option<String>,
     proper_name: Option<String>,
     email: Option<String>,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageUserUpdate {
@@ -444,7 +444,7 @@ impl StorageUserUpdate {
         password_hash: Option<String>,
         proper_name: Option<String>,
         email: Option<String>,
-        event_context: Option<EventContext>,
+        event_context: EventContext,
     ) -> Self {
         Self {
             id,
@@ -463,7 +463,7 @@ impl StorageUserUpdate {
         Option<String>,
         Option<String>,
         Option<String>,
-        Option<EventContext>,
+        EventContext,
     ) {
         (
             self.id,
@@ -483,26 +483,26 @@ impl fmt::Debug for StorageUserUpdate {
             .field("has_password_hash", &self.password_hash.is_some())
             .field("has_proper_name", &self.proper_name.is_some())
             .field("has_email", &self.email.is_some())
-            .field("emit_event", &self.event_context.is_some())
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
 
-/// Point user deletion with optional lifecycle event emission.
+/// Point user deletion with mandatory lifecycle event attribution.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUserDelete {
     id: i32,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageUserDelete {
     #[must_use]
-    pub const fn new(id: i32, event_context: Option<EventContext>) -> Self {
+    pub const fn new(id: i32, event_context: EventContext) -> Self {
         Self { id, event_context }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, Option<EventContext>) {
+    pub fn into_parts(self) -> (i32, EventContext) {
         (self.id, self.event_context)
     }
 }
@@ -512,7 +512,7 @@ impl fmt::Debug for StorageUserDelete {
         formatter
             .debug_struct("StorageUserDelete")
             .field("id", &"<redacted>")
-            .field("emit_event", &self.event_context.is_some())
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -522,20 +522,22 @@ impl fmt::Debug for StorageUserDelete {
 pub struct StorageUserPasswordUpdate {
     id: i32,
     password_hash: String,
+    event_context: EventContext,
 }
 
 impl StorageUserPasswordUpdate {
     #[must_use]
-    pub fn new(id: i32, password_hash: impl Into<String>) -> Self {
+    pub fn new(id: i32, password_hash: impl Into<String>, event_context: EventContext) -> Self {
         Self {
             id,
             password_hash: password_hash.into(),
+            event_context,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String) {
-        (self.id, self.password_hash)
+    pub fn into_parts(self) -> (i32, String, EventContext) {
+        (self.id, self.password_hash, self.event_context)
     }
 }
 
@@ -545,6 +547,36 @@ impl fmt::Debug for StorageUserPasswordUpdate {
             .debug_struct("StorageUserPasswordUpdate")
             .field("id", &"<redacted>")
             .field("password_hash", &"<redacted>")
+            .field("event_context", &"<redacted>")
+            .finish()
+    }
+}
+
+/// User anonymization with mandatory audit attribution.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageUserAnonymize {
+    id: i32,
+    event_context: EventContext,
+}
+
+impl StorageUserAnonymize {
+    #[must_use]
+    pub const fn new(id: i32, event_context: EventContext) -> Self {
+        Self { id, event_context }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (i32, EventContext) {
+        (self.id, self.event_context)
+    }
+}
+
+impl fmt::Debug for StorageUserAnonymize {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageUserAnonymize")
+            .field("id", &"<redacted>")
+            .field("event_context", &"<redacted>")
             .finish()
     }
 }
@@ -579,7 +611,7 @@ pub trait UserStorage: Send + Sync {
 
     async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError>;
 
-    async fn anonymize_user(&self, id: i32) -> Result<(), StorageError>;
+    async fn anonymize_user(&self, request: StorageUserAnonymize) -> Result<(), StorageError>;
 }
 
 #[cfg(test)]
@@ -592,7 +624,7 @@ mod tests {
             Some("sensitive-scope".to_string()),
             "sensitive-name",
             "sensitive-password-hash",
-            None,
+            EventContext::system(),
             None,
             None,
         );

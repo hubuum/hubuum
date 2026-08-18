@@ -27,7 +27,7 @@ pub(crate) async fn purge_event_retention_without_archive(
     settings: EventRetentionSettings,
 ) -> Result<crate::storage::EventRetentionSummary, ApiError> {
     hubuum_storage_postgres::operations::event_retention::purge_without_archive(
-        &PostgresRuntime::new(pool.clone()),
+        &PostgresRuntime::unobserved(pool.clone()),
         settings,
     )
     .await

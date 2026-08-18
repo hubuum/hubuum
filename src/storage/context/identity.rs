@@ -461,9 +461,9 @@ impl UserStorage for StorageHandle {
         .await
     }
 
-    async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
+    async fn anonymize_user(&self, request: StorageUserAnonymize) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "user", "anonymize", async {
-            dispatch_backend!(self, |backend| backend.anonymize_user(id).await)
+            dispatch_backend!(self, |backend| backend.anonymize_user(request).await)
         })
         .await
     }
@@ -541,11 +541,14 @@ impl TokenStorage for StorageHandle {
         .await
     }
 
-    async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
+    async fn revoke_all_principal_tokens(
+        &self,
+        request: StoragePrincipalTokensRevoke,
+    ) -> Result<usize, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke_all", async {
-            dispatch_backend!(self, |backend| {
-                backend.revoke_all_principal_tokens(principal_id).await
-            })
+            dispatch_backend!(self, |backend| backend
+                .revoke_all_principal_tokens(request)
+                .await)
         })
         .await
     }

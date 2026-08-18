@@ -242,7 +242,12 @@ impl User {
 
     /// Set a new local password and revoke every active bearer token for this
     /// user in the same database transaction.
-    pub async fn set_password<C>(&self, backend: &C, new_password: &str) -> Result<(), ApiError>
+    pub async fn set_password<C>(
+        &self,
+        backend: &C,
+        new_password: &str,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
     where
         C: StorageContext,
     {
@@ -251,7 +256,8 @@ impl User {
             .await
             .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
         let revoked_tokens =
-            crate::services::identity::set_user_password(backend, self.id, password_hash).await?;
+            crate::services::identity::set_user_password(backend, self.id, password_hash, context)
+                .await?;
         debug!(
             message = "Password changed and active tokens revoked",
             user_id = self.id,
@@ -272,7 +278,7 @@ impl User {
         C: StorageContext,
     {
         PrincipalTokenCreateRequest::new(PrincipalID::new(self.id)?)
-            .create_issued(backend, None)
+            .create_issued(backend, &EventContext::system())
             .await
     }
 
@@ -284,6 +290,7 @@ impl User {
             backend,
             Some(self.id),
             token_param.storage_hash(),
+            &EventContext::system(),
         )
         .await
     }
@@ -292,37 +299,37 @@ impl User {
     where
         C: StorageContext,
     {
-        crate::services::identity::revoke_all_principal_tokens(backend, self.id).await
+        crate::services::identity::revoke_all_principal_tokens(
+            backend,
+            self.id,
+            &EventContext::system(),
+        )
+        .await
     }
 
-    /// Delete this user without emitting domain events.
+    /// Delete this user with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`User::delete`] so event subscribers observe the change.
+    /// This compatibility name is retained for internal callers; the mutation
+    /// still emits an audit event attributed to the system actor.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
-        crate::services::identity::delete_user(backend, self.id, None).await
+        crate::services::identity::delete_user(backend, self.id, &EventContext::system()).await
     }
 
-    pub async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    pub async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
         crate::services::identity::delete_user(backend, self.id, context).await
     }
 
-    pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    pub async fn anonymize<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
         C: StorageContext,
     {
-        crate::services::identity::anonymize_user(backend, self.id).await
+        crate::services::identity::anonymize_user(backend, self.id, context).await
     }
 }
 
@@ -352,12 +359,10 @@ impl UpdateUser {
         Ok(self)
     }
 
-    /// Persist changes without emitting domain events.
+    /// Persist changes with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`UpdateUser::save`] so event subscribers observe the
-    /// change.
+    /// This compatibility name is retained for internal callers; the mutation
+    /// still emits an audit event attributed to the system actor.
     pub async fn save_without_events<C>(
         self,
         user_id: UserID,
@@ -366,14 +371,15 @@ impl UpdateUser {
     where
         C: StorageContext,
     {
-        crate::services::identity::update_user(backend, user_id.id(), self, None).await
+        crate::services::identity::update_user(backend, user_id.id(), self, &EventContext::system())
+            .await
     }
 
     pub async fn save<C>(
         self,
         user_id: UserID,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<User, ApiError>
     where
         C: StorageContext,
@@ -409,23 +415,18 @@ impl fmt::Debug for NewUser {
 }
 
 impl NewUser {
-    /// Persist without emitting domain events.
+    /// Persist with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`NewUser::save`] so event subscribers observe the change.
+    /// This compatibility name is retained for internal callers; the mutation
+    /// still emits an audit event attributed to the system actor.
     pub async fn save_without_events<C>(self, backend: &C) -> Result<User, ApiError>
     where
         C: StorageContext,
     {
-        crate::services::identity::create_user(backend, self, None).await
+        crate::services::identity::create_user(backend, self, &EventContext::system()).await
     }
 
-    pub async fn save<C>(
-        self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<User, ApiError>
+    pub async fn save<C>(self, backend: &C, context: &EventContext) -> Result<User, ApiError>
     where
         C: StorageContext,
     {
@@ -448,15 +449,11 @@ pub trait UserIdApplicationExt {
     where
         C: StorageContext;
 
-    async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
         C: StorageContext;
 
-    async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    async fn anonymize<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
         C: StorageContext;
 }
@@ -469,22 +466,18 @@ impl UserIdApplicationExt for UserID {
         crate::services::identity::load_user(backend, self.id()).await
     }
 
-    async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
         crate::services::identity::delete_user(backend, self.id(), context).await
     }
 
-    async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    async fn anonymize<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
         C: StorageContext,
     {
-        crate::services::identity::anonymize_user(backend, self.id()).await
+        crate::services::identity::anonymize_user(backend, self.id(), context).await
     }
 }
 

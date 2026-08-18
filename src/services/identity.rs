@@ -20,13 +20,14 @@ use crate::storage::{
     StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
     StorageIdentityGroup, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
+    StoragePrincipalTokensRevoke, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
+    StorageTokenListState, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
+    StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
+    StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -305,7 +306,7 @@ pub async fn list_users(
 pub async fn create_user(
     context: &impl StorageContext,
     request: crate::models::NewUser,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<User, ApiError> {
     let request = request.hash_password().await?;
     create_user_with_password_hash(context, request, event_context).await
@@ -314,7 +315,7 @@ pub async fn create_user(
 pub(crate) async fn create_user_with_password_hash(
     context: &impl StorageContext,
     request: crate::models::NewUser,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<User, ApiError> {
     let storage_request = StorageUserCreate::new(
         request.identity_scope,
@@ -322,7 +323,7 @@ pub(crate) async fn create_user_with_password_hash(
         request.password,
         request.proper_name,
         request.email,
-        event_context.cloned(),
+        event_context.clone(),
     );
     Ok(user_from_storage(
         storage_handle(context).create_user(storage_request).await?,
@@ -333,7 +334,7 @@ pub async fn update_user(
     context: &impl StorageContext,
     id: i32,
     request: UpdateUser,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<User, ApiError> {
     let request = request.hash_password().await?;
     let storage_request = StorageUserUpdate::new(
@@ -341,7 +342,7 @@ pub async fn update_user(
         request.password,
         request.proper_name,
         request.email,
-        event_context.cloned(),
+        event_context.clone(),
     );
     Ok(user_from_storage(
         storage_handle(context).update_user(storage_request).await?,
@@ -352,31 +353,42 @@ pub async fn set_user_password(
     context: &impl StorageContext,
     id: i32,
     password_hash: String,
+    event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
-        .set_user_password(StorageUserPasswordUpdate::new(id, password_hash))
+        .set_user_password(StorageUserPasswordUpdate::new(
+            id,
+            password_hash,
+            event_context.clone(),
+        ))
         .await?)
 }
 
 pub async fn delete_user(
     context: &impl StorageContext,
     id: i32,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
-        .delete_user(StorageUserDelete::new(id, event_context.cloned()))
+        .delete_user(StorageUserDelete::new(id, event_context.clone()))
         .await?)
 }
 
-pub async fn anonymize_user(context: &impl StorageContext, id: i32) -> Result<(), ApiError> {
-    Ok(storage_handle(context).anonymize_user(id).await?)
+pub async fn anonymize_user(
+    context: &impl StorageContext,
+    id: i32,
+    event_context: &EventContext,
+) -> Result<(), ApiError> {
+    Ok(storage_handle(context)
+        .anonymize_user(StorageUserAnonymize::new(id, event_context.clone()))
+        .await?)
 }
 
 pub async fn create_token(
     context: &impl StorageContext,
     request: PrincipalTokenCreateRequest,
     issuance_policy: crate::models::TokenIssuancePolicy,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<crate::models::IssuedToken, ApiError> {
     let parts = request.into_parts();
     let raw = crate::utilities::auth::generate_token();
@@ -384,12 +396,12 @@ pub async fn create_token(
         parts.principal_id.id(),
         raw.storage_hash(),
         token_policy(issuance_policy),
+        event_context.clone(),
     )
     .name(parts.name)
     .description(parts.description)
     .expires_at(parts.expires_at)
-    .scope(parts.scope.as_ref().map(token_scope_to_storage))
-    .event_context(event_context.cloned());
+    .scope(parts.scope.as_ref().map(token_scope_to_storage));
     let metadata = token_metadata_from_storage(
         storage_handle(context)
             .create_token(storage_request)
@@ -409,7 +421,7 @@ pub async fn renew_token(
     principal_id: i32,
     expires_at: Option<chrono::NaiveDateTime>,
     issuance_policy: crate::models::TokenIssuancePolicy,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<crate::models::IssuedToken, ApiError> {
     let raw = crate::utilities::auth::generate_token();
     let request = StorageTokenRenew::new(
@@ -418,7 +430,7 @@ pub async fn renew_token(
         raw.storage_hash(),
         expires_at,
         token_policy(issuance_policy),
-        event_context.cloned(),
+        event_context.clone(),
     );
     let metadata =
         token_metadata_from_storage(storage_handle(context).renew_token(request).await?)?;
@@ -461,13 +473,13 @@ pub async fn revoke_token(
     context: &impl StorageContext,
     token_id: i32,
     principal_id: i32,
-    event_context: Option<&EventContext>,
+    event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .revoke_token(StorageTokenRevoke::new(
             token_id,
             principal_id,
-            event_context.cloned(),
+            event_context.clone(),
         ))
         .await?)
 }
@@ -476,18 +488,27 @@ pub async fn revoke_token_by_hash(
     context: &impl StorageContext,
     principal_id: Option<i32>,
     token_hash: String,
+    event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
-        .revoke_token_by_hash(StorageTokenHashRevoke::new(principal_id, token_hash))
+        .revoke_token_by_hash(StorageTokenHashRevoke::new(
+            principal_id,
+            token_hash,
+            event_context.clone(),
+        ))
         .await?)
 }
 
 pub async fn revoke_all_principal_tokens(
     context: &impl StorageContext,
     principal_id: i32,
+    event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
-        .revoke_all_principal_tokens(principal_id)
+        .revoke_all_principal_tokens(StoragePrincipalTokensRevoke::new(
+            principal_id,
+            event_context.clone(),
+        ))
         .await?)
 }
 

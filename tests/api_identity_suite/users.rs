@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::auth::ConfiguredLdapScope;
+    use crate::events::EventContext;
     use crate::models::group::NewGroup;
     use crate::models::user::{
         LoginUser, NewUser, UpdateUser, User, UserID, UserPointResponse, UserResponse,
@@ -1154,7 +1155,7 @@ mod tests {
             proper_name: Some("API Anon".into()),
             email: Some("x@example.com".into()),
         }
-        .save(&context.pool, None)
+        .save(&context.pool, &EventContext::system())
         .await
         .unwrap();
 

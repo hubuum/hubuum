@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn assert_complete_storage_backend(
-    backend: &impl StorageBackend,
+    backend: &impl CertifiedStorageBackend,
     expected_kind: StorageBackendKind,
 ) {
     assert_eq!(

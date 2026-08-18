@@ -428,7 +428,8 @@ impl SaveAdapter for NewExportTemplate {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ExportTemplate, ApiError> {
-        self.save_export_template(pool, None).await
+        self.save_export_template(pool, &EventContext::system())
+            .await
     }
 
     async fn save_adapter(
@@ -436,7 +437,7 @@ impl SaveAdapter for NewExportTemplate {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<ExportTemplate, ApiError> {
-        self.save_export_template(pool, Some(context)).await
+        self.save_export_template(pool, context).await
     }
 }
 
@@ -466,7 +467,7 @@ impl NewExportTemplate {
     async fn save_export_template(
         &self,
         pool: &impl crate::storage::StorageContext,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<ExportTemplate, ApiError> {
         let definition = self.storage_definition()?;
         let include = to_optional_json(self.include.clone())?;
@@ -505,7 +506,7 @@ impl NewExportTemplate {
                 self.collection_id,
                 self.name.clone(),
                 definition,
-                context.cloned(),
+                context.clone(),
             ))
             .await?;
 
@@ -522,7 +523,8 @@ impl UpdateAdapter for UpdateExportTemplate {
         pool: &impl crate::storage::StorageContext,
         entry_id: ExportTemplateID,
     ) -> Result<ExportTemplate, ApiError> {
-        apply_export_template_update(pool, entry_id.id(), self.clone(), None).await
+        apply_export_template_update(pool, entry_id.id(), self.clone(), &EventContext::system())
+            .await
     }
 
     async fn update_adapter(
@@ -531,7 +533,7 @@ impl UpdateAdapter for UpdateExportTemplate {
         entry_id: ExportTemplateID,
         context: &EventContext,
     ) -> Result<ExportTemplate, ApiError> {
-        apply_export_template_update(pool, entry_id.id(), self.clone(), Some(context)).await
+        apply_export_template_update(pool, entry_id.id(), self.clone(), context).await
     }
 }
 
@@ -539,7 +541,7 @@ async fn apply_export_template_update(
     pool: &impl crate::storage::StorageContext,
     template_id: i32,
     update: UpdateExportTemplate,
-    context: Option<&EventContext>,
+    context: &EventContext,
 ) -> Result<ExportTemplate, ApiError> {
     let current = export_template_from_storage(
         storage_handle(pool)
@@ -635,7 +637,7 @@ async fn apply_export_template_update(
             replacement.collection_id,
             replacement.name.clone(),
             storage_definition(&replacement)?,
-            context.cloned(),
+            context.clone(),
         ))
         .await?;
 
@@ -723,7 +725,10 @@ impl DeleteAdapter for ExportTemplateID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_export_template(StorageExportTemplateDelete::new(self.id(), None))
+            .delete_export_template(StorageExportTemplateDelete::new(
+                self.id(),
+                EventContext::system(),
+            ))
             .await?;
         Ok(())
     }
@@ -734,10 +739,7 @@ impl DeleteAdapter for ExportTemplateID {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_export_template(StorageExportTemplateDelete::new(
-                self.id(),
-                Some(context.clone()),
-            ))
+            .delete_export_template(StorageExportTemplateDelete::new(self.id(), context.clone()))
             .await?;
         Ok(())
     }

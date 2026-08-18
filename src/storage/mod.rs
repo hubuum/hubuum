@@ -18,7 +18,7 @@ pub use context::StorageContext;
 pub use context::StorageHandle as BenchmarkStorageContext;
 pub(crate) use context::{StorageHandle, storage_handle};
 pub(crate) use contract::{
-    StorageBackend, StorageBackendDescriptor, StorageBackendKind, StorageIdentity,
+    CertifiedStorageBackend, StorageBackendDescriptor, StorageBackendKind, StorageIdentity,
 };
 pub use execution::{
     with_mutation_provenance, with_revision_precondition, with_storage_call_site,
@@ -55,9 +55,9 @@ pub(crate) use hubuum_storage_core::{
     EventSubscriptionStorage, ExportQueryStorage, ExportTemplateHistoryRecord,
     ExportTemplateStorage, GroupStorage, HistoryAsOfQuery, HistoryCollectionScope,
     HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    IdentityStorage, InventoryStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
+    IdentityStorage, InventoryStorage, MutationOutcome, ObjectAggregateAuthorizationMode,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
     ObjectRelationsTouchingIdsQuery, ObjectStore, PrincipalStorage, RelatedObjectsForRootsQuery,
     RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
     RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
@@ -90,11 +90,12 @@ pub(crate) use hubuum_storage_core::{
     StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationCreate,
     StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
     StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StoragePreparedClassRelation, StoragePreparedObjectRelation, StoragePrincipal,
-    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation, StorageQueryBudget, StorageRecordMetadata,
+    StorageOperationObservation, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePreparedClassRelation,
+    StoragePreparedObjectRelation, StoragePrincipal, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    StoragePrincipalTokensRevoke, StorageQueryBudget, StorageRecordMetadata,
     StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
     StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTarget,
@@ -118,13 +119,14 @@ pub(crate) use hubuum_storage_core::{
     StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
     StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery,
     StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
-    StorageTokenRevoke, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
-    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenStorage, UnifiedSearchClass,
-    UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageTelemetry, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
+    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
+    TokenStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    WorkerNotificationStorage,
 };
 pub use hubuum_storage_core::{
     AuthenticatedToken, StorageCallSite, StorageExecution, StorageRevisionPrecondition,
@@ -151,7 +153,7 @@ pub(crate) use imports::ApplicationImportOperation;
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
 pub(crate) use notifications::spawn_storage_notification_listener;
-pub(crate) use observed::ObservedStorage;
+pub(crate) use observed::{ApplicationStorageTelemetry, ObservedStorage};
 pub(crate) use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventHealthStorage,
     OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,

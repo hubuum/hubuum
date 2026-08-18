@@ -20,6 +20,8 @@ mod sink;
 
 pub use context::RequestProvenance;
 pub(crate) use delivery::event_delivery_worker_health;
+#[cfg(test)]
+pub(crate) use delivery::process_event_delivery_work_item;
 pub use delivery::{
     ensure_event_delivery_worker_running, event_delivery_wakeup_stats, kick_event_delivery_worker,
 };

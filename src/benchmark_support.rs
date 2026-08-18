@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use crate::services::CollectionService;
-use crate::storage::{CollectionStore, ObservedStorage, StorageIdentity};
+use crate::storage::{
+    ApplicationStorageTelemetry, CollectionStore, ObservedStorage, StorageIdentity,
+};
 
 #[cfg(feature = "postgres-bench")]
 use crate::services::Services;
@@ -26,7 +28,10 @@ pub fn observed_collection_service<S>(storage: S) -> CollectionService
 where
     S: CollectionStore + StorageIdentity + 'static,
 {
-    CollectionService::new(Arc::new(ObservedStorage::new(storage)))
+    CollectionService::new(Arc::new(ObservedStorage::new(
+        storage,
+        Arc::new(ApplicationStorageTelemetry),
+    )))
 }
 
 /// Compose a PostgreSQL pool into the same opaque context used by the

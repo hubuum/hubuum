@@ -4,10 +4,10 @@ use crate::{
     CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectStorage,
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
-    ExportTemplateStorage, GroupStorage, HistoryStorage, IdentityStorage, ImportStorage,
-    InventoryStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
+    ExportTemplateStorage, GroupStorage, HistoryStorage, IdentityStorage, InventoryStorage,
+    MaintenanceStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
-    RestoreStorage, StorageExecution, StorageIdentity, TaskExecutionStorage, TaskQueueStorage,
+    StorageExecution, StorageIdentity, TaskExecutionStorage, TaskQueueStorage,
     TokenRetentionStorage, TokenStorage, TransactionalStorage, UnifiedSearchStorage, UserStorage,
     WorkerNotificationStorage,
 };
@@ -58,8 +58,7 @@ pub trait StorageBackend:
     + TaskQueueStorage
     + TaskExecutionStorage
     + BackupSnapshotStorage
-    + RestoreStorage
-    + ImportStorage
+    + MaintenanceStorage
     + ExportQueryStorage
     + ExportTemplateStorage
     + WorkerNotificationStorage

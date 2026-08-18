@@ -283,21 +283,21 @@ pub trait GroupStorage: Send + Sync {
     async fn create_group(
         &self,
         command: StorageGroupCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageIdentityGroup, StorageError>;
+        context: &EventContext,
+    ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError>;
 
     async fn update_group(
         &self,
         group_id: i32,
         update: StorageGroupUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageIdentityGroup, StorageError>;
+        context: &EventContext,
+    ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError>;
 
     async fn delete_group(
         &self,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<usize, StorageError>;
+        context: &EventContext,
+    ) -> Result<crate::MutationOutcome<usize>, StorageError>;
 
     async fn group_members(&self, group_id: i32) -> Result<Vec<StoragePrincipal>, StorageError>;
 
@@ -322,15 +322,15 @@ pub trait GroupStorage: Send + Sync {
         &self,
         principal_id: i32,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<StoragePrincipalGroup, StorageError>;
+        context: &EventContext,
+    ) -> Result<crate::MutationOutcome<StoragePrincipalGroup>, StorageError>;
 
     async fn remove_group_member(
         &self,
         principal_id: i32,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<crate::MutationOutcome<()>, StorageError>;
 }
 
 /// Principal point and settings behavior required from every backend.
@@ -348,5 +348,5 @@ pub trait PrincipalStorage: Send + Sync {
         principal_id: i32,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<StoragePrincipalSettings, StorageError>;
+    ) -> Result<crate::MutationOutcome<StoragePrincipalSettings>, StorageError>;
 }

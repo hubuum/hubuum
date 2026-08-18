@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use actix_web::{App, http, test, web::Data};
 use async_trait::async_trait;
@@ -9,6 +10,15 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, GroupId, PrincipalId, ResourceId, ResourceRevision};
 use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use hubuum_storage_conformance::{
+    BackendAuditFixture, CommittedMutationProbe, FanoutProbe, FixtureError,
+    RecordingStorageTelemetry, RollbackProbe, TelemetryProbe, UnchangedMutationProbe,
+    verify_backend_audit_contract,
+};
+use hubuum_storage_postgres::{PostgresStorage as AdapterPostgresStorage, PostgresTelemetry};
 
 fn principal_id(id: i32) -> PrincipalId {
     PrincipalId::new(id).expect("test principal id must be positive")
@@ -26,6 +36,7 @@ use crate::events::{
     Action, EntityType, EventContext, EventFanoutSettings, EventRetentionSettings,
     MutationProvenance,
 };
+use crate::events::{EventDeliverySettings, EventEnvelope, Sink, SinkError, SinkResolver};
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::{
@@ -67,25 +78,26 @@ use crate::storage::{
     ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
     PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
     RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, RetainedEvent, StorageAuditEventFilters, StorageAuditEventListQuery,
-    StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite, StorageClassCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
-    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan,
-    StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
+    RestoreStorage, RetainedEvent, StorageAuditEvent, StorageAuditEventFilters,
+    StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
+    StorageClassCreate, StorageClassSelector, StorageClassUpdate, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
+    StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecution, StorageExportTaskArtifact,
+    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
+    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
+    StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan, StorageImportPlanItem,
+    StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
     StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StorageQueryBudget,
-    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
+    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
+    StorageQueryBudget, StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
@@ -102,10 +114,11 @@ use crate::storage::{
     StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
     StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserCreate,
-    StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
-    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage, UserStorage, WorkerNotificationStorage,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserAnonymize,
+    StorageUserCreate, StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
+    TokenRetentionStorage, TokenStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    WorkerNotificationStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 
@@ -153,6 +166,421 @@ fn available_backends() -> impl Iterator<Item = StorageHandle> {
 fn backend_for_kind(kind: StorageBackendKind, postgres_pool: &PostgresPool) -> StorageHandle {
     match kind {
         StorageBackendKind::Postgresql => StorageHandle::postgres(postgres_pool.clone()),
+    }
+}
+
+#[derive(Debug, Default)]
+struct RecordingPostgresTelemetry {
+    operations: AtomicUsize,
+    failures: AtomicUsize,
+}
+
+impl RecordingPostgresTelemetry {
+    fn operation_count(&self) -> usize {
+        AtomicUsize::load(&self.operations, Ordering::Relaxed)
+    }
+
+    fn failure_count(&self) -> usize {
+        AtomicUsize::load(&self.failures, Ordering::Relaxed)
+    }
+}
+
+impl PostgresTelemetry for RecordingPostgresTelemetry {
+    fn operation_finished(
+        &self,
+        _call_site: StorageCallSite,
+        _operation: &'static str,
+        _duration: Duration,
+        error: Option<StorageErrorKind>,
+    ) {
+        self.operations.fetch_add(1, Ordering::Relaxed);
+        if error.is_some() {
+            self.failures.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+struct ContractRecordingSink {
+    deliveries: Arc<AtomicUsize>,
+}
+
+impl Sink for ContractRecordingSink {
+    fn deliver<'a>(
+        &'a self,
+        _envelope: &'a EventEnvelope,
+        _subscription: &'a crate::storage::EventDeliverySubscription,
+        _sink: &'a crate::storage::EventDeliverySink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async move {
+            self.deliveries.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+struct ContractDiscardSink;
+
+impl Sink for ContractDiscardSink {
+    fn deliver<'a>(
+        &'a self,
+        _envelope: &'a EventEnvelope,
+        _subscription: &'a crate::storage::EventDeliverySubscription,
+        _sink: &'a crate::storage::EventDeliverySink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async { Ok(()) }.boxed()
+    }
+}
+
+struct ContractSinkResolver {
+    recording: ContractRecordingSink,
+    discard: ContractDiscardSink,
+}
+
+impl SinkResolver for ContractSinkResolver {
+    fn resolve(&self, kind: &str) -> Option<&dyn Sink> {
+        if kind == "webhook" {
+            Some(&self.recording)
+        } else {
+            Some(&self.discard)
+        }
+    }
+}
+
+struct PostgresAuditContractFixture {
+    backend: StorageHandle,
+    pool: PostgresPool,
+    group_id: i32,
+    sink_id: i32,
+    subscription_id: tokio::sync::Mutex<Option<i32>>,
+    collection_id: tokio::sync::Mutex<Option<i32>>,
+    logical_telemetry: Arc<RecordingStorageTelemetry>,
+    postgres_telemetry: Arc<RecordingPostgresTelemetry>,
+    sink_deliveries: Arc<AtomicUsize>,
+}
+
+impl PostgresAuditContractFixture {
+    async fn new(pool: PostgresPool) -> Result<Self, FixtureError> {
+        let postgres_telemetry = Arc::new(RecordingPostgresTelemetry::default());
+        let logical_telemetry = Arc::new(RecordingStorageTelemetry::default());
+        let adapter = AdapterPostgresStorage::new(pool.clone(), postgres_telemetry.clone());
+        let backend = StorageHandle::from_postgres_backend_with_storage_telemetry(
+            adapter,
+            logical_telemetry.clone(),
+        );
+        let context = EventContext::system();
+        let group = backend
+            .create_group(
+                StorageGroupCreate::new(
+                    None,
+                    prefix("audit_contract_group"),
+                    Some("audit contract owner".to_string()),
+                ),
+                &context,
+            )
+            .await?
+            .into_value();
+        let sink = backend
+            .create_event_sink(
+                StorageEventSinkCreate::builder(
+                    prefix("audit_contract_sink"),
+                    "webhook",
+                    context.clone(),
+                )
+                .configuration(serde_json::json!({}))
+                .enabled(true)
+                .build(),
+            )
+            .await?;
+        Ok(Self {
+            backend,
+            pool,
+            group_id: group.id(),
+            sink_id: sink.id(),
+            subscription_id: tokio::sync::Mutex::new(None),
+            collection_id: tokio::sync::Mutex::new(None),
+            logical_telemetry,
+            postgres_telemetry,
+            sink_deliveries: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    fn query_options() -> QueryOptions {
+        QueryOptions::new(Vec::new(), Vec::new(), Some(100), None, true)
+            .expect("audit contract query options must be valid")
+    }
+
+    async fn collection_events(
+        &self,
+        collection_id: i32,
+    ) -> Result<Vec<StorageAuditEvent>, FixtureError> {
+        let (events, _) = self
+            .backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                vec![collection_id],
+                false,
+                StorageAuditEventFilters::new()
+                    .entity_type(Some(EntityType::Collection))
+                    .entity_id(Some(collection_id)),
+                Self::query_options(),
+            ))
+            .await?
+            .into_parts();
+        Ok(events)
+    }
+
+    async fn collection_event_count_by_name(
+        &self,
+        collection_name: &str,
+    ) -> Result<i64, FixtureError> {
+        let count = crate::storage::postgres::with_connection(&self.pool, async |connection| {
+            use crate::schema::events::dsl::{entity_name, entity_type, events};
+            events
+                .filter(entity_type.eq(EntityType::Collection.as_str()))
+                .filter(entity_name.eq(collection_name))
+                .count()
+                .get_result::<i64>(connection)
+                .await
+        })
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+        Ok(count)
+    }
+
+    async fn cleanup(&self) -> Result<(), FixtureError> {
+        let context = EventContext::system();
+        let stored_collection_id = *self.collection_id.lock().await;
+        if let (Some(collection_id), Some(subscription_id)) =
+            (stored_collection_id, *self.subscription_id.lock().await)
+        {
+            self.backend
+                .delete_event_subscription(StorageEventSubscriptionDelete::new(
+                    collection_id,
+                    subscription_id,
+                    context.clone(),
+                ))
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+        }
+        if let Some(stored_collection_id) = stored_collection_id {
+            self.backend
+                .collection_store()
+                .delete_collection(collection_id(stored_collection_id), &context)
+                .await?
+                .into_value();
+        }
+        self.backend
+            .delete_event_sink(StorageEventSinkDelete::new(self.sink_id, context.clone()))
+            .await?;
+        let _ = self
+            .backend
+            .delete_group(self.group_id, &context)
+            .await?
+            .into_value();
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl BackendAuditFixture for PostgresAuditContractFixture {
+    async fn committed_mutation(&self) -> Result<CommittedMutationProbe, FixtureError> {
+        let outcome = self
+            .backend
+            .collection_store()
+            .create_collection(
+                StorageCollectionCreate::new(
+                    prefix("audit_contract_collection"),
+                    "audited contract collection",
+                    group_id(self.group_id),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await?;
+        let id = outcome.value().id();
+        *self.collection_id.lock().await = Some(id);
+        let subscription = self
+            .backend
+            .create_event_subscription(
+                StorageEventSubscriptionCreate::builder(
+                    id,
+                    self.sink_id,
+                    prefix("audit_contract_subscription"),
+                    EventContext::system(),
+                )
+                .entity_types(vec![EntityType::Collection.as_str().to_string()])
+                .actions(vec![Action::Created.as_str().to_string()])
+                .routing(serde_json::json!({}))
+                .enabled(true)
+                .build(),
+            )
+            .await?;
+        *self.subscription_id.lock().await = Some(subscription.id());
+        let receipt = outcome
+            .audit()
+            .ok_or_else(|| std::io::Error::other("committed collection had no receipt"))?;
+        let event = self
+            .collection_events(id)
+            .await?
+            .into_iter()
+            .find(|event| event.clone().into_parts().0.id == receipt.sequence())
+            .ok_or_else(|| std::io::Error::other("receipt event was not queryable"))?;
+        Ok(CommittedMutationProbe::new(outcome.map(drop), event))
+    }
+
+    async fn unchanged_mutation(&self) -> Result<UnchangedMutationProbe, FixtureError> {
+        let id =
+            self.collection_id.lock().await.ok_or_else(|| {
+                std::io::Error::other("committed probe did not store a collection")
+            })?;
+        let before = self.collection_events(id).await?.len();
+        let outcome = self
+            .backend
+            .collection_store()
+            .update_collection(
+                collection_id(id),
+                StorageCollectionUpdate::new(None, None),
+                &EventContext::system(),
+            )
+            .await?;
+        let after = self.collection_events(id).await?.len();
+        Ok(UnchangedMutationProbe::new(
+            outcome.map(drop),
+            after.saturating_sub(before),
+        ))
+    }
+
+    async fn rolled_back_mutation(&self) -> Result<RollbackProbe, FixtureError> {
+        let name = prefix("audit_contract_rollback");
+        let event_count_before = self.collection_event_count_by_name(&name).await?;
+        let result = crate::storage::postgres::with_failpoint(
+            crate::storage::postgres::PostgresFailpoint::CollectionCreateAfterRecords,
+            self.backend.collection_store().create_collection(
+                StorageCollectionCreate::new(
+                    name.clone(),
+                    "must roll back",
+                    group_id(self.group_id),
+                    None,
+                ),
+                &EventContext::system(),
+            ),
+        )
+        .await;
+        if result.is_ok() {
+            return Err(std::io::Error::other("rollback failpoint did not fail").into());
+        }
+        let name_for_state = name.clone();
+        let state_count =
+            crate::storage::postgres::with_connection(&self.pool, async |connection| {
+                use crate::schema::collections::dsl::{collections, name as collection_name};
+                collections
+                    .filter(collection_name.eq(name_for_state))
+                    .count()
+                    .get_result::<i64>(connection)
+                    .await
+            })
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let event_count_after = self.collection_event_count_by_name(&name).await?;
+        Ok(RollbackProbe::new(
+            state_count != 0,
+            event_count_after != event_count_before,
+        ))
+    }
+
+    async fn fanout_to_recording_sink(&self) -> Result<FanoutProbe, FixtureError> {
+        let subscription_id = self.subscription_id.lock().await.ok_or_else(|| {
+            std::io::Error::other("committed probe did not create a subscription")
+        })?;
+        let fanout = EventFanoutSettings::new(1_000, 30_000)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        for _ in 0..10 {
+            self.backend.process_event_fanout_batch(fanout).await?;
+            let (deliveries, _) = self
+                .backend
+                .list_event_deliveries(
+                    StorageEventDeliveryListQuery::new(Self::query_options())
+                        .subscription_id(Some(subscription_id)),
+                )
+                .await?
+                .into_parts();
+            if !deliveries.is_empty() {
+                let durable_delivery_count = deliveries.len();
+                let settings = EventDeliverySettings::builder()
+                    .batch_size(1_000)
+                    .lock_timeout_ms(30_000)
+                    .transport_timeout_ms(25_000)
+                    .retry_backoff_base_ms(1_000)
+                    .retry_backoff_max_ms(10_000)
+                    .max_attempts(3)
+                    .build()
+                    .map_err(|error| std::io::Error::other(error.to_string()))?;
+                let resolver = ContractSinkResolver {
+                    recording: ContractRecordingSink {
+                        deliveries: self.sink_deliveries.clone(),
+                    },
+                    discard: ContractDiscardSink,
+                };
+                let (work, _) = self
+                    .backend
+                    .claim_event_delivery_batch(settings)
+                    .await?
+                    .into_parts();
+                for item in work {
+                    crate::events::process_event_delivery_work_item(
+                        &self.backend,
+                        settings,
+                        &resolver,
+                        item,
+                    )
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()))?;
+                }
+                return Ok(FanoutProbe::new(
+                    durable_delivery_count,
+                    AtomicUsize::load(self.sink_deliveries.as_ref(), Ordering::Relaxed),
+                ));
+            }
+        }
+        Ok(FanoutProbe::new(0, 0))
+    }
+
+    async fn telemetry_observations(&self) -> Result<TelemetryProbe, FixtureError> {
+        Ok(TelemetryProbe::new(
+            self.logical_telemetry
+                .operation_count("collections", "create"),
+            self.postgres_telemetry.operation_count(),
+            self.postgres_telemetry.failure_count(),
+        ))
+    }
+}
+
+#[actix_web::test]
+async fn every_registered_backend_satisfies_the_five_part_audit_contract() {
+    let _permit = postgres_permit().await;
+    let config = crate::tests::integration_test_config()
+        .expect("audit contract integration configuration should be initialized");
+    let pool = Data::new(crate::storage::postgres::init_postgres_pool(
+        &config.database_url,
+        8,
+    ));
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let fixture = PostgresAuditContractFixture::new(pool.get_ref().clone())
+                    .await
+                    .expect("PostgreSQL audit fixture should initialize");
+                let report = verify_backend_audit_contract(&fixture)
+                    .await
+                    .expect("certified PostgreSQL backend must satisfy the audit contract");
+                assert_eq!(report.checks(), 5);
+                fixture
+                    .cleanup()
+                    .await
+                    .expect("PostgreSQL audit fixture should clean up");
+            }
+        }
     }
 }
 
@@ -226,10 +654,11 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
                 prefix("collection_failpoint_group"),
                 Some("collection rollback owner".to_string()),
             ),
-            None,
+            &EventContext::system(),
         )
         .await
-        .expect("collection rollback owner group should be created");
+        .expect("collection rollback owner group should be created")
+        .into_value();
     let collection_name = prefix("collection_failpoint");
     let command = StorageCollectionCreate::new(
         collection_name.clone(),
@@ -248,7 +677,7 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
         crate::storage::postgres::PostgresFailpoint::CollectionCreateAfterRecords,
         backend
             .collection_store()
-            .create_collection(command, Some(&EventContext::system())),
+            .create_collection(command, &EventContext::system()),
     )
     .await
     .err()
@@ -267,10 +696,11 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
     .expect("collection rollback should remain queryable");
     assert_eq!(persisted, 0, "all collection records must roll back");
 
-    backend
-        .delete_group(group.id(), None)
+    let _ = backend
+        .delete_group(group.id(), &EventContext::system())
         .await
-        .expect("collection rollback owner group should be removed");
+        .expect("collection rollback owner group should be removed")
+        .into_value();
 }
 
 #[actix_web::test]
@@ -415,10 +845,11 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
                     initial_name,
                     Some("storage compatibility group".to_string()),
                 ),
-                None,
+                &EventContext::system(),
             )
             .await
-            .expect("certified backend should create groups");
+            .expect("certified backend should create groups")
+            .into_value();
 
         let loaded = backend
             .load_group(created.id())
@@ -437,10 +868,11 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .update_group(
                 created.id(),
                 StorageGroupUpdate::new(Some(renamed.clone())),
-                None,
+                &EventContext::system(),
             )
             .await
-            .expect("certified backend should update groups");
+            .expect("certified backend should update groups")
+            .into_value();
         assert_eq!(updated.name(), renamed);
 
         let list_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
@@ -463,9 +895,10 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         )
         .await;
         backend
-            .add_group_member(user.id, created.id(), None)
+            .add_group_member(user.id, created.id(), &EventContext::system())
             .await
-            .expect("certified backend should add group members");
+            .expect("certified backend should add group members")
+            .into_value();
 
         let members = backend
             .group_members(created.id())
@@ -504,9 +937,10 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         );
 
         backend
-            .remove_group_member(user.id, created.id(), None)
+            .remove_group_member(user.id, created.id(), &EventContext::system())
             .await
-            .expect("certified backend should remove group members");
+            .expect("certified backend should remove group members")
+            .into_value();
         assert_eq!(
             backend
                 .count_group_members(created.id(), query_options)
@@ -516,9 +950,10 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         );
         assert_eq!(
             backend
-                .delete_group(created.id(), None)
+                .delete_group(created.id(), &EventContext::system())
                 .await
-                .expect("certified backend should delete groups"),
+                .expect("certified backend should delete groups")
+                .into_value(),
             1
         );
     }
@@ -559,7 +994,8 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
                 &event_context,
             )
             .await
-            .expect("certified backend should replace principal settings");
+            .expect("certified backend should replace principal settings")
+            .into_value();
         assert_eq!(replaced.document()["theme"], "light");
 
         let merged = backend
@@ -571,7 +1007,8 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
                 &event_context,
             )
             .await
-            .expect("certified backend should merge principal settings");
+            .expect("certified backend should merge principal settings")
+            .into_value();
         assert_eq!(merged.document()["notifications"]["email"], true);
         assert_eq!(merged.document()["notifications"]["push"], true);
 
@@ -584,7 +1021,8 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
                 &event_context,
             )
             .await
-            .expect("certified backend should apply principal settings JSON Patch");
+            .expect("certified backend should apply principal settings JSON Patch")
+            .into_value();
         assert_eq!(patched.document()["theme"], "dark");
 
         let reset = backend
@@ -594,7 +1032,8 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
                 &event_context,
             )
             .await
-            .expect("certified backend should reset principal settings");
+            .expect("certified backend should reset principal settings")
+            .into_value();
         assert_eq!(reset.document(), &serde_json::json!({}));
     }
 }
@@ -746,7 +1185,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 "complete-user-contract-password-hash",
                 Some("Complete Contract".to_string()),
                 Some("complete-contract@example.invalid".to_string()),
-                Some(event_context.clone()),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should create users");
@@ -809,7 +1248,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 None,
                 Some("Updated Contract".to_string()),
                 None,
-                Some(event_context.clone()),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should update users");
@@ -817,6 +1256,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .set_user_password(StorageUserPasswordUpdate::new(
                 contract_user_id,
                 "updated-complete-user-contract-password-hash",
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should replace local passwords");
@@ -830,10 +1270,12 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         .expect("identity compatibility token observation should be valid");
         let first_hash = prefix("complete_token_hash");
         let first_token = backend
-            .create_token(
-                StorageTokenCreate::new(contract_user_id, &first_hash, token_policy)
-                    .event_context(Some(event_context.clone())),
-            )
+            .create_token(StorageTokenCreate::new(
+                contract_user_id,
+                &first_hash,
+                token_policy,
+                event_context.clone(),
+            ))
             .await
             .expect("certified backend should create tokens");
         let first_token_id = first_token.id();
@@ -860,7 +1302,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 &second_hash,
                 None,
                 token_policy,
-                Some(event_context.clone()),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should renew tokens");
@@ -870,7 +1312,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .revoke_token(StorageTokenRevoke::new(
                     first_token_id,
                     contract_user_id,
-                    Some(event_context.clone()),
+                    event_context.clone(),
                 ))
                 .await
                 .expect("certified backend should revoke principal-scoped tokens"),
@@ -881,6 +1323,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .revoke_token_by_hash(StorageTokenHashRevoke::new(
                     Some(contract_user_id),
                     second_hash,
+                    event_context.clone(),
                 ))
                 .await
                 .expect("certified backend should revoke HMAC-keyed tokens"),
@@ -892,25 +1335,32 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 contract_user_id,
                 third_hash,
                 token_policy,
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should create a token for bulk revocation");
         assert_eq!(
             backend
-                .revoke_all_principal_tokens(contract_user_id)
+                .revoke_all_principal_tokens(StoragePrincipalTokensRevoke::new(
+                    contract_user_id,
+                    event_context.clone(),
+                ))
                 .await
                 .expect("certified backend should revoke all principal tokens"),
             1
         );
         backend
-            .anonymize_user(contract_user_id)
+            .anonymize_user(StorageUserAnonymize::new(
+                contract_user_id,
+                event_context.clone(),
+            ))
             .await
             .expect("certified backend should anonymize users");
         assert_eq!(
             backend
                 .delete_user(StorageUserDelete::new(
                     contract_user_id,
-                    Some(event_context.clone()),
+                    event_context.clone(),
                 ))
                 .await
                 .expect("certified backend should delete users"),
@@ -1139,14 +1589,16 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
                 prefix("external_contract_manual_group"),
                 Some("manual membership must survive provider sync".to_string()),
             ),
-            None,
+            &EventContext::system(),
         )
         .await
-        .expect("manual group should be created");
-    backend
-        .add_group_member(first_id, manual_group.id(), None)
+        .expect("manual group should be created")
+        .into_value();
+    let _ = backend
+        .add_group_member(first_id, manual_group.id(), &EventContext::system())
         .await
-        .expect("manual membership should be created");
+        .expect("manual membership should be created")
+        .into_value();
 
     let renamed_id = backend
         .sync_external_user(request(
@@ -1997,7 +2449,7 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
                 collection_id,
                 name.clone(),
                 definition,
-                Some(event_context.clone()),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should create an export template");
@@ -2050,7 +2502,7 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
                     "Updated {{ object.name }}",
                     "fragment",
                 ),
-                Some(event_context.clone()),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should replace an export template");
@@ -2059,7 +2511,7 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
         backend
             .delete_export_template(StorageExportTemplateDelete::new(
                 template_id,
-                Some(event_context.clone()),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should delete an export template");
@@ -2338,9 +2790,10 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
         let collections = backend.collection_store();
         let created = backend
             .collection_store()
-            .create_collection(command, None)
+            .create_collection(command, &EventContext::system())
             .await
-            .expect("certified backend should create collections");
+            .expect("certified backend should create collections")
+            .into_value();
         let updated = collections
             .update_collection(
                 collection_id(created.id()),
@@ -2348,20 +2801,27 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
                     None,
                     Some("updated collection lifecycle".to_string()),
                 ),
-                Some(&EventContext::system()),
+                &EventContext::system(),
             )
             .await
-            .expect("certified backend should update collections");
+            .expect("certified backend should update collections")
+            .into_value();
         assert_eq!(updated.description(), "updated collection lifecycle");
         let moved = collections
-            .move_collection(collection_id(created.id()), collection_id(1), None)
+            .move_collection(
+                collection_id(created.id()),
+                collection_id(1),
+                &EventContext::system(),
+            )
             .await
-            .expect("certified backend should move collections");
+            .expect("certified backend should move collections")
+            .into_value();
         assert_eq!(moved.parent_collection_id(), Some(1));
         collections
-            .delete_collection(collection_id(created.id()), Some(&EventContext::system()))
+            .delete_collection(collection_id(created.id()), &EventContext::system())
             .await
-            .expect("certified backend should delete collections");
+            .expect("certified backend should delete collections")
+            .into_value();
     }
 
     group
@@ -2386,10 +2846,11 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
                     group_id(group.id),
                     None,
                 ),
-                None,
+                &EventContext::system(),
             )
             .await
-            .expect("certified backend should create the class collection");
+            .expect("certified backend should create the class collection")
+            .into_value();
         let classes = backend.class_store();
         let class_name = prefix("class_lifecycle");
         let created = classes
@@ -2405,10 +2866,11 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
                 })))
                 .validate_schema(true)
                 .build(),
-                Some(&EventContext::system()),
+                &EventContext::system(),
             )
             .await
-            .expect("certified backend should create classes");
+            .expect("certified backend should create classes")
+            .into_value();
         assert_eq!(created.collection_id().id(), collection.id());
         assert!(created.validates_schema());
 
@@ -2429,10 +2891,11 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
                 StorageClassUpdate::builder()
                     .description(Some("updated class lifecycle".to_string()))
                     .build(),
-                Some(&EventContext::system()),
+                &EventContext::system(),
             )
             .await
-            .expect("certified backend should update classes");
+            .expect("certified backend should update classes")
+            .into_value();
         assert_eq!(updated.description(), "updated class lifecycle");
         assert_eq!(
             classes
@@ -2455,9 +2918,10 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
             .await
             .expect("certified backend should resolve the updated class");
         classes
-            .delete_class(&updated_target, Some(&EventContext::system()))
+            .delete_class(&updated_target, &EventContext::system())
             .await
-            .expect("certified backend should delete classes");
+            .expect("certified backend should delete classes")
+            .into_value();
         assert_eq!(
             classes
                 .resolve_class(StorageClassSelector::Id(updated.id()))
@@ -2468,9 +2932,10 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
             StorageErrorKind::NotFound
         );
         collections
-            .delete_collection(collection_id(collection.id()), None)
+            .delete_collection(collection_id(collection.id()), &EventContext::system())
             .await
-            .expect("class lifecycle collection should be removable");
+            .expect("class lifecycle collection should be removable")
+            .into_value();
     }
 
     group
@@ -2591,14 +3056,12 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
         let key = AuthorizationGrantKey::new(collection_id, group.id);
         backend
-            .apply_local_collection_grant(
-                AuthorizationGrantMutation::new(
-                    key,
-                    [AuthorizationPermission::ReadCollection],
-                    false,
-                )
-                .event_context(EventContext::system()),
-            )
+            .apply_local_collection_grant(AuthorizationGrantMutation::new(
+                key,
+                [AuthorizationPermission::ReadCollection],
+                false,
+                EventContext::system(),
+            ))
             .await
             .expect("certified backend should apply a local grant");
         let grant = backend
@@ -2834,14 +3297,12 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         }));
 
         backend
-            .revoke_local_collection_grant(
-                AuthorizationGrantMutation::new(
-                    key,
-                    [AuthorizationPermission::ReadCollection],
-                    false,
-                )
-                .event_context(EventContext::system()),
-            )
+            .revoke_local_collection_grant(AuthorizationGrantMutation::new(
+                key,
+                [AuthorizationPermission::ReadCollection],
+                false,
+                EventContext::system(),
+            ))
             .await
             .expect("certified backend should revoke selected local permissions");
         assert!(
@@ -2851,9 +3312,10 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .expect("revoked local grant should deny")
         );
         backend
-            .revoke_all_local_collection_grants(
-                AuthorizationGrantDelete::new(key).event_context(EventContext::system()),
-            )
+            .revoke_all_local_collection_grants(AuthorizationGrantDelete::new(
+                key,
+                EventContext::system(),
+            ))
             .await
             .expect("certified backend should remove the local grant row");
     }

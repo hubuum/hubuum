@@ -53,9 +53,10 @@ impl ObjectRelationService {
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         let prepared = prepared_object_relation_to_storage(prepared);
         self.storage
-            .create_object_relation(&prepared, Some(context))
+            .create_object_relation(&prepared, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(resolved_object_relation_from_storage)
     }
 
@@ -66,9 +67,10 @@ impl ObjectRelationService {
     ) -> Result<(), ApiError> {
         let target = resolved_object_relation_to_storage(target);
         self.storage
-            .delete_object_relation(&target, Some(context))
+            .delete_object_relation(&target, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -162,7 +164,7 @@ mod tests {
                         prefix: prefix.clone(),
                     };
                     Self {
-                        services: Services::from_resource_storage(PostgresStorage::new(
+                        services: Services::from_resource_storage(PostgresStorage::unobserved(
                             pool.get_ref().clone(),
                         )),
                         storage: None,
@@ -400,7 +402,7 @@ mod tests {
     #[case::postgres(ContractImplementation::PostgresAdapter)]
     #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn object_relation_contract_supports_event_suppressed_compatibility_writes(
+    async fn object_relation_contract_audits_compatibility_writes_as_system(
         #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "event_suppressed").await;
@@ -415,13 +417,14 @@ mod tests {
                         class_relation_id: fixture.class_relation.relation().id,
                     },
                 ),
-                None,
+                &EventContext::system(),
             )
             .await
             .expect("event-suppressed relation should create");
-        let relation_id = crate::services::storage_boundary::object_relation_from_storage(created)
-            .expect("valid stored object relation")
-            .id;
+        let relation_id =
+            crate::services::storage_boundary::object_relation_from_storage(created.into_value())
+                .expect("valid stored object relation")
+                .id;
         lifecycle
             .resolve_object_relation(crate::storage::StorageObjectRelationSelector::Id(
                 relation_id,
@@ -429,9 +432,10 @@ mod tests {
             .await
             .expect("event-suppressed relation should resolve");
         lifecycle
-            .delete_object_relation_by_id(relation_id, None)
+            .delete_object_relation_by_id(relation_id, &EventContext::system())
             .await
-            .expect("event-suppressed relation should delete");
+            .expect("event-suppressed relation should delete")
+            .into_value();
 
         assert!(
             lifecycle
@@ -442,7 +446,7 @@ mod tests {
                 .is_err()
         );
         if let Some(storage) = harness.storage.as_ref() {
-            assert!(storage.object_relation_events().await.is_empty());
+            assert_eq!(storage.object_relation_events().await.len(), 2);
         }
         harness.finish().await;
     }

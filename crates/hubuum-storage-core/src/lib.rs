@@ -24,7 +24,9 @@ mod identity_tokens;
 mod identity_users;
 mod import_workflow;
 mod inventory;
+mod maintenance;
 mod metrics;
+mod mutation;
 mod object_aggregate;
 mod operational;
 mod record;
@@ -35,6 +37,7 @@ mod resource_lifecycle;
 mod restore;
 mod task_execution;
 mod task_queue;
+mod telemetry;
 mod transaction;
 mod unified_search;
 mod worker_notifications;
@@ -134,12 +137,13 @@ pub use identity_resources::{
     StoragePrincipalBuilder, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
 };
 pub use identity_tokens::{
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenRenew,
-    StorageTokenRevoke, TokenStorage,
+    StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenRenew, StorageTokenRevoke, TokenStorage,
 };
 pub use identity_users::{
-    StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate, UserStorage,
+    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    UserStorage,
 };
 pub use import_workflow::{
     ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportAtomicity,
@@ -166,12 +170,14 @@ pub use import_workflow::{
     StorageImportRevision, StorageImportTimestamps, StorageImportWriteCondition,
 };
 pub use inventory::{InventoryStorage, StorageInventoryCounts, StorageObjectsByClassCount};
+pub use maintenance::MaintenanceStorage;
 pub use metrics::{
     EventMetricsSnapshot, ExportTemplateMetricIdentity, InventoryGaugeSnapshot,
     InventoryMetricsSnapshot, MetricsStorage, StoragePoolAcquisitionState, StoragePoolCapacity,
     StoragePoolConnectionState, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
     TaskGaugeLastTerminal, TaskGaugeSnapshot,
 };
+pub use mutation::{AuditReceipt, MutationOutcome};
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder, StorageComputedFieldSelector,
@@ -248,6 +254,7 @@ pub use task_queue::{
     StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
     TaskQueueStorage,
 };
+pub use telemetry::{StorageOperationObservation, StorageTelemetry};
 pub use transaction::{
     StorageTransaction, StorageTransactionFuture, TransactionalClassRelations,
     TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,

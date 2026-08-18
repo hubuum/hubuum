@@ -13,7 +13,7 @@ pub(crate) async fn resolve_principal_names(
 ) -> Result<PrincipalNames, ApiError> {
     Ok(
         hubuum_storage_postgres::operations::history::resolve_principal_names(
-            &PostgresRuntime::new(pool.clone()),
+            &PostgresRuntime::unobserved(pool.clone()),
             principal_ids,
         )
         .await

@@ -13,9 +13,9 @@ use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     AuthenticationResourceScope, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
-    StorageIdentityPage, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
-    StorageTokenRevoke,
+    StorageIdentityPage, StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
+    StorageTokenRenew, StorageTokenRevoke,
 };
 use serde_json::{Value, json};
 
@@ -353,14 +353,6 @@ pub async fn revoke_token(
     let (token_id, principal_id, event_context) = request.into_parts();
     validate_positive_id(token_id, "token id")?;
     validate_positive_id(principal_id, "principal id")?;
-    let Some(event_context) = event_context else {
-        return runtime
-            .with_connection(async move |connection| {
-                revoke_token_without_event(connection, token_id, principal_id).await
-            })
-            .await;
-    };
-
     runtime
         .with_transaction(
             async move |connection| -> Result<usize, PostgresStorageError> {
@@ -430,38 +422,123 @@ pub async fn revoke_token_by_hash(
     runtime: &PostgresRuntime,
     request: StorageTokenHashRevoke,
 ) -> Result<usize, PostgresStorageError> {
-    let (principal_id, token_hash) = request.into_parts();
+    let (principal_id, token_hash, event_context) = request.into_parts();
     if let Some(principal_id) = principal_id {
         validate_positive_id(principal_id, "principal id")?;
     }
     runtime
-        .with_connection(async move |connection| {
-            let records = crate::schema::tokens::table
+        .with_transaction(async move |connection| {
+            let before = crate::schema::tokens::table
                 .filter(crate::schema::tokens::token.eq(token_hash))
-                .filter(crate::schema::tokens::revoked_at.is_null());
-            if let Some(principal_id) = principal_id {
-                diesel::update(records.filter(crate::schema::tokens::principal_id.eq(principal_id)))
-                    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
-                    .execute(connection)
-                    .await
-            } else {
-                diesel::update(records)
-                    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
-                    .execute(connection)
-                    .await
+                .filter(crate::schema::tokens::revoked_at.is_null())
+                .for_update()
+                .select(TokenRow::as_select())
+                .first::<TokenRow>(connection)
+                .await
+                .optional()?;
+            let Some(before) = before else {
+                return Ok(0);
+            };
+            if principal_id.is_some_and(|principal_id| principal_id != before.principal_id) {
+                return Ok(0);
             }
+            let scope = load_token_scope(
+                connection,
+                AuthenticationTokenScopeQuery::new(
+                    before.id,
+                    before.permission_scoped,
+                    before.resource_scoped,
+                ),
+            )
+            .await?;
+            let after = diesel::update(
+                crate::schema::tokens::table.filter(crate::schema::tokens::id.eq(before.id)),
+            )
+            .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+            .returning(TokenRow::as_returning())
+            .get_result::<TokenRow>(connection)
+            .await?;
+            let event = token_event(
+                &after,
+                Action::Revoked,
+                &event_context,
+                format!(
+                    "Token {} revoked for principal {}",
+                    after.id, after.principal_id
+                ),
+                None,
+            )?
+            .with_before(before.snapshot(scope.as_ref()))
+            .with_after(after.snapshot(scope.as_ref()));
+            append_event(connection, &event).await?;
+            Ok::<_, PostgresStorageError>(1)
         })
         .await
 }
 
 pub async fn revoke_all_principal_tokens(
     runtime: &PostgresRuntime,
-    principal_id: i32,
+    request: StoragePrincipalTokensRevoke,
 ) -> Result<usize, PostgresStorageError> {
+    let (principal_id, event_context) = request.into_parts();
     validate_positive_id(principal_id, "principal id")?;
     runtime
-        .with_connection(async move |connection| {
-            revoke_all_principal_tokens_on_connection(connection, principal_id).await
+        .with_transaction(async move |connection| {
+            let before = crate::schema::tokens::table
+                .filter(crate::schema::tokens::principal_id.eq(principal_id))
+                .filter(crate::schema::tokens::revoked_at.is_null())
+                .for_update()
+                .select(TokenRow::as_select())
+                .load::<TokenRow>(connection)
+                .await?;
+            if before.is_empty() {
+                return Ok(0);
+            }
+            let mut scopes = HashMap::with_capacity(before.len());
+            for token in &before {
+                let scope = load_token_scope(
+                    connection,
+                    AuthenticationTokenScopeQuery::new(
+                        token.id,
+                        token.permission_scoped,
+                        token.resource_scoped,
+                    ),
+                )
+                .await?;
+                scopes.insert(token.id, scope);
+            }
+            let token_ids = before.iter().map(|token| token.id).collect::<Vec<_>>();
+            let after = diesel::update(
+                crate::schema::tokens::table.filter(crate::schema::tokens::id.eq_any(token_ids)),
+            )
+            .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+            .returning(TokenRow::as_returning())
+            .get_results::<TokenRow>(connection)
+            .await?;
+            let before_by_id = before
+                .into_iter()
+                .map(|token| (token.id, token))
+                .collect::<HashMap<_, _>>();
+            for token in &after {
+                let before = before_by_id.get(&token.id).ok_or_else(|| {
+                    PostgresStorageError::database("bulk token revocation lost its locked row")
+                })?;
+                let scope = scopes.get(&token.id).and_then(Option::as_ref);
+                let event = token_event(
+                    token,
+                    Action::Revoked,
+                    &event_context,
+                    format!(
+                        "Token {} revoked for principal {}",
+                        token.id, token.principal_id
+                    ),
+                    None,
+                )?
+                .with_before(before.snapshot(scope))
+                .with_after(token.snapshot(scope));
+                append_event(connection, &event).await?;
+            }
+            Ok::<_, PostgresStorageError>(after.len())
         })
         .await
 }
@@ -538,7 +615,7 @@ struct TokenCreateParts {
     expires_at: Option<NaiveDateTime>,
     scope: Option<AuthenticationTokenScope>,
     policy: hubuum_storage_core::StorageTokenIssuancePolicy,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
     renewed_from_token_id: Option<i32>,
     principal_already_checked: bool,
 }
@@ -609,20 +686,18 @@ async fn create_token_row(
     )
     .await?;
 
-    if let Some(context) = event_context {
-        let event = token_event(
-            &token,
-            Action::Created,
-            &context,
-            format!(
-                "Token {} created for principal {}",
-                token.id, token.principal_id
-            ),
-            renewed_from_token_id,
-        )?
-        .with_after(token.snapshot(scope.as_ref()));
-        append_event(connection, &event).await?;
-    }
+    let event = token_event(
+        &token,
+        Action::Created,
+        &event_context,
+        format!(
+            "Token {} created for principal {}",
+            token.id, token.principal_id
+        ),
+        renewed_from_token_id,
+    )?
+    .with_after(token.snapshot(scope.as_ref()));
+    append_event(connection, &event).await?;
     Ok(token)
 }
 
@@ -957,23 +1032,6 @@ fn build_token_query<'query>(
     };
     apply_token_filters!(records, options);
     Ok(records)
-}
-
-async fn revoke_token_without_event(
-    connection: &mut PostgresConnection,
-    token_id: i32,
-    principal_id: i32,
-) -> Result<usize, PostgresStorageError> {
-    diesel::update(
-        crate::schema::tokens::table
-            .filter(crate::schema::tokens::id.eq(token_id))
-            .filter(crate::schema::tokens::principal_id.eq(principal_id))
-            .filter(crate::schema::tokens::revoked_at.is_null()),
-    )
-    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
-    .execute(connection)
-    .await
-    .map_err(PostgresStorageError::from)
 }
 
 fn token_event(

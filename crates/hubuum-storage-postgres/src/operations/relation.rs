@@ -7,8 +7,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::normalize_template_alias;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    StorageClassRelation, StorageClassRelationCreate, StorageObject, StorageObjectRelation,
-    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    MutationOutcome, StorageClassRelation, StorageClassRelationCreate, StorageObject,
+    StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
     StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePreparedClassRelation,
     StoragePreparedObjectRelation, StorageResolvedClassRelation, StorageResolvedObjectRelation,
 };
@@ -191,13 +191,13 @@ pub(crate) async fn resolve_class_relation_on(
 pub async fn create_class_relation(
     runtime: &PostgresRuntime,
     prepared: &StoragePreparedClassRelation,
-    context: Option<&EventContext>,
-) -> Result<StorageResolvedClassRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
     let prepared = prepared.clone();
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            create_class_relation_on(connection, &prepared, context.as_ref()).await
+            create_class_relation_on(connection, &prepared, &context).await
         })
         .await
 }
@@ -205,8 +205,8 @@ pub async fn create_class_relation(
 pub(crate) async fn create_class_relation_on(
     connection: &mut PostgresConnection,
     prepared: &StoragePreparedClassRelation,
-    context: Option<&EventContext>,
-) -> Result<StorageResolvedClassRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
     let command = normalize_class_relation_create(prepared.command().clone())?;
     let from_class = lock_class(connection, command.from_class_id()).await?;
     let to_class = lock_class(connection, command.to_class_id()).await?;
@@ -218,16 +218,16 @@ pub(crate) async fn create_class_relation_on(
         ));
     }
     let relation = insert_class_relation(connection, &command).await?;
-    if let Some(context) = context {
-        let event =
-            class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
-                .with_after(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(StorageResolvedClassRelation::new(
-        relation.into_storage(),
-        from_class.into_storage(),
-        to_class.into_storage(),
+    let event = class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
+        .with_after(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed(
+        StorageResolvedClassRelation::new(
+            relation.into_storage(),
+            from_class.into_storage(),
+            to_class.into_storage(),
+        ),
+        audit,
     ))
 }
 
@@ -235,14 +235,14 @@ pub(crate) async fn create_class_relation_on(
 pub async fn delete_class_relation(
     runtime: &PostgresRuntime,
     target: &StorageResolvedClassRelation,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "class relation id")?;
     let target = target.clone();
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            delete_class_relation_on(connection, &target, context.as_ref()).await
+            delete_class_relation_on(connection, &target, &context).await
         })
         .await
 }
@@ -250,8 +250,8 @@ pub async fn delete_class_relation(
 pub(crate) async fn delete_class_relation_on(
     connection: &mut PostgresConnection,
     target: &StorageResolvedClassRelation,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "class relation id")?;
     let relation = lock_class_relation(connection, target.relation().metadata().id().id()).await?;
     let from_class = lock_class(connection, relation.from_hubuum_class_id).await?;
@@ -265,33 +265,23 @@ pub(crate) async fn delete_class_relation_on(
         ));
     }
     delete_class_relation_row(connection, relation.id).await?;
-    if let Some(context) = context {
-        let event =
-            class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
-                .with_before(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(())
+    let event = class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
+        .with_before(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed((), audit))
 }
 
 /// Create a class relation from a validated command.
 pub async fn create_class_relation_from_command(
     runtime: &PostgresRuntime,
     command: StorageClassRelationCreate,
-    context: Option<&EventContext>,
-) -> Result<StorageClassRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageClassRelation>, PostgresStorageError> {
     let command = normalize_class_relation_create(command)?;
-    let context = context.cloned();
-    if context.is_none() {
-        return runtime
-            .with_connection(async move |connection| {
-                create_class_relation_from_command_on(connection, command, context.as_ref()).await
-            })
-            .await;
-    }
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            create_class_relation_from_command_on(connection, command, context.as_ref()).await
+            create_class_relation_from_command_on(connection, command, &context).await
         })
         .await
 }
@@ -299,39 +289,29 @@ pub async fn create_class_relation_from_command(
 pub(crate) async fn create_class_relation_from_command_on(
     connection: &mut PostgresConnection,
     command: StorageClassRelationCreate,
-    context: Option<&EventContext>,
-) -> Result<StorageClassRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageClassRelation>, PostgresStorageError> {
     let command = normalize_class_relation_create(command)?;
     let relation = insert_class_relation(connection, &command).await?;
-    if let Some(context) = context {
-        let from_class = load_class(connection, relation.from_hubuum_class_id).await?;
-        let to_class = load_class(connection, relation.to_hubuum_class_id).await?;
-        let event =
-            class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
-                .with_after(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(relation.into_storage())
+    let from_class = load_class(connection, relation.from_hubuum_class_id).await?;
+    let to_class = load_class(connection, relation.to_hubuum_class_id).await?;
+    let event = class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
+        .with_after(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed(relation.into_storage(), audit))
 }
 
-/// Delete a class relation by identifier, optionally recording an event.
+/// Delete a class relation by identifier and record its event atomically.
 pub async fn delete_class_relation_by_id(
     runtime: &PostgresRuntime,
     relation_id: i32,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(relation_id, "class relation id")?;
-    let context = context.cloned();
-    if context.is_none() {
-        return runtime
-            .with_connection(async move |connection| {
-                delete_class_relation_by_id_on(connection, relation_id, context.as_ref()).await
-            })
-            .await;
-    }
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            delete_class_relation_by_id_on(connection, relation_id, context.as_ref()).await
+            delete_class_relation_by_id_on(connection, relation_id, &context).await
         })
         .await
 }
@@ -339,23 +319,17 @@ pub async fn delete_class_relation_by_id(
 pub(crate) async fn delete_class_relation_by_id_on(
     connection: &mut PostgresConnection,
     relation_id: i32,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(relation_id, "class relation id")?;
-    if context.is_none() {
-        return delete_class_relation_row(connection, relation_id).await;
-    }
     let relation = lock_class_relation(connection, relation_id).await?;
     let from_class = load_class(connection, relation.from_hubuum_class_id).await?;
     let to_class = load_class(connection, relation.to_hubuum_class_id).await?;
     delete_class_relation_row(connection, relation.id).await?;
-    if let Some(context) = context {
-        let event =
-            class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
-                .with_before(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(())
+    let event = class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
+        .with_before(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed((), audit))
 }
 
 /// Resolve and validate a prospective object relation before authorization.
@@ -478,13 +452,13 @@ pub(crate) async fn resolve_object_relation_on(
 pub async fn create_object_relation(
     runtime: &PostgresRuntime,
     prepared: &StoragePreparedObjectRelation,
-    context: Option<&EventContext>,
-) -> Result<StorageResolvedObjectRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
     let prepared = prepared.clone();
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            create_object_relation_on(connection, &prepared, context.as_ref()).await
+            create_object_relation_on(connection, &prepared, &context).await
         })
         .await
 }
@@ -492,8 +466,8 @@ pub async fn create_object_relation(
 pub(crate) async fn create_object_relation_on(
     connection: &mut PostgresConnection,
     prepared: &StoragePreparedObjectRelation,
-    context: Option<&EventContext>,
-) -> Result<StorageResolvedObjectRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
     let command = normalize_object_relation_create(*prepared.command())?;
     let (from_object, to_object) =
         load_object_endpoints(connection, command.from_object_id(), command.to_object_id()).await?;
@@ -518,17 +492,18 @@ pub(crate) async fn create_object_relation_on(
         prepared.class_relation(),
     )?;
     let relation = insert_object_relation(connection, command).await?;
-    if let Some(context) = context {
-        let event =
-            object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
-                .with_after(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(StorageResolvedObjectRelation::new(
-        relation.into_storage(),
-        from_object.into_storage(),
-        to_object.into_storage(),
-        prepared.class_relation().clone(),
+    let event =
+        object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
+            .with_after(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed(
+        StorageResolvedObjectRelation::new(
+            relation.into_storage(),
+            from_object.into_storage(),
+            to_object.into_storage(),
+            prepared.class_relation().clone(),
+        ),
+        audit,
     ))
 }
 
@@ -536,14 +511,14 @@ pub(crate) async fn create_object_relation_on(
 pub async fn delete_object_relation(
     runtime: &PostgresRuntime,
     target: &StorageResolvedObjectRelation,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "object relation id")?;
     let target = target.clone();
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            delete_object_relation_on(connection, &target, context.as_ref()).await
+            delete_object_relation_on(connection, &target, &context).await
         })
         .await
 }
@@ -551,8 +526,8 @@ pub async fn delete_object_relation(
 pub(crate) async fn delete_object_relation_on(
     connection: &mut PostgresConnection,
     target: &StorageResolvedObjectRelation,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "object relation id")?;
     let relation = lock_object_relation(connection, target.relation().metadata().id().id()).await?;
     let (from_object, to_object) = load_object_endpoints(
@@ -570,33 +545,24 @@ pub(crate) async fn delete_object_relation_on(
         ));
     }
     delete_object_relation_row(connection, relation.id).await?;
-    if let Some(context) = context {
-        let event =
-            object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
-                .with_before(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(())
+    let event =
+        object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
+            .with_before(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed((), audit))
 }
 
 /// Create an object relation from a validated command.
 pub async fn create_object_relation_from_command(
     runtime: &PostgresRuntime,
     command: StorageObjectRelationCreate,
-    context: Option<&EventContext>,
-) -> Result<StorageObjectRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageObjectRelation>, PostgresStorageError> {
     let command = normalize_object_relation_create(command)?;
-    let context = context.cloned();
-    if context.is_none() {
-        return runtime
-            .with_connection(async move |connection| {
-                create_object_relation_from_command_on(connection, command, context.as_ref()).await
-            })
-            .await;
-    }
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            create_object_relation_from_command_on(connection, command, context.as_ref()).await
+            create_object_relation_from_command_on(connection, command, &context).await
         })
         .await
 }
@@ -604,40 +570,31 @@ pub async fn create_object_relation_from_command(
 pub(crate) async fn create_object_relation_from_command_on(
     connection: &mut PostgresConnection,
     command: StorageObjectRelationCreate,
-    context: Option<&EventContext>,
-) -> Result<StorageObjectRelation, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageObjectRelation>, PostgresStorageError> {
     let command = normalize_object_relation_create(command)?;
     let (from_object, to_object) =
         load_object_endpoints(connection, command.from_object_id(), command.to_object_id()).await?;
     validate_direct_object_endpoints(&from_object, &to_object)?;
     let relation = insert_object_relation(connection, command).await?;
-    if let Some(context) = context {
-        let event =
-            object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
-                .with_after(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(relation.into_storage())
+    let event =
+        object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
+            .with_after(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed(relation.into_storage(), audit))
 }
 
-/// Delete an object relation by identifier, optionally recording an event.
+/// Delete an object relation by identifier and record its event atomically.
 pub async fn delete_object_relation_by_id(
     runtime: &PostgresRuntime,
     relation_id: i32,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(relation_id, "object relation id")?;
-    let context = context.cloned();
-    if context.is_none() {
-        return runtime
-            .with_connection(async move |connection| {
-                delete_object_relation_by_id_on(connection, relation_id, context.as_ref()).await
-            })
-            .await;
-    }
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            delete_object_relation_by_id_on(connection, relation_id, context.as_ref()).await
+            delete_object_relation_by_id_on(connection, relation_id, &context).await
         })
         .await
 }
@@ -645,12 +602,9 @@ pub async fn delete_object_relation_by_id(
 pub(crate) async fn delete_object_relation_by_id_on(
     connection: &mut PostgresConnection,
     relation_id: i32,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(relation_id, "object relation id")?;
-    if context.is_none() {
-        return delete_object_relation_row(connection, relation_id).await;
-    }
     let relation = lock_object_relation(connection, relation_id).await?;
     let (from_object, to_object) = load_object_endpoints(
         connection,
@@ -659,13 +613,11 @@ pub(crate) async fn delete_object_relation_by_id_on(
     )
     .await?;
     delete_object_relation_row(connection, relation.id).await?;
-    if let Some(context) = context {
-        let event =
-            object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
-                .with_before(relation.snapshot());
-        append_event(connection, &event).await?;
-    }
-    Ok(())
+    let event =
+        object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
+            .with_before(relation.snapshot());
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(MutationOutcome::committed((), audit))
 }
 
 pub(crate) fn normalize_class_relation_create(

@@ -211,7 +211,7 @@ pub async fn apply_local_collection_grant(
     let key = mutation.key();
     let requested = mutation.permissions().to_vec();
     let replace_existing = mutation.replace_existing();
-    let event_context = mutation.event_context_value().cloned();
+    let event_context = mutation.event_context().clone();
     runtime
         .with_transaction(async move |connection| {
             let before_revision = lock_permission_owner(connection, key.collection_id()).await?;
@@ -246,25 +246,22 @@ pub async fn apply_local_collection_grant(
                         .await?
                 }
             };
-            if let Some(context) = event_context.as_ref() {
-                let after_revision =
-                    permission_owner_revision(connection, key.collection_id()).await?;
-                append_permission_event(
-                    connection,
-                    PermissionEvent {
-                        action: Action::Granted,
-                        context,
-                        before: before.as_ref(),
-                        after: &after,
-                        before_revision,
-                        after_revision,
-                        requested: &requested,
-                        replace_existing: Some(replace_existing),
-                        removes_grant: false,
-                    },
-                )
-                .await?;
-            }
+            let after_revision = permission_owner_revision(connection, key.collection_id()).await?;
+            append_permission_event(
+                connection,
+                PermissionEvent {
+                    action: Action::Granted,
+                    context: &event_context,
+                    before: before.as_ref(),
+                    after: &after,
+                    before_revision,
+                    after_revision,
+                    requested: &requested,
+                    replace_existing: Some(replace_existing),
+                    removes_grant: false,
+                },
+            )
+            .await?;
             Ok::<_, PostgresStorageError>(after.into_storage())
         })
         .await
@@ -276,7 +273,7 @@ pub async fn revoke_local_collection_grant(
 ) -> Result<AuthorizationGrant, PostgresStorageError> {
     let key = mutation.key();
     let requested = mutation.permissions().to_vec();
-    let event_context = mutation.event_context_value().cloned();
+    let event_context = mutation.event_context().clone();
     runtime
         .with_transaction(async move |connection| {
             let before_revision = lock_permission_owner(connection, key.collection_id()).await?;
@@ -294,25 +291,22 @@ pub async fn revoke_local_collection_grant(
             .set(UpdatePermission::revoke(&requested))
             .get_result::<PermissionRow>(connection)
             .await?;
-            if let Some(context) = event_context.as_ref() {
-                let after_revision =
-                    permission_owner_revision(connection, key.collection_id()).await?;
-                append_permission_event(
-                    connection,
-                    PermissionEvent {
-                        action: Action::Revoked,
-                        context,
-                        before: Some(&before),
-                        after: &after,
-                        before_revision,
-                        after_revision,
-                        requested: &requested,
-                        replace_existing: None,
-                        removes_grant: false,
-                    },
-                )
-                .await?;
-            }
+            let after_revision = permission_owner_revision(connection, key.collection_id()).await?;
+            append_permission_event(
+                connection,
+                PermissionEvent {
+                    action: Action::Revoked,
+                    context: &event_context,
+                    before: Some(&before),
+                    after: &after,
+                    before_revision,
+                    after_revision,
+                    requested: &requested,
+                    replace_existing: None,
+                    removes_grant: false,
+                },
+            )
+            .await?;
             Ok::<_, PostgresStorageError>(after.into_storage())
         })
         .await
@@ -323,7 +317,7 @@ pub async fn revoke_all_local_collection_grants(
     request: AuthorizationGrantDelete,
 ) -> Result<(), PostgresStorageError> {
     let key = request.key();
-    let event_context = request.event_context_value().cloned();
+    let event_context = request.event_context().clone();
     runtime
         .with_transaction(async move |connection| {
             let before_revision = lock_permission_owner(connection, key.collection_id()).await?;
@@ -335,7 +329,7 @@ pub async fn revoke_all_local_collection_grants(
             )
             .execute(connection)
             .await?;
-            if let (Some(context), Some(before)) = (event_context.as_ref(), before.as_ref()) {
+            if let Some(before) = before.as_ref() {
                 let after_revision =
                     permission_owner_revision(connection, key.collection_id()).await?;
                 let requested = before.permissions();
@@ -343,7 +337,7 @@ pub async fn revoke_all_local_collection_grants(
                     connection,
                     PermissionEvent {
                         action: Action::Revoked,
-                        context,
+                        context: &event_context,
                         before: Some(before),
                         after: before,
                         before_revision,

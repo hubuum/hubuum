@@ -44,11 +44,7 @@ pub trait GroupIdApplicationExt {
     where
         C: StorageContext;
 
-    async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
         C: StorageContext;
 }
@@ -65,27 +61,22 @@ impl GroupIdApplicationExt for GroupID {
             .and_then(group_from_storage)
     }
 
-    /// Delete this group without emitting domain events.
+    /// Delete this group with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`GroupIdApplicationExt::delete`] so event subscribers observe the
-    /// change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
         storage_handle(backend)
-            .delete_group(self.id(), None)
+            .delete_group(self.id(), &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
-    async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
@@ -93,6 +84,7 @@ impl GroupIdApplicationExt for GroupID {
             .delete_group(self.id(), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -343,10 +335,7 @@ impl Group {
     /// * `Ok(())` if the user was added to the group
     /// * `Err(ApiError)` if the user was not added to the group
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`Group::add_member`] so event subscribers observe the change.
+    /// This compatibility path emits an event attributed to the system actor.
     ///
     /// If the user is already a member of the group, this function is a safe noop.
     pub async fn add_member_without_events<C, P>(
@@ -358,10 +347,11 @@ impl Group {
         C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        storage_handle(backend)
-            .add_group_member(member.principal_id(), self.id, None)
+        let _membership = storage_handle(backend)
+            .add_group_member(member.principal_id(), self.id, &EventContext::system())
             .await
-            .map_err(ApiError::from)?;
+            .map_err(ApiError::from)?
+            .into_value();
 
         Ok(())
     }
@@ -370,7 +360,7 @@ impl Group {
         &self,
         backend: &C,
         member: &P,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<crate::models::PrincipalGroup, ApiError>
     where
         C: StorageContext,
@@ -380,14 +370,14 @@ impl Group {
             .add_group_member(member.principal_id(), self.id, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(principal_group_from_storage)
     }
 
-    /// Remove a member from this group without emitting domain events.
+    /// Remove a member with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`Group::remove_member`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn remove_member_without_events<C, P>(
         &self,
         member: &P,
@@ -398,16 +388,17 @@ impl Group {
         P: PrincipalIdAccessor,
     {
         storage_handle(backend)
-            .remove_group_member(member.principal_id(), self.id, None)
+            .remove_group_member(member.principal_id(), self.id, &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     pub async fn remove_member<C, P>(
         &self,
         member: &P,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<(), ApiError>
     where
         C: StorageContext,
@@ -417,21 +408,22 @@ impl Group {
             .remove_group_member(member.principal_id(), self.id, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
-    /// Delete this group without emitting domain events.
+    /// Delete this group with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use the event-aware delete path so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: StorageContext,
     {
         storage_handle(backend)
-            .delete_group(self.id, None)
+            .delete_group(self.id, &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -444,27 +436,23 @@ pub struct NewGroup {
 }
 
 impl NewGroup {
-    /// Persist without emitting domain events.
+    /// Persist with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`NewGroup::save`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn save_without_events<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
         C: StorageContext,
     {
         storage_handle(backend)
-            .create_group(group_create_to_storage(self), None)
+            .create_group(group_create_to_storage(self), &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(group_from_storage)
     }
 
-    pub async fn save<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<Group, ApiError>
+    pub async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Group, ApiError>
     where
         C: StorageContext,
     {
@@ -472,6 +460,7 @@ impl NewGroup {
             .create_group(group_create_to_storage(self), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(group_from_storage)
     }
 }
@@ -483,12 +472,10 @@ pub struct UpdateGroup {
 }
 
 impl UpdateGroup {
-    /// Persist changes without emitting domain events.
+    /// Persist changes with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`UpdateGroup::save`] so event subscribers observe the
-    /// change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn save_without_events<C>(
         &self,
         group_id: GroupID,
@@ -498,9 +485,14 @@ impl UpdateGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .update_group(group_id.id(), group_update_to_storage(self), None)
+            .update_group(
+                group_id.id(),
+                group_update_to_storage(self),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(group_from_storage)
     }
 
@@ -508,7 +500,7 @@ impl UpdateGroup {
         &self,
         group_id: GroupID,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Group, ApiError>
     where
         C: StorageContext,
@@ -517,6 +509,7 @@ impl UpdateGroup {
             .update_group(group_id.id(), group_update_to_storage(self), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(group_from_storage)
     }
 }

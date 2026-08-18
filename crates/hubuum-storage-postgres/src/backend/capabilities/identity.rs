@@ -298,8 +298,8 @@ impl UserStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn anonymize_user(&self, id: i32) -> Result<(), StorageError> {
-        crate::operations::user::anonymize_user(self.runtime(), id)
+    async fn anonymize_user(&self, request: StorageUserAnonymize) -> Result<(), StorageError> {
+        crate::operations::user::anonymize_user(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -366,8 +366,11 @@ impl TokenStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn revoke_all_principal_tokens(&self, principal_id: i32) -> Result<usize, StorageError> {
-        crate::operations::token::revoke_all_principal_tokens(self.runtime(), principal_id)
+    async fn revoke_all_principal_tokens(
+        &self,
+        request: StoragePrincipalTokensRevoke,
+    ) -> Result<usize, StorageError> {
+        crate::operations::token::revoke_all_principal_tokens(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }

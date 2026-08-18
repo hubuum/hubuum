@@ -7,8 +7,9 @@ use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup,
-    StorageIdentityPage, StoragePrincipal, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
+    MutationOutcome, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
+    StorageIdentityGroup, StorageIdentityPage, StoragePrincipal, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery,
 };
 use serde_json::{Value, json};
 
@@ -300,8 +301,8 @@ pub async fn list_groups(
 pub async fn create_group(
     runtime: &PostgresRuntime,
     command: StorageGroupCreate,
-    context: Option<&EventContext>,
-) -> Result<StorageIdentityGroup, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageIdentityGroup>, PostgresStorageError> {
     let (identity_scope, name, description) = command.into_parts();
     let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     if identity_scope != LOCAL_IDENTITY_SCOPE {
@@ -310,31 +311,20 @@ pub async fn create_group(
         ));
     }
     let description = description.unwrap_or_default();
-    let context = context.cloned();
-
-    if context.is_none() {
-        return runtime
-            .with_connection(async |connection| {
-                insert_local_group(connection, &name, &description)
-                    .await
-                    .map(GroupRow::into_storage)
-            })
-            .await;
-    }
+    let context = context.clone();
 
     runtime
         .with_transaction(async move |connection| {
             let group = insert_local_group(connection, &name, &description).await?;
-            let context = context.as_ref().expect("context presence was checked");
             let event = group_event(
                 &group,
                 Action::Created,
-                context,
+                &context,
                 format!("Group '{}' created", group.groupname),
             )?
             .with_after(group.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(group.into_storage())
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(group.into_storage(), audit))
         })
         .await
 }
@@ -343,32 +333,17 @@ pub async fn update_group(
     runtime: &PostgresRuntime,
     group_id: i32,
     update: StorageGroupUpdate,
-    context: Option<&EventContext>,
-) -> Result<StorageIdentityGroup, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageIdentityGroup>, PostgresStorageError> {
     validate_positive_id(group_id, "group id")?;
-    let context = context.cloned();
-    if context.is_none() {
-        return runtime
-            .with_connection(async |connection| {
-                ensure_group_allows_local_write(connection, group_id).await?;
-                diesel::update(
-                    crate::schema::groups::table.filter(crate::schema::groups::id.eq(group_id)),
-                )
-                .set(UpdateGroupRow::from(&update))
-                .get_result::<GroupRow>(connection)
-                .await
-                .map(GroupRow::into_storage)
-                .map_err(PostgresStorageError::from)
-            })
-            .await;
-    }
+    let context = context.clone();
 
     runtime
         .with_transaction(async move |connection| {
             let before = lock_group(connection, group_id).await?;
             ensure_group_allows_local_write(connection, group_id).await?;
             if !update.name().is_some_and(|name| name != before.groupname) {
-                return Ok(before.into_storage());
+                return Ok(MutationOutcome::unchanged(before.into_storage()));
             }
             let after = diesel::update(
                 crate::schema::groups::table.filter(crate::schema::groups::id.eq(group_id)),
@@ -376,17 +351,16 @@ pub async fn update_group(
             .set(UpdateGroupRow::from(&update))
             .get_result::<GroupRow>(connection)
             .await?;
-            let context = context.as_ref().expect("context presence was checked");
             let event = group_event(
                 &after,
                 Action::Updated,
-                context,
+                &context,
                 format!("Group '{}' updated", after.groupname),
             )?
             .with_before(before.snapshot())
             .with_after(after.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(after.into_storage())
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage(), audit))
         })
         .await
 }
@@ -394,10 +368,10 @@ pub async fn update_group(
 pub async fn delete_group(
     runtime: &PostgresRuntime,
     group_id: i32,
-    context: Option<&EventContext>,
-) -> Result<usize, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<usize>, PostgresStorageError> {
     validate_positive_id(group_id, "group id")?;
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
             let group = lock_group(connection, group_id).await?;
@@ -408,17 +382,15 @@ pub async fn delete_group(
             )
             .execute(connection)
             .await?;
-            if let Some(context) = context.as_ref() {
-                let event = group_event(
-                    &group,
-                    Action::Deleted,
-                    context,
-                    format!("Group '{}' deleted", group.groupname),
-                )?
-                .with_before(group.snapshot());
-                append_event(connection, &event).await?;
-            }
-            Ok::<_, PostgresStorageError>(deleted)
+            let event = group_event(
+                &group,
+                Action::Deleted,
+                &context,
+                format!("Group '{}' deleted", group.groupname),
+            )?
+            .with_before(group.snapshot());
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(deleted, audit))
         })
         .await
 }
@@ -519,31 +491,33 @@ pub async fn add_group_member(
     runtime: &PostgresRuntime,
     principal_id: i32,
     group_id: i32,
-    context: Option<&EventContext>,
-) -> Result<StoragePrincipalGroup, PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<StoragePrincipalGroup>, PostgresStorageError> {
     validate_positive_id(principal_id, "principal id")?;
     validate_positive_id(group_id, "group id")?;
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
             let (membership, effective_membership_created) =
                 insert_manual_membership(connection, principal_id, group_id).await?;
-            if let Some(context) = context.as_ref()
-                && effective_membership_created
-            {
+            if effective_membership_created {
                 let event = membership_event(
                     &membership,
                     Action::Added,
-                    context,
+                    &context,
                     format!(
                         "Principal {} added to group {}",
                         membership.principal_id, membership.group_id
                     ),
                 )?
                 .with_after(membership.snapshot());
-                append_event(connection, &event).await?;
+                let audit = append_event(connection, &event).await?.into_audit_receipt();
+                return Ok::<_, PostgresStorageError>(MutationOutcome::committed(
+                    membership.into_storage(),
+                    audit,
+                ));
             }
-            Ok::<_, PostgresStorageError>(membership.into_storage())
+            Ok::<_, PostgresStorageError>(MutationOutcome::unchanged(membership.into_storage()))
         })
         .await
 }
@@ -552,29 +526,30 @@ pub async fn remove_group_member(
     runtime: &PostgresRuntime,
     principal_id: i32,
     group_id: i32,
-    context: Option<&EventContext>,
-) -> Result<(), PostgresStorageError> {
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(principal_id, "principal id")?;
     validate_positive_id(group_id, "group id")?;
-    let context = context.cloned();
+    let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
             let removed =
                 remove_manual_membership_source(connection, principal_id, group_id).await?;
-            if let (Some(context), Some(membership)) = (context.as_ref(), removed.as_ref()) {
+            if let Some(membership) = removed.as_ref() {
                 let event = membership_event(
                     membership,
                     Action::Removed,
-                    context,
+                    &context,
                     format!(
                         "Principal {} removed from group {}",
                         membership.principal_id, membership.group_id
                     ),
                 )?
                 .with_before(membership.snapshot());
-                append_event(connection, &event).await?;
+                let audit = append_event(connection, &event).await?.into_audit_receipt();
+                return Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit));
             }
-            Ok::<_, PostgresStorageError>(())
+            Ok::<_, PostgresStorageError>(MutationOutcome::unchanged(()))
         })
         .await
 }

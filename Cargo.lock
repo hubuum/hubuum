@@ -2099,6 +2099,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-query",
+ "hubuum-storage-conformance",
  "hubuum-storage-core",
  "hubuum-storage-postgres",
  "hubuum-task-core",
@@ -2294,6 +2295,14 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hubuum-storage-conformance"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hubuum-storage-core",
 ]
 
 [[package]]

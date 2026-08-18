@@ -260,13 +260,13 @@ impl StorageExportTemplatePage {
     }
 }
 
-/// Atomic create command including optional audit provenance.
+/// Atomic create command including mandatory audit provenance.
 #[derive(Clone, PartialEq)]
 pub struct StorageExportTemplateCreate {
     collection_id: i32,
     name: String,
     definition: StorageExportTemplateDefinition,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageExportTemplateCreate {
@@ -275,7 +275,7 @@ impl StorageExportTemplateCreate {
         collection_id: i32,
         name: impl Into<String>,
         definition: StorageExportTemplateDefinition,
-        event_context: Option<EventContext>,
+        event_context: EventContext,
     ) -> Self {
         Self {
             collection_id,
@@ -286,14 +286,7 @@ impl StorageExportTemplateCreate {
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        String,
-        StorageExportTemplateDefinition,
-        Option<EventContext>,
-    ) {
+    pub fn into_parts(self) -> (i32, String, StorageExportTemplateDefinition, EventContext) {
         (
             self.collection_id,
             self.name,
@@ -310,7 +303,7 @@ impl fmt::Debug for StorageExportTemplateCreate {
             .field("collection_id", &"[redacted]")
             .field("definition", &self.definition)
             .field("name", &"[redacted]")
-            .field("has_event_context", &self.event_context.is_some())
+            .field("event_context", &"[redacted]")
             .finish()
     }
 }
@@ -322,7 +315,7 @@ pub struct StorageExportTemplateReplace {
     collection_id: i32,
     name: String,
     definition: StorageExportTemplateDefinition,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageExportTemplateReplace {
@@ -332,7 +325,7 @@ impl StorageExportTemplateReplace {
         collection_id: i32,
         name: impl Into<String>,
         definition: StorageExportTemplateDefinition,
-        event_context: Option<EventContext>,
+        event_context: EventContext,
     ) -> Self {
         Self {
             template_id,
@@ -351,7 +344,7 @@ impl StorageExportTemplateReplace {
         i32,
         String,
         StorageExportTemplateDefinition,
-        Option<EventContext>,
+        EventContext,
     ) {
         (
             self.template_id,
@@ -371,7 +364,7 @@ impl fmt::Debug for StorageExportTemplateReplace {
             .field("collection_id", &"[redacted]")
             .field("definition", &self.definition)
             .field("name", &"[redacted]")
-            .field("has_event_context", &self.event_context.is_some())
+            .field("event_context", &"[redacted]")
             .finish()
     }
 }
@@ -379,12 +372,12 @@ impl fmt::Debug for StorageExportTemplateReplace {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageExportTemplateDelete {
     template_id: i32,
-    event_context: Option<EventContext>,
+    event_context: EventContext,
 }
 
 impl StorageExportTemplateDelete {
     #[must_use]
-    pub const fn new(template_id: i32, event_context: Option<EventContext>) -> Self {
+    pub const fn new(template_id: i32, event_context: EventContext) -> Self {
         Self {
             template_id,
             event_context,
@@ -392,7 +385,7 @@ impl StorageExportTemplateDelete {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, Option<EventContext>) {
+    pub fn into_parts(self) -> (i32, EventContext) {
         (self.template_id, self.event_context)
     }
 }
@@ -402,7 +395,7 @@ impl fmt::Debug for StorageExportTemplateDelete {
         formatter
             .debug_struct("StorageExportTemplateDelete")
             .field("template_id", &"[redacted]")
-            .field("has_event_context", &self.event_context.is_some())
+            .field("event_context", &"[redacted]")
             .finish()
     }
 }
@@ -465,11 +458,7 @@ mod tests {
             7,
             "secret template name",
             definition,
-            Some(EventContext::user(
-                hubuum_domain::PrincipalId::new(3).unwrap(),
-                None,
-                None,
-            )),
+            EventContext::user(hubuum_domain::PrincipalId::new(3).unwrap(), None, None),
         );
 
         let debug = format!("{request:?}");

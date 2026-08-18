@@ -4,6 +4,7 @@
 //! remains temporarily for integration fixtures that create users without
 //! lifecycle events.
 
+use hubuum_events_core::EventContext;
 use hubuum_storage_core::{StorageError, StorageUser, StorageUserCreate};
 
 use crate::errors::ApiError;
@@ -22,7 +23,7 @@ impl CreateUserRecord for NewUser {
         &self,
         pool: &PostgresPool,
     ) -> Result<User, ApiError> {
-        let runtime = hubuum_storage_postgres::PostgresRuntime::new(pool.clone());
+        let runtime = hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone());
         hubuum_storage_postgres::operations::user::create_user(
             &runtime,
             StorageUserCreate::new(
@@ -31,7 +32,7 @@ impl CreateUserRecord for NewUser {
                 self.password.clone(),
                 self.proper_name.clone(),
                 self.email.clone(),
-                None,
+                EventContext::system(),
             ),
         )
         .await
@@ -100,7 +101,7 @@ mod tests {
         let (user, tokens) = user_with_tokens(&scope, "set_password_revokes").await;
         assert_tokens_active(&scope.pool, &tokens).await;
 
-        user.set_password(&scope.pool, "replacement-password")
+        user.set_password(&scope.pool, "replacement-password", &EventContext::system())
             .await
             .unwrap();
 
@@ -124,7 +125,7 @@ mod tests {
             proper_name: None,
             email: None,
         }
-        .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
+        .save(UserID::new(user.id).unwrap(), &scope.pool, &context)
         .await
         .unwrap();
 
@@ -147,7 +148,7 @@ mod tests {
             proper_name: Some("Updated Name".to_string()),
             email: None,
         }
-        .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
+        .save(UserID::new(user.id).unwrap(), &scope.pool, &context)
         .await
         .unwrap();
 

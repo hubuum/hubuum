@@ -35,6 +35,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for every registered backend, and uses adapter-private deterministic
   failpoints to verify rollback of compound collection and task-finalization
   writes.
+- Storage backend certification now includes a reusable five-part audit
+  conformance harness. Every selectable backend must prove that committed
+  receipts match durable events, no-ops append nothing, failed mutations roll
+  back state and events, durable outbox work reaches a recording sink, and
+  logical, backend, and failure telemetry is reported.
 - Storage backends now provide a mandatory backend-neutral unit of work for
   composing collection, class, object, and relation operations. Transactional
   mutations inherit one audit context, and shared PostgreSQL and memory-model
@@ -72,6 +77,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   traits. External adapter authors must provide an atomic callback runner and
   all transaction-scoped lifecycle accessors; applications continue to select
   adapters statically, with no dynamic plugin interface.
+- **Breaking (experimental Rust API):** ordinary storage mutations now require
+  `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
+  durable `AuditReceipt` for commits and no receipt for genuine no-ops. Import
+  and restore are grouped under `MaintenanceStorage`, and storage/PostgreSQL
+  telemetry is supplied explicitly by application composition. External
+  adapter authors must remove optional audit contexts, return the new outcome
+  type from resource methods, provide telemetry observers, implement the
+  reusable audit fixture, and be added to the sealed certification registry.
+  No database or HTTP migration is required.
 - **Breaking (experimental Rust API):** the publishable domain, query, event,
   and storage contracts now keep database and application implementation
   details behind their crate boundaries. External adapter authors must replace

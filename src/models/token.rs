@@ -114,11 +114,7 @@ impl PrincipalTokenCreateRequest {
     /// The token row and every scope row are written in one transaction. Scope
     /// flags are stored on the token row before child rows are inserted, so a
     /// partial failure cannot create an unrestricted credential.
-    pub async fn create<C>(
-        self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<Token, ApiError>
+    pub async fn create<C>(self, backend: &C, context: &EventContext) -> Result<Token, ApiError>
     where
         C: StorageContext,
     {
@@ -134,7 +130,7 @@ impl PrincipalTokenCreateRequest {
     pub async fn create_issued<C>(
         self,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<IssuedToken, ApiError>
     where
         C: StorageContext,
@@ -409,7 +405,13 @@ impl Token {
     where
         C: StorageContext,
     {
-        crate::services::identity::revoke_token_by_hash(backend, None, self.storage_hash()).await?;
+        crate::services::identity::revoke_token_by_hash(
+            backend,
+            None,
+            self.storage_hash(),
+            &EventContext::system(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -432,8 +434,8 @@ impl Token {
 /// ids prevents a manager of principal A from revoking principal B's token by
 /// guessing its id. Returns the number of rows updated (0 = not found / not theirs).
 ///
-/// This bypasses event emission and is intended only for internal
-/// infrastructure paths such as cleanup and event-system tests.
+/// The compatibility name is retained for internal callers; the mutation is
+/// attributed to the system actor and still emits its audit event.
 pub async fn revoke_token_by_id_for_principal_without_events<C>(
     backend: &C,
     token_id: TokenID,
@@ -442,14 +444,20 @@ pub async fn revoke_token_by_id_for_principal_without_events<C>(
 where
     C: StorageContext,
 {
-    crate::services::identity::revoke_token(backend, token_id.id(), principal_id.id(), None).await
+    crate::services::identity::revoke_token(
+        backend,
+        token_id.id(),
+        principal_id.id(),
+        &EventContext::system(),
+    )
+    .await
 }
 
 pub async fn revoke_token_by_id_for_principal<C>(
     backend: &C,
     token_id: TokenID,
     principal_id: PrincipalID,
-    context: Option<&EventContext>,
+    context: &EventContext,
 ) -> Result<usize, ApiError>
 where
     C: StorageContext,
@@ -468,7 +476,7 @@ pub async fn renew_token_by_id_for_principal<C>(
     token_id: TokenID,
     principal_id: PrincipalID,
     expires_at: Option<NaiveDateTime>,
-    context: Option<&EventContext>,
+    context: &EventContext,
 ) -> Result<IssuedToken, ApiError>
 where
     C: StorageContext,

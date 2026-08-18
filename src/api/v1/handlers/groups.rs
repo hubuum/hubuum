@@ -94,7 +94,7 @@ pub async fn create_group(
     );
 
     let event_context = requestor.event_context(&req);
-    let group = new_group.save(&context, Some(&event_context)).await?;
+    let group = new_group.save(&context, &event_context).await?;
 
     let location = api_locations::group(group.id)?;
     ApiResponse::created_revisioned(group.to_point_response(&context).await?, location)
@@ -173,7 +173,7 @@ pub async fn update_group(
         precondition,
         updated_group
             .into_inner()
-            .save(group_id, &context, Some(&event_context)),
+            .save(group_id, &context, &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(updated.to_point_response(&context).await?)
@@ -215,7 +215,7 @@ pub async fn delete_group(
     with_revision_precondition(
         &context,
         precondition,
-        group_id.delete(&context, Some(&event_context)),
+        group_id.delete(&context, &event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
@@ -354,7 +354,7 @@ pub async fn add_group_member(
     let membership = with_revision_precondition(
         &context,
         precondition,
-        group.add_member(&context, &principal, Some(&event_context)),
+        group.add_member(&context, &principal, &event_context),
     )
     .await?;
     let response = PrincipalMemberResponse::point(membership);
@@ -400,7 +400,7 @@ pub async fn delete_group_member(
     with_revision_precondition(
         &context,
         precondition,
-        group.remove_member(&principal, &context, Some(&event_context)),
+        group.remove_member(&principal, &context, &event_context),
     )
     .await?;
     match load_principal_group(&context, principal.id, group.id).await {

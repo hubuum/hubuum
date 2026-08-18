@@ -86,7 +86,7 @@ async fn claim_event_delivery_by_id(
     settings: EventDeliverySettings,
 ) -> EventDeliveryWorkItem {
     hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
-        &PostgresRuntime::new(pool.clone()),
+        &PostgresRuntime::unobserved(pool.clone()),
         delivery_id,
         settings,
     )
@@ -348,7 +348,7 @@ async fn create_collection_event_subscription_with_filter(
     enabled: bool,
     filter: hubuum_events_core::EventSubscriptionFilter,
 ) -> i32 {
-    let runtime = PostgresRuntime::new(scope.pool.get_ref().clone());
+    let runtime = PostgresRuntime::unobserved(scope.pool.get_ref().clone());
     let sink = hubuum_storage_postgres::operations::event_subscription::create_event_sink(
         &runtime,
         StorageEventSinkCreate::builder(
@@ -1214,7 +1214,7 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     assert!(first_failure.next_attempt_at > failure_started_at);
     let wakeup =
         hubuum_storage_postgres::operations::event_delivery::next_event_delivery_wakeup_in(
-            &PostgresRuntime::new(scope.pool.get_ref().clone()),
+            &PostgresRuntime::unobserved(scope.pool.get_ref().clone()),
         )
         .await
         .unwrap();
@@ -1385,7 +1385,7 @@ async fn moving_a_collection_to_its_current_parent_is_a_noop() {
     let parent_id = collection.parent_collection_id.unwrap();
     let event_count = events_for(&scope, "collection", collection.id).await.len();
 
-    let unchanged = move_collection(&scope.pool, collection.id, parent_id, Some(&context))
+    let unchanged = move_collection(&scope.pool, collection.id, parent_id, &context)
         .await
         .unwrap();
 
@@ -1794,28 +1794,28 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
         groupname: scope.scoped_name("event_group"),
         description: Some("before".to_string()),
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
     let updated = UpdateGroup {
         groupname: Some(scope.scoped_name("event_group_after")),
     }
-    .save(GroupID::new(group.id).unwrap(), &scope.pool, Some(&context))
+    .save(GroupID::new(group.id).unwrap(), &scope.pool, &context)
     .await
     .unwrap();
 
     let unchanged = UpdateGroup {
         groupname: Some(updated.groupname.clone()),
     }
-    .save(GroupID::new(group.id).unwrap(), &scope.pool, Some(&context))
+    .save(GroupID::new(group.id).unwrap(), &scope.pool, &context)
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
 
     GroupID::new(unchanged.id)
         .unwrap()
-        .delete(&scope.pool, Some(&context))
+        .delete(&scope.pool, &context)
         .await
         .unwrap();
 
@@ -1872,19 +1872,19 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
     let user = create_test_user(&scope.pool).await;
 
     group
-        .add_member(&scope.pool, &user, Some(&context))
+        .add_member(&scope.pool, &user, &context)
         .await
         .unwrap();
     group
-        .add_member(&scope.pool, &user, Some(&context))
+        .add_member(&scope.pool, &user, &context)
         .await
         .unwrap();
     group
-        .remove_member(&user, &scope.pool, Some(&context))
+        .remove_member(&user, &scope.pool, &context)
         .await
         .unwrap();
     group
-        .remove_member(&user, &scope.pool, Some(&context))
+        .remove_member(&user, &scope.pool, &context)
         .await
         .unwrap();
 
@@ -1932,7 +1932,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("Before User".to_string()),
         email: Some("before@example.invalid".to_string()),
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
@@ -1941,7 +1941,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("After User".to_string()),
         email: Some("after@example.invalid".to_string()),
     }
-    .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
+    .save(UserID::new(user.id).unwrap(), &scope.pool, &context)
     .await
     .unwrap();
 
@@ -1950,12 +1950,12 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("After User".to_string()),
         email: Some("after@example.invalid".to_string()),
     }
-    .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
+    .save(UserID::new(user.id).unwrap(), &scope.pool, &context)
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
 
-    unchanged.delete(&scope.pool, Some(&context)).await.unwrap();
+    unchanged.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "user", user.id).await;
     assert_eq!(rows.len(), 3);
@@ -2025,7 +2025,7 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
             )
             .unwrap(),
         )
-        .create(&scope.pool, Some(&context))
+        .create(&scope.pool, &context)
         .await
         .unwrap();
     let token = token_by_raw_value(&scope, &raw).await;
@@ -2034,7 +2034,7 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
         &scope.pool,
         TokenID::new(token.id).unwrap(),
         PrincipalID::new(user.id).unwrap(),
-        Some(&context),
+        &context,
     )
     .await
     .unwrap();
@@ -2088,7 +2088,7 @@ async fn token_renewal_event_links_source_and_copies_hash_free_scope() {
         .scope(
             TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap(),
         )
-        .create(&scope.pool, Some(&context))
+        .create(&scope.pool, &context)
         .await
         .unwrap();
     let source = token_by_raw_value(&scope, &source_raw).await;
@@ -2098,7 +2098,7 @@ async fn token_renewal_event_links_source_and_copies_hash_free_scope() {
         TokenID::new(source.id).unwrap(),
         PrincipalID::new(user.id).unwrap(),
         None,
-        Some(&context),
+        &context,
     )
     .await
     .unwrap()
@@ -2146,7 +2146,7 @@ async fn permission_writes_emit_granted_revoked_events() {
             &scope.pool,
             GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
-            Some(&context),
+            &context,
         )
         .await
         .unwrap();
@@ -2157,7 +2157,7 @@ async fn permission_writes_emit_granted_revoked_events() {
             &scope.pool,
             GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
-            Some(&context),
+            &context,
         )
         .await
         .unwrap();
@@ -2169,7 +2169,7 @@ async fn permission_writes_emit_granted_revoked_events() {
             GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
             true,
-            Some(&context),
+            &context,
         )
         .await
         .unwrap();
@@ -2180,7 +2180,7 @@ async fn permission_writes_emit_granted_revoked_events() {
             &scope.pool,
             GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::CreateClass]),
-            Some(&context),
+            &context,
         )
         .await
         .unwrap();
@@ -2191,19 +2191,19 @@ async fn permission_writes_emit_granted_revoked_events() {
             &scope.pool,
             GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::CreateClass]),
-            Some(&context),
+            &context,
         )
         .await
         .unwrap();
 
     fixture
         .collection
-        .revoke_all(&scope.pool, GroupID::new(group.id).unwrap(), Some(&context))
+        .revoke_all(&scope.pool, GroupID::new(group.id).unwrap(), &context)
         .await
         .unwrap();
     fixture
         .collection
-        .revoke_all(&scope.pool, GroupID::new(group.id).unwrap(), Some(&context))
+        .revoke_all(&scope.pool, GroupID::new(group.id).unwrap(), &context)
         .await
         .unwrap();
 
@@ -2369,7 +2369,7 @@ async fn export_template_writes_emit_lifecycle_events() {
 async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_auth() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
-    let backend = PostgresStorage::new(scope.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(scope.pool.get_ref().clone());
     let context = EventContext::user(
         principal_id(27),
         Some(Uuid::new_v4()),

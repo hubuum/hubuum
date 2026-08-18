@@ -20,7 +20,7 @@ pub(crate) async fn claim_events_for_fanout(
     settings: EventFanoutSettings,
 ) -> Result<Vec<i64>, ApiError> {
     hubuum_storage_postgres::operations::event_fanout::claim_event_ids(
-        &PostgresRuntime::new(pool.clone()),
+        &PostgresRuntime::unobserved(pool.clone()),
         settings,
     )
     .await
@@ -31,7 +31,7 @@ pub(crate) async fn claim_events_for_fanout(
 #[cfg(any(test, feature = "integration-test-support"))]
 pub async fn fanout_event(pool: &PostgresPool, event_id: i64) -> Result<usize, ApiError> {
     hubuum_storage_postgres::operations::event_fanout::fanout_event(
-        &PostgresRuntime::new(pool.clone()),
+        &PostgresRuntime::unobserved(pool.clone()),
         event_id,
     )
     .await
@@ -45,7 +45,7 @@ pub(crate) async fn fanout_events(
     event_ids: &[i64],
 ) -> Result<usize, ApiError> {
     hubuum_storage_postgres::operations::event_fanout::fanout_events(
-        &PostgresRuntime::new(pool.clone()),
+        &PostgresRuntime::unobserved(pool.clone()),
         event_ids,
     )
     .await
@@ -59,7 +59,7 @@ pub(crate) async fn count_event_deliveries_for_event(
     event_id: i64,
 ) -> Result<i64, ApiError> {
     hubuum_storage_postgres::operations::event_fanout::count_event_deliveries_for_event(
-        &PostgresRuntime::new(pool.clone()),
+        &PostgresRuntime::unobserved(pool.clone()),
         event_id,
     )
     .await

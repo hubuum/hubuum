@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use chrono::NaiveDateTime;
 
-use crate::{StorageCollection, StorageError, StorageObject, StorageRecordMetadata};
+use crate::{
+    MutationOutcome, StorageCollection, StorageError, StorageObject, StorageRecordMetadata,
+};
 
 /// Flat class record used by point and lifecycle operations.
 ///
@@ -650,9 +652,8 @@ impl StorageResolvedObject {
 
 /// Complete collection lifecycle required from a selectable backend.
 ///
-/// An event context makes a mutation audited. `None` is an adapter-facing seam
-/// for dedicated migrations, restores, imports, and fixtures; normal
-/// application mutations use an audited service or [`crate::TransactionalStorage`].
+/// Every mutation is audited. Restore and import operations use the separate
+/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
 pub trait CollectionStore: Send + Sync {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError>;
@@ -660,21 +661,21 @@ pub trait CollectionStore: Send + Sync {
     async fn create_collection(
         &self,
         command: StorageCollectionCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError>;
 
     async fn update_collection(
         &self,
         id: CollectionId,
         changes: StorageCollectionUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError>;
 
     async fn delete_collection(
         &self,
         id: CollectionId,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     async fn collection_children(
         &self,
@@ -690,15 +691,14 @@ pub trait CollectionStore: Send + Sync {
         &self,
         id: CollectionId,
         new_parent_id: CollectionId,
-        context: Option<&EventContext>,
-    ) -> Result<StorageCollection, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageCollection>, StorageError>;
 }
 
 /// Complete class lifecycle required from a selectable backend.
 ///
-/// An event context makes a mutation audited. `None` is an adapter-facing seam
-/// for dedicated migrations, restores, imports, and fixtures; normal
-/// application mutations use an audited service or [`crate::TransactionalStorage`].
+/// Every mutation is audited. Restore and import operations use the separate
+/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
 pub trait ClassStore: Send + Sync {
     async fn resolve_class(
@@ -709,21 +709,21 @@ pub trait ClassStore: Send + Sync {
     async fn create_class(
         &self,
         command: StorageClassCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRecord, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError>;
 
     async fn update_class(
         &self,
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRecord, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError>;
 
     async fn delete_class(
         &self,
         target: &StorageResolvedClass,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     /// Resolve class names in one backend operation.
     ///
@@ -737,9 +737,8 @@ pub trait ClassStore: Send + Sync {
 
 /// Complete object lifecycle required from a selectable backend.
 ///
-/// An event context makes a mutation audited. `None` is an adapter-facing seam
-/// for dedicated migrations, restores, imports, and fixtures; normal
-/// application mutations use an audited service or [`crate::TransactionalStorage`].
+/// Every mutation is audited. Restore and import operations use the separate
+/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     /// Load one object and its class by object ID.
@@ -754,28 +753,28 @@ pub trait ObjectStore: Send + Sync {
         &self,
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObject, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObject>, StorageError>;
 
     async fn update_object(
         &self,
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObject, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObject>, StorageError>;
 
     async fn patch_object_data(
         &self,
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<StorageObject, StorageError>;
+    ) -> Result<MutationOutcome<StorageObject>, StorageError>;
 
     async fn delete_object(
         &self,
         target: &StorageResolvedObject,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     /// Validate one stored object against its referenced class and collection.
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError>;

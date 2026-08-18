@@ -23,7 +23,7 @@ mod tests {
     use crate::api;
     use crate::api::v1::handlers::me::MeResponse;
     use crate::errors::ApiError;
-    use crate::events::{Action, EntityType};
+    use crate::events::{Action, EntityType, EventContext};
     use crate::models::Collection;
     use crate::models::collection::{group_can_on, user_can_on_any};
     use crate::models::principal::{PrincipalKind, load_principal_by_id};
@@ -463,7 +463,7 @@ mod tests {
                 } else {
                     PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
                         .expires_at(Some(expiry))
-                        .create(pool, None)
+                        .create(pool, &EventContext::system())
                         .await
                         .unwrap()
                 }
@@ -1149,7 +1149,7 @@ mod tests {
         .unwrap();
         let token = PrincipalTokenCreateRequest::new(PrincipalID::new(sa.id).unwrap())
             .scope(Some(scope))
-            .create(&context.pool, None)
+            .create(&context.pool, &EventContext::system())
             .await
             .unwrap()
             .get_token();

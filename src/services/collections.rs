@@ -38,9 +38,10 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .create_collection(collection_create_to_storage(command), Some(context))
+            .create_collection(collection_create_to_storage(command), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(collection_from_storage)
     }
 
@@ -54,18 +55,20 @@ impl CollectionService {
             .update_collection(
                 collection_id_to_storage(id.id()),
                 collection_update_to_storage(changes),
-                Some(context),
+                context,
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(collection_from_storage)
     }
 
     pub async fn delete(&self, id: CollectionID, context: &EventContext) -> Result<(), ApiError> {
         self.storage
-            .delete_collection(collection_id_to_storage(id.id()), Some(context))
+            .delete_collection(collection_id_to_storage(id.id()), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     pub async fn children(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
@@ -98,10 +101,11 @@ impl CollectionService {
             .move_collection(
                 collection_id_to_storage(id.id()),
                 collection_id_to_storage(new_parent_id.id()),
-                Some(context),
+                context,
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(collection_from_storage)
     }
 }
@@ -160,7 +164,7 @@ mod tests {
                     .await
                     .expect("contract owner group should save");
                     Self {
-                        service: Services::from_resource_storage(PostgresStorage::new(
+                        service: Services::from_resource_storage(PostgresStorage::unobserved(
                             pool.get_ref().clone(),
                         ))
                         .collections()

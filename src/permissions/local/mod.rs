@@ -3,6 +3,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::QueryOptions;
 use crate::models::{
@@ -233,6 +234,7 @@ impl PermissionBackend for LocalPermissionBackend {
             AuthorizationGrantKey::new(collection_id.id(), group_id.id()),
             list.iter().copied().map(permission_to_storage),
             replace_existing,
+            EventContext::system(),
         );
         Ok(grant_from_storage(
             self.storage.apply_local_collection_grant(mutation).await?,
@@ -249,6 +251,7 @@ impl PermissionBackend for LocalPermissionBackend {
             AuthorizationGrantKey::new(collection_id.id(), group_id.id()),
             list.iter().copied().map(permission_to_storage),
             false,
+            EventContext::system(),
         );
         Ok(grant_from_storage(
             self.storage.revoke_local_collection_grant(mutation).await?,
@@ -260,10 +263,10 @@ impl PermissionBackend for LocalPermissionBackend {
         collection_id: CollectionID,
         group_id: GroupID,
     ) -> Result<(), ApiError> {
-        let request = AuthorizationGrantDelete::new(AuthorizationGrantKey::new(
-            collection_id.id(),
-            group_id.id(),
-        ));
+        let request = AuthorizationGrantDelete::new(
+            AuthorizationGrantKey::new(collection_id.id(), group_id.id()),
+            EventContext::system(),
+        );
         Ok(self
             .storage
             .revoke_all_local_collection_grants(request)

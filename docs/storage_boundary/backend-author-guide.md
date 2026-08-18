@@ -53,7 +53,10 @@ The following order minimizes rework:
 7. Implement event and operational families.
 8. Add exhaustive dispatch, common observation, administrator projection, and
    the explicit `StorageBackend` implementation.
-9. Run shared compatibility and backend-native verification tests.
+9. Implement a `BackendAuditFixture` and pass the reusable five-part audit
+   conformance verifier.
+10. Add the adapter to the sealed application certification registry, then run
+    shared compatibility and backend-native verification tests.
 
 Later families depend conceptually on the earlier facts, but this order does
 not authorize direct trait-to-trait backend recovery. Prefer private adapter
@@ -118,10 +121,16 @@ identifier allocation, uniqueness enforcement, and rollback behavior. The
 application may hold an opaque `StorageTransaction` across several safe
 resource calls; it must never hold or recover the native transaction.
 
-Transaction-scoped mutations inherit one required `EventContext`. The adapter
-must commit or roll back state, audit events, and transactional notifications
+Ordinary mutations require an `EventContext`; optional audit provenance is not
+part of the contract. Resource mutations return `MutationOutcome`, with a
+durable `AuditReceipt` for commits and no receipt for genuine no-ops.
+Transaction-scoped mutations inherit one required context. The adapter must
+commit or roll back state, audit events, and transactional notifications
 together. It must serialize access when its native transaction cannot safely
 execute concurrent operations.
+
+Import and restore implement `MaintenanceStorage`. Do not use that surface as
+an unaudited shortcut for ordinary application writes.
 
 Read contracts state whether paging, totals, visibility, and projections must
 come from one snapshot. Implement those semantics even when a native store
@@ -198,7 +207,9 @@ The common observer records:
 
 An adapter may add native pool, transaction, or query diagnostics. Those are a
 second implementation-level view, not a replacement for common storage
-observation.
+observation. Its production constructor must accept an application-owned
+telemetry implementation. Any no-op observer must be an explicit opt-out for
+tests, benchmarks, or one-shot tools.
 
 `TransactionalStorage::transaction` is one logical observed entrypoint. Calls
 made through its operation accessors are constituent steps rather than new
@@ -247,7 +258,10 @@ fallback:
 3. Explicitly implement `StorageBackend` beside the complete adapter implementation.
 4. Add the adapter as a static application dependency and add one exhaustive `StorageHandle` composition and dispatch variant.
 5. Add factory construction and redacted settings projection.
-6. Add it to the `available_backends()` test factory.
+6. Add its fixture to the reusable five-part conformance runner.
+7. Add it to the sealed `CertifiedStorageBackend` registry only after that
+   behavior passes.
+8. Add it to the `available_backends()` test factory.
 
 Compilation should fail when any trait or exhaustive match arm is missing.
 

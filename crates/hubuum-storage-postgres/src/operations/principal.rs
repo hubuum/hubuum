@@ -3,7 +3,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    StorageErrorKind, StoragePrincipal, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    MutationOutcome, StorageErrorKind, StoragePrincipal, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation,
 };
 use serde_json::{Map, Value, json};
 
@@ -100,11 +101,11 @@ pub async fn mutate_principal_settings(
     principal_id: i32,
     mutation: StoragePrincipalSettingsMutation,
     event_context: &EventContext,
-) -> Result<StoragePrincipalSettings, PostgresStorageError> {
+) -> Result<MutationOutcome<StoragePrincipalSettings>, PostgresStorageError> {
     validate_principal_id(principal_id)?;
     runtime
         .with_transaction(
-            async |connection| -> Result<StoragePrincipalSettings, PostgresStorageError> {
+            async |connection| -> Result<MutationOutcome<StoragePrincipalSettings>, PostgresStorageError> {
                 let (kind, name, before, before_revision) = crate::schema::principals::table
                     .filter(crate::schema::principals::id.eq(principal_id))
                     .select((
@@ -126,11 +127,11 @@ pub async fn mutate_principal_settings(
                 let after = apply_settings_mutation(before.clone(), mutation)?;
 
                 if before == after {
-                    return Ok(StoragePrincipalSettings::new(
+                    return Ok(MutationOutcome::unchanged(StoragePrincipalSettings::new(
                         principal_id,
                         before_revision.get(),
                         after,
-                    ));
+                    )));
                 }
 
                 let after_revision = diesel::update(
@@ -155,13 +156,13 @@ pub async fn mutate_principal_settings(
                 .with_entity_name(name)
                 .with_before(json!({ "revision": before_revision, "settings": before }))
                 .with_after(json!({ "revision": after_revision, "settings": after }));
-                append_event(connection, &event).await?;
+                let audit = append_event(connection, &event).await?.into_audit_receipt();
 
-                Ok(StoragePrincipalSettings::new(
+                Ok(MutationOutcome::committed(StoragePrincipalSettings::new(
                     principal_id,
                     after_revision.get(),
                     after,
-                ))
+                ), audit))
             },
         )
         .await

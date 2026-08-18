@@ -111,7 +111,7 @@ async fn process_event_delivery_batch_with_schedule(
     })
 }
 
-pub(super) async fn process_event_delivery_work_item(
+pub(crate) async fn process_event_delivery_work_item(
     storage: &StorageHandle,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,

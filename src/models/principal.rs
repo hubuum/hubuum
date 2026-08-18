@@ -492,6 +492,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(principal_settings_from_storage)
     }
 
@@ -512,6 +513,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(principal_settings_from_storage)
     }
 
@@ -531,6 +533,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(principal_settings_from_storage)
     }
 }
@@ -552,6 +555,7 @@ where
         )
         .await
         .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
         .and_then(principal_settings_from_storage)
 }
 

@@ -236,7 +236,7 @@ pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<
     .enabled(sink.enabled)
     .build();
     hubuum_storage_postgres::operations::event_subscription::create_event_sink(
-        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
         request,
     )
     .await
@@ -270,7 +270,7 @@ pub async fn save_event_subscription(
     .enabled(subscription.enabled)
     .build();
     hubuum_storage_postgres::operations::event_subscription::create_event_subscription(
-        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
         request,
     )
     .await

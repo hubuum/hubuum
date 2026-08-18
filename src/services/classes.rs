@@ -36,9 +36,10 @@ impl ClassService {
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
         self.storage
-            .create_class(class_create_to_storage(command), Some(context))
+            .create_class(class_create_to_storage(command), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 
@@ -50,9 +51,10 @@ impl ClassService {
     ) -> Result<HubuumClass, ApiError> {
         let target = resolved_class_to_storage(target);
         self.storage
-            .update_class(&target, class_update_to_storage(changes), Some(context))
+            .update_class(&target, class_update_to_storage(changes), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(class_record_from_storage)
     }
 
@@ -63,9 +65,10 @@ impl ClassService {
     ) -> Result<(), ApiError> {
         let target = resolved_class_to_storage(target);
         self.storage
-            .delete_class(&target, Some(context))
+            .delete_class(&target, context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -149,7 +152,7 @@ mod tests {
                         owner_group,
                         prefix: prefix.clone(),
                     };
-                    let services = Services::from_resource_storage(PostgresStorage::new(
+                    let services = Services::from_resource_storage(PostgresStorage::unobserved(
                         pool.get_ref().clone(),
                     ));
                     Self {

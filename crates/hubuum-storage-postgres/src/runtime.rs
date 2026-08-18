@@ -63,8 +63,13 @@ pub trait PostgresTelemetry: Send + Sync {
     fn computed_rebuild_batch(&self, _object_count: usize) {}
 }
 
+/// Explicit telemetry opt-out for tests, benchmarks, and one-shot maintenance
+/// tools that intentionally do not export adapter observations.
+///
+/// Normal application composition should pass its own [`PostgresTelemetry`]
+/// implementation to [`PostgresRuntime::new`].
 #[derive(Debug, Default)]
-struct NoopPostgresTelemetry;
+pub struct NoopPostgresTelemetry;
 
 impl PostgresTelemetry for NoopPostgresTelemetry {}
 
@@ -94,13 +99,21 @@ impl fmt::Debug for PostgresRuntime {
 
 impl PostgresRuntime {
     #[must_use]
-    pub fn new(pool: PostgresPool) -> Self {
+    pub fn new(pool: PostgresPool, telemetry: Arc<dyn PostgresTelemetry>) -> Self {
         Self {
             task_lease_pool: pool.clone(),
             computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
             pool,
-            telemetry: Arc::new(NoopPostgresTelemetry),
+            telemetry,
         }
+    }
+
+    /// Construct a runtime with an explicit telemetry opt-out.
+    ///
+    /// This is intended for tests, benchmarks, and one-shot maintenance tools.
+    #[must_use]
+    pub fn unobserved(pool: PostgresPool) -> Self {
+        Self::new(pool, Arc::new(NoopPostgresTelemetry))
     }
 
     /// Use a small isolated pool for lease heartbeats.
@@ -636,7 +649,7 @@ where
     E: Send,
     PostgresStorageError: From<E>,
 {
-    PostgresRuntime::new(pool.clone())
+    PostgresRuntime::unobserved(pool.clone())
         .with_connection(operation)
         .await
 }
@@ -654,7 +667,7 @@ where
     E: Send,
     PostgresStorageError: From<E>,
 {
-    PostgresRuntime::new(pool.clone())
+    PostgresRuntime::unobserved(pool.clone())
         .with_transaction(operation)
         .await
 }

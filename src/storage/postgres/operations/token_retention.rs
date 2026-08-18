@@ -7,7 +7,7 @@ async fn purge_expired_token_batch_at(
     now: NaiveDateTime,
 ) -> Result<usize, crate::errors::ApiError> {
     hubuum_storage_postgres::operations::token_retention::purge_expired_tokens_at(
-        &hubuum_storage_postgres::PostgresRuntime::new(pool.clone()),
+        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
         settings,
         now,
     )
@@ -24,7 +24,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::errors::ApiError;
-    use crate::events::{Action, ActorKind, EntityType};
+    use crate::events::{Action, ActorKind, EntityType, EventContext};
     use crate::models::search::QueryOptions;
     use crate::models::{
         MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, Permissions, PrincipalID, PrincipalToken,
@@ -65,7 +65,7 @@ mod tests {
         expires_at: Option<NaiveDateTime>,
     ) -> Token {
         let token = PrincipalTokenCreateRequest::new(PrincipalID::new(principal_id).unwrap())
-            .create(pool, None)
+            .create(pool, &EventContext::system())
             .await
             .unwrap();
         if let Some(expires_at) = expires_at {
@@ -354,7 +354,7 @@ mod tests {
             TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
         let token = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
             .scope(scope)
-            .create(&pool, None)
+            .create(&pool, &EventContext::system())
             .await
             .unwrap();
         set_persisted_expiry(&pool, &token, now - Duration::days(TEST_RETENTION_DAYS + 1)).await;
@@ -420,7 +420,7 @@ mod tests {
             TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
         let raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
             .scope(scope)
-            .create(&pool, None)
+            .create(&pool, &EventContext::system())
             .await
             .unwrap();
         let token_hash = raw.storage_hash();

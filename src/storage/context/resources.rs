@@ -21,8 +21,8 @@ impl GroupStorage for StorageHandle {
     async fn create_group(
         &self,
         command: StorageGroupCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageIdentityGroup, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "create", async {
             dispatch_backend!(self, |backend| {
                 backend.create_group(command, context).await
@@ -35,8 +35,8 @@ impl GroupStorage for StorageHandle {
         &self,
         group_id: i32,
         update: StorageGroupUpdate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageIdentityGroup, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "update", async {
             dispatch_backend!(self, |backend| {
                 backend.update_group(group_id, update, context).await
@@ -48,8 +48,8 @@ impl GroupStorage for StorageHandle {
     async fn delete_group(
         &self,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<usize, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "delete", async {
             dispatch_backend!(self, |backend| {
                 backend.delete_group(group_id, context).await
@@ -107,8 +107,8 @@ impl GroupStorage for StorageHandle {
         &self,
         principal_id: i32,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<StoragePrincipalGroup, StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "member_add", async {
             dispatch_backend!(self, |backend| {
                 backend
@@ -123,8 +123,8 @@ impl GroupStorage for StorageHandle {
         &self,
         principal_id: i32,
         group_id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError> {
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(self.backend_name(), "groups", "member_remove", async {
             dispatch_backend!(self, |backend| {
                 backend
@@ -164,7 +164,7 @@ impl PrincipalStorage for StorageHandle {
         principal_id: i32,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<StoragePrincipalSettings, StorageError> {
+    ) -> Result<MutationOutcome<StoragePrincipalSettings>, StorageError> {
         let operation = match &mutation {
             StoragePrincipalSettingsMutation::Replace(_) => "settings_replace",
             StoragePrincipalSettingsMutation::MergePatch(_) => "settings_merge",

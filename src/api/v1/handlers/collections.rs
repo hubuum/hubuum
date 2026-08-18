@@ -676,7 +676,7 @@ pub async fn grant_collection_group_permissions(
         with_revision_precondition(
             &context,
             precondition,
-            collection.grant(&context, group_id, permissions, Some(&event_context)),
+            collection.grant(&context, group_id, permissions, &event_context),
         )
         .await?;
         let updated = local_collection_permission_set(&context, &collection).await?;
@@ -754,7 +754,7 @@ pub async fn replace_collection_group_permissions(
         with_revision_precondition(
             &context,
             precondition,
-            collection.set_permissions(&context, group_id, permissions, Some(&event_context)),
+            collection.set_permissions(&context, group_id, permissions, &event_context),
         )
         .await?;
         let updated = local_collection_permission_set(&context, &collection).await?;
@@ -816,7 +816,7 @@ pub async fn revoke_collection_group_permissions(
         with_revision_precondition(
             &context,
             precondition,
-            collection.revoke_all(&context, group_id, Some(&event_context)),
+            collection.revoke_all(&context, group_id, &event_context),
         )
         .await?;
         let updated = local_collection_permission_set(&context, &collection).await?;
@@ -940,7 +940,7 @@ pub async fn grant_collection_group_permission(
         with_revision_precondition(
             &context,
             precondition,
-            collection.grant(&context, group_id, permissions, Some(&event_context)),
+            collection.grant(&context, group_id, permissions, &event_context),
         )
         .await?;
         let updated = local_collection_permission_set(&context, &collection).await?;
@@ -1008,7 +1008,7 @@ pub async fn revoke_collection_group_permission(
         with_revision_precondition(
             &context,
             precondition,
-            collection.revoke(&context, group_id, permissions, Some(&event_context)),
+            collection.revoke(&context, group_id, permissions, &event_context),
         )
         .await?;
         let updated = local_collection_permission_set(&context, &collection).await?;

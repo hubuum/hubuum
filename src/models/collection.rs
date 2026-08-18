@@ -550,7 +550,7 @@ pub async fn move_collection<C>(
     backend: &C,
     collection_id: i32,
     new_parent_collection_id: i32,
-    context: Option<&crate::events::EventContext>,
+    context: &crate::events::EventContext,
 ) -> Result<Collection, ApiError>
 where
     C: StorageContext,
@@ -564,6 +564,7 @@ where
         )
         .await
         .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
         .and_then(collection_from_storage)
 }
 
@@ -871,12 +872,23 @@ mod tests {
             &[child.id, parent.collection.id, root_id]
         );
 
-        let cycle_result = move_collection(&pool, parent.collection.id, grandchild.id, None).await;
+        let cycle_result = move_collection(
+            &pool,
+            parent.collection.id,
+            grandchild.id,
+            &crate::events::EventContext::system(),
+        )
+        .await;
         assert!(matches!(cycle_result, Err(ApiError::BadRequest(_))));
 
-        let moved = move_collection(&pool, child.id, root_id, None)
-            .await
-            .unwrap();
+        let moved = move_collection(
+            &pool,
+            child.id,
+            root_id,
+            &crate::events::EventContext::system(),
+        )
+        .await
+        .unwrap();
         assert_eq!(moved.parent_collection_id, Some(root_id));
 
         let moved_ancestors = collection_ancestors(&pool, grandchild.clone())

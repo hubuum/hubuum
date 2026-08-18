@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use hubuum_events_core::EventContext;
 
 use crate::{
-    StorageClassRecord, StorageClassRelation, StorageError, StorageObject, StorageObjectRelation,
+    MutationOutcome, StorageClassRecord, StorageClassRelation, StorageError, StorageObject,
+    StorageObjectRelation,
 };
 
 /// Data required to create one class relation.
@@ -388,9 +389,8 @@ impl StorageResolvedObjectRelation {
 
 /// Complete class-relation lifecycle required from a selectable backend.
 ///
-/// An event context makes a mutation audited. `None` is an adapter-facing seam
-/// for dedicated migrations, restores, imports, and fixtures; normal
-/// application mutations use an audited service or [`crate::TransactionalStorage`].
+/// Every mutation is audited. Restore and import operations use the separate
+/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
 pub trait ClassRelationStore: Send + Sync {
     async fn prepare_class_relation(
@@ -406,33 +406,32 @@ pub trait ClassRelationStore: Send + Sync {
     async fn create_class_relation(
         &self,
         prepared: &StoragePreparedClassRelation,
-        context: Option<&EventContext>,
-    ) -> Result<StorageResolvedClassRelation, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError>;
 
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     async fn create_class_relation_from_command(
         &self,
         command: StorageClassRelationCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageClassRelation, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError>;
 
     async fn delete_class_relation_by_id(
         &self,
         id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 /// Complete object-relation lifecycle required from a selectable backend.
 ///
-/// An event context makes a mutation audited. `None` is an adapter-facing seam
-/// for dedicated migrations, restores, imports, and fixtures; normal
-/// application mutations use an audited service or [`crate::TransactionalStorage`].
+/// Every mutation is audited. Restore and import operations use the separate
+/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
 pub trait ObjectRelationStore: Send + Sync {
     async fn prepare_object_relation(
@@ -448,24 +447,24 @@ pub trait ObjectRelationStore: Send + Sync {
     async fn create_object_relation(
         &self,
         prepared: &StoragePreparedObjectRelation,
-        context: Option<&EventContext>,
-    ) -> Result<StorageResolvedObjectRelation, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError>;
 
     async fn delete_object_relation(
         &self,
         target: &StorageResolvedObjectRelation,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     async fn create_object_relation_from_command(
         &self,
         command: StorageObjectRelationCreate,
-        context: Option<&EventContext>,
-    ) -> Result<StorageObjectRelation, StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError>;
 
     async fn delete_object_relation_by_id(
         &self,
         id: i32,
-        context: Option<&EventContext>,
-    ) -> Result<(), StorageError>;
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }

@@ -236,7 +236,7 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
 
     let contract = read_source(&root.join("crates/hubuum-storage-core/src/backend.rs"))
         .expect("complete storage contract should be readable");
-    let aggregate = contract
+    let mut aggregate = contract
         .split_once("pub trait StorageBackend:")
         .and_then(|(_, remainder)| remainder.split_once("\n{"))
         .map(|(body, _)| body)
@@ -246,6 +246,10 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
         .filter(|name| !name.is_empty())
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
+    if aggregate.remove("MaintenanceStorage") {
+        aggregate.insert("ImportStorage".to_string());
+        aggregate.insert("RestoreStorage".to_string());
+    }
     assert_eq!(
         aggregate, expected_traits,
         "the complete backend aggregate and semantic inventory must change together"
@@ -781,7 +785,7 @@ fn resource_services_cannot_request_unrecorded_mutations() {
                     .split_once(".await")
                     .map_or(call, |(before_await, _)| before_await);
                 assert!(
-                    call.contains("Some(context)"),
+                    call.contains("context"),
                     "{} uses {mutation} without the required audit context",
                     path.display()
                 );
@@ -1637,7 +1641,9 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         .expect("StorageBackend should have a readable aggregate trait declaration");
     for required in REQUIRED_STORAGE_BACKEND_TRAITS {
         assert!(
-            contract_body.contains(required),
+            contract_body.contains(required)
+                || (["ImportStorage", "RestoreStorage"].contains(required)
+                    && contract_body.contains("MaintenanceStorage")),
             "complete storage contract is missing {required}"
         );
     }
@@ -1667,6 +1673,135 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         !notification_adapter_production.contains("get_config"),
         "the PostgreSQL notification adapter must receive settings through composition"
     );
+}
+
+#[test]
+fn ordinary_storage_mutations_have_no_optional_audit_context_escape_hatch() {
+    let root = repository_root();
+    for crate_path in [
+        "crates/hubuum-storage-core/src",
+        "crates/hubuum-storage-postgres/src",
+    ] {
+        let source = read_rust_module_tree(&root.join(crate_path));
+        for forbidden in [
+            "Option<EventContext>",
+            "Option<&EventContext>",
+            "event_context: Option",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{crate_path} exposes an optional audit context through {forbidden}"
+            );
+        }
+    }
+
+    let maintenance = read_source(&root.join("crates/hubuum-storage-core/src/maintenance.rs"))
+        .expect("maintenance storage contract should be readable");
+    assert!(
+        maintenance.contains("pub trait MaintenanceStorage: ImportStorage + RestoreStorage"),
+        "import and restore must remain on the explicit maintenance surface"
+    );
+}
+
+#[test]
+fn audited_resource_mutations_return_durable_receipt_outcomes() {
+    let root = repository_root();
+    let mutation = read_source(&root.join("crates/hubuum-storage-core/src/mutation.rs"))
+        .expect("mutation outcome contract should be readable");
+    for required in [
+        "pub struct AuditReceipt",
+        "pub enum MutationOutcome<T>",
+        "Committed { value: T, audit: AuditReceipt }",
+        "Unchanged(T)",
+    ] {
+        assert!(
+            mutation.contains(required),
+            "audited mutation contract is missing {required}"
+        );
+    }
+
+    for file in [
+        "resource_lifecycle.rs",
+        "relation_lifecycle.rs",
+        "identity_resources.rs",
+        "transaction.rs",
+    ] {
+        let source = read_source(&root.join("crates/hubuum-storage-core/src").join(file))
+            .unwrap_or_else(|error| panic!("could not read {file}: {error}"));
+        assert!(
+            source.contains("MutationOutcome<"),
+            "{file} must expose explicit audited mutation outcomes"
+        );
+    }
+}
+
+#[test]
+fn selectable_backends_pass_a_sealed_behavioral_certification_gate() {
+    let root = repository_root();
+    let certification = read_source(&root.join("src/storage/contract.rs"))
+        .expect("storage certification gate should be readable");
+    for required in [
+        "trait CertifiedStorageBackend: StorageBackend + private::Sealed",
+        "impl CertifiedStorageBackend for hubuum_storage_postgres::PostgresStorage",
+    ] {
+        assert!(
+            certification.contains(required),
+            "storage certification gate is missing {required}"
+        );
+    }
+
+    let composition = read_source(&root.join("src/storage/context/api.rs"))
+        .expect("storage composition gate should be readable");
+    assert!(
+        composition.contains("backend: &impl CertifiedStorageBackend"),
+        "runtime storage selection must require behavioral certification"
+    );
+}
+
+#[test]
+fn storage_telemetry_is_required_at_production_composition() {
+    let root = repository_root();
+    let runtime = read_source(&root.join("crates/hubuum-storage-postgres/src/runtime.rs"))
+        .expect("PostgreSQL runtime should be readable");
+    assert!(
+        runtime.contains("pub fn new(pool: PostgresPool, telemetry: Arc<dyn PostgresTelemetry>)"),
+        "PostgreSQL runtime construction must require application-owned telemetry"
+    );
+    assert!(
+        runtime.contains("pub fn unobserved(pool: PostgresPool)"),
+        "tests and one-shot tools need an explicit telemetry opt-out"
+    );
+
+    let composition = read_source(&root.join("src/storage/postgres/mod.rs"))
+        .expect("PostgreSQL application composition should be readable");
+    assert!(
+        composition.contains("PostgresStorage::new(pool, Arc::new(ApplicationPostgresTelemetry))"),
+        "production composition must provide its telemetry implementation"
+    );
+}
+
+#[test]
+fn every_registered_backend_runs_the_reusable_five_part_audit_contract() {
+    let root = repository_root();
+    let manifest = read_source(&root.join("crates/hubuum-storage-conformance/Cargo.toml"))
+        .expect("storage conformance manifest should be readable");
+    assert!(
+        manifest.contains("publish = false"),
+        "the conformance harness must remain workspace-internal"
+    );
+
+    let fixture = read_source(&root.join("src/tests/storage_contract.rs"))
+        .expect("registered backend contract fixture should be readable");
+    for required in [
+        "for kind in StorageBackendKind::ALL",
+        "verify_backend_audit_contract(&fixture)",
+        "assert_eq!(report.checks(), 5)",
+    ] {
+        assert!(
+            fixture.contains(required),
+            "registered backend certification is missing {required}"
+        );
+    }
 }
 
 #[test]

@@ -67,9 +67,13 @@ impl DeleteAdapter for HubuumObjectRelation {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?.id(), None)
+            .delete_object_relation_by_id(
+                HubuumObjectRelationID::new(self.id)?.id(),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     async fn delete_adapter(
@@ -79,9 +83,10 @@ impl DeleteAdapter for HubuumObjectRelation {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?.id(), Some(context))
+            .delete_object_relation_by_id(HubuumObjectRelationID::new(self.id)?.id(), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -92,9 +97,10 @@ impl DeleteAdapter for HubuumObjectRelationID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(self.id(), None)
+            .delete_object_relation_by_id(self.id(), &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     async fn delete_adapter(
@@ -104,9 +110,10 @@ impl DeleteAdapter for HubuumObjectRelationID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .object_relation_store()
-            .delete_object_relation_by_id(self.id(), Some(context))
+            .delete_object_relation_by_id(self.id(), context)
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -121,10 +128,11 @@ impl SaveAdapter for NewHubuumObjectRelation {
             .object_relation_store()
             .create_object_relation_from_command(
                 object_relation_create_to_storage(self.clone()),
-                None,
+                &EventContext::system(),
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(object_relation_from_storage)
     }
 
@@ -137,10 +145,11 @@ impl SaveAdapter for NewHubuumObjectRelation {
             .object_relation_store()
             .create_object_relation_from_command(
                 object_relation_create_to_storage(self.clone()),
-                Some(context),
+                context,
             )
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(object_relation_from_storage)
     }
 }

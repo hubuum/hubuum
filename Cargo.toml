@@ -32,6 +32,7 @@ members = [
     "crates/hubuum-outbound-http",
     "crates/hubuum-query",
     "crates/hubuum-storage-core",
+    "crates/hubuum-storage-conformance",
     "crates/hubuum-storage-postgres",
     "crates/hubuum-task-core",
     "crates/hubuum-templates",
@@ -118,6 +119,7 @@ libc = "0.2"
 [dev-dependencies]
 criterion = "0.8.2"
 gungraun = "0.19.4"
+hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
 regex = "1"
 rstest = "0.26"
 tokio-rustls = "0.26"

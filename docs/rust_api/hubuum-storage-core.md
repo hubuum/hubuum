@@ -16,6 +16,15 @@ Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by `StorageTransaction`; native connections and query
 interfaces remain private to each adapter.
 
+Ordinary resource mutations require `EventContext` and return
+`MutationOutcome`. A committed outcome includes a non-sensitive `AuditReceipt`
+for the durable event written atomically with the state change; a genuine no-op
+returns `Unchanged`. Imports and restores are grouped under the explicit
+`MaintenanceStorage` surface and do not weaken ordinary mutation signatures.
+
+Application composition supplies `StorageTelemetry`, keeping metrics exporters
+and global registries out of adapter-neutral contracts.
+
 The root `hubuum` crate remains an internal application composition crate.
 HTTP clients should use Hubuum's versioned API instead of this storage API.
 
@@ -60,16 +69,20 @@ Private fields and validating constructors preserve boundary invariants.
 Implementations must enforce visibility and permission inputs rather than treat
 them as hints. Debug implementations must remain bounded and redact identifiers,
 credentials, payloads, filters, and tokens where documented. Storage entrypoint
-logging and metrics belong to application composition or the adapter and must
-use bounded family and operation labels.
+logging and metrics belong to application composition. Adapters report through
+the application-supplied observer and must use bounded family and operation
+labels.
 
 ## Ownership and Verification
 
 Hubuum maintainers own releases. CI builds rustdoc with warnings denied, tests a
 clean package, and compares SemVer compatibility with the latest crates.io
 release. The PostgreSQL adapter is the pinned reference implementation. Shared
-compatibility tests exercise every statically registered backend, while each
-backend owns native query, transaction, migration, and failure tests.
+compatibility tests exercise every statically registered backend. The
+workspace-internal `hubuum-storage-conformance` harness certifies durable
+receipts, no-op behavior, rollback, outbox-to-sink delivery, and telemetry,
+while each backend owns native query, transaction, migration, and failure
+tests.
 An external-crate integration test also compiles representative transaction,
 query, and typed DTO usage so accidental reliance on crate-private adapter
 hooks fails before publication.

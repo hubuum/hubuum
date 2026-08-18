@@ -41,11 +41,19 @@ pub struct PostgresStorage {
 
 impl PostgresStorage {
     #[must_use]
-    pub fn new(pool: PostgresPool) -> Self {
+    pub fn new(pool: PostgresPool, telemetry: Arc<dyn PostgresTelemetry>) -> Self {
         Self {
-            runtime: PostgresRuntime::new(pool.clone()),
+            runtime: PostgresRuntime::new(pool.clone(), telemetry),
             notification_listener_pool: pool,
         }
+    }
+
+    /// Construct a backend with an explicit telemetry opt-out.
+    ///
+    /// This is intended for tests, benchmarks, and one-shot maintenance tools.
+    #[must_use]
+    pub fn unobserved(pool: PostgresPool) -> Self {
+        Self::new(pool, Arc::new(crate::NoopPostgresTelemetry))
     }
 
     #[must_use]
@@ -63,12 +71,6 @@ impl PostgresStorage {
     #[must_use]
     pub fn with_computed_reindex_batch_size(mut self, batch_size: NonZeroUsize) -> Self {
         self.runtime = self.runtime.with_computed_reindex_batch_size(batch_size);
-        self
-    }
-
-    #[must_use]
-    pub fn with_telemetry(mut self, telemetry: Arc<dyn PostgresTelemetry>) -> Self {
-        self.runtime = self.runtime.with_telemetry(telemetry);
         self
     }
 

@@ -93,11 +93,16 @@ If the callback returns `Err`, state, audit events, and transactional
 notifications roll back together. A backend that commits the state but loses
 the audit event does not satisfy the contract.
 
-The lower-level lifecycle traits still accept an optional context as an
-adapter and focused-test seam. Normal application code must enter mutations
-through an audited service method or the transaction-scoped operation types.
-Unrecorded fixture, migration, import, or restore behavior belongs in its
-dedicated path; it must not be introduced into ordinary application workflows.
+The lower-level lifecycle traits also require an `EventContext`; there is no
+optional-context escape hatch in the ordinary storage contract. A committed
+resource mutation returns `MutationOutcome::Committed` with an `AuditReceipt`
+identifying the durable event written in the same atomic operation. A genuine
+no-op returns `MutationOutcome::Unchanged` and appends no event.
+
+Fixture compatibility helpers use explicit system attribution. Import and
+restore behavior belongs to `MaintenanceStorage`, which is a separate surface
+because those workflows preserve or reconstruct durable history rather than
+masquerading as ordinary user mutations.
 
 ## Example
 
@@ -111,8 +116,16 @@ use hubuum_storage_core::{
 storage
     .transaction(EventContext::system(), |transaction| {
         Box::pin(async move {
-            let left = transaction.objects().create(&left_class, left_command).await?;
-            let right = transaction.objects().create(&right_class, right_command).await?;
+            let left = transaction
+                .objects()
+                .create(&left_class, left_command)
+                .await?
+                .into_value();
+            let right = transaction
+                .objects()
+                .create(&right_class, right_command)
+                .await?
+                .into_value();
             let prepared = transaction
                 .object_relations()
                 .prepare(StorageObjectRelationCreateSelector::Explicit(

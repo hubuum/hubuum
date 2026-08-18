@@ -7,8 +7,9 @@ use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
-    StorageIdentityPage, StorageUser, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    StorageIdentityPage, StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
+    StorageUserUpdate,
 };
 use serde_json::{Value, json};
 
@@ -315,18 +316,16 @@ pub async fn create_user(
                 ))
                 .get_result::<UserRow>(connection)
                 .await?;
-            if let Some(context) = context.as_ref() {
-                let revision = principal_revision(connection, principal_id).await?;
-                let event = user_event(
-                    &user,
-                    &name,
-                    Action::Created,
-                    context,
-                    format!("User '{name}' created"),
-                )?
-                .with_after(user.snapshot(&name, revision));
-                append_event(connection, &event).await?;
-            }
+            let revision = principal_revision(connection, principal_id).await?;
+            let event = user_event(
+                &user,
+                &name,
+                Action::Created,
+                &context,
+                format!("User '{name}' created"),
+            )?
+            .with_after(user.snapshot(&name, revision));
+            append_event(connection, &event).await?;
             Ok::<_, PostgresStorageError>(user.into_storage())
         })
         .await
@@ -371,20 +370,18 @@ pub async fn update_user(
             if password_changed {
                 revoke_all_tokens(connection, user_id).await?;
             }
-            if let Some(context) = context.as_ref() {
-                let after_revision = principal_revision(connection, user_id).await?;
-                let event = user_event(
-                    &after,
-                    &name,
-                    Action::Updated,
-                    context,
-                    format!("User '{name}' updated"),
-                )?
-                .with_before(before.snapshot(&name, before_revision))
-                .with_after(after.snapshot(&name, after_revision))
-                .with_metadata(json!({ "password_changed": password_changed }));
-                append_event(connection, &event).await?;
-            }
+            let after_revision = principal_revision(connection, user_id).await?;
+            let event = user_event(
+                &after,
+                &name,
+                Action::Updated,
+                &context,
+                format!("User '{name}' updated"),
+            )?
+            .with_before(before.snapshot(&name, before_revision))
+            .with_after(after.snapshot(&name, after_revision))
+            .with_metadata(json!({ "password_changed": password_changed }));
+            append_event(connection, &event).await?;
             Ok::<_, PostgresStorageError>(after.into_storage())
         })
         .await
@@ -394,18 +391,37 @@ pub async fn set_user_password(
     runtime: &PostgresRuntime,
     request: StorageUserPasswordUpdate,
 ) -> Result<usize, PostgresStorageError> {
-    let (user_id, password_hash) = request.into_parts();
+    let (user_id, password_hash, context) = request.into_parts();
     validate_positive_id(user_id, "user id")?;
     runtime
         .with_transaction(async move |connection| {
+            let before_revision = lock_principal_revision(connection, user_id).await?;
             ensure_user_allows_local_write(connection, user_id).await?;
+            let (before, name) = load_user_with_name(connection, user_id).await?;
             diesel::update(
                 crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)),
             )
             .set(crate::schema::users::password.eq(Some(password_hash)))
             .execute(connection)
             .await?;
-            revoke_all_tokens(connection, user_id).await
+            let revoked = revoke_all_tokens(connection, user_id).await?;
+            let after = load_user_row(connection, user_id).await?;
+            let after_revision = principal_revision(connection, user_id).await?;
+            let event = user_event(
+                &after,
+                &name,
+                Action::Updated,
+                &context,
+                format!("User '{name}' password changed"),
+            )?
+            .with_before(before.snapshot(&name, before_revision))
+            .with_after(after.snapshot(&name, after_revision))
+            .with_metadata(json!({
+                "password_changed": true,
+                "revoked_token_count": revoked,
+            }));
+            append_event(connection, &event).await?;
+            Ok::<_, PostgresStorageError>(revoked)
         })
         .await
 }
@@ -426,17 +442,15 @@ pub async fn delete_user(
             )
             .execute(connection)
             .await?;
-            if let Some(context) = context.as_ref() {
-                let event = user_event(
-                    &user,
-                    &name,
-                    Action::Deleted,
-                    context,
-                    format!("User '{name}' deleted"),
-                )?
-                .with_before(user.snapshot(&name, before_revision));
-                append_event(connection, &event).await?;
-            }
+            let event = user_event(
+                &user,
+                &name,
+                Action::Deleted,
+                &context,
+                format!("User '{name}' deleted"),
+            )?
+            .with_before(user.snapshot(&name, before_revision));
+            append_event(connection, &event).await?;
             Ok::<_, PostgresStorageError>(deleted)
         })
         .await
@@ -444,13 +458,15 @@ pub async fn delete_user(
 
 pub async fn anonymize_user(
     runtime: &PostgresRuntime,
-    user_id: i32,
+    request: StorageUserAnonymize,
 ) -> Result<(), PostgresStorageError> {
+    let (user_id, context) = request.into_parts();
     validate_positive_id(user_id, "user id")?;
     runtime
         .with_transaction(async move |connection| {
-            lock_principal_revision(connection, user_id).await?;
+            let before_revision = lock_principal_revision(connection, user_id).await?;
             ensure_user_allows_local_write(connection, user_id).await?;
+            let (before, name) = load_user_with_name(connection, user_id).await?;
             diesel::delete(
                 crate::schema::computed_field_definitions::table
                     .filter(
@@ -483,6 +499,20 @@ pub async fn anonymize_user(
             .execute(connection)
             .await?;
             revoke_all_tokens(connection, user_id).await?;
+            let after = load_user_row(connection, user_id).await?;
+            let anonymized_name = principal_name(connection, user_id).await?;
+            let after_revision = principal_revision(connection, user_id).await?;
+            let event = user_event(
+                &after,
+                &name,
+                Action::Updated,
+                &context,
+                format!("User '{name}' anonymized"),
+            )?
+            .with_before(before.snapshot(&name, before_revision))
+            .with_after(after.snapshot(&anonymized_name, after_revision))
+            .with_metadata(json!({ "anonymized": true }));
+            append_event(connection, &event).await?;
             Ok::<_, PostgresStorageError>(())
         })
         .await

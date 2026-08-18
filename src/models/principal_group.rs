@@ -3,6 +3,7 @@ use crate::models::group::Group;
 use crate::models::principal::Principal;
 
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::services::storage_boundary::{
     group_from_storage, principal_from_storage, principal_group_from_storage,
 };
@@ -36,9 +37,23 @@ impl SaveAdapter for NewPrincipalGroup {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
-            .add_group_member(self.principal_id, self.group_id, None)
+            .add_group_member(self.principal_id, self.group_id, &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(principal_group_from_storage)
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        storage_handle(pool)
+            .add_group_member(self.principal_id, self.group_id, context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(principal_group_from_storage)
     }
 }
@@ -71,9 +86,10 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .add_group_member(self.principal_id, self.group_id, None)
+            .add_group_member(self.principal_id, self.group_id, &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
             .and_then(principal_group_from_storage)
     }
 
@@ -82,8 +98,9 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .remove_group_member(self.principal_id, self.group_id, None)
+            .remove_group_member(self.principal_id, self.group_id, &EventContext::system())
             .await
             .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }

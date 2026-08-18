@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::StorageError;
+use crate::{AuditReceipt, StorageError};
 
 /// One committed event returned by a storage adapter after an append or read.
 ///
@@ -35,6 +35,21 @@ impl StorageRecordedEvent {
     #[must_use]
     pub fn into_parts(self) -> (EventEnvelope, Option<i64>, Option<i64>) {
         (self.envelope, self.before_revision, self.after_revision)
+    }
+
+    /// Reduce the committed event to the non-sensitive proof returned by
+    /// ordinary mutation APIs.
+    #[must_use]
+    pub fn into_audit_receipt(self) -> AuditReceipt {
+        let (envelope, before_revision, after_revision) = self.into_parts();
+        AuditReceipt::new(
+            envelope.id,
+            envelope.event_id,
+            envelope.entity_type,
+            envelope.action,
+            before_revision,
+            after_revision,
+        )
     }
 }
 

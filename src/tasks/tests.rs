@@ -473,7 +473,7 @@ async fn apply_import_operations(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let plan = StorageImportPlan::new(items).map_err(ApiError::from)?;
-    PostgresStorage::new(context.pool.get_ref().clone())
+    PostgresStorage::unobserved(context.pool.get_ref().clone())
         .apply_import_strict(plan)
         .await
         .map_err(ApiError::from)
@@ -502,7 +502,7 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     )
     .await
     .unwrap();
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
         .import_collection_child_by_name(parent.collection.id, &imported_name)
         .await
@@ -533,10 +533,11 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     backend
         .delete_collection(
             crate::services::storage_boundary::collection_id_to_storage(collection.id()),
-            None,
+            &crate::events::EventContext::system(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     parent.cleanup().await.unwrap();
 }
 
@@ -770,7 +771,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
     .await
     .unwrap();
 
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
         .import_collection_child_by_name(parent.collection.id, &collection_input.name)
         .await
@@ -923,10 +924,11 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
     backend
         .delete_collection(
             crate::services::storage_boundary::collection_id_to_storage(collection.id()),
-            None,
+            &crate::events::EventContext::system(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     parent.cleanup().await.unwrap();
 }
 
@@ -1013,7 +1015,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     )
     .await
     .unwrap();
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
         .import_collection_child_by_name(parent.collection.id, &imported_collection_name)
         .await
@@ -1078,10 +1080,11 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     backend
         .delete_collection(
             crate::services::storage_boundary::collection_id_to_storage(collection.id()),
-            None,
+            &crate::events::EventContext::system(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     parent.cleanup().await.unwrap();
 }
 
@@ -1312,7 +1315,7 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
     let execution =
         crate::services::import_boundary::import_operation_to_storage(execution).unwrap();
 
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let plan = StorageImportPlan::new(vec![StorageImportPlanItem::new(0, execution)]).unwrap();
     let result = backend.apply_import_strict(plan).await;
 
@@ -1395,7 +1398,7 @@ async fn imported_templates_use_effective_collection_loader(
     .collect::<Result<Vec<_>, _>>()
     .unwrap();
     let executions = StorageImportPlan::new(executions).unwrap();
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let result = backend.apply_import_strict(executions).await;
 
     assert_eq!(result.is_ok(), expected_valid);
@@ -2579,7 +2582,7 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let operations = StorageImportPlan::new(operations).unwrap();
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let collection = backend
         .import_collection_by_id(fixture.collection.id)
@@ -2646,7 +2649,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let operations = StorageImportPlan::new(operations).unwrap();
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let updated = backend
         .import_class_by_name(fixture.collection.id, &class.name)
@@ -2795,7 +2798,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
         .map(|operation| StorageImportPlanItem::new(0, operation))
         .unwrap();
     let plan = StorageImportPlan::new(vec![operation]).unwrap();
-    let backend = PostgresStorage::new(context.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(plan).await.unwrap();
     let resolved = backend
         .import_object_by_name(class.id, &object.name)

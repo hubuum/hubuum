@@ -234,7 +234,7 @@ pub async fn create_token(
 
     let event_context = requestor.event_context(&req);
     let issued = token_request
-        .create_issued(&context, Some(&event_context))
+        .create_issued(&context, &event_context)
         .await?;
 
     Ok(ApiResponse::new(
@@ -355,7 +355,7 @@ pub async fn renew_token(
         path.token_id,
         path.principal_id,
         body.into_inner().expires_at,
-        Some(&event_context),
+        &event_context,
     )
     .await?;
 
@@ -409,7 +409,7 @@ pub async fn revoke_token(
             &context,
             path.token_id,
             path.principal_id,
-            Some(&event_context),
+            &event_context,
         ),
     )
     .await?;

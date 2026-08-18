@@ -15,7 +15,8 @@ This document separates what each test layer proves from what it does not.
 | PostgreSQL behavior on a real database | Strong | The full suite creates and migrates an isolated PostgreSQL database and exercises queries, transactions, triggers, workers, services, and APIs. |
 | Resource lifecycle semantics | Strong | Focused family contracts run against PostgreSQL and a deterministic memory model, including whole-graph transaction commit and state-plus-event rollback. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
-| Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and the registry covers every selectable kind. |
+| Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and a sealed certification gate covers every selectable kind. |
+| Audit/event contract | Strong | The reusable conformance harness verifies a durable receipt, no-op behavior, rollback, outbox-to-sink delivery, and logical/backend/failure telemetry for every registered backend. |
 | Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The scenarios still require human review for semantic depth. |
 | Application and HTTP behavior | Strong | Every registered backend runs a service point read, readiness, and representative authenticated point/list HTTP requests. Larger integration suites exercise the remaining real application path. |
 | Concurrency and failure recovery | Good | Targeted lease, notification, transaction, restore, retention, and atomicity tests exist. Task-local PostgreSQL failpoints prove rollback at collection-create and task-finalization seams without changing the public contract. |
@@ -165,8 +166,20 @@ notably delivery claims and notification listeners—still receive their deepest
 coverage in PostgreSQL-specific tests, and the inventory records that evidence
 as native rather than pretending it is portable.
 
-The suite is not yet a `hubuum-storage-contract-tests` workspace crate. That is
-an extraction target after remaining root-owned domain fixtures are removed.
+`hubuum-storage-conformance` owns the reusable backend-independent five-part
+audit verifier. Each adapter supplies an isolated fixture through
+`BackendAuditFixture`; the root registry invokes it for every
+`StorageBackendKind::ALL` entry. A selectable backend must demonstrate:
+
+1. a committed mutation receipt that matches its durable event row;
+2. a genuine no-op with neither receipt nor appended event;
+3. rollback of both state and event at an injected failure;
+4. durable fan-out followed by delivery to a recording sink; and
+5. logical, native-backend, and failure telemetry observations.
+
+This is behavioral certification, not a type-system proof of implementation
+semantics. The application seals its `CertifiedStorageBackend` registry so an
+adapter cannot become selectable merely by satisfying Rust method signatures.
 
 ## PostgreSQL-Specific Coverage
 
@@ -210,11 +223,24 @@ The PostgreSQL benchmark workflow compares representative storage operations
 against the pull request base. Query budgets catch structural regressions;
 benchmarks catch latency changes that preserve query counts.
 
+`storage_collection_boundary_callgrind` keeps the existing read-only service
+boundary case and separately measures an audited mutation crossing the common
+observer plus construction/consumption of a committed receipt outcome. This
+separates application-boundary overhead from database round trips and event
+insertion costs.
+
 ### Migrations and destructive restore
 
 `run_tests.sh` creates a fresh isolated database, applies all migrations, and
 runs the suite against that schema. `tests/restore_roundtrip.rs` separately
 exercises destructive state replacement and restart recovery.
+
+The migration source lives with its owner at
+`crates/hubuum-storage-postgres/migrations`. Diesel supports this layout both
+at build time through `embed_migrations!("migrations")`, resolved relative to
+the adapter crate, and at test/deployment time through an explicit
+`--migration-dir`. Moving adapter migrations therefore does not expose a path
+through `hubuum-storage-core` or make schema ownership part of the neutral API.
 
 Migration compatibility with the adjacent supported release is tested directly in CI. The workflow starts the previous release, creates representative resources and workflow configuration, migrates the database with the candidate, verifies the candidate application, and then restarts the previous application against the migrated schema. A separate static policy rejects migration shapes known to violate adjacent-release compatibility.
 

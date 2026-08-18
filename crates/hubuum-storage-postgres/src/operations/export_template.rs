@@ -103,7 +103,7 @@ struct NewExportTemplateRow {
 }
 
 impl NewExportTemplateRow {
-    fn from_request(request: StorageExportTemplateCreate) -> (Self, Option<EventContext>) {
+    fn from_request(request: StorageExportTemplateCreate) -> (Self, EventContext) {
         let (collection_id, name, definition, event_context) = request.into_parts();
         let definition = ExportTemplateDefinitionParts::from(definition);
         (
@@ -145,7 +145,7 @@ struct ReplaceExportTemplateRow {
 }
 
 impl ReplaceExportTemplateRow {
-    fn from_request(request: StorageExportTemplateReplace) -> (i32, Self, Option<EventContext>) {
+    fn from_request(request: StorageExportTemplateReplace) -> (i32, Self, EventContext) {
         let (template_id, collection_id, name, definition, event_context) = request.into_parts();
         let definition = ExportTemplateDefinitionParts::from(definition);
         (
@@ -366,34 +366,25 @@ pub async fn create_export_template(
 ) -> Result<StorageExportTemplate, PostgresStorageError> {
     let (new_template, event_context) = NewExportTemplateRow::from_request(request);
     ensure_positive_id(new_template.collection_id, "Collection")?;
-    if let Some(context) = event_context {
-        runtime
-            .with_transaction(async |connection| {
-                use crate::schema::export_templates::dsl::export_templates;
+    runtime
+        .with_transaction(async |connection| {
+            use crate::schema::export_templates::dsl::export_templates;
 
-                let created = diesel::insert_into(export_templates)
-                    .values(new_template)
-                    .get_result::<ExportTemplateRow>(connection)
-                    .await?;
-                append_export_template_audit(connection, Action::Created, &context, None, &created)
-                    .await?;
-                Ok::<_, PostgresStorageError>(created.into_storage())
-            })
-            .await
-    } else {
-        runtime
-            .with_connection(async |connection| {
-                use crate::schema::export_templates::dsl::export_templates;
-
-                diesel::insert_into(export_templates)
-                    .values(new_template)
-                    .get_result::<ExportTemplateRow>(connection)
-                    .await
-                    .map(ExportTemplateRow::into_storage)
-                    .map_err(PostgresStorageError::from)
-            })
-            .await
-    }
+            let created = diesel::insert_into(export_templates)
+                .values(new_template)
+                .get_result::<ExportTemplateRow>(connection)
+                .await?;
+            append_export_template_audit(
+                connection,
+                Action::Created,
+                &event_context,
+                None,
+                &created,
+            )
+            .await?;
+            Ok::<_, PostgresStorageError>(created.into_storage())
+        })
+        .await
 }
 
 pub async fn replace_export_template(
@@ -403,54 +394,39 @@ pub async fn replace_export_template(
     let (template_id, replacement, event_context) = ReplaceExportTemplateRow::from_request(request);
     ensure_positive_id(template_id, "Export template")?;
     ensure_positive_id(replacement.collection_id, "Collection")?;
-    if let Some(context) = event_context {
-        runtime
-            .with_transaction(async |connection| {
-                use crate::schema::export_templates::dsl::{export_templates, id};
+    runtime
+        .with_transaction(async |connection| {
+            use crate::schema::export_templates::dsl::{export_templates, id};
 
-                let before = export_templates
-                    .filter(id.eq(template_id))
-                    .for_update()
-                    .first::<ExportTemplateRow>(connection)
-                    .await?;
-                assert_locked_revision_precondition(
-                    connection,
-                    &RevisionOwner::ExportTemplate.key(before.id),
-                    before.revision,
-                )
+            let before = export_templates
+                .filter(id.eq(template_id))
+                .for_update()
+                .first::<ExportTemplateRow>(connection)
                 .await?;
-                if !replacement.has_changes(&before) {
-                    return Ok(before.into_storage());
-                }
-                let updated = diesel::update(export_templates.filter(id.eq(template_id)))
-                    .set(replacement)
-                    .get_result::<ExportTemplateRow>(connection)
-                    .await?;
-                append_export_template_audit(
-                    connection,
-                    Action::Updated,
-                    &context,
-                    Some(&before),
-                    &updated,
-                )
+            assert_locked_revision_precondition(
+                connection,
+                &RevisionOwner::ExportTemplate.key(before.id),
+                before.revision,
+            )
+            .await?;
+            if !replacement.has_changes(&before) {
+                return Ok(before.into_storage());
+            }
+            let updated = diesel::update(export_templates.filter(id.eq(template_id)))
+                .set(replacement)
+                .get_result::<ExportTemplateRow>(connection)
                 .await?;
-                Ok::<_, PostgresStorageError>(updated.into_storage())
-            })
-            .await
-    } else {
-        runtime
-            .with_connection(async |connection| {
-                use crate::schema::export_templates::dsl::{export_templates, id};
-
-                diesel::update(export_templates.filter(id.eq(template_id)))
-                    .set(replacement)
-                    .get_result::<ExportTemplateRow>(connection)
-                    .await
-                    .map(ExportTemplateRow::into_storage)
-                    .map_err(PostgresStorageError::from)
-            })
-            .await
-    }
+            append_export_template_audit(
+                connection,
+                Action::Updated,
+                &event_context,
+                Some(&before),
+                &updated,
+            )
+            .await?;
+            Ok::<_, PostgresStorageError>(updated.into_storage())
+        })
+        .await
 }
 
 pub async fn delete_export_template(
@@ -459,48 +435,34 @@ pub async fn delete_export_template(
 ) -> Result<(), PostgresStorageError> {
     let (template_id, event_context) = request.into_parts();
     ensure_positive_id(template_id, "Export template")?;
-    if let Some(context) = event_context {
-        runtime
-            .with_transaction(async |connection| {
-                use crate::schema::export_templates::dsl::{export_templates, id};
+    runtime
+        .with_transaction(async |connection| {
+            use crate::schema::export_templates::dsl::{export_templates, id};
 
-                let before = export_templates
-                    .filter(id.eq(template_id))
-                    .for_update()
-                    .first::<ExportTemplateRow>(connection)
-                    .await?;
-                assert_locked_revision_precondition(
-                    connection,
-                    &RevisionOwner::ExportTemplate.key(before.id),
-                    before.revision,
-                )
+            let before = export_templates
+                .filter(id.eq(template_id))
+                .for_update()
+                .first::<ExportTemplateRow>(connection)
                 .await?;
-                diesel::delete(export_templates.filter(id.eq(template_id)))
-                    .execute(connection)
-                    .await?;
-                append_export_template_audit(
-                    connection,
-                    Action::Deleted,
-                    &context,
-                    Some(&before),
-                    &before,
-                )
-                .await
-            })
+            assert_locked_revision_precondition(
+                connection,
+                &RevisionOwner::ExportTemplate.key(before.id),
+                before.revision,
+            )
+            .await?;
+            diesel::delete(export_templates.filter(id.eq(template_id)))
+                .execute(connection)
+                .await?;
+            append_export_template_audit(
+                connection,
+                Action::Deleted,
+                &event_context,
+                Some(&before),
+                &before,
+            )
             .await
-    } else {
-        runtime
-            .with_connection(async |connection| {
-                use crate::schema::export_templates::dsl::{export_templates, id};
-
-                diesel::delete(export_templates.filter(id.eq(template_id)))
-                    .execute(connection)
-                    .await
-                    .map(|_| ())
-                    .map_err(PostgresStorageError::from)
-            })
-            .await
-    }
+        })
+        .await
 }
 
 async fn load_export_template_row(

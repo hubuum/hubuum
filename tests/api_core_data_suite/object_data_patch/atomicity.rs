@@ -265,7 +265,7 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
         &test_context.pool,
         crate::events::EntityType::Object,
         before.id,
-        None,
+        Some(crate::events::Action::Updated),
     )
     .await
     .unwrap();
