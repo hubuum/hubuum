@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use diesel::{Connection, PgConnection};
 use hubuum::events::EventContext;
 use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
@@ -109,7 +110,7 @@ impl PostgresBenchmarkDatabase {
         panic!("Docker did not publish the PostgreSQL benchmark port");
     }
 
-    fn wait_until_ready(&self) {
+    fn wait_until_container_ready(&self) {
         for _ in 0..120 {
             let status = Command::new("docker")
                 .args([
@@ -137,6 +138,29 @@ impl PostgresBenchmarkDatabase {
             .expect("Docker should read PostgreSQL benchmark logs");
         panic!(
             "PostgreSQL benchmark container did not become ready:\n{}",
+            command_diagnostics(&logs),
+        );
+    }
+
+    fn wait_until_ready(&self) {
+        self.wait_until_container_ready();
+
+        let mut last_error = None;
+        for _ in 0..120 {
+            match PgConnection::establish(&self.database_url) {
+                Ok(_) => return,
+                Err(error) => last_error = Some(error),
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+
+        let logs = Command::new("docker")
+            .args(["logs", &self.container_name])
+            .output()
+            .expect("Docker should read PostgreSQL benchmark logs");
+        panic!(
+            "PostgreSQL benchmark container was not reachable from the host: {}\n{}",
+            last_error.expect("at least one host connection attempt should fail"),
             command_diagnostics(&logs),
         );
     }
