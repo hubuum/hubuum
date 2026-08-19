@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
 use rstest::rstest;
@@ -21,7 +21,9 @@ use super::types::{
     CollectionResolution, ExecutionAccumulator, FailureKind, PlannedExecution, PlannedItem,
     PlanningFailure, PlanningState, WorkerLoopAction,
 };
-use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
+use super::worker::{
+    background_worker_action, mark_claimed_task_failed, process_claimed_task_for_test,
+};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
@@ -32,26 +34,73 @@ use crate::models::{
     ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, ImportWriteCondition,
     NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
     NewHubuumObjectRelation, ObjectKey, Permissions, PrincipalKey, RemoteAuthConfig,
-    RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision, RestoreTimestamps, TaskKind,
-    TaskStatus,
+    RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision, RestoreTimestamps,
+    TaskResultCounts, TaskStatus,
 };
 use crate::permissions::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{ResourceAttrs, ResourceKind};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
-use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
-use crate::services::tasks::ClaimedTask;
-use crate::storage::postgres::operations::task::{TaskBackend, insert_import_results};
-use crate::storage::postgres::operations::task_rows::{
-    NewImportTaskResultRow as NewImportTaskResultRecord, NewTaskRow as NewTaskRecord,
-};
-use crate::storage::postgres::{capture_queries, with_connection};
+use crate::services::tasks::{ClaimedTask, TaskStateChange, find_task, update_task_state};
 use crate::storage::{
-    CollectionStore, ImportStorage, PostgresStorage, StorageImportPlan, StorageImportPlanItem,
+    CollectionStorage, ImportStorage, StorageImportPlan, StorageImportPlanItem,
+    StorageImportResult, StorageTaskCreateRequest, StorageTaskKind, StorageTaskScopeSnapshot,
+    TaskQueueStorage,
 };
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
+use hubuum_storage_postgres::PostgresStorage;
+use hubuum_storage_postgres::{capture_queries, with_connection};
+
+async fn create_worker_test_task(
+    context: &TestContext,
+    kind: StorageTaskKind,
+    payload: serde_json::Value,
+    total_items: i32,
+    label: &str,
+) -> crate::models::TaskRecord {
+    let backend = crate::storage::storage_handle(&context.pool);
+    let task = backend
+        .create_task(
+            StorageTaskCreateRequest::builder(
+                kind,
+                hubuum_domain::PrincipalId::new(context.admin_user.id)
+                    .expect("persisted test principal id must be positive"),
+                payload,
+                total_items,
+            )
+            .idempotency_key(Some(
+                hubuum_task_core::IdempotencyKey::new(context.scoped_name(label))
+                    .expect("test idempotency key must be valid"),
+            ))
+            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+            .build(100),
+        )
+        .await
+        .expect("worker test task should be created");
+    hubuum_storage_postgres::test_support::prioritize_task(context.pool.get_ref(), task.id())
+        .await
+        .expect("worker test task should be prioritized");
+    find_task(
+        &context.pool,
+        crate::models::TaskID::new(task.id().id()).expect("persisted task id must be positive"),
+    )
+    .await
+    .expect("worker test task should be loadable")
+}
+
+async fn claim_worker_test_task(
+    context: &TestContext,
+    task_id: i32,
+) -> crate::services::tasks::ClaimedTask {
+    let task_id = hubuum_domain::TaskId::new(task_id).expect("persisted task id must be positive");
+    let claim =
+        hubuum_storage_postgres::test_support::claim_task_by_id(context.pool.get_ref(), task_id)
+            .await
+            .expect("the exact worker test task should be claimable");
+    ClaimedTask::from_storage(claim).expect("the claimed worker test task should be valid")
+}
 
 #[tokio::test]
 async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
@@ -504,7 +553,10 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     .unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
-        .import_collection_child_by_name(parent.collection.id, &imported_name)
+        .import_collection_child_by_name(
+            hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
+            &imported_name,
+        )
         .await
         .unwrap()
         .expect("imported collection should exist");
@@ -512,7 +564,7 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     let history = with_connection(&context.pool, async |conn| {
         use crate::schema::collections_history::dsl as h;
         h::collections_history
-            .filter(h::id.eq(collection.id()))
+            .filter(h::id.eq(collection.id().id()))
             .order(h::history_id.asc())
             .select((h::op, h::created_at, h::updated_at))
             .load::<(String, NaiveDateTime, NaiveDateTime)>(conn)
@@ -531,10 +583,7 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     );
 
     backend
-        .delete_collection(
-            crate::services::storage_boundary::collection_id_to_storage(collection.id()),
-            &crate::events::EventContext::system(),
-        )
+        .delete_collection(collection.id(), &crate::events::EventContext::system())
         .await
         .unwrap()
         .into_value();
@@ -773,7 +822,10 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
 
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
-        .import_collection_child_by_name(parent.collection.id, &collection_input.name)
+        .import_collection_child_by_name(
+            hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
+            &collection_input.name,
+        )
         .await
         .unwrap()
         .expect("imported collection should exist");
@@ -791,12 +843,12 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
     ];
     let objects = [
         backend
-            .import_object_by_name(classes[0].id().id(), &object_inputs[0].name)
+            .import_object_by_name(classes[0].id(), &object_inputs[0].name)
             .await
             .unwrap()
             .expect("first imported object should exist"),
         backend
-            .import_object_by_name(classes[1].id().id(), &object_inputs[1].name)
+            .import_object_by_name(classes[1].id(), &object_inputs[1].name)
             .await
             .unwrap()
             .expect("second imported object should exist"),
@@ -811,12 +863,12 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
             .first::<i32>(conn)
             .await?;
         let object_relation_id = or::hubuumobject_relation
-            .filter(or::from_hubuum_object_id.eq(objects[0].id()))
-            .filter(or::to_hubuum_object_id.eq(objects[1].id()))
+            .filter(or::from_hubuum_object_id.eq(objects[0].id().id()))
+            .filter(or::to_hubuum_object_id.eq(objects[1].id().id()))
             .select(or::id)
             .first::<i32>(conn)
             .await?;
-        Ok::<_, ApiError>((class_relation_id, object_relation_id))
+        Ok::<_, diesel::result::Error>((class_relation_id, object_relation_id))
     })
     .await
     .unwrap();
@@ -840,7 +892,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
 
     let update = match entity {
         CoreTemporalEntity::Collection => PlannedExecution::UpdateCollection {
-            collection_id: collection.id(),
+            collection_id: collection.id().id(),
             input: collection_input,
         },
         CoreTemporalEntity::Class => PlannedExecution::UpdateClass {
@@ -848,7 +900,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
             input: class_inputs[0].clone(),
         },
         CoreTemporalEntity::Object => PlannedExecution::UpdateObject {
-            object_id: objects[0].id(),
+            object_id: objects[0].id().id(),
             input: object_inputs[0].clone(),
         },
         CoreTemporalEntity::ClassRelation => PlannedExecution::UpdateClassRelationTimestamps {
@@ -878,7 +930,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         CoreTemporalEntity::Collection => {
             use crate::schema::collections_history::dsl as h;
             h::collections_history
-                .filter(h::id.eq(collection.id()))
+                .filter(h::id.eq(collection.id().id()))
                 .count()
                 .get_result::<i64>(conn)
                 .await
@@ -894,7 +946,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         CoreTemporalEntity::Object => {
             use crate::schema::hubuumobject_history::dsl as h;
             h::hubuumobject_history
-                .filter(h::id.eq(objects[0].id()))
+                .filter(h::id.eq(objects[0].id().id()))
                 .count()
                 .get_result::<i64>(conn)
                 .await
@@ -922,10 +974,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
     assert_eq!(history_count, 1);
 
     backend
-        .delete_collection(
-            crate::services::storage_boundary::collection_id_to_storage(collection.id()),
-            &crate::events::EventContext::system(),
-        )
+        .delete_collection(collection.id(), &crate::events::EventContext::system())
         .await
         .unwrap()
         .into_value();
@@ -1017,7 +1066,10 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     .unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
-        .import_collection_child_by_name(parent.collection.id, &imported_collection_name)
+        .import_collection_child_by_name(
+            hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
+            &imported_collection_name,
+        )
         .await
         .unwrap()
         .expect("imported collection should exist");
@@ -1035,12 +1087,12 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     ];
     let objects = [
         backend
-            .import_object_by_name(classes[0].id().id(), &object_names[0])
+            .import_object_by_name(classes[0].id(), &object_names[0])
             .await
             .unwrap()
             .expect("first imported object should exist"),
         backend
-            .import_object_by_name(classes[1].id().id(), &object_names[1])
+            .import_object_by_name(classes[1].id(), &object_names[1])
             .await
             .unwrap()
             .expect("second imported object should exist"),
@@ -1055,12 +1107,12 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
             .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
         let object_relation = or::hubuumobject_relation
-            .filter(or::from_hubuum_object_id.eq(objects[0].id()))
-            .filter(or::to_hubuum_object_id.eq(objects[1].id()))
+            .filter(or::from_hubuum_object_id.eq(objects[0].id().id()))
+            .filter(or::to_hubuum_object_id.eq(objects[1].id().id()))
             .select((or::created_at, or::updated_at))
             .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
-        Ok::<_, ApiError>((class_relation, object_relation))
+        Ok::<_, diesel::result::Error>((class_relation, object_relation))
     })
     .await
     .unwrap();
@@ -1078,10 +1130,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     assert_eq!(actual, [(expected, expected); 7]);
 
     backend
-        .delete_collection(
-            crate::services::storage_boundary::collection_id_to_storage(collection.id()),
-            &crate::events::EventContext::system(),
-        )
+        .delete_collection(collection.id(), &crate::events::EventContext::system())
         .await
         .unwrap()
         .into_value();
@@ -1229,7 +1278,8 @@ async fn identity_scope_import_rejects_a_stale_expected_revision() {
 
     assert!(matches!(
         error,
-        ApiError::PreconditionFailed(message, _) if message.contains("stale_revision")
+        ApiError::RevisionConflict(message, revision)
+            if message.contains("stale_revision") && revision.get() == 1
     ));
 }
 
@@ -1477,7 +1527,7 @@ async fn membership_import_honors_collision_policy(
             .select((s::created_at, s::updated_at))
             .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
-        Ok::<_, ApiError>((stored_membership, stored_source))
+        Ok::<_, diesel::result::Error>((stored_membership, stored_source))
     })
     .await
     .unwrap();
@@ -1791,77 +1841,6 @@ async fn test_execute_import_strict_preserves_underlying_error_variant() {
     let result = (execute_import_strict(&context.pool, 1, &planned_items, &mut accumulator)).await;
 
     assert!(matches!(result, Err(ApiError::NotFound(_))));
-}
-
-#[tokio::test]
-async fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
-    let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Import.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("missing-payload-task")),
-        request_hash: None,
-        request_payload: None,
-        summary: None,
-        total_items: 1,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
-
-    let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
-        .expect("valid date")
-        .and_hms_opt(0, 0, 0)
-        .expect("valid timestamp");
-    with_connection(&context.pool, async |conn| {
-        diesel::update(tasks.filter(task_id.eq(task.id)))
-            .set(created_at.eq(earliest))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    for _ in 0..20 {
-        let _ = (process_one_task(&context.pool, None)).await.unwrap();
-
-        let stored = (task.find_record(&context.pool)).await.unwrap();
-        if stored.status == TaskStatus::Failed.as_str() {
-            assert!(stored.finished_at.is_some());
-            assert!(stored.request_redacted_at.is_some());
-
-            let (events, _) = (task.list_events_with_total_count(
-                &context.pool,
-                &crate::models::search::QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
-                    .expect("test query must be valid"),
-            ))
-            .await
-            .unwrap();
-            let event_types = events
-                .iter()
-                .map(|event| event.event_type.as_str())
-                .collect::<Vec<_>>();
-            assert!(event_types.contains(&"validating"));
-            assert!(event_types.contains(&"failed"));
-            return;
-        }
-    }
-
-    let stored = (task.find_record(&context.pool)).await.unwrap();
-    panic!(
-        "Task {} did not reach failed state after repeated processing attempts; current status: {}",
-        task.id, stored.status
-    );
 }
 
 #[test]
@@ -2585,12 +2564,12 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let collection = backend
-        .import_collection_by_id(fixture.collection.id)
+        .import_collection_by_id(hubuum_domain::CollectionId::new(fixture.collection.id).unwrap())
         .await
         .unwrap();
 
     let collection = collection.expect("collection should remain available after update");
-    assert_eq!(collection.id(), fixture.collection.id);
+    assert_eq!(collection.id().id(), fixture.collection.id);
     assert_eq!(collection.description(), updated_description);
 }
 
@@ -2652,7 +2631,10 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let updated = backend
-        .import_class_by_name(fixture.collection.id, &class.name)
+        .import_class_by_name(
+            hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+            &class.name,
+        )
         .await
         .unwrap();
 
@@ -2801,12 +2783,12 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(plan).await.unwrap();
     let resolved = backend
-        .import_object_by_name(class.id, &object.name)
+        .import_object_by_name(hubuum_domain::ClassId::new(class.id).unwrap(), &object.name)
         .await
         .unwrap()
         .expect("updated object should remain addressable by name");
 
-    assert_eq!(resolved.id(), object.id);
+    assert_eq!(resolved.id().id(), object.id);
     assert_eq!(resolved.description(), "updated object");
 }
 
@@ -2901,133 +2883,57 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
 #[tokio::test]
 async fn test_process_one_task_export_failure_marks_single_failed_item() {
     let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Export.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("unimplemented-export-task")),
-        request_hash: None,
-        request_payload: Some(serde_json::json!({"export": "demo"})),
-        summary: None,
-        total_items: 0,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Export,
+        serde_json::json!({"export": "demo"}),
+        0,
+        "unimplemented-export-task",
+    )
+    .await;
+    let task_id = crate::models::TaskID::new(task.id).expect("persisted task id must be positive");
 
-    let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
-        .expect("valid date")
-        .and_hms_opt(0, 0, 0)
-        .expect("valid timestamp");
-    with_connection(&context.pool, async |conn| {
-        diesel::update(tasks.filter(task_id.eq(task.id)))
-            .set(created_at.eq(earliest))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    for _ in 0..20 {
-        let _ = (process_one_task(&context.pool, None)).await.unwrap();
-        let stored = (task.find_record(&context.pool)).await.unwrap();
-        if stored.status == TaskStatus::Failed.as_str() {
-            assert_eq!(stored.total_items, 0);
-            assert_eq!(stored.processed_items, 1);
-            assert_eq!(stored.failed_items, 1);
-            return;
-        }
-    }
-
-    let stored = (task.find_record(&context.pool)).await.unwrap();
-    panic!(
-        "Task {} did not reach failed state after repeated processing attempts; current status: {}",
-        task.id, stored.status
-    );
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    process_claimed_task_for_test(&context.pool, &claimed)
+        .await
+        .unwrap();
+    let stored = find_task(&context.pool, task_id).await.unwrap();
+    assert_eq!(stored.status, TaskStatus::Failed.as_str());
+    assert_eq!(stored.total_items, 0);
+    assert_eq!(stored.processed_items, 1);
+    assert_eq!(stored.failed_items, 1);
 }
 
 #[tokio::test]
 async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Import.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("fallback-count-task")),
-        request_hash: None,
-        request_payload: Some(serde_json::json!({"version": 1})),
-        summary: None,
-        total_items: 3,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
-    let claim_token = uuid::Uuid::new_v4();
-    with_connection(&context.pool, async |conn| {
-        use crate::schema::tasks::dsl::{
-            id, lease_expires_at, lease_token, started_at, status, tasks,
-        };
-        let now = chrono::Utc::now().naive_utc();
-        diesel::update(tasks.filter(id.eq(task.id)))
-            .set((
-                status.eq(TaskStatus::Running.as_str()),
-                started_at.eq(Some(now)),
-                lease_token.eq(Some(claim_token)),
-                lease_expires_at.eq(Some(now + chrono::Duration::minutes(1))),
-            ))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    let claimed =
-        ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap().into()).unwrap();
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({"version": 1}),
+        3,
+        "fallback-count-task",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    assert_eq!(claimed.id, task.id);
 
-    (insert_import_results(
-        &context.pool,
-        &[
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("a".to_string()),
-                entity_kind: "collection".to_string(),
-                action: "create".to_string(),
-                identifier: Some("a".to_string()),
-                outcome: "succeeded".to_string(),
-                error: None,
-                details: None,
-            },
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("b".to_string()),
-                entity_kind: "class".to_string(),
-                action: "create".to_string(),
-                identifier: Some("b".to_string()),
-                outcome: "failed".to_string(),
-                error: Some("failed".to_string()),
-                details: None,
-            },
-        ],
-    ))
-    .await
-    .unwrap();
+    let storage_task_id =
+        hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive");
+    crate::storage::storage_handle(&context.pool)
+        .record_import_results(vec![
+            StorageImportResult::builder(storage_task_id, "collection", "create", "succeeded")
+                .item_ref(Some("a".to_string()))
+                .identifier(Some("a".to_string()))
+                .build(),
+            StorageImportResult::builder(storage_task_id, "class", "create", "failed")
+                .item_ref(Some("b".to_string()))
+                .identifier(Some("b".to_string()))
+                .error(Some("failed".to_string()))
+                .build(),
+        ])
+        .await
+        .expect("import results should be recorded");
 
     (mark_claimed_task_failed(
         &context.pool,
@@ -3037,7 +2943,12 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     .await
     .unwrap();
 
-    let stored = (task.find_record(&context.pool)).await.unwrap();
+    let stored = find_task(
+        &context.pool,
+        crate::models::TaskID::new(task.id).expect("persisted task id must be positive"),
+    )
+    .await
+    .unwrap();
     assert_eq!(stored.processed_items, 2);
     assert_eq!(stored.success_items, 1);
     assert_eq!(stored.failed_items, 1);
@@ -3046,58 +2957,26 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
 #[tokio::test]
 async fn test_reindex_failure_finalization_reloads_persisted_progress() {
     let context = TestContext::new().await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Reindex.as_str().to_string(),
-        status: TaskStatus::Running.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("reindex-progress-task")),
-        request_hash: None,
-        request_payload: None,
-        summary: None,
-        total_items: 5,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Reindex,
+        serde_json::json!({"class_id": 1}),
+        5,
+        "reindex-progress-task",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    assert_eq!(claimed.id, task.id);
+    update_task_state(
+        &context.pool,
+        &claimed,
+        TaskStateChange::new(
+            TaskStatus::Running,
+            TaskResultCounts::from_stored(3, 3, 0).expect("test progress must be valid"),
+        ),
+    )
     .await
-    .unwrap();
-    let claim_token = uuid::Uuid::new_v4();
-    with_connection(&context.pool, async |conn| {
-        use crate::schema::tasks::dsl::{
-            id, lease_expires_at, lease_token, started_at, status, tasks,
-        };
-        let now = chrono::Utc::now().naive_utc();
-        diesel::update(tasks.filter(id.eq(task.id)))
-            .set((
-                status.eq(TaskStatus::Running.as_str()),
-                started_at.eq(Some(now)),
-                lease_token.eq(Some(claim_token)),
-                lease_expires_at.eq(Some(now + chrono::Duration::minutes(1))),
-            ))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    let claimed =
-        ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap().into()).unwrap();
-
-    with_connection(&context.pool, async |conn| {
-        use crate::schema::tasks::dsl::{id, processed_items, success_items, tasks};
-        diesel::update(tasks.filter(id.eq(task.id)))
-            .set((processed_items.eq(3), success_items.eq(3)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
+    .expect("reindex progress should be persisted");
 
     mark_claimed_task_failed(
         &context.pool,
@@ -3107,79 +2986,13 @@ async fn test_reindex_failure_finalization_reloads_persisted_progress() {
     .await
     .unwrap();
 
-    let stored = task.find_record(&context.pool).await.unwrap();
+    let stored = find_task(
+        &context.pool,
+        crate::models::TaskID::new(task.id).expect("persisted task id must be positive"),
+    )
+    .await
+    .unwrap();
     assert_eq!(stored.processed_items, 3);
     assert_eq!(stored.success_items, 3);
     assert_eq!(stored.failed_items, 1);
-}
-
-#[tokio::test]
-async fn test_count_import_results_summary_counts_success_and_failure_rows() {
-    let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Import.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("aggregate-count-task")),
-        request_hash: None,
-        request_payload: Some(serde_json::json!({"version": 1})),
-        summary: None,
-        total_items: 4,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
-
-    (insert_import_results(
-        &context.pool,
-        &[
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("one".to_string()),
-                entity_kind: "collection".to_string(),
-                action: "create".to_string(),
-                identifier: Some("one".to_string()),
-                outcome: "succeeded".to_string(),
-                error: None,
-                details: None,
-            },
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("two".to_string()),
-                entity_kind: "class".to_string(),
-                action: "create".to_string(),
-                identifier: Some("two".to_string()),
-                outcome: "failed".to_string(),
-                error: Some("failed".to_string()),
-                details: None,
-            },
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("three".to_string()),
-                entity_kind: "object".to_string(),
-                action: "update".to_string(),
-                identifier: Some("three".to_string()),
-                outcome: "planned".to_string(),
-                error: None,
-                details: None,
-            },
-        ],
-    ))
-    .await
-    .unwrap();
-
-    let counts = (task.count_import_results(&context.pool)).await.unwrap();
-
-    assert_eq!(counts.processed(), 3);
-    assert_eq!(counts.success(), 2);
-    assert_eq!(counts.failed(), 1);
 }

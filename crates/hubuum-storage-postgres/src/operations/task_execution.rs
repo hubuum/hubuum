@@ -194,7 +194,10 @@ pub async fn claim_next_task(
             submitted_by = ?row.submitted_by,
             total_items = row.total_items,
         );
-        let lease = StorageTaskLease::new(row.id, StorageTaskClaimToken::new(token.to_string()));
+        let lease = StorageTaskLease::new(
+            TaskId::new(row.id)?,
+            StorageTaskClaimToken::new(token.to_string()),
+        );
         Ok(StorageTaskClaim::new(row.into_storage()?, lease))
     })
     .transpose()
@@ -209,27 +212,34 @@ pub async fn renew_task_lease(
     let lease_milliseconds = validate_lease_duration(lease_duration)?;
     let updated = runtime
         .with_task_lease_connection(async move |connection| {
-            use crate::schema::tasks::dsl as tasks;
-            diesel::update(
-                tasks::tasks
-                    .filter(tasks::id.eq(claimed.id))
-                    .filter(tasks::lease_token.eq(Some(claimed.token)))
-                    .filter(
-                        tasks::lease_expires_at
-                            .gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
-                    )
-                    .filter(tasks::status.eq_any(active_statuses())),
+            crate::reach_fault_point(
+                crate::PostgresFaultPoint::TaskLeaseBeforeRenewal,
+                Some(connection),
             )
-            .set((
-                tasks::lease_expires_at.eq(sql::<Nullable<Timestamp>>(
-                    DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX,
+            .await?;
+            use crate::schema::tasks::dsl as tasks;
+            Ok::<_, PostgresStorageError>(
+                diesel::update(
+                    tasks::tasks
+                        .filter(tasks::id.eq(claimed.id))
+                        .filter(tasks::lease_token.eq(Some(claimed.token)))
+                        .filter(
+                            tasks::lease_expires_at
+                                .gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
+                        )
+                        .filter(tasks::status.eq_any(active_statuses())),
                 )
-                .bind::<BigInt, _>(lease_milliseconds)
-                .sql(DATABASE_LEASE_EXPIRY_SQL_SUFFIX)),
-                tasks::updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
-            ))
-            .execute(connection)
-            .await
+                .set((
+                    tasks::lease_expires_at.eq(sql::<Nullable<Timestamp>>(
+                        DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX,
+                    )
+                    .bind::<BigInt, _>(lease_milliseconds)
+                    .sql(DATABASE_LEASE_EXPIRY_SQL_SUFFIX)),
+                    tasks::updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
+                ))
+                .execute(connection)
+                .await?,
+            )
         })
         .await?;
     Ok(updated == 1)
@@ -558,7 +568,11 @@ async fn finalize_task_connection(
     let recorded =
         append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?).await?;
     let occurred_at = recorded.into_parts().0.occurred_at;
-    crate::check_failpoint(crate::PostgresFailpoint::TaskFinalizeAfterEvent)?;
+    crate::reach_fault_point(
+        crate::PostgresFaultPoint::TaskFinalizeAfterEvent,
+        Some(connection),
+    )
+    .await?;
     diesel::update(
         tasks::tasks
             .filter(tasks::id.eq(claimed.id))
@@ -718,16 +732,11 @@ fn state_update(
 }
 
 pub(super) fn claimed_task(lease: &StorageTaskLease) -> Result<ClaimedTask, PostgresStorageError> {
-    if lease.task_id() <= 0 {
-        return Err(PostgresStorageError::bad_request(
-            "Task claim id must be greater than zero",
-        ));
-    }
     let token = Uuid::parse_str(lease.token().adapter_value()).map_err(|_| {
         PostgresStorageError::bad_request("Task claim token is not valid for this backend")
     })?;
     Ok(ClaimedTask {
-        id: lease.task_id(),
+        id: lease.task_id().id(),
         token,
     })
 }
@@ -951,9 +960,9 @@ fn remote_call_artifact(
     let (duration_ms, success, error) = outcome.into_parts();
     NewRemoteCallResultRow {
         task_id,
-        target_id,
+        target_id: target_id.map(|id| id.id()),
         subject_type,
-        subject_id,
+        subject_id: subject_id.id(),
         method,
         rendered_url,
         response_status,
@@ -1113,7 +1122,10 @@ mod tests {
 
     #[test]
     fn invalid_claim_tokens_are_rejected_at_the_adapter_boundary() {
-        let lease = StorageTaskLease::new(7, StorageTaskClaimToken::new("not-a-uuid"));
+        let lease = StorageTaskLease::new(
+            TaskId::new(7).unwrap(),
+            StorageTaskClaimToken::new("not-a-uuid"),
+        );
         let error = claimed_task(&lease)
             .err()
             .expect("invalid claim token must be rejected");

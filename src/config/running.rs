@@ -415,9 +415,7 @@ impl From<&AppConfig> for RunningConfig {
     fn from(config: &AppConfig) -> Self {
         Self::from_app_config_and_storage(
             config,
-            crate::storage::StorageBackendDescriptor::new(
-                crate::storage::StorageBackendKind::Postgresql,
-            ),
+            crate::storage::StorageBackendDescriptor::new(config.storage_backend),
         )
     }
 }

@@ -1,5 +1,15 @@
 use actix_web::web::Data;
 use chrono::NaiveDateTime;
+use hubuum_domain::{
+    ClassId, CollectionId, ComputedFieldDefinitionId, EventDeliveryId, EventSinkId,
+    EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId, PrincipalId,
+    RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
+};
+#[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
+use hubuum_storage_postgres::PostgresPool;
+use hubuum_storage_postgres::PostgresStorage;
+#[cfg(any(test, feature = "integration-test-support"))]
+use hubuum_storage_postgres::{PostgresPoolSettings, build_postgres_pool};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,7 +18,6 @@ use uuid::Uuid;
 
 use crate::events::{
     EventContext, EventDeliverySettings, EventFanoutSettings, EventRetentionSettings,
-    MutationProvenance,
 };
 use crate::models::search::QueryOptions;
 use crate::models::{MaintenanceState, TokenRetentionSettings};
@@ -17,7 +26,6 @@ use crate::storage::observed::{
     ApplicationStorageTelemetry, ObservedStorage, observe_infallible_storage_call,
     observe_storage_call,
 };
-use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use crate::storage::{
     AuditEventStorage, AuthenticatedToken, AuthenticationAttempt, AuthenticationIdentity,
     AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
@@ -33,38 +41,37 @@ use crate::storage::{
     AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
     AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, AuthorizationStorage,
     BackupSnapshotStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogPage,
-    CatalogStorage, CertifiedStorageBackend, ClassRelationStore, ClassStore,
-    CollectionAuthorizationStorage, CollectionStore, ComputedFieldLifecycleStorage,
+    CatalogStorage, CertifiedStorageBackend, ClassRelationStorage, ClassStorage,
+    CollectionAuthorizationStorage, CollectionStorage, ComputedFieldLifecycleStorage,
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
     ComputedObjectStorage, EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch,
     EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    EventSubscriptionStorage, ExportQueryStorage, ExportTemplateHistoryRecord,
-    ExportTemplateStorage, GroupStorage, HistoryAsOfQuery, HistoryListQuery, HistoryPage,
-    HistoryPrincipalName, HistoryStorage, IdentityStorage, ImportStorage, InventoryGaugeSnapshot,
-    InventoryStorage, MetricsStorage, MutationOutcome, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
-    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalExportTemplateAuditEntry,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionBatch, EventRetentionBatchId,
+    EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
+    ExportTemplateHistoryRecord, ExportTemplateStorage, GroupStorage, HistoryAsOfQuery,
+    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, IdentityStorage,
+    ImportStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage, MutationOutcome,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStorage,
+    ObjectRelationsTouchingIdsQuery, ObjectStorage, OperationalExportTemplateAuditEntry,
     OperationalExportTemplateHealth, OperationalStateStorage, OperationalStorageSnapshot,
-    OperationalTaskQueueSnapshot, PostgresStorage, PrincipalStorage, ReadinessSnapshot,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    RemoteTargetStorage, RestoreStorage, StorageAuditEvent, StorageAuditEventListQuery,
-    StorageBackendDescriptor, StorageBackendKind, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageBackupSnapshot, StorageCallSite, StorageClass, StorageClassComputationState,
-    StorageClassGraphRow, StorageClassRecord, StorageClassRelation, StorageCollection,
-    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
-    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageDefaultAdminBootstrap,
-    StorageError, StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventPage,
-    StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecution, StorageExportOutput,
-    StorageExportOutputSummary, StorageExportTemplate, StorageExportTemplateCreate,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplatePage,
-    StorageExportTemplateReplace, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentity,
+    OperationalTaskQueueSnapshot, PrincipalStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
+    StorageAuditEvent, StorageAuditEventListQuery, StorageBackendDescriptor,
+    StorageBackendIdentity, StorageBackendKind, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageBackupSnapshot, StorageClass, StorageClassComputationState, StorageClassGraphRow,
+    StorageClassRecord, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    StorageEventDeliveryListQuery, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
+    StorageExecutionScope, StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
+    StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplatePage, StorageExportTemplateReplace, StorageExternalPrincipalState,
+    StorageExternalUserSync, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
     StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageImportApply, StorageImportCollectionKey, StorageImportMode, StorageImportPlan,
     StorageImportPreflight, StorageImportResult, StorageImportTaskResultPage,
@@ -75,13 +82,12 @@ use crate::storage::{
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StoragePrincipal, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
     StoragePrincipalSettings, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
-    StorageQueryBudget, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
-    StorageRemoteTarget, StorageRemoteTargetCreate, StorageRemoteTargetDelete,
-    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPage,
-    StorageRemoteTargetUpdate, StorageRestoreApply, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
-    StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
-    StorageRevisionPrecondition, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
+    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageServiceAccount, StorageServiceAccountCreate,
     StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
     StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
@@ -120,6 +126,7 @@ pub struct StorageHandle {
 }
 
 struct StorageHandleInner {
+    descriptor: StorageBackendDescriptor,
     implementation: BackendImplementation,
     resource_ports: ResourceStoragePorts,
 }
@@ -129,22 +136,22 @@ enum BackendImplementation {
 }
 
 struct ResourceStoragePorts {
-    collections: Arc<dyn CollectionStore>,
-    classes: Arc<dyn ClassStore>,
-    objects: Arc<dyn ObjectStore>,
-    class_relations: Arc<dyn ClassRelationStore>,
-    object_relations: Arc<dyn ObjectRelationStore>,
+    collections: Arc<dyn CollectionStorage>,
+    classes: Arc<dyn ClassStorage>,
+    objects: Arc<dyn ObjectStorage>,
+    class_relations: Arc<dyn ClassRelationStorage>,
+    object_relations: Arc<dyn ObjectRelationStorage>,
 }
 
 impl ResourceStoragePorts {
     fn observed<S>(storage: S, telemetry: Arc<dyn StorageTelemetry>) -> Self
     where
-        S: StorageIdentity
-            + CollectionStore
-            + ClassStore
-            + ObjectStore
-            + ClassRelationStore
-            + ObjectRelationStore
+        S: StorageBackendIdentity
+            + CollectionStorage
+            + ClassStorage
+            + ObjectStorage
+            + ClassRelationStorage
+            + ObjectRelationStorage
             + 'static,
     {
         let observed = Arc::new(ObservedStorage::new(storage, telemetry));
@@ -192,22 +199,26 @@ pub(crate) use api::storage_handle;
 impl StorageHandle {
     #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
     pub(crate) fn postgres(pool: PostgresPool) -> Self {
-        Self::from_postgres_backend(super::postgres::configured_postgres_storage(pool))
+        Self::from_postgres_backend(super::factory::compose_postgres(pool))
     }
 
+    #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn postgres_with_operational_pool_settings(
         pool: PostgresPool,
-        operational_pool_settings: PostgresPoolSettings,
+        settings: PostgresPoolSettings,
     ) -> Self {
+        let task_lease_pool = build_postgres_pool(&settings)
+            .expect("validated task-lease pool settings must remain constructible");
+        let notification_listener_pool = build_postgres_pool(&settings)
+            .expect("validated notification-listener pool settings must remain constructible");
         Self::from_postgres_backend(
-            super::postgres::configured_postgres_storage_with_operational_pools(
-                pool,
-                &operational_pool_settings,
-            ),
+            super::factory::compose_postgres(pool)
+                .with_task_lease_pool(task_lease_pool)
+                .with_notification_listener_pool(notification_listener_pool),
         )
     }
 
-    fn from_postgres_backend(backend: PostgresStorage) -> Self {
+    pub(in crate::storage) fn from_postgres_backend(backend: PostgresStorage) -> Self {
         Self::from_postgres_backend_with_storage_telemetry(
             backend,
             Arc::new(ApplicationStorageTelemetry),
@@ -218,46 +229,59 @@ impl StorageHandle {
         backend: PostgresStorage,
         telemetry: Arc<dyn StorageTelemetry>,
     ) -> Self {
-        let backend_kind = StorageBackendKind::Postgresql;
-        assert_complete_storage_backend(&backend, backend_kind);
+        Self::from_certified_backend(
+            backend,
+            StorageBackendKind::Postgresql,
+            BackendImplementation::Postgresql,
+            telemetry,
+        )
+    }
+
+    fn from_certified_backend<S>(
+        backend: S,
+        kind: StorageBackendKind,
+        into_implementation: impl FnOnce(S) -> BackendImplementation,
+        telemetry: Arc<dyn StorageTelemetry>,
+    ) -> Self
+    where
+        S: CertifiedStorageBackend + Clone + 'static,
+    {
+        assert_complete_storage_backend(&backend, kind);
         let resource_ports = ResourceStoragePorts::observed(backend.clone(), telemetry);
         Self {
             inner: Arc::new(StorageHandleInner {
-                implementation: BackendImplementation::Postgresql(backend),
+                descriptor: StorageBackendDescriptor::new(kind),
+                implementation: into_implementation(backend),
                 resource_ports,
             }),
         }
     }
 
     pub(crate) fn descriptor(&self) -> StorageBackendDescriptor {
-        match &self.inner.implementation {
-            BackendImplementation::Postgresql(_) => {
-                StorageBackendDescriptor::new(StorageBackendKind::Postgresql)
-            }
-        }
+        self.inner.descriptor
     }
 
     fn backend_name(&self) -> &'static str {
         self.descriptor().kind().as_str()
     }
 
-    pub(crate) fn collection_store(&self) -> Arc<dyn CollectionStore> {
+    pub(crate) fn collection_store(&self) -> Arc<dyn CollectionStorage> {
         self.inner.resource_ports.collections.clone()
     }
 
-    pub(crate) fn class_store(&self) -> Arc<dyn ClassStore> {
+    pub(crate) fn class_store(&self) -> Arc<dyn ClassStorage> {
         self.inner.resource_ports.classes.clone()
     }
 
-    pub(crate) fn object_store(&self) -> Arc<dyn ObjectStore> {
+    pub(crate) fn object_store(&self) -> Arc<dyn ObjectStorage> {
         self.inner.resource_ports.objects.clone()
     }
 
-    pub(crate) fn class_relation_store(&self) -> Arc<dyn ClassRelationStore> {
+    pub(crate) fn class_relation_store(&self) -> Arc<dyn ClassRelationStorage> {
         self.inner.resource_ports.class_relations.clone()
     }
 
-    pub(crate) fn object_relation_store(&self) -> Arc<dyn ObjectRelationStore> {
+    pub(crate) fn object_relation_store(&self) -> Arc<dyn ObjectRelationStorage> {
         self.inner.resource_ports.object_relations.clone()
     }
 }

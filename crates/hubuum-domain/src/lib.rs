@@ -22,10 +22,10 @@ pub use event_policy::{
     EventRetentionSettings,
 };
 pub use identifier::{
-    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventDeliveryId,
-    EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId,
-    ObjectRelationId, PositiveIdError, PrincipalId, RemoteTargetId, ResourceId, RestoreJobId,
-    ServiceAccountId, TaskId, TokenId, UserId,
+    AuthorizationGrantId, ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId,
+    EventDeliveryId, EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, HistoryRecordId,
+    IdentityScopeId, ImportTaskResultId, ObjectId, ObjectRelationId, PositiveIdError, PrincipalId,
+    RemoteTargetId, ResourceId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
 pub use identity::{
     EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,

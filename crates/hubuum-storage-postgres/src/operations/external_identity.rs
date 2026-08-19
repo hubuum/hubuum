@@ -8,10 +8,10 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::upsert::excluded;
 use diesel::{Insertable, JoinOnDsl, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND};
+use hubuum_domain::{EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, UserId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageSyncedHuman,
+    MutationOutcome, StorageExternalPrincipalState, StorageExternalUserSync, StorageSyncedHuman,
 };
 use serde_json::json;
 
@@ -45,15 +45,15 @@ struct ExternalUserRow {
 }
 
 impl ExternalUserRow {
-    fn into_storage(self) -> StorageSyncedHuman {
-        StorageSyncedHuman::new(
-            self.id,
+    fn into_storage(self) -> Result<StorageSyncedHuman, PostgresStorageError> {
+        Ok(StorageSyncedHuman::new(
+            UserId::new(self.id)?,
             self.proper_name,
             self.email,
             self.created_at,
             self.updated_at,
             self.anonymized_at,
-        )
+        ))
     }
 }
 
@@ -182,7 +182,7 @@ pub async fn mark_external_sync_attempted(
 pub async fn sync_external_user(
     runtime: &PostgresRuntime,
     request: StorageExternalUserSync,
-) -> Result<StorageSyncedHuman, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageSyncedHuman>, PostgresStorageError> {
     let (scope_name, provider_kind, subject, name, proper_name, email, groups) =
         request.into_parts();
     validate_required(&scope_name, "identity scope")?;
@@ -211,8 +211,9 @@ pub async fn sync_external_user(
             )
             .await?;
             let sync_time = database_now(connection).await?;
+            let scope_id = scope.id().id();
             let principal =
-                reconcile_principal(connection, scope.id(), &subject, &name, sync_time).await?;
+                reconcile_principal(connection, scope_id, &subject, &name, sync_time).await?;
             if principal.kind != HUMAN_PRINCIPAL_KIND {
                 return Err(PostgresStorageError::conflict(
                     "external identity subject belongs to a non-human principal",
@@ -235,15 +236,14 @@ pub async fn sync_external_user(
 
             let synced_group_ids = reconcile_groups(
                 connection,
-                scope.id(),
+                scope_id,
                 principal.id,
                 &provider_kind,
                 groups,
                 sync_time,
             )
             .await?;
-            remove_stale_memberships(connection, scope.id(), principal.id, &synced_group_ids)
-                .await?;
+            remove_stale_memberships(connection, scope_id, principal.id, &synced_group_ids).await?;
 
             let context = EventContext::system();
             let event = NewEvent::new(
@@ -263,8 +263,10 @@ pub async fn sync_external_user(
                 "external_subject": subject,
                 "synced_group_count": synced_group_count,
             }));
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(user.into_storage())
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(user.into_storage()?, audit))
         })
         .await
 }

@@ -343,12 +343,12 @@ pub async fn invoke_remote_target(
         body_override: invoke.body_override,
     })?;
     let snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id())?),
+        Some(TokenID::new(requestor.token_meta.id().id())?),
         requestor.scopes(),
     );
     let task = find_or_create_remote_call_task(
         &context,
-        PrincipalID::new(user.id())?,
+        PrincipalID::new(user.id().id())?,
         snapshot,
         idempotency_key_from_headers(req.headers())?,
         payload,

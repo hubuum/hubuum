@@ -6,10 +6,11 @@ use serde_json::Value;
 use crate::errors::ApiError;
 use crate::models::{NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
 use crate::services::storage_boundary::{object_create_to_storage, object_update_to_storage};
-use crate::storage::{ObjectStore, PostgresStorage};
+use crate::storage::ObjectStorage;
 use crate::tests::constants::{SchemaType, get_schema};
 use crate::tests::{CollectionFixture, TestScope};
 use crate::traits::CanSave;
+use hubuum_storage_postgres::PostgresStorage;
 
 /// Sets up a Geo class (with its collection) for testing.
 /// The identifier string is used to create unique names.

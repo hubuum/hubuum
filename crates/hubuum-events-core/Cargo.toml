@@ -6,11 +6,10 @@ rust-version = "1.88"
 description = "Backend-agnostic event catalog and provenance types for Hubuum's unified event & audit stream."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = true
+publish = false
 
 [package.metadata.hubuum]
-rust-api = "experimental-public"
-policy-document = "docs/rust_api/hubuum-events-core.md"
+rust-api = "workspace-internal"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }

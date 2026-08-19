@@ -2,10 +2,14 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{
+    AuthorizationGrantId, ClassId, CollectionId, GroupId, IdentityScopeId, ObjectId, PrincipalId,
+    ResourceId, ResourceRevision,
+};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::StorageError;
+use crate::{MutationOutcome, StorageError};
 
 /// Permission vocabulary persisted by a local authorization store.
 ///
@@ -129,13 +133,13 @@ impl AuthorizationPermission {
 /// Principal facts required by policy engines.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationPrincipal {
-    principal_id: i32,
-    group_ids: Vec<i32>,
+    principal_id: PrincipalId,
+    group_ids: Vec<GroupId>,
 }
 
 impl AuthorizationPrincipal {
     #[must_use]
-    pub fn new(principal_id: i32, group_ids: impl IntoIterator<Item = i32>) -> Self {
+    pub fn new(principal_id: PrincipalId, group_ids: impl IntoIterator<Item = GroupId>) -> Self {
         let mut group_ids = group_ids.into_iter().collect::<Vec<_>>();
         group_ids.sort_unstable();
         group_ids.dedup();
@@ -146,17 +150,17 @@ impl AuthorizationPrincipal {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
     #[must_use]
-    pub fn group_ids(&self) -> &[i32] {
+    pub fn group_ids(&self) -> &[GroupId] {
         &self.group_ids
     }
 
     #[must_use]
-    pub fn into_group_ids(self) -> Vec<i32> {
+    pub fn into_group_ids(self) -> Vec<GroupId> {
         self.group_ids
     }
 }
@@ -174,7 +178,7 @@ impl fmt::Debug for AuthorizationPrincipal {
 /// Membership lookup by stable principal id and configured group identity.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationGroupMembershipQuery {
-    principal_id: i32,
+    principal_id: PrincipalId,
     group_name: String,
     identity_scope: String,
 }
@@ -182,7 +186,7 @@ pub struct AuthorizationGroupMembershipQuery {
 impl AuthorizationGroupMembershipQuery {
     #[must_use]
     pub fn new(
-        principal_id: i32,
+        principal_id: PrincipalId,
         group_name: impl Into<String>,
         identity_scope: impl Into<String>,
     ) -> Self {
@@ -194,7 +198,7 @@ impl AuthorizationGroupMembershipQuery {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
@@ -222,16 +226,16 @@ impl fmt::Debug for AuthorizationGroupMembershipQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationCollectionAccessQuery {
-    principal_id: i32,
-    collection_id: i32,
+    principal_id: PrincipalId,
+    collection_id: CollectionId,
     permissions: Vec<AuthorizationPermission>,
 }
 
 impl AuthorizationCollectionAccessQuery {
     #[must_use]
     pub fn new(
-        principal_id: i32,
-        collection_id: i32,
+        principal_id: PrincipalId,
+        collection_id: CollectionId,
         permissions: impl IntoIterator<Item = AuthorizationPermission>,
     ) -> Self {
         Self {
@@ -242,12 +246,12 @@ impl AuthorizationCollectionAccessQuery {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -275,16 +279,16 @@ impl fmt::Debug for AuthorizationCollectionAccessQuery {
 /// permissions are normalized so adapters receive a deterministic query.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationCollectionsAccessQuery {
-    principal_id: i32,
-    collection_ids: Vec<i32>,
+    principal_id: PrincipalId,
+    collection_ids: Vec<CollectionId>,
     permissions: Vec<AuthorizationPermission>,
 }
 
 impl AuthorizationCollectionsAccessQuery {
     #[must_use]
     pub fn new(
-        principal_id: i32,
-        collection_ids: impl IntoIterator<Item = i32>,
+        principal_id: PrincipalId,
+        collection_ids: impl IntoIterator<Item = CollectionId>,
         permissions: impl IntoIterator<Item = AuthorizationPermission>,
     ) -> Self {
         let mut collection_ids = collection_ids.into_iter().collect::<Vec<_>>();
@@ -298,12 +302,12 @@ impl AuthorizationCollectionsAccessQuery {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
     #[must_use]
-    pub fn collection_ids(&self) -> &[i32] {
+    pub fn collection_ids(&self) -> &[CollectionId] {
         &self.collection_ids
     }
 
@@ -326,14 +330,14 @@ impl fmt::Debug for AuthorizationCollectionsAccessQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationCollectionsQuery {
-    principal_id: i32,
+    principal_id: PrincipalId,
     permissions: Vec<AuthorizationPermission>,
 }
 
 impl AuthorizationCollectionsQuery {
     #[must_use]
     pub fn new(
-        principal_id: i32,
+        principal_id: PrincipalId,
         permissions: impl IntoIterator<Item = AuthorizationPermission>,
     ) -> Self {
         Self {
@@ -343,7 +347,7 @@ impl AuthorizationCollectionsQuery {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
@@ -365,25 +369,25 @@ impl fmt::Debug for AuthorizationCollectionsQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationCollection {
-    id: i32,
+    id: CollectionId,
     name: String,
     description: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    parent_collection_id: Option<i32>,
-    revision: i64,
+    parent_collection_id: Option<CollectionId>,
+    revision: ResourceRevision,
 }
 
 impl AuthorizationCollection {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: CollectionId,
         name: impl Into<String>,
         description: impl Into<String>,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
-        parent_collection_id: Option<i32>,
-        revision: i64,
+        parent_collection_id: Option<CollectionId>,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             id,
@@ -397,7 +401,7 @@ impl AuthorizationCollection {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> CollectionId {
         self.id
     }
 
@@ -422,12 +426,12 @@ impl AuthorizationCollection {
     }
 
     #[must_use]
-    pub const fn parent_collection_id(&self) -> Option<i32> {
+    pub const fn parent_collection_id(&self) -> Option<CollectionId> {
         self.parent_collection_id
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
@@ -452,9 +456,9 @@ impl fmt::Debug for AuthorizationCollection {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationGroupIdentity {
-    id: i32,
+    id: GroupId,
     group_name: String,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
     managed_by: String,
     external_key: Option<String>,
 }
@@ -462,9 +466,9 @@ pub struct AuthorizationGroupIdentity {
 impl AuthorizationGroupIdentity {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: GroupId,
         group_name: impl Into<String>,
-        identity_scope_id: i32,
+        identity_scope_id: IdentityScopeId,
         managed_by: impl Into<String>,
         external_key: Option<String>,
     ) -> Self {
@@ -499,7 +503,7 @@ pub struct AuthorizationGroupProfile {
     description: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl AuthorizationGroupProfile {
@@ -508,7 +512,7 @@ impl AuthorizationGroupProfile {
         description: impl Into<String>,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             description: description.into(),
@@ -572,7 +576,7 @@ impl AuthorizationGroup {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> GroupId {
         self.identity.id
     }
     #[must_use]
@@ -592,7 +596,7 @@ impl AuthorizationGroup {
         self.profile.updated_at
     }
     #[must_use]
-    pub const fn identity_scope_id(&self) -> i32 {
+    pub const fn identity_scope_id(&self) -> IdentityScopeId {
         self.identity.identity_scope_id
     }
     #[must_use]
@@ -612,7 +616,7 @@ impl AuthorizationGroup {
         self.sync.last_succeeded_at
     }
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.profile.revision
     }
 }
@@ -630,9 +634,9 @@ impl fmt::Debug for AuthorizationGroup {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationGrant {
-    id: i32,
-    collection_id: i32,
-    group_id: i32,
+    id: AuthorizationGrantId,
+    collection_id: CollectionId,
+    group_id: GroupId,
     permissions: Vec<AuthorizationPermission>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
@@ -655,9 +659,9 @@ impl fmt::Debug for AuthorizationGrant {
 impl AuthorizationGrant {
     #[must_use]
     pub fn new(
-        id: i32,
-        collection_id: i32,
-        group_id: i32,
+        id: AuthorizationGrantId,
+        collection_id: CollectionId,
+        group_id: GroupId,
         permissions: impl IntoIterator<Item = AuthorizationPermission>,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
@@ -673,15 +677,15 @@ impl AuthorizationGrant {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> AuthorizationGrantId {
         self.id
     }
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
     #[must_use]
-    pub const fn group_id(&self) -> i32 {
+    pub const fn group_id(&self) -> GroupId {
         self.group_id
     }
     #[must_use]
@@ -770,7 +774,7 @@ impl AuthorizationGroupGrantPage {
 
 #[derive(Clone, PartialEq)]
 pub struct AuthorizationCollectionGrantListQuery {
-    collection_id: i32,
+    collection_id: CollectionId,
     required_permissions: Vec<AuthorizationPermission>,
     query_options: QueryOptions,
 }
@@ -796,7 +800,7 @@ impl fmt::Debug for AuthorizationCollectionGrantListQuery {
 impl AuthorizationCollectionGrantListQuery {
     #[must_use]
     pub fn new(
-        collection_id: i32,
+        collection_id: CollectionId,
         required_permissions: impl IntoIterator<Item = AuthorizationPermission>,
         query_options: QueryOptions,
     ) -> Self {
@@ -808,7 +812,7 @@ impl AuthorizationCollectionGrantListQuery {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
     #[must_use]
@@ -823,8 +827,8 @@ impl AuthorizationCollectionGrantListQuery {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AuthorizationGrantKey {
-    collection_id: i32,
-    group_id: i32,
+    collection_id: CollectionId,
+    group_id: GroupId,
 }
 
 impl fmt::Debug for AuthorizationGrantKey {
@@ -839,18 +843,18 @@ impl fmt::Debug for AuthorizationGrantKey {
 
 impl AuthorizationGrantKey {
     #[must_use]
-    pub const fn new(collection_id: i32, group_id: i32) -> Self {
+    pub const fn new(collection_id: CollectionId, group_id: GroupId) -> Self {
         Self {
             collection_id,
             group_id,
         }
     }
     #[must_use]
-    pub const fn collection_id(self) -> i32 {
+    pub const fn collection_id(self) -> CollectionId {
         self.collection_id
     }
     #[must_use]
-    pub const fn group_id(self) -> i32 {
+    pub const fn group_id(self) -> GroupId {
         self.group_id
     }
 }
@@ -916,13 +920,13 @@ impl AuthorizationGrantMutation {
 /// set for the collection.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AuthorizationPermissionSetQuery {
-    collection_id: i32,
-    group_id: Option<i32>,
+    collection_id: CollectionId,
+    group_id: Option<GroupId>,
 }
 
 impl AuthorizationPermissionSetQuery {
     #[must_use]
-    pub const fn new(collection_id: i32, group_id: Option<i32>) -> Self {
+    pub const fn new(collection_id: CollectionId, group_id: Option<GroupId>) -> Self {
         Self {
             collection_id,
             group_id,
@@ -930,12 +934,12 @@ impl AuthorizationPermissionSetQuery {
     }
 
     #[must_use]
-    pub const fn collection_id(self) -> i32 {
+    pub const fn collection_id(self) -> CollectionId {
         self.collection_id
     }
 
     #[must_use]
-    pub const fn group_id(self) -> Option<i32> {
+    pub const fn group_id(self) -> Option<GroupId> {
         self.group_id
     }
 }
@@ -953,14 +957,18 @@ impl fmt::Debug for AuthorizationPermissionSetQuery {
 /// Revisioned local permission set returned without database row types.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationPermissionSet {
-    collection_id: i32,
-    revision: i64,
+    collection_id: CollectionId,
+    revision: ResourceRevision,
     grants: Vec<AuthorizationGrant>,
 }
 
 impl AuthorizationPermissionSet {
     #[must_use]
-    pub const fn new(collection_id: i32, revision: i64, grants: Vec<AuthorizationGrant>) -> Self {
+    pub const fn new(
+        collection_id: CollectionId,
+        revision: ResourceRevision,
+        grants: Vec<AuthorizationGrant>,
+    ) -> Self {
         Self {
             collection_id,
             revision,
@@ -969,7 +977,7 @@ impl AuthorizationPermissionSet {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i64, Vec<AuthorizationGrant>) {
+    pub fn into_parts(self) -> (CollectionId, ResourceRevision, Vec<AuthorizationGrant>) {
         (self.collection_id, self.revision, self.grants)
     }
 }
@@ -1031,12 +1039,12 @@ fn normalized_permissions(
 /// Deduplicated resource identifiers requested for authorization enrichment.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationResourceIds {
-    ids: Vec<i32>,
+    ids: Vec<ResourceId>,
 }
 
 impl AuthorizationResourceIds {
     #[must_use]
-    pub fn new(ids: impl IntoIterator<Item = i32>) -> Self {
+    pub fn new(ids: impl IntoIterator<Item = ResourceId>) -> Self {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         ids.sort_unstable();
         ids.dedup();
@@ -1044,7 +1052,7 @@ impl AuthorizationResourceIds {
     }
 
     #[must_use]
-    pub fn ids(&self) -> &[i32] {
+    pub fn ids(&self) -> &[ResourceId] {
         &self.ids
     }
 }
@@ -1061,23 +1069,23 @@ impl fmt::Debug for AuthorizationResourceIds {
 /// Class facts needed to construct an authorization resource.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationClassResource {
-    id: i32,
-    collection_id: i32,
+    id: ClassId,
+    collection_id: CollectionId,
 }
 
 impl AuthorizationClassResource {
     #[must_use]
-    pub const fn new(id: i32, collection_id: i32) -> Self {
+    pub const fn new(id: ClassId, collection_id: CollectionId) -> Self {
         Self { id, collection_id }
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ClassId {
         self.id
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 }
@@ -1095,15 +1103,20 @@ impl fmt::Debug for AuthorizationClassResource {
 /// Object facts needed to construct an authorization resource.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationObjectResource {
-    id: i32,
-    collection_id: i32,
-    class_id: i32,
+    id: ObjectId,
+    collection_id: CollectionId,
+    class_id: ClassId,
     name: String,
 }
 
 impl AuthorizationObjectResource {
     #[must_use]
-    pub fn new(id: i32, collection_id: i32, class_id: i32, name: impl Into<String>) -> Self {
+    pub fn new(
+        id: ObjectId,
+        collection_id: CollectionId,
+        class_id: ClassId,
+        name: impl Into<String>,
+    ) -> Self {
         Self {
             id,
             collection_id,
@@ -1113,17 +1126,17 @@ impl AuthorizationObjectResource {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ObjectId {
         self.id
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> i32 {
+    pub const fn class_id(&self) -> ClassId {
         self.class_id
     }
 
@@ -1155,7 +1168,7 @@ impl fmt::Debug for AuthorizationObjectResource {
 pub trait AuthorizationStorage: Send + Sync {
     async fn load_authorization_principal(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<AuthorizationPrincipal, StorageError>;
 
     async fn authorization_principal_is_group_member(
@@ -1219,27 +1232,39 @@ pub trait AuthorizationStorage: Send + Sync {
     async fn apply_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
-    ) -> Result<AuthorizationGrant, StorageError>;
+    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError>;
 
     async fn revoke_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
-    ) -> Result<AuthorizationGrant, StorageError>;
+    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError>;
 
     async fn revoke_all_local_collection_grants(
         &self,
         request: AuthorizationGrantDelete,
-    ) -> Result<(), StorageError>;
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn principal(id: i32) -> PrincipalId {
+        PrincipalId::new(id).unwrap()
+    }
+
+    fn group(id: i32) -> GroupId {
+        GroupId::new(id).unwrap()
+    }
+
+    fn collection(id: i32) -> CollectionId {
+        CollectionId::new(id).unwrap()
+    }
+
     #[test]
     fn principal_groups_are_normalized() {
-        let principal = AuthorizationPrincipal::new(7, [3, 1, 3, 2]);
-        assert_eq!(principal.group_ids(), &[1, 2, 3]);
+        let principal = AuthorizationPrincipal::new(principal(7), [3, 1, 3, 2].map(group));
+        assert_eq!(principal.group_ids(), &[group(1), group(2), group(3)]);
     }
 
     #[test]
@@ -1261,7 +1286,10 @@ mod tests {
 
     #[test]
     fn principal_debug_redacts_identity() {
-        let debug = format!("{:?}", AuthorizationPrincipal::new(987_654, [123, 456]));
+        let debug = format!(
+            "{:?}",
+            AuthorizationPrincipal::new(principal(987_654), [group(123), group(456)])
+        );
         assert!(!debug.contains("987654"));
         assert!(!debug.contains("123"));
         assert!(debug.contains("group_count"));
@@ -1271,7 +1299,11 @@ mod tests {
     fn membership_debug_redacts_lookup_values() {
         let debug = format!(
             "{:?}",
-            AuthorizationGroupMembershipQuery::new(987_654, "secret-admins", "private-scope")
+            AuthorizationGroupMembershipQuery::new(
+                principal(987_654),
+                "secret-admins",
+                "private-scope",
+            )
         );
         assert!(!debug.contains("987654"));
         assert!(!debug.contains("secret-admins"));
@@ -1281,14 +1313,14 @@ mod tests {
     #[test]
     fn authorization_dto_debug_redacts_resource_identity() {
         let query = AuthorizationCollectionAccessQuery::new(
-            987_654,
-            876_543,
+            principal(987_654),
+            collection(876_543),
             [AuthorizationPermission::ReadCollection],
         );
         let grant = AuthorizationGrant::new(
-            765_432,
-            876_543,
-            654_321,
+            AuthorizationGrantId::new(765_432).unwrap(),
+            collection(876_543),
+            group(654_321),
             [AuthorizationPermission::ReadCollection],
             NaiveDateTime::default(),
             NaiveDateTime::default(),
@@ -1304,8 +1336,8 @@ mod tests {
     #[test]
     fn permission_sets_are_normalized() {
         let query = AuthorizationCollectionAccessQuery::new(
-            1,
-            2,
+            principal(1),
+            collection(2),
             [
                 AuthorizationPermission::UpdateCollection,
                 AuthorizationPermission::ReadCollection,
@@ -1324,8 +1356,8 @@ mod tests {
     #[test]
     fn batch_access_query_normalizes_collection_and_permission_sets() {
         let query = AuthorizationCollectionsAccessQuery::new(
-            1,
-            [9, 3, 9, 5],
+            principal(1),
+            [9, 3, 9, 5].map(collection),
             [
                 AuthorizationPermission::UpdateCollection,
                 AuthorizationPermission::ReadCollection,
@@ -1333,7 +1365,10 @@ mod tests {
             ],
         );
 
-        assert_eq!(query.collection_ids(), &[3, 5, 9]);
+        assert_eq!(
+            query.collection_ids(),
+            &[collection(3), collection(5), collection(9)]
+        );
         assert_eq!(
             query.permissions(),
             &[
@@ -1348,8 +1383,8 @@ mod tests {
         let debug = format!(
             "{:?}",
             AuthorizationCollectionsAccessQuery::new(
-                987_654,
-                [876_543, 765_432],
+                principal(987_654),
+                [collection(876_543), collection(765_432)],
                 [AuthorizationPermission::ReadCollection],
             )
         );
@@ -1363,10 +1398,18 @@ mod tests {
 
     #[test]
     fn authorization_resource_debug_redacts_projected_values() {
-        let class = AuthorizationClassResource::new(987_654, 876_543);
-        let object =
-            AuthorizationObjectResource::new(765_432, 654_321, 543_210, "sensitive-object-name");
-        let ids = AuthorizationResourceIds::new([432_109, 321_098]);
+        let class =
+            AuthorizationClassResource::new(ClassId::new(987_654).unwrap(), collection(876_543));
+        let object = AuthorizationObjectResource::new(
+            ObjectId::new(765_432).unwrap(),
+            collection(654_321),
+            ClassId::new(543_210).unwrap(),
+            "sensitive-object-name",
+        );
+        let ids = AuthorizationResourceIds::new([
+            ResourceId::new(432_109).unwrap(),
+            ResourceId::new(321_098).unwrap(),
+        ]);
         let debug = format!("{class:?} {object:?} {ids:?}");
 
         for sensitive in [
@@ -1386,8 +1429,8 @@ mod tests {
 
     #[test]
     fn permission_set_and_mutation_debug_redact_identifiers() {
-        let key = AuthorizationGrantKey::new(987_654, 876_543);
-        let query = AuthorizationPermissionSetQuery::new(987_654, Some(876_543));
+        let key = AuthorizationGrantKey::new(collection(987_654), group(876_543));
+        let query = AuthorizationPermissionSetQuery::new(collection(987_654), Some(group(876_543)));
         let mutation = AuthorizationGrantMutation::new(
             key,
             [AuthorizationPermission::ReadCollection],
@@ -1400,7 +1443,7 @@ mod tests {
         for sensitive in ["987654", "876543"] {
             assert!(!debug.contains(sensitive));
         }
-        assert!(debug.contains("has_event_context"));
+        assert!(debug.contains("event_context"));
         assert!(debug.contains("has_group_filter"));
     }
 }

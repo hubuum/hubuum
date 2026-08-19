@@ -1,10 +1,12 @@
+use hubuum_domain::PrincipalId;
+
 use super::*;
 
 #[async_trait]
 impl HistoryStorage for StorageHandle {
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<i32>,
+        principal_ids: Vec<PrincipalId>,
     ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
         observe_storage_call(
             self.backend_name(),

@@ -44,7 +44,7 @@ impl From<MemoryStorageModelError> for StorageError {
             }
             ApiError::Conflict(message) => Self::new(StorageErrorKind::Conflict, message, None),
             ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
-                Self::new(StorageErrorKind::Database, message, None)
+                Self::new(StorageErrorKind::Backend, message, None)
             }
             ApiError::NotFound(message) | ApiError::Gone(message) => {
                 Self::new(StorageErrorKind::NotFound, message, None)
@@ -52,6 +52,11 @@ impl From<MemoryStorageModelError> for StorageError {
             ApiError::PreconditionFailed(message, _) => {
                 Self::new(StorageErrorKind::RevisionConflict, message, None)
             }
+            ApiError::RevisionConflict(message, current_revision) => Self::new(
+                StorageErrorKind::RevisionConflict,
+                message,
+                Some(current_revision),
+            ),
             ApiError::TooManyRequests(message) => {
                 Self::new(StorageErrorKind::RateLimited, message, None)
             }

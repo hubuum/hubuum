@@ -101,7 +101,7 @@ async fn list_objects_in_class(
 
     debug!(
         message = "Getting objects in class",
-        user_id = requestor.principal.id(),
+        user_id = requestor.principal.id().id(),
         class_id = class_id.id(),
         query = query_string
     );
@@ -160,7 +160,7 @@ async fn load_raw_object_page(
         let is_admin = crate::traits::AuthzSubject::is_admin(user, context).await?;
         let (objects, total_count) = catalog_service::list_objects(
             context,
-            user.id(),
+            user.id().id(),
             is_admin,
             requestor.scopes(),
             prepare_db_pagination::<HubuumObject>(params)?,
@@ -189,7 +189,7 @@ async fn load_raw_object_page(
         let mut candidates = if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
             Vec::new()
         } else {
-            catalog_service::list_objects(&context, user.id(), true, None, candidate_options)
+            catalog_service::list_objects(&context, user.id().id(), true, None, candidate_options)
                 .await?
                 .0
         };
@@ -304,7 +304,7 @@ async fn create_object_in_resolved_class(
     let object = object.into_domain_for_class(target.class())?;
     debug!(
         message = "Creating object in class",
-        user_id = requestor.principal.id(),
+        user_id = requestor.principal.id().id(),
         class_id = target.class().id,
         object_name = object.name,
     );
@@ -390,7 +390,7 @@ async fn get_object_in_class(
 
     debug!(
         message = "Getting object in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
@@ -495,7 +495,7 @@ async fn patch_object_in_class(
 
     debug!(
         message = "Updating object in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
@@ -625,7 +625,7 @@ async fn patch_object_data_in_class(
 
     debug!(
         message = "Applying JSON Patch to object data",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
@@ -685,7 +685,7 @@ async fn patch_object_data_by_name_in_class(
 
     debug!(
         message = "Applying JSON Patch to object data by name",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = target.object().hubuum_class_id,
         object_id = target.object().id
     );
@@ -748,7 +748,7 @@ async fn delete_object_in_class(
 
     debug!(
         message = "Deleting object in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );

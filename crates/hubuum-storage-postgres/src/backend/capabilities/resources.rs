@@ -2,14 +2,14 @@ use super::super::*;
 
 #[async_trait]
 impl GroupStorage for PostgresStorage {
-    async fn load_group(&self, group_id: i32) -> Result<StorageIdentityGroup, StorageError> {
-        crate::operations::group::load_group(self.runtime(), group_id)
+    async fn load_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
+        crate::operations::group::load_group(self.runtime(), group_id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError> {
-        crate::operations::group::group_identity_scope_name(self.runtime(), group_id)
+    async fn group_identity_scope_name(&self, group_id: GroupId) -> Result<String, StorageError> {
+        crate::operations::group::group_identity_scope_name(self.runtime(), group_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -26,81 +26,89 @@ impl GroupStorage for PostgresStorage {
 
     async fn update_group(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         update: StorageGroupUpdate,
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
-        crate::operations::group::update_group(self.runtime(), group_id, update, context)
+        crate::operations::group::update_group(self.runtime(), group_id.id(), update, context)
             .await
             .map_err(StorageError::from)
     }
 
     async fn delete_group(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         context: &EventContext,
     ) -> Result<MutationOutcome<usize>, StorageError> {
-        crate::operations::group::delete_group(self.runtime(), group_id, context)
+        crate::operations::group::delete_group(self.runtime(), group_id.id(), context)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn group_members(&self, group_id: i32) -> Result<Vec<StoragePrincipal>, StorageError> {
-        crate::operations::group::group_members(self.runtime(), group_id)
+    async fn group_members(
+        &self,
+        group_id: GroupId,
+    ) -> Result<Vec<StoragePrincipal>, StorageError> {
+        crate::operations::group::group_members(self.runtime(), group_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn group_members_page(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError> {
-        crate::operations::group::group_members_page(self.runtime(), group_id, query_options)
+        crate::operations::group::group_members_page(self.runtime(), group_id.id(), query_options)
             .await
             .map_err(StorageError::from)
     }
 
     async fn count_group_members(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<i64, StorageError> {
-        crate::operations::group::count_group_members(self.runtime(), group_id, query_options)
+        crate::operations::group::count_group_members(self.runtime(), group_id.id(), query_options)
             .await
             .map_err(StorageError::from)
     }
 
     async fn group_member_principal(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError> {
-        crate::operations::group::group_member_principal(self.runtime(), principal_id)
+        crate::operations::group::group_member_principal(self.runtime(), principal_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn add_group_member(
         &self,
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
         context: &EventContext,
     ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
-        crate::operations::group::add_group_member(self.runtime(), principal_id, group_id, context)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::group::add_group_member(
+            self.runtime(),
+            principal_id.id(),
+            group_id.id(),
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn remove_group_member(
         &self,
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::group::remove_group_member(
             self.runtime(),
-            principal_id,
-            group_id,
+            principal_id.id(),
+            group_id.id(),
             context,
         )
         .await
@@ -110,30 +118,33 @@ impl GroupStorage for PostgresStorage {
 
 #[async_trait]
 impl PrincipalStorage for PostgresStorage {
-    async fn load_principal(&self, principal_id: i32) -> Result<StoragePrincipal, StorageError> {
-        crate::operations::principal::load_principal(self.runtime(), principal_id)
+    async fn load_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<StoragePrincipal, StorageError> {
+        crate::operations::principal::load_principal(self.runtime(), principal_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn load_principal_settings(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        crate::operations::principal::load_principal_settings(self.runtime(), principal_id)
+        crate::operations::principal::load_principal_settings(self.runtime(), principal_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn mutate_principal_settings(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
     ) -> Result<MutationOutcome<StoragePrincipalSettings>, StorageError> {
         crate::operations::principal::mutate_principal_settings(
             self.runtime(),
-            principal_id,
+            principal_id.id(),
             mutation,
             context,
         )
@@ -155,11 +166,11 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 
     async fn principal_all_collection_permissions(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
         crate::operations::authorization::principal_all_collection_permissions(
             self.runtime(),
-            principal_id,
+            principal_id.id(),
         )
         .await
         .map_err(StorageError::from)
@@ -209,13 +220,13 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 
     async fn effective_group_collection_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionId,
+        group_id: GroupId,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
         crate::operations::authorization::effective_group_collection_permissions(
             self.runtime(),
-            collection_id,
-            group_id,
+            collection_id.id(),
+            group_id.id(),
         )
         .await
         .map_err(StorageError::from)
@@ -265,13 +276,13 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 
     async fn collection_group_permission(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionId,
+        group_id: GroupId,
     ) -> Result<AuthorizationGrant, StorageError> {
         crate::operations::authorization::collection_group_permission(
             self.runtime(),
-            collection_id,
-            group_id,
+            collection_id.id(),
+            group_id.id(),
         )
         .await
         .map_err(StorageError::from)
@@ -279,7 +290,7 @@ impl CollectionAuthorizationStorage for PostgresStorage {
 }
 
 #[async_trait]
-impl CollectionStore for PostgresStorage {
+impl CollectionStorage for PostgresStorage {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         crate::operations::collection::get_collection(self.runtime(), id.id())
             .await
@@ -353,7 +364,7 @@ impl CollectionStore for PostgresStorage {
 }
 
 #[async_trait]
-impl ClassStore for PostgresStorage {
+impl ClassStorage for PostgresStorage {
     async fn resolve_class(
         &self,
         selector: StorageClassSelector,
@@ -416,7 +427,7 @@ impl ClassStore for PostgresStorage {
 }
 
 #[async_trait]
-impl ClassRelationStore for PostgresStorage {
+impl ClassRelationStorage for PostgresStorage {
     async fn prepare_class_relation(
         &self,
         command: StorageClassRelationCreate,
@@ -428,9 +439,9 @@ impl ClassRelationStore for PostgresStorage {
 
     async fn resolve_class_relation(
         &self,
-        id: i32,
+        id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        crate::operations::relation::resolve_class_relation(self.runtime(), id)
+        crate::operations::relation::resolve_class_relation(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -454,34 +465,10 @@ impl ClassRelationStore for PostgresStorage {
             .await
             .map_err(StorageError::from)
     }
-
-    async fn create_class_relation_from_command(
-        &self,
-        command: StorageClassRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
-        crate::operations::relation::create_class_relation_from_command(
-            self.runtime(),
-            command,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn delete_class_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        crate::operations::relation::delete_class_relation_by_id(self.runtime(), id, context)
-            .await
-            .map_err(StorageError::from)
-    }
 }
 
 #[async_trait]
-impl ObjectRelationStore for PostgresStorage {
+impl ObjectRelationStorage for PostgresStorage {
     async fn prepare_object_relation(
         &self,
         selector: StorageObjectRelationCreateSelector,
@@ -519,34 +506,10 @@ impl ObjectRelationStore for PostgresStorage {
             .await
             .map_err(StorageError::from)
     }
-
-    async fn create_object_relation_from_command(
-        &self,
-        command: StorageObjectRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
-        crate::operations::relation::create_object_relation_from_command(
-            self.runtime(),
-            command,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn delete_object_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        crate::operations::relation::delete_object_relation_by_id(self.runtime(), id, context)
-            .await
-            .map_err(StorageError::from)
-    }
 }
 
 #[async_trait]
-impl ObjectStore for PostgresStorage {
+impl ObjectStorage for PostgresStorage {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         crate::operations::object::get_object(self.runtime(), object_id.id())
             .await

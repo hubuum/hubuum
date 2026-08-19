@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, ObjectId, PrincipalId};
 use hubuum_query::QueryOptions;
 
-use crate::{StorageError, StorageObject, StorageVisibility};
+use crate::{StorageComputationRevision, StorageError, StorageObject, StorageVisibility};
 
 /// Visibility already established for a computed-object query.
 ///
@@ -15,8 +16,8 @@ use crate::{StorageError, StorageObject, StorageVisibility};
 pub enum ComputedObjectVisibility {
     Storage(StorageVisibility),
     AuthorizedObjectIds {
-        principal_id: i32,
-        object_ids: Vec<i32>,
+        principal_id: PrincipalId,
+        object_ids: Vec<ObjectId>,
     },
 }
 
@@ -28,8 +29,8 @@ impl ComputedObjectVisibility {
 
     #[must_use]
     pub fn authorized_object_ids(
-        principal_id: i32,
-        object_ids: impl IntoIterator<Item = i32>,
+        principal_id: PrincipalId,
+        object_ids: impl IntoIterator<Item = ObjectId>,
     ) -> Self {
         let mut object_ids = object_ids.into_iter().collect::<Vec<_>>();
         object_ids.sort_unstable();
@@ -100,8 +101,8 @@ impl ComputedObjectQueryOptions {
 /// application layer.
 #[derive(Clone, PartialEq)]
 pub struct ComputedObjectListQuery {
-    class_id: i32,
-    personal_owner_id: Option<i32>,
+    class_id: ClassId,
+    personal_owner_id: Option<PrincipalId>,
     options: ComputedObjectQueryOptions,
     visibility: ComputedObjectVisibility,
     projection: ComputedObjectProjection,
@@ -110,8 +111,8 @@ pub struct ComputedObjectListQuery {
 impl ComputedObjectListQuery {
     #[must_use]
     pub const fn new(
-        class_id: i32,
-        personal_owner_id: Option<i32>,
+        class_id: ClassId,
+        personal_owner_id: Option<PrincipalId>,
         options: ComputedObjectQueryOptions,
         visibility: ComputedObjectVisibility,
         projection: ComputedObjectProjection,
@@ -134,8 +135,8 @@ impl ComputedObjectListQuery {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
-        Option<i32>,
+        ClassId,
+        Option<PrincipalId>,
         ComputedObjectQueryOptions,
         ComputedObjectVisibility,
         ComputedObjectProjection,
@@ -169,12 +170,12 @@ impl fmt::Debug for ComputedObjectListQuery {
 #[derive(Clone, PartialEq)]
 pub struct ComputedObjectEnrichmentQuery {
     objects: Vec<StorageObject>,
-    personal_owner_id: Option<i32>,
+    personal_owner_id: Option<PrincipalId>,
 }
 
 impl ComputedObjectEnrichmentQuery {
     #[must_use]
-    pub const fn new(objects: Vec<StorageObject>, personal_owner_id: Option<i32>) -> Self {
+    pub const fn new(objects: Vec<StorageObject>, personal_owner_id: Option<PrincipalId>) -> Self {
         Self {
             objects,
             personal_owner_id,
@@ -182,7 +183,7 @@ impl ComputedObjectEnrichmentQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageObject>, Option<i32>) {
+    pub fn into_parts(self) -> (Vec<StorageObject>, Option<PrincipalId>) {
         (self.objects, self.personal_owner_id)
     }
 }
@@ -248,7 +249,7 @@ impl StorageComputedScope {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageSharedComputedScope {
-    revision: i64,
+    revision: StorageComputationRevision,
     materialization_stale: bool,
     scope: StorageComputedScope,
 }
@@ -256,7 +257,7 @@ pub struct StorageSharedComputedScope {
 impl StorageSharedComputedScope {
     #[must_use]
     pub const fn new(
-        revision: i64,
+        revision: StorageComputationRevision,
         materialization_stale: bool,
         scope: StorageComputedScope,
     ) -> Self {
@@ -268,7 +269,7 @@ impl StorageSharedComputedScope {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i64, bool, StorageComputedScope) {
+    pub fn into_parts(self) -> (StorageComputationRevision, bool, StorageComputedScope) {
         (self.revision, self.materialization_stale, self.scope)
     }
 }
@@ -368,8 +369,8 @@ mod tests {
     #[test]
     fn query_debug_redacts_filter_values_ids_and_cursors() {
         let query = ComputedObjectListQuery::new(
-            7,
-            Some(9),
+            ClassId::new(7).unwrap(),
+            PrincipalId::new(9).ok(),
             ComputedObjectQueryOptions::new(
                 QueryOptions::new(
                     vec![ParsedQueryParam::from_parts(
@@ -396,7 +397,10 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            ComputedObjectVisibility::authorized_object_ids(42, [11, 12]),
+            ComputedObjectVisibility::authorized_object_ids(
+                PrincipalId::new(42).unwrap(),
+                [ObjectId::new(11).unwrap(), ObjectId::new(12).unwrap()],
+            ),
             ComputedObjectProjection::All,
         );
 

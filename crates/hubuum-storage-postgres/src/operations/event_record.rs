@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 
+#[cfg(feature = "integration-test-support")]
+use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_events_core::NewEvent;
+#[cfg(feature = "integration-test-support")]
+use hubuum_events_core::{Action, EntityType, EventEntityId};
 use hubuum_storage_core::StorageRecordedEvent;
 use uuid::Uuid;
 
+#[cfg(feature = "integration-test-support")]
+use crate::PostgresRuntime;
 use crate::{PostgresConnection, PostgresStorageError};
 
 use super::event_rows::StoredEventProjection;
@@ -103,4 +109,79 @@ fn log_event_append(event: &StoredEventProjection) {
         actor_user_id = event.actor_user_id,
         "PostgreSQL event append completed"
     );
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn list_events_for_test(
+    runtime: &PostgresRuntime,
+    entity_type_value: EntityType,
+    entity_id_value: EventEntityId,
+    action_value: Option<Action>,
+) -> Result<Vec<StorageRecordedEvent>, PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::events::dsl::{action, entity_id, entity_type, events, id};
+
+            let mut query = events
+                .filter(entity_type.eq(entity_type_value.as_str()))
+                .filter(entity_id.eq(entity_id_value.get()))
+                .into_boxed();
+            if let Some(action_value) = action_value {
+                query = query.filter(action.eq(action_value.as_str()));
+            }
+            query
+                .order(id.asc())
+                .select(StoredEventProjection::as_select())
+                .load::<StoredEventProjection>(connection)
+                .await?
+                .into_iter()
+                .map(|event| event.into_audit_event(&HashMap::new(), false))
+                .collect()
+        })
+        .await
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn count_events_for_test(
+    runtime: &PostgresRuntime,
+    entity_type_value: EntityType,
+    entity_id_value: EventEntityId,
+    action_value: Option<Action>,
+) -> Result<i64, PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::events::dsl::{action, entity_id, entity_type, events};
+
+            let mut query = events
+                .filter(entity_type.eq(entity_type_value.as_str()))
+                .filter(entity_id.eq(entity_id_value.get()))
+                .into_boxed();
+            if let Some(action_value) = action_value {
+                query = query.filter(action.eq(action_value.as_str()));
+            }
+            Ok::<_, PostgresStorageError>(query.count().get_result::<i64>(connection).await?)
+        })
+        .await
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn list_events_by_type_for_test(
+    runtime: &PostgresRuntime,
+    entity_type_value: EntityType,
+) -> Result<Vec<StorageRecordedEvent>, PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::events::dsl::{entity_type, events, id};
+
+            events
+                .filter(entity_type.eq(entity_type_value.as_str()))
+                .order(id.asc())
+                .select(StoredEventProjection::as_select())
+                .load::<StoredEventProjection>(connection)
+                .await?
+                .into_iter()
+                .map(|event| event.into_audit_event(&HashMap::new(), false))
+                .collect()
+        })
+        .await
 }

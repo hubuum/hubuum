@@ -2,7 +2,19 @@ use super::*;
 
 use diesel::sql_types::{BigInt, Bool, Integer};
 
-use crate::storage::postgres::PostgresPool;
+use hubuum_storage_postgres::PostgresPool;
+
+async fn load_computed_object_data(
+    pool: &PostgresPool,
+    object_id: i32,
+) -> hubuum_storage_postgres::test_support::TestComputedObjectData {
+    hubuum_storage_postgres::test_support::load_computed_object_data(
+        pool,
+        hubuum_domain::ObjectId::new(object_id).expect("persisted object id must be positive"),
+    )
+    .await
+    .expect("computed object data should load")
+}
 
 #[rstest]
 #[actix_web::test]
@@ -36,23 +48,18 @@ async fn schema_failure_preserves_data_computed_history_and_events(
     .save_without_events(&test_context.pool)
     .await
     .unwrap();
-    let computed_before = NewObjectComputedData {
-        object_id: object.id,
-        class_id: class.id,
-        evaluation_revision: 7,
-        source_data_sha256: "0".repeat(64),
-        values: serde_json::json!({"stable": "value"}),
-        errors: serde_json::json!({}),
-    };
-    with_connection(&test_context.pool, async |conn| {
-        use crate::schema::object_computed_data::dsl::object_computed_data;
-        diesel::insert_into(object_computed_data)
-            .values(&computed_before)
-            .execute(conn)
-            .await
-    })
+    hubuum_storage_postgres::test_support::create_computed_object_data(
+        test_context.pool.get_ref(),
+        hubuum_storage_postgres::test_support::TestComputedObjectDataCreate::new(
+            hubuum_domain::ObjectId::new(object.id).expect("persisted object id must be positive"),
+            hubuum_domain::ClassId::new(class.id).expect("persisted class id must be positive"),
+            7,
+            "0".repeat(64),
+            serde_json::json!({"stable": "value"}),
+        ),
+    )
     .await
-    .unwrap();
+    .expect("computed object fixture should be inserted");
     let history_before = object_history_count(&test_context, object.id).await;
     let events_before = object_event_count(&test_context, object.id).await;
 
@@ -69,20 +76,12 @@ async fn schema_failure_preserves_data_computed_history_and_events(
     assert_response_status(response, StatusCode::NOT_ACCEPTABLE).await;
 
     assert_eq!(current_object(&test_context, object.id).await, object);
-    let computed_after = with_connection(&test_context.pool, async |conn| {
-        use crate::schema::object_computed_data::dsl::{object_computed_data, object_id};
-        object_computed_data
-            .filter(object_id.eq(object.id))
-            .first::<ObjectComputedData>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(computed_after.evaluation_revision, 7);
-    assert_eq!(computed_after.source_data_sha256, "0".repeat(64));
+    let computed_after = load_computed_object_data(test_context.pool.get_ref(), object.id).await;
+    assert_eq!(computed_after.evaluation_revision(), 7);
+    assert_eq!(computed_after.source_data_sha256(), "0".repeat(64));
     assert_eq!(
-        computed_after.values,
-        serde_json::json!({"stable": "value"})
+        computed_after.values(),
+        &serde_json::json!({"stable": "value"})
     );
     assert_eq!(
         object_history_count(&test_context, object.id).await,
@@ -128,15 +127,7 @@ async fn computed_materialization_failure_rolls_back_data_history_and_events(
         .save_without_events(&test_context.pool)
         .await
         .unwrap();
-    let computed_before = with_connection(&test_context.pool, async |conn| {
-        use crate::schema::object_computed_data::dsl::{object_computed_data, object_id};
-        object_computed_data
-            .filter(object_id.eq(before.id))
-            .first::<ObjectComputedData>(conn)
-            .await
-    })
-    .await
-    .unwrap();
+    let computed_before = load_computed_object_data(test_context.pool.get_ref(), before.id).await;
     with_connection(&test_context.pool, async |conn| {
         use crate::schema::computed_field_definitions::dsl::{
             class_id, computed_field_definitions, operation,
@@ -164,27 +155,19 @@ async fn computed_materialization_failure_rolls_back_data_history_and_events(
     assert_response_status(response, StatusCode::INTERNAL_SERVER_ERROR).await;
 
     assert_eq!(current_object(&test_context, before.id).await, before);
-    let computed_after = with_connection(&test_context.pool, async |conn| {
-        use crate::schema::object_computed_data::dsl::{object_computed_data, object_id};
-        object_computed_data
-            .filter(object_id.eq(before.id))
-            .first::<ObjectComputedData>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(computed_after.class_id, computed_before.class_id);
+    let computed_after = load_computed_object_data(test_context.pool.get_ref(), before.id).await;
+    assert_eq!(computed_after.class_id(), computed_before.class_id());
     assert_eq!(
-        computed_after.evaluation_revision,
-        computed_before.evaluation_revision
+        computed_after.evaluation_revision(),
+        computed_before.evaluation_revision()
     );
     assert_eq!(
-        computed_after.source_data_sha256,
-        computed_before.source_data_sha256
+        computed_after.source_data_sha256(),
+        computed_before.source_data_sha256()
     );
-    assert_eq!(computed_after.values, computed_before.values);
-    assert_eq!(computed_after.errors, computed_before.errors);
-    assert_eq!(computed_after.computed_at, computed_before.computed_at);
+    assert_eq!(computed_after.values(), computed_before.values());
+    assert_eq!(computed_after.errors(), computed_before.errors());
+    assert_eq!(computed_after.computed_at(), computed_before.computed_at());
     assert_eq!(
         object_history_count(&test_context, before.id).await,
         history_before
@@ -243,21 +226,15 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
     let updated: HubuumObject = test::read_body_json(response).await;
 
     assert!(updated.updated_at > before.updated_at);
-    let (computed, history) = with_connection(&test_context.pool, async |conn| {
+    let computed = load_computed_object_data(test_context.pool.get_ref(), before.id).await;
+    let history = with_connection(&test_context.pool, async |conn| {
         use crate::schema::hubuumobject_history::dsl as history;
-        use crate::schema::object_computed_data::dsl as computed;
-
-        let computed = computed::object_computed_data
-            .filter(computed::object_id.eq(before.id))
-            .first::<ObjectComputedData>(conn)
-            .await?;
-        let history = history::hubuumobject_history
+        history::hubuumobject_history
             .filter(history::id.eq(before.id))
             .order(history::history_id.asc())
             .select((history::data, history::op, history::actor_id))
             .load::<(serde_json::Value, String, Option<i32>)>(conn)
-            .await?;
-        Ok::<_, diesel::result::Error>((computed, history))
+            .await
     })
     .await
     .unwrap();
@@ -270,11 +247,13 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
     .await
     .unwrap();
 
-    assert_eq!(computed.values["display_name"], "after.example");
+    assert_eq!(computed.values()["display_name"], "after.example");
     assert_eq!(
-        computed.source_data_sha256,
-        crate::storage::postgres::operations::computed_field::source_data_sha256(&updated.data)
-            .unwrap()
+        computed.source_data_sha256(),
+        hubuum_storage_postgres::operations::computed_materialization::source_data_sha256(
+            &updated.data,
+        )
+        .unwrap()
     );
     assert_eq!(history.len() as i64, history_before + 1);
     assert_eq!(history.last().unwrap().0, updated.data);

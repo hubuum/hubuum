@@ -122,14 +122,14 @@ pub async fn preflight_import(
                         match result {
                             Ok(()) => outcomes.push(StorageImportPreflightItem::success(
                                 index,
-                                revision.map(PostgresRevision::get),
+                                revision.map(PostgresRevision::into_domain),
                             )),
                             Err(error) => {
                                 record_revision_condition(&telemetry_runtime, &error);
                                 aborted = should_abort_preflight(&error, &mode);
                                 outcomes.push(StorageImportPreflightItem::failure(
                                     index,
-                                    revision.map(PostgresRevision::get),
+                                    revision.map(PostgresRevision::into_domain),
                                     StorageError::from(error),
                                 ));
                                 if aborted {
@@ -230,7 +230,7 @@ async fn execute_operation(
         StorageImportOperation::CreateCollection(input) => {
             let parent = resolve_collection_parent(connection, state, &input).await?;
             let reference = input.clone().into_parts().reference;
-            let created = create_collection(connection, input, Some(parent.id())).await?;
+            let created = create_collection(connection, input, Some(parent.id().id())).await?;
             if let Some(reference) = reference {
                 state.collections_by_ref.insert(reference, created);
             }
@@ -240,7 +240,7 @@ async fn execute_operation(
             input,
         } => {
             let reference = input.clone().into_parts().reference;
-            let updated = update_collection(connection, collection_id, input).await?;
+            let updated = update_collection(connection, collection_id.id(), input).await?;
             if let Some(reference) = reference {
                 state.collections_by_ref.insert(reference, updated);
             }
@@ -254,14 +254,14 @@ async fn execute_operation(
                 parts.collection_key.as_ref(),
             )
             .await?;
-            let created = create_class(connection, input, collection.id()).await?;
+            let created = create_class(connection, input, collection.id().id()).await?;
             if let Some(reference) = parts.reference {
                 state.classes_by_ref.insert(reference, created);
             }
         }
         StorageImportOperation::UpdateClass { class_id, input } => {
             let reference = input.clone().into_parts().reference;
-            let updated = update_class(connection, class_id, input).await?;
+            let updated = update_class(connection, class_id.id(), input).await?;
             if let Some(reference) = reference {
                 state.classes_by_ref.insert(reference, updated);
             }
@@ -282,7 +282,7 @@ async fn execute_operation(
         }
         StorageImportOperation::UpdateObject { object_id, input } => {
             let reference = input.clone().into_parts().reference;
-            let updated = update_object(connection, object_id, input).await?;
+            let updated = update_object(connection, object_id.id(), input).await?;
             if let Some(reference) = reference {
                 state.objects_by_ref.insert(reference, updated);
             }
@@ -405,7 +405,7 @@ async fn resolve_class(
                 parts.collection_key.as_ref(),
             )
             .await?;
-            class_by_name_on_connection(connection, collection.id(), &parts.name)
+            class_by_name_on_connection(connection, collection.id().id(), &parts.name)
                 .await?
                 .ok_or_else(|| {
                     PostgresStorageError::not_found(format!(
@@ -478,7 +478,7 @@ fn assert_import_revision(
             "stale_revision: expected revision {expected}, observed {}",
             current_revision.get()
         ),
-        None,
+        Some(current_revision.into_domain()),
     ))
 }
 
@@ -541,9 +541,10 @@ async fn create_collection(
                 .await?
         }
     };
-    let collection = row.into_storage();
+    let collection = row.into_storage()?;
     if let Some(parent_collection_id) = parent_collection_id {
-        insert_collection_closure_rows(connection, collection.id(), parent_collection_id).await?;
+        insert_collection_closure_rows(connection, collection.id().id(), parent_collection_id)
+            .await?;
     }
     Ok(collection)
 }
@@ -612,7 +613,7 @@ async fn update_collection(
         )
         .await?
     };
-    Ok(updated.into_storage())
+    updated.into_storage()
 }
 
 async fn create_class(
@@ -653,7 +654,7 @@ async fn create_class(
                 .await?
         }
     };
-    Ok(row.into_storage())
+    row.into_storage()
 }
 
 async fn update_class(
@@ -722,7 +723,7 @@ async fn update_class(
         )
         .await?
     };
-    Ok(row.into_storage())
+    row.into_storage()
 }
 
 async fn create_object(
@@ -762,7 +763,7 @@ async fn create_object(
         }
     };
     materialize_object_on_connection(connection, row.id, row.hubuum_class_id, &row.data).await?;
-    Ok(row.into_storage())
+    row.into_storage()
 }
 
 async fn update_object(
@@ -831,7 +832,7 @@ async fn update_object(
         .await?
     };
     materialize_object_on_connection(connection, row.id, row.hubuum_class_id, &row.data).await?;
-    Ok(row.into_storage())
+    row.into_storage()
 }
 
 async fn with_imported_timestamp_override<F, R>(
@@ -1915,7 +1916,7 @@ async fn create_class_relation(
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
     let command = normalize_class_relation_create(
-        StorageClassRelationCreate::builder(from.id().id(), to.id().id())
+        StorageClassRelationCreate::builder(from.id(), to.id())
             .template_aliases(parts.forward_template_alias, parts.reverse_template_alias)
             .relation_limits(parts.from_max_relations, parts.to_max_relations)
             .build(),
@@ -1926,9 +1927,9 @@ async fn create_class_relation(
             diesel::insert_into(crate::schema::hubuumclass_relation::table)
                 .values((
                     crate::schema::hubuumclass_relation::from_hubuum_class_id
-                        .eq(command.from_class_id()),
+                        .eq(command.from_class_id().id()),
                     crate::schema::hubuumclass_relation::to_hubuum_class_id
-                        .eq(command.to_class_id()),
+                        .eq(command.to_class_id().id()),
                     crate::schema::hubuumclass_relation::forward_template_alias
                         .eq(command.forward_template_alias()),
                     crate::schema::hubuumclass_relation::reverse_template_alias
@@ -1947,9 +1948,9 @@ async fn create_class_relation(
             diesel::insert_into(crate::schema::hubuumclass_relation::table)
                 .values((
                     crate::schema::hubuumclass_relation::from_hubuum_class_id
-                        .eq(command.from_class_id()),
+                        .eq(command.from_class_id().id()),
                     crate::schema::hubuumclass_relation::to_hubuum_class_id
-                        .eq(command.to_class_id()),
+                        .eq(command.to_class_id().id()),
                     crate::schema::hubuumclass_relation::forward_template_alias
                         .eq(command.forward_template_alias()),
                     crate::schema::hubuumclass_relation::reverse_template_alias
@@ -2054,19 +2055,19 @@ async fn create_object_relation(
     let (from, to) = resolve_object_relation_endpoints(connection, state, &input).await?;
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
-    if from.id() == to.id() {
+    if from.id().id() == to.id().id() {
         return Err(PostgresStorageError::bad_request(
             "from and to object ids cannot be the same",
         ));
     }
-    let class_pair = normalize_pair(from.class_id(), to.class_id());
+    let class_pair = normalize_pair(from.class_id().id(), to.class_id().id());
     let class_relation_id = crate::schema::hubuumclass_relation::table
         .filter(crate::schema::hubuumclass_relation::from_hubuum_class_id.eq(class_pair.0))
         .filter(crate::schema::hubuumclass_relation::to_hubuum_class_id.eq(class_pair.1))
         .select(crate::schema::hubuumclass_relation::id)
         .first::<i32>(connection)
         .await?;
-    let object_pair = normalize_pair(from.id(), to.id());
+    let object_pair = normalize_pair(from.id().id(), to.id().id());
     match parts.timestamps {
         Some(timestamps) => {
             let (created_at, updated_at) = timestamps.as_pair();
@@ -2103,7 +2104,7 @@ async fn update_object_relation_timestamps(
 ) -> Result<(), PostgresStorageError> {
     let (from, to) = resolve_object_relation_endpoints(connection, state, input).await?;
     let parts = input.clone().into_parts();
-    let pair = normalize_pair(from.id(), to.id());
+    let pair = normalize_pair(from.id().id(), to.id().id());
     assert_relation_condition(
         object_relation_revision(connection, pair).await?,
         parts.condition,
@@ -2133,7 +2134,7 @@ async fn check_object_relation_condition(
 ) -> Result<(), PostgresStorageError> {
     let (from, to) = resolve_object_relation_endpoints(connection, state, input).await?;
     assert_relation_condition(
-        object_relation_revision(connection, normalize_pair(from.id(), to.id())).await?,
+        object_relation_revision(connection, normalize_pair(from.id().id(), to.id().id())).await?,
         input.clone().into_parts().condition,
     )
 }
@@ -2183,7 +2184,9 @@ async fn apply_collection_permissions(
     .await?;
     let group_id = resolve_group(connection, state, None, Some(&parts.group_key)).await?;
     let authorization_revision = crate::schema::collection_authorization_state::table
-        .filter(crate::schema::collection_authorization_state::collection_id.eq(collection.id()))
+        .filter(
+            crate::schema::collection_authorization_state::collection_id.eq(collection.id().id()),
+        )
         .select(crate::schema::collection_authorization_state::revision)
         .for_update()
         .first::<PostgresRevision>(connection)
@@ -2195,7 +2198,7 @@ async fn apply_collection_permissions(
     )?;
 
     let existing = crate::schema::permissions::table
-        .filter(crate::schema::permissions::collection_id.eq(collection.id()))
+        .filter(crate::schema::permissions::collection_id.eq(collection.id().id()))
         .filter(crate::schema::permissions::group_id.eq(group_id))
         .select(crate::schema::permissions::id)
         .first::<i32>(connection)
@@ -2204,13 +2207,13 @@ async fn apply_collection_permissions(
     if existing.is_some() && !overwrite {
         return Err(PostgresStorageError::conflict(format!(
             "Permissions for group {group_id} already exist on collection {}",
-            collection.id()
+            collection.id().id()
         )));
     }
     if existing.is_some() {
         diesel::update(
             crate::schema::permissions::table
-                .filter(crate::schema::permissions::collection_id.eq(collection.id()))
+                .filter(crate::schema::permissions::collection_id.eq(collection.id().id()))
                 .filter(crate::schema::permissions::group_id.eq(group_id)),
         )
         .set(UpdatePermission::grant(
@@ -2222,7 +2225,7 @@ async fn apply_collection_permissions(
     } else {
         diesel::insert_into(crate::schema::permissions::table)
             .values(NewPermission::new(
-                collection.id(),
+                collection.id().id(),
                 group_id,
                 &parts.permissions,
             ))
@@ -2262,14 +2265,14 @@ async fn upsert_export_template(
     validate_import_template_composition(
         connection,
         state,
-        collection.id(),
+        collection.id().id(),
         &parts.name,
         &parts.template,
         &parts.content_type,
     )
     .await?;
     let existing = crate::schema::export_templates::table
-        .filter(crate::schema::export_templates::collection_id.eq(collection.id()))
+        .filter(crate::schema::export_templates::collection_id.eq(collection.id().id()))
         .filter(crate::schema::export_templates::name.eq(&parts.name))
         .select((
             crate::schema::export_templates::id,
@@ -2325,7 +2328,7 @@ async fn upsert_export_template(
             let (created_at, updated_at) = imported_timestamps(parts.timestamps);
             diesel::insert_into(crate::schema::export_templates::table)
                 .values((
-                    crate::schema::export_templates::collection_id.eq(collection.id()),
+                    crate::schema::export_templates::collection_id.eq(collection.id().id()),
                     crate::schema::export_templates::name.eq(parts.name),
                     crate::schema::export_templates::description.eq(parts.description),
                     crate::schema::export_templates::content_type.eq(parts.content_type),
@@ -2376,7 +2379,7 @@ async fn validate_import_template_composition(
         )
         .await;
         match resolved {
-            Ok(collection) if collection.id() == collection_id => {
+            Ok(collection) if collection.id().id() == collection_id => {
                 sources.push((candidate.name, candidate.template));
             }
             Ok(_) => {}
@@ -2463,7 +2466,7 @@ async fn upsert_remote_target(
         None
     };
     let existing = crate::schema::remote_targets::table
-        .filter(crate::schema::remote_targets::collection_id.eq(collection.id()))
+        .filter(crate::schema::remote_targets::collection_id.eq(collection.id().id()))
         .filter(crate::schema::remote_targets::name.eq(&parts.name))
         .select((
             crate::schema::remote_targets::id,
@@ -2519,7 +2522,7 @@ async fn upsert_remote_target(
             let (created_at, updated_at) = imported_timestamps(parts.timestamps);
             diesel::insert_into(crate::schema::remote_targets::table)
                 .values((
-                    crate::schema::remote_targets::collection_id.eq(collection.id()),
+                    crate::schema::remote_targets::collection_id.eq(collection.id().id()),
                     crate::schema::remote_targets::class_id.eq(class_id),
                     crate::schema::remote_targets::name.eq(parts.name),
                     crate::schema::remote_targets::description.eq(parts.description),
@@ -2642,7 +2645,7 @@ async fn upsert_event_subscription(
         &parts.routing,
     )?;
     let existing = crate::schema::event_subscriptions::table
-        .filter(crate::schema::event_subscriptions::collection_id.eq(collection.id()))
+        .filter(crate::schema::event_subscriptions::collection_id.eq(collection.id().id()))
         .filter(crate::schema::event_subscriptions::name.eq(&parts.name))
         .select((
             crate::schema::event_subscriptions::id,
@@ -2697,7 +2700,7 @@ async fn upsert_event_subscription(
             let (created_at, updated_at) = imported_timestamps(parts.timestamps);
             diesel::insert_into(crate::schema::event_subscriptions::table)
                 .values((
-                    crate::schema::event_subscriptions::collection_id.eq(collection.id()),
+                    crate::schema::event_subscriptions::collection_id.eq(collection.id().id()),
                     crate::schema::event_subscriptions::sink_id.eq(sink_id),
                     crate::schema::event_subscriptions::name.eq(parts.name),
                     crate::schema::event_subscriptions::description.eq(parts.description),
@@ -2760,14 +2763,14 @@ fn ensure_class_collection(
     collection: &StorageCollection,
     resource: &str,
 ) -> Result<(), PostgresStorageError> {
-    if class.collection_id().id() == collection.id() {
+    if class.collection_id().id() == collection.id().id() {
         Ok(())
     } else {
         Err(PostgresStorageError::bad_request(format!(
             "{resource} class {} belongs to collection {}, not target collection {}",
             class.id(),
             class.collection_id(),
-            collection.id()
+            collection.id().id()
         )))
     }
 }
@@ -2876,21 +2879,21 @@ async fn observed_revision(
         }
         StorageImportOperation::UpdateCollection { collection_id, .. } => {
             crate::schema::collections::table
-                .filter(crate::schema::collections::id.eq(*collection_id))
+                .filter(crate::schema::collections::id.eq(collection_id.id()))
                 .select(crate::schema::collections::revision)
                 .first::<PostgresRevision>(connection)
                 .await
                 .optional()?
         }
         StorageImportOperation::UpdateClass { class_id, .. } => crate::schema::hubuumclass::table
-            .filter(crate::schema::hubuumclass::id.eq(*class_id))
+            .filter(crate::schema::hubuumclass::id.eq(class_id.id()))
             .select(crate::schema::hubuumclass::revision)
             .first::<PostgresRevision>(connection)
             .await
             .optional()?,
         StorageImportOperation::UpdateObject { object_id, .. } => {
             crate::schema::hubuumobject::table
-                .filter(crate::schema::hubuumobject::id.eq(*object_id))
+                .filter(crate::schema::hubuumobject::id.eq(object_id.id()))
                 .select(crate::schema::hubuumobject::revision)
                 .first::<PostgresRevision>(connection)
                 .await
@@ -2942,7 +2945,8 @@ async fn observed_revision(
         StorageImportOperation::UpdateObjectRelationTimestamps { input, .. }
         | StorageImportOperation::CheckObjectRelationCondition(input) => {
             let (from, to) = resolve_object_relation_endpoints(connection, state, input).await?;
-            object_relation_revision(connection, normalize_pair(from.id(), to.id())).await?
+            object_relation_revision(connection, normalize_pair(from.id().id(), to.id().id()))
+                .await?
         }
         StorageImportOperation::ApplyCollectionPermissions { input, .. } => {
             let parts = input.clone().into_parts();
@@ -2956,7 +2960,7 @@ async fn observed_revision(
             crate::schema::collection_authorization_state::table
                 .filter(
                     crate::schema::collection_authorization_state::collection_id
-                        .eq(collection.id()),
+                        .eq(collection.id().id()),
                 )
                 .select(crate::schema::collection_authorization_state::revision)
                 .first::<PostgresRevision>(connection)
@@ -2973,7 +2977,7 @@ async fn observed_revision(
             )
             .await?;
             crate::schema::export_templates::table
-                .filter(crate::schema::export_templates::collection_id.eq(collection.id()))
+                .filter(crate::schema::export_templates::collection_id.eq(collection.id().id()))
                 .filter(crate::schema::export_templates::name.eq(parts.name))
                 .select(crate::schema::export_templates::revision)
                 .first::<PostgresRevision>(connection)
@@ -2990,7 +2994,7 @@ async fn observed_revision(
             )
             .await?;
             crate::schema::remote_targets::table
-                .filter(crate::schema::remote_targets::collection_id.eq(collection.id()))
+                .filter(crate::schema::remote_targets::collection_id.eq(collection.id().id()))
                 .filter(crate::schema::remote_targets::name.eq(parts.name))
                 .select(crate::schema::remote_targets::revision)
                 .first::<PostgresRevision>(connection)
@@ -3016,7 +3020,7 @@ async fn observed_revision(
             )
             .await?;
             crate::schema::event_subscriptions::table
-                .filter(crate::schema::event_subscriptions::collection_id.eq(collection.id()))
+                .filter(crate::schema::event_subscriptions::collection_id.eq(collection.id().id()))
                 .filter(crate::schema::event_subscriptions::name.eq(parts.name))
                 .select(crate::schema::event_subscriptions::revision)
                 .first::<PostgresRevision>(connection)

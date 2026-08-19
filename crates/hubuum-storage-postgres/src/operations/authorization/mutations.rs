@@ -3,8 +3,8 @@ use diesel::{AsChangeset, Insertable};
 use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    AuthorizationGrant, AuthorizationGrantDelete, AuthorizationGrantMutation,
-    AuthorizationPermission,
+    AuditReceipt, AuthorizationGrant, AuthorizationGrantDelete, AuthorizationGrantMutation,
+    AuthorizationPermission, MutationOutcome,
 };
 use serde_json::json;
 
@@ -207,29 +207,29 @@ pub(crate) async fn insert_full_collection_grant(
 pub async fn apply_local_collection_grant(
     runtime: &PostgresRuntime,
     mutation: AuthorizationGrantMutation,
-) -> Result<AuthorizationGrant, PostgresStorageError> {
+) -> Result<MutationOutcome<AuthorizationGrant>, PostgresStorageError> {
     let key = mutation.key();
     let requested = mutation.permissions().to_vec();
     let replace_existing = mutation.replace_existing();
     let event_context = mutation.event_context().clone();
+    let collection_id = key.collection_id().id();
+    let group_id = key.group_id().id();
     runtime
         .with_transaction(async move |connection| {
-            let before_revision = lock_permission_owner(connection, key.collection_id()).await?;
-            let before = lock_grant(connection, key.collection_id(), key.group_id()).await?;
+            let before_revision = lock_permission_owner(connection, collection_id).await?;
+            let before = lock_grant(connection, collection_id, group_id).await?;
             if let Some(current) = before
                 && !grant_changes(&current, &requested, replace_existing)
             {
-                return Ok(current.into_storage());
+                return Ok(MutationOutcome::unchanged(current.into_storage()?));
             }
 
             let after = match before {
                 Some(_) => {
                     diesel::update(
                         crate::schema::permissions::table
-                            .filter(
-                                crate::schema::permissions::collection_id.eq(key.collection_id()),
-                            )
-                            .filter(crate::schema::permissions::group_id.eq(key.group_id())),
+                            .filter(crate::schema::permissions::collection_id.eq(collection_id))
+                            .filter(crate::schema::permissions::group_id.eq(group_id)),
                     )
                     .set(UpdatePermission::grant(&requested, replace_existing))
                     .get_result::<PermissionRow>(connection)
@@ -237,17 +237,13 @@ pub async fn apply_local_collection_grant(
                 }
                 None => {
                     diesel::insert_into(crate::schema::permissions::table)
-                        .values(NewPermission::new(
-                            key.collection_id(),
-                            key.group_id(),
-                            &requested,
-                        ))
+                        .values(NewPermission::new(collection_id, group_id, &requested))
                         .get_result::<PermissionRow>(connection)
                         .await?
                 }
             };
-            let after_revision = permission_owner_revision(connection, key.collection_id()).await?;
-            append_permission_event(
+            let after_revision = permission_owner_revision(connection, collection_id).await?;
+            let audit = append_permission_event(
                 connection,
                 PermissionEvent {
                     action: Action::Granted,
@@ -262,7 +258,7 @@ pub async fn apply_local_collection_grant(
                 },
             )
             .await?;
-            Ok::<_, PostgresStorageError>(after.into_storage())
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
         })
         .await
 }
@@ -270,29 +266,31 @@ pub async fn apply_local_collection_grant(
 pub async fn revoke_local_collection_grant(
     runtime: &PostgresRuntime,
     mutation: AuthorizationGrantMutation,
-) -> Result<AuthorizationGrant, PostgresStorageError> {
+) -> Result<MutationOutcome<AuthorizationGrant>, PostgresStorageError> {
     let key = mutation.key();
     let requested = mutation.permissions().to_vec();
     let event_context = mutation.event_context().clone();
+    let collection_id = key.collection_id().id();
+    let group_id = key.group_id().id();
     runtime
         .with_transaction(async move |connection| {
-            let before_revision = lock_permission_owner(connection, key.collection_id()).await?;
-            let before = lock_grant(connection, key.collection_id(), key.group_id())
+            let before_revision = lock_permission_owner(connection, collection_id).await?;
+            let before = lock_grant(connection, collection_id, group_id)
                 .await?
                 .ok_or_else(|| PostgresStorageError::not_found("Entity not found"))?;
             if !revoke_changes(&before, &requested) {
-                return Ok(before.into_storage());
+                return Ok(MutationOutcome::unchanged(before.into_storage()?));
             }
             let after = diesel::update(
                 crate::schema::permissions::table
-                    .filter(crate::schema::permissions::collection_id.eq(key.collection_id()))
-                    .filter(crate::schema::permissions::group_id.eq(key.group_id())),
+                    .filter(crate::schema::permissions::collection_id.eq(collection_id))
+                    .filter(crate::schema::permissions::group_id.eq(group_id)),
             )
             .set(UpdatePermission::revoke(&requested))
             .get_result::<PermissionRow>(connection)
             .await?;
-            let after_revision = permission_owner_revision(connection, key.collection_id()).await?;
-            append_permission_event(
+            let after_revision = permission_owner_revision(connection, collection_id).await?;
+            let audit = append_permission_event(
                 connection,
                 PermissionEvent {
                     action: Action::Revoked,
@@ -307,7 +305,7 @@ pub async fn revoke_local_collection_grant(
                 },
             )
             .await?;
-            Ok::<_, PostgresStorageError>(after.into_storage())
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
         })
         .await
 }
@@ -315,41 +313,43 @@ pub async fn revoke_local_collection_grant(
 pub async fn revoke_all_local_collection_grants(
     runtime: &PostgresRuntime,
     request: AuthorizationGrantDelete,
-) -> Result<(), PostgresStorageError> {
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     let key = request.key();
     let event_context = request.event_context().clone();
+    let collection_id = key.collection_id().id();
+    let group_id = key.group_id().id();
     runtime
         .with_transaction(async move |connection| {
-            let before_revision = lock_permission_owner(connection, key.collection_id()).await?;
-            let before = lock_grant(connection, key.collection_id(), key.group_id()).await?;
+            let before_revision = lock_permission_owner(connection, collection_id).await?;
+            let before = lock_grant(connection, collection_id, group_id).await?;
             diesel::delete(
                 crate::schema::permissions::table
-                    .filter(crate::schema::permissions::collection_id.eq(key.collection_id()))
-                    .filter(crate::schema::permissions::group_id.eq(key.group_id())),
+                    .filter(crate::schema::permissions::collection_id.eq(collection_id))
+                    .filter(crate::schema::permissions::group_id.eq(group_id)),
             )
             .execute(connection)
             .await?;
-            if let Some(before) = before.as_ref() {
-                let after_revision =
-                    permission_owner_revision(connection, key.collection_id()).await?;
-                let requested = before.permissions();
-                append_permission_event(
-                    connection,
-                    PermissionEvent {
-                        action: Action::Revoked,
-                        context: &event_context,
-                        before: Some(before),
-                        after: before,
-                        before_revision,
-                        after_revision,
-                        requested: &requested,
-                        replace_existing: None,
-                        removes_grant: true,
-                    },
-                )
-                .await?;
-            }
-            Ok::<_, PostgresStorageError>(())
+            let Some(before) = before.as_ref() else {
+                return Ok(MutationOutcome::unchanged(()));
+            };
+            let after_revision = permission_owner_revision(connection, collection_id).await?;
+            let requested = before.permissions();
+            let audit = append_permission_event(
+                connection,
+                PermissionEvent {
+                    action: Action::Revoked,
+                    context: &event_context,
+                    before: Some(before),
+                    after: before,
+                    before_revision,
+                    after_revision,
+                    requested: &requested,
+                    replace_existing: None,
+                    removes_grant: true,
+                },
+            )
+            .await?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit))
         })
         .await
 }
@@ -437,7 +437,7 @@ struct PermissionEvent<'event> {
 async fn append_permission_event(
     connection: &mut PostgresConnection,
     details: PermissionEvent<'_>,
-) -> Result<(), PostgresStorageError> {
+) -> Result<AuditReceipt, PostgresStorageError> {
     let summary = match details.action {
         Action::Granted => format!(
             "Permissions granted to group {} on collection {}",
@@ -492,7 +492,10 @@ async fn append_permission_event(
     } else {
         permission_snapshot(details.after, details.after_revision)
     });
-    append_event(connection, &event).await.map(|_| ())
+    append_event(connection, &event)
+        .await?
+        .into_audit_receipt()
+        .map_err(Into::into)
 }
 
 fn permission_snapshot(

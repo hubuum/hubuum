@@ -1,6 +1,11 @@
 use async_trait::async_trait;
-use hubuum_domain::{EventFanoutSettings, EventRetentionSettings};
-use hubuum_events_core::EventEnvelope;
+use hubuum_domain::{
+    EventDeliveryId, EventFanoutSettings, EventRetentionSettings, EventSinkId, EventSubscriptionId,
+    ResourceRevision,
+};
+use hubuum_events_core::{
+    Action, EntityType, EventEnvelope, EventId, EventSequence, is_valid_pair,
+};
 use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
@@ -9,21 +14,20 @@ use crate::{AuditReceipt, StorageError};
 
 /// One committed event returned by a storage adapter after an append or read.
 ///
-/// The envelope is backend-neutral and revisions remain primitive boundary
-/// values. Application code validates and converts them into its public model.
+/// The envelope and revisions are backend-neutral, validated domain values.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRecordedEvent {
     envelope: EventEnvelope,
-    before_revision: Option<i64>,
-    after_revision: Option<i64>,
+    before_revision: Option<ResourceRevision>,
+    after_revision: Option<ResourceRevision>,
 }
 
 impl StorageRecordedEvent {
     #[must_use]
     pub const fn new(
         envelope: EventEnvelope,
-        before_revision: Option<i64>,
-        after_revision: Option<i64>,
+        before_revision: Option<ResourceRevision>,
+        after_revision: Option<ResourceRevision>,
     ) -> Self {
         Self {
             envelope,
@@ -33,23 +37,43 @@ impl StorageRecordedEvent {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (EventEnvelope, Option<i64>, Option<i64>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        EventEnvelope,
+        Option<ResourceRevision>,
+        Option<ResourceRevision>,
+    ) {
         (self.envelope, self.before_revision, self.after_revision)
     }
 
     /// Reduce the committed event to the non-sensitive proof returned by
     /// ordinary mutation APIs.
-    #[must_use]
-    pub fn into_audit_receipt(self) -> AuditReceipt {
+    pub fn into_audit_receipt(self) -> Result<AuditReceipt, StorageError> {
         let (envelope, before_revision, after_revision) = self.into_parts();
-        AuditReceipt::new(
+        let entity_type = EntityType::parse(&envelope.entity_type).map_err(|error| {
+            StorageError::internal(format!(
+                "backend returned an invalid event entity type: {error}"
+            ))
+        })?;
+        let action = Action::parse(&envelope.action).map_err(|error| {
+            StorageError::internal(format!("backend returned an invalid event action: {error}"))
+        })?;
+        if !is_valid_pair(entity_type, action) {
+            return Err(StorageError::internal(format!(
+                "backend returned action '{}' for entity type '{}'",
+                action.as_str(),
+                entity_type.as_str(),
+            )));
+        }
+        Ok(AuditReceipt::new(
             envelope.id,
-            envelope.event_id,
-            envelope.entity_type,
-            envelope.action,
+            EventId::from(envelope.event_id),
+            entity_type,
+            action,
             before_revision,
             after_revision,
-        )
+        ))
     }
 }
 
@@ -71,14 +95,14 @@ pub trait EventFanoutStorage: Send + Sync {
 /// claim token is intentionally private and redacted from diagnostics.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EventDeliveryClaim {
-    delivery_id: i64,
+    delivery_id: EventDeliveryId,
     attempts: i32,
     token: Uuid,
 }
 
 impl EventDeliveryClaim {
     #[must_use]
-    pub const fn new(delivery_id: i64, attempts: i32, token: Uuid) -> Self {
+    pub const fn new(delivery_id: EventDeliveryId, attempts: i32, token: Uuid) -> Self {
         Self {
             delivery_id,
             attempts,
@@ -87,7 +111,7 @@ impl EventDeliveryClaim {
     }
 
     #[must_use]
-    pub const fn delivery_id(&self) -> i64 {
+    pub const fn delivery_id(&self) -> EventDeliveryId {
         self.delivery_id
     }
 
@@ -116,7 +140,7 @@ impl std::fmt::Debug for EventDeliveryClaim {
 /// Sink settings required by a delivery transport.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EventDeliverySink {
-    id: i32,
+    id: EventSinkId,
     name: String,
     kind: String,
     configuration: Value,
@@ -126,7 +150,7 @@ pub struct EventDeliverySink {
 impl EventDeliverySink {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: EventSinkId,
         name: impl Into<String>,
         kind: impl Into<String>,
         configuration: Value,
@@ -142,7 +166,7 @@ impl EventDeliverySink {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> EventSinkId {
         self.id
     }
 
@@ -186,14 +210,14 @@ impl std::fmt::Debug for EventDeliverySink {
 /// Subscription routing settings required by a delivery transport.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EventDeliverySubscription {
-    id: i32,
+    id: EventSubscriptionId,
     name: String,
     routing: Value,
 }
 
 impl EventDeliverySubscription {
     #[must_use]
-    pub fn new(id: i32, name: impl Into<String>, routing: Value) -> Self {
+    pub fn new(id: EventSubscriptionId, name: impl Into<String>, routing: Value) -> Self {
         Self {
             id,
             name: name.into(),
@@ -202,7 +226,7 @@ impl EventDeliverySubscription {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> EventSubscriptionId {
         self.id
     }
 
@@ -323,13 +347,13 @@ pub trait EventDeliveryStorage: Send + Sync {
 /// without depending on a backend row type or inspecting claim metadata.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RetainedEvent {
-    id: i64,
+    id: EventSequence,
     json: String,
 }
 
 impl RetainedEvent {
     #[must_use]
-    pub fn new(id: i64, json: impl Into<String>) -> Self {
+    pub fn new(id: EventSequence, json: impl Into<String>) -> Self {
         Self {
             id,
             json: json.into(),
@@ -337,7 +361,7 @@ impl RetainedEvent {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i64 {
+    pub const fn id(&self) -> EventSequence {
         self.id
     }
 
@@ -357,13 +381,57 @@ impl std::fmt::Debug for RetainedEvent {
     }
 }
 
-/// Application-owned destination used during an atomic retention operation.
+/// Stable identifier for a durably claimed event-retention batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EventRetentionBatchId(Uuid);
+
+impl EventRetentionBatchId {
+    #[must_use]
+    pub const fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
+        self.0
+    }
+}
+
+/// A durably claimed, retryable batch of events awaiting archival and purge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventRetentionBatch {
+    id: EventRetentionBatchId,
+    events: Vec<RetainedEvent>,
+}
+
+impl EventRetentionBatch {
+    #[must_use]
+    pub const fn new(id: EventRetentionBatchId, events: Vec<RetainedEvent>) -> Self {
+        Self { id, events }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> EventRetentionBatchId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn events(&self) -> &[RetainedEvent] {
+        &self.events
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+}
+
+/// Application-owned destination for durably claimed retention batches.
 ///
-/// Returning an error instructs the adapter to roll back the purge. The
-/// adapter must not retain this reference or invoke it after the operation
-/// returns.
+/// Implementations must be idempotent by [`EventRetentionBatch::id`]. A
+/// retry of the same batch must succeed without duplicating archived events.
 pub trait EventArchive: Send + Sync {
-    fn archive(&self, events: &[RetainedEvent]) -> Result<(), StorageError>;
+    fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError>;
 }
 
 /// Counts produced by one bounded retention operation.
@@ -398,19 +466,36 @@ impl EventRetentionSummary {
     }
 }
 
-/// Atomic archival and purge behavior required from every storage backend.
+/// Durable claim/archive/ack behavior required from every storage backend.
 ///
-/// Implementations must coordinate competing workers, select a bounded batch,
-/// invoke `archive` before deletion, roll back when archival fails, purge only
-/// eligible events and terminal deliveries, and commit those actions as one
-/// backend transaction.
+/// Claims survive process failure. Completing a claim must be idempotent and
+/// purge only the exact eligible events represented by that claim, plus the
+/// bounded terminal-delivery work captured with it.
 #[async_trait]
 pub trait EventRetentionStorage: Send + Sync {
+    async fn claim_event_retention_batch(
+        &self,
+        settings: EventRetentionSettings,
+    ) -> Result<Option<EventRetentionBatch>, StorageError>;
+
+    async fn complete_event_retention_batch(
+        &self,
+        batch_id: EventRetentionBatchId,
+    ) -> Result<EventRetentionSummary, StorageError>;
+
     async fn process_event_retention_batch(
         &self,
         settings: EventRetentionSettings,
         archive: &dyn EventArchive,
-    ) -> Result<EventRetentionSummary, StorageError>;
+    ) -> Result<EventRetentionSummary, StorageError> {
+        let Some(batch) = self.claim_event_retention_batch(settings).await? else {
+            return Ok(EventRetentionSummary::default());
+        };
+        if !batch.is_empty() {
+            archive.archive(&batch)?;
+        }
+        self.complete_event_retention_batch(batch.id()).await
+    }
 }
 
 #[cfg(test)]
@@ -420,16 +505,16 @@ mod tests {
     #[test]
     fn delivery_dto_debug_output_redacts_claim_and_transport_secrets() {
         let token = Uuid::new_v4();
-        let claim = EventDeliveryClaim::new(7, 2, token);
+        let claim = EventDeliveryClaim::new(EventDeliveryId::new(7).unwrap(), 2, token);
         let sink = EventDeliverySink::new(
-            8,
+            EventSinkId::new(8).unwrap(),
             "webhook",
             "webhook",
             serde_json::json!({"authorization": "config-secret"}),
             Some("secret-reference".to_string()),
         );
         let subscription = EventDeliverySubscription::new(
-            9,
+            EventSubscriptionId::new(9).unwrap(),
             "subscription",
             serde_json::json!({"url": "https://routing-secret.invalid"}),
         );
@@ -444,7 +529,10 @@ mod tests {
 
     #[test]
     fn retained_event_debug_output_redacts_the_serialized_payload() {
-        let event = RetainedEvent::new(11, r#"{"metadata":"payload-secret"}"#);
+        let event = RetainedEvent::new(
+            EventSequence::new(11).unwrap(),
+            r#"{"metadata":"payload-secret"}"#,
+        );
 
         let debug = format!("{event:?}");
 

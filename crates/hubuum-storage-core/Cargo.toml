@@ -6,11 +6,10 @@ rust-version = "1.88"
 description = "Backend-neutral storage contracts and diagnostics for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = true
+publish = false
 
 [package.metadata.hubuum]
-rust-api = "experimental-public"
-policy-document = "docs/rust_api/hubuum-storage-core.md"
+rust-api = "workspace-internal"
 
 [dependencies]
 async-trait = "0.1"

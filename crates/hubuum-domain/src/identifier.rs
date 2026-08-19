@@ -174,6 +174,12 @@ macro_rules! positive_i64_id {
 }
 
 positive_id!(
+    /// Identifier for a local authorization grant row.
+    AuthorizationGrantId,
+    "authorization grant id",
+    "AuthorizationGrantID"
+);
+positive_id!(
     /// Resource-kind-neutral identifier used only by generic record metadata.
     ResourceId,
     "resource id",
@@ -252,6 +258,12 @@ positive_id!(
     "TaskID"
 );
 positive_id!(
+    /// Identifier for one persisted import-task result.
+    ImportTaskResultId,
+    "import task result id",
+    "ImportTaskResultID"
+);
+positive_id!(
     /// Identifier for an event sink.
     EventSinkId,
     "event sink id",
@@ -282,6 +294,12 @@ positive_id!(
     "UserID"
 );
 positive_i64_id!(
+    /// Identifier for one temporal history record.
+    HistoryRecordId,
+    "history record id",
+    "HistoryRecordID"
+);
+positive_i64_id!(
     /// Identifier for a staged restore job.
     RestoreJobId,
     "restore job id",
@@ -292,6 +310,40 @@ positive_i64_id!(
     EventDeliveryId,
     "event delivery id",
     "EventDeliveryID"
+);
+
+macro_rules! typed_id_from_resource_id {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl From<ResourceId> for $name {
+                fn from(value: ResourceId) -> Self {
+                    Self(value.0)
+                }
+            }
+        )+
+    };
+}
+
+typed_id_from_resource_id!(
+    AuthorizationGrantId,
+    IdentityScopeId,
+    CollectionId,
+    ClassId,
+    ObjectId,
+    ClassRelationId,
+    ObjectRelationId,
+    TokenId,
+    ExportTemplateId,
+    RemoteTargetId,
+    ServiceAccountId,
+    ComputedFieldDefinitionId,
+    TaskId,
+    ImportTaskResultId,
+    EventSinkId,
+    EventSubscriptionId,
+    GroupId,
+    PrincipalId,
+    UserId,
 );
 
 #[cfg(test)]
@@ -322,15 +374,17 @@ mod tests {
     #[test]
     fn schema_names_preserve_the_http_contract() {
         use super::{
-            ClassId, ClassRelationId, ComputedFieldDefinitionId, EventDeliveryId, EventSinkId,
-            EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId,
-            ObjectRelationId, PrincipalId, RemoteTargetId, ResourceId, RestoreJobId,
-            ServiceAccountId, TaskId, TokenId, UserId,
+            AuthorizationGrantId, ClassId, ClassRelationId, ComputedFieldDefinitionId,
+            EventDeliveryId, EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId,
+            HistoryRecordId, IdentityScopeId, ImportTaskResultId, ObjectId, ObjectRelationId,
+            PrincipalId, RemoteTargetId, ResourceId, RestoreJobId, ServiceAccountId, TaskId,
+            TokenId, UserId,
         };
         use utoipa::ToSchema;
 
         let names = [
             ResourceId::name(),
+            AuthorizationGrantId::name(),
             IdentityScopeId::name(),
             CollectionId::name(),
             ClassId::name(),
@@ -343,11 +397,13 @@ mod tests {
             ServiceAccountId::name(),
             ComputedFieldDefinitionId::name(),
             TaskId::name(),
+            ImportTaskResultId::name(),
             EventSinkId::name(),
             EventSubscriptionId::name(),
             GroupId::name(),
             PrincipalId::name(),
             UserId::name(),
+            HistoryRecordId::name(),
             RestoreJobId::name(),
             EventDeliveryId::name(),
         ];
@@ -356,6 +412,7 @@ mod tests {
             names.map(|name| name.into_owned()),
             [
                 "ResourceID",
+                "AuthorizationGrantID",
                 "IdentityScopeID",
                 "CollectionID",
                 "HubuumClassID",
@@ -368,11 +425,13 @@ mod tests {
                 "ServiceAccountID",
                 "ComputedFieldDefinitionID",
                 "TaskID",
+                "ImportTaskResultID",
                 "EventSinkID",
                 "EventSubscriptionID",
                 "GroupID",
                 "PrincipalID",
                 "UserID",
+                "HistoryRecordID",
                 "RestoreJobID",
                 "EventDeliveryID",
             ]

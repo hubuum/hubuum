@@ -2,8 +2,8 @@
 mod tests {
     use std::sync::Arc;
 
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
 
     use crate::events::EventContext;
     use crate::models::{
@@ -18,9 +18,6 @@ mod tests {
         request_class_rebuild,
     };
     use crate::services::tasks::{ClaimedTask, execute_computed_field_rebuild};
-    use crate::storage::postgres::operations::computed_field::source_data_sha256;
-    use crate::storage::postgres::operations::task::claim_task_for_backend_test;
-    use crate::storage::postgres::{capture_queries, with_connection};
     use crate::tests::api_operations::{
         get_request, get_request_with_permission_backend, patch_request,
         patch_request_with_headers, post_request,
@@ -31,6 +28,8 @@ mod tests {
         service_account_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
+    use hubuum_storage_postgres::operations::computed_materialization::source_data_sha256;
+    use hubuum_storage_postgres::{capture_queries, with_connection};
 
     #[derive(QueryableByName)]
     struct ComputedQuerySqlValue {
@@ -136,8 +135,11 @@ mod tests {
                     .expect("manual rebuild task")
                 }
             };
-            if let Ok(task) = claim_task_for_backend_test(&context.pool, task_id).await {
-                return ClaimedTask::from_record(task.into()).unwrap();
+            if let Ok(task) =
+                crate::test_support::claim_persisted_test_task(context.pool.get_ref(), task_id)
+                    .await
+            {
+                return task;
             }
             tokio::task::yield_now().await;
         }

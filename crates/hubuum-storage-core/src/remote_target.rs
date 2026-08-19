@@ -1,11 +1,12 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, RemoteTargetId, ResourceId, TaskId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StorageRecordMetadata};
+use crate::{MutationOutcome, StorageError, StorageRecordMetadata};
 
 /// HTTP transport configuration for a remote target.
 #[derive(Clone, PartialEq)]
@@ -66,7 +67,7 @@ impl fmt::Debug for StorageRemoteTargetTransport {
 /// Subject and enablement policy for a remote target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageRemoteTargetPolicy {
-    class_id: Option<i32>,
+    class_id: Option<ClassId>,
     allowed_subject_types: Vec<String>,
     enabled: bool,
 }
@@ -74,7 +75,7 @@ pub struct StorageRemoteTargetPolicy {
 impl StorageRemoteTargetPolicy {
     #[must_use]
     pub const fn new(
-        class_id: Option<i32>,
+        class_id: Option<ClassId>,
         allowed_subject_types: Vec<String>,
         enabled: bool,
     ) -> Self {
@@ -86,7 +87,7 @@ impl StorageRemoteTargetPolicy {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<i32>, Vec<String>, bool) {
+    pub fn into_parts(self) -> (Option<ClassId>, Vec<String>, bool) {
         (self.class_id, self.allowed_subject_types, self.enabled)
     }
 }
@@ -140,7 +141,7 @@ impl StorageRemoteTargetDefinition {
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTarget {
     metadata: StorageRecordMetadata,
-    collection_id: i32,
+    collection_id: CollectionId,
     name: String,
     definition: StorageRemoteTargetDefinition,
 }
@@ -149,7 +150,7 @@ impl StorageRemoteTarget {
     #[must_use]
     pub fn new(
         metadata: StorageRecordMetadata,
-        collection_id: i32,
+        collection_id: CollectionId,
         name: impl Into<String>,
         definition: StorageRemoteTargetDefinition,
     ) -> Self {
@@ -167,7 +168,7 @@ impl StorageRemoteTarget {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -176,7 +177,7 @@ impl StorageRemoteTarget {
         self,
     ) -> (
         StorageRecordMetadata,
-        i32,
+        CollectionId,
         String,
         StorageRemoteTargetDefinition,
     ) {
@@ -204,13 +205,13 @@ impl fmt::Debug for StorageRemoteTarget {
 /// Filtered, ordered remote-target list request.
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetListQuery {
-    allowed_collection_ids: Vec<i32>,
+    allowed_collection_ids: Vec<CollectionId>,
     options: QueryOptions,
 }
 
 impl StorageRemoteTargetListQuery {
     #[must_use]
-    pub const fn new(allowed_collection_ids: Vec<i32>, options: QueryOptions) -> Self {
+    pub const fn new(allowed_collection_ids: Vec<CollectionId>, options: QueryOptions) -> Self {
         Self {
             allowed_collection_ids,
             options,
@@ -218,7 +219,7 @@ impl StorageRemoteTargetListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<i32>, QueryOptions) {
+    pub fn into_parts(self) -> (Vec<CollectionId>, QueryOptions) {
         (self.allowed_collection_ids, self.options)
     }
 }
@@ -240,28 +241,13 @@ impl fmt::Debug for StorageRemoteTargetListQuery {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct StorageRemoteTargetPage {
-    targets: Vec<StorageRemoteTarget>,
-    total: Option<i64>,
-}
-
-impl StorageRemoteTargetPage {
-    #[must_use]
-    pub const fn new(targets: Vec<StorageRemoteTarget>, total: Option<i64>) -> Self {
-        Self { targets, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageRemoteTarget>, Option<i64>) {
-        (self.targets, self.total)
-    }
-}
+/// Remote-target page retained as a domain-specific API name.
+pub type StorageRemoteTargetPage = crate::StoragePage<StorageRemoteTarget>;
 
 /// Atomic remote-target create command including audit provenance.
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetCreate {
-    collection_id: i32,
+    collection_id: CollectionId,
     name: String,
     definition: StorageRemoteTargetDefinition,
     event_context: EventContext,
@@ -270,7 +256,7 @@ pub struct StorageRemoteTargetCreate {
 impl StorageRemoteTargetCreate {
     #[must_use]
     pub fn new(
-        collection_id: i32,
+        collection_id: CollectionId,
         name: impl Into<String>,
         definition: StorageRemoteTargetDefinition,
         event_context: EventContext,
@@ -284,7 +270,14 @@ impl StorageRemoteTargetCreate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String, StorageRemoteTargetDefinition, EventContext) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        CollectionId,
+        String,
+        StorageRemoteTargetDefinition,
+        EventContext,
+    ) {
         (
             self.collection_id,
             self.name,
@@ -306,8 +299,8 @@ impl fmt::Debug for StorageRemoteTargetCreate {
 }
 
 pub type StorageRemoteTargetPatchParts = (
-    Option<i32>,
-    Option<Option<i32>>,
+    Option<CollectionId>,
+    Option<Option<ClassId>>,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -323,8 +316,8 @@ pub type StorageRemoteTargetPatchParts = (
 /// Sparse, already validated remote-target update.
 #[derive(Clone, Default, PartialEq)]
 pub struct StorageRemoteTargetPatch {
-    collection_id: Option<i32>,
-    class_id: Option<Option<i32>>,
+    collection_id: Option<CollectionId>,
+    class_id: Option<Option<ClassId>>,
     name: Option<String>,
     description: Option<String>,
     method: Option<String>,
@@ -357,13 +350,13 @@ impl StorageRemoteTargetPatch {
     }
 
     #[must_use]
-    pub const fn with_collection_id(mut self, value: Option<i32>) -> Self {
+    pub const fn with_collection_id(mut self, value: Option<CollectionId>) -> Self {
         self.collection_id = value;
         self
     }
 
     #[must_use]
-    pub const fn with_class_id(mut self, value: Option<Option<i32>>) -> Self {
+    pub const fn with_class_id(mut self, value: Option<Option<ClassId>>) -> Self {
         self.class_id = value;
         self
     }
@@ -473,7 +466,7 @@ impl fmt::Debug for StorageRemoteTargetPatch {
 /// Atomic remote-target update command including audit provenance.
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetUpdate {
-    target_id: i32,
+    target_id: RemoteTargetId,
     patch: StorageRemoteTargetPatch,
     event_context: EventContext,
 }
@@ -481,7 +474,7 @@ pub struct StorageRemoteTargetUpdate {
 impl StorageRemoteTargetUpdate {
     #[must_use]
     pub const fn new(
-        target_id: i32,
+        target_id: RemoteTargetId,
         patch: StorageRemoteTargetPatch,
         event_context: EventContext,
     ) -> Self {
@@ -493,20 +486,20 @@ impl StorageRemoteTargetUpdate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, StorageRemoteTargetPatch, EventContext) {
+    pub fn into_parts(self) -> (RemoteTargetId, StorageRemoteTargetPatch, EventContext) {
         (self.target_id, self.patch, self.event_context)
     }
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRemoteTargetDelete {
-    target_id: i32,
+    target_id: RemoteTargetId,
     event_context: EventContext,
 }
 
 impl StorageRemoteTargetDelete {
     #[must_use]
-    pub const fn new(target_id: i32, event_context: EventContext) -> Self {
+    pub const fn new(target_id: RemoteTargetId, event_context: EventContext) -> Self {
         Self {
             target_id,
             event_context,
@@ -514,7 +507,7 @@ impl StorageRemoteTargetDelete {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, EventContext) {
+    pub fn into_parts(self) -> (RemoteTargetId, EventContext) {
         (self.target_id, self.event_context)
     }
 }
@@ -523,20 +516,20 @@ impl StorageRemoteTargetDelete {
 /// from the same durable target record used for the event.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRemoteTargetInvocation {
-    target_id: i32,
-    task_id: i32,
+    target_id: RemoteTargetId,
+    task_id: TaskId,
     subject_type: String,
-    subject_id: i32,
+    subject_id: ResourceId,
     event_context: EventContext,
 }
 
 impl StorageRemoteTargetInvocation {
     #[must_use]
     pub fn new(
-        target_id: i32,
-        task_id: i32,
+        target_id: RemoteTargetId,
+        task_id: TaskId,
         subject_type: impl Into<String>,
-        subject_id: i32,
+        subject_id: ResourceId,
         event_context: EventContext,
     ) -> Self {
         Self {
@@ -549,7 +542,7 @@ impl StorageRemoteTargetInvocation {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, String, i32, EventContext) {
+    pub fn into_parts(self) -> (RemoteTargetId, TaskId, String, ResourceId, EventContext) {
         (
             self.target_id,
             self.task_id,
@@ -575,7 +568,10 @@ impl fmt::Debug for StorageRemoteTargetInvocation {
 /// Complete remote-target lifecycle required from every selectable backend.
 #[async_trait]
 pub trait RemoteTargetStorage: Send + Sync {
-    async fn get_remote_target(&self, target_id: i32) -> Result<StorageRemoteTarget, StorageError>;
+    async fn get_remote_target(
+        &self,
+        target_id: RemoteTargetId,
+    ) -> Result<StorageRemoteTarget, StorageError>;
 
     async fn list_remote_targets(
         &self,
@@ -585,22 +581,22 @@ pub trait RemoteTargetStorage: Send + Sync {
     async fn create_remote_target(
         &self,
         request: StorageRemoteTargetCreate,
-    ) -> Result<StorageRemoteTarget, StorageError>;
+    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError>;
 
     async fn update_remote_target(
         &self,
         request: StorageRemoteTargetUpdate,
-    ) -> Result<StorageRemoteTarget, StorageError>;
+    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError>;
 
     async fn delete_remote_target(
         &self,
         request: StorageRemoteTargetDelete,
-    ) -> Result<(), StorageError>;
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     async fn record_remote_target_invocation(
         &self,
         request: StorageRemoteTargetInvocation,
-    ) -> Result<(), StorageError>;
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
@@ -634,12 +630,12 @@ mod tests {
                 now,
                 hubuum_domain::ResourceRevision::new(1).unwrap(),
             ),
-            2,
+            CollectionId::new(2).unwrap(),
             "secret target name",
             definition(),
         );
         let request = StorageRemoteTargetCreate::new(
-            2,
+            CollectionId::new(2).unwrap(),
             "secret create name",
             definition(),
             EventContext::user(hubuum_domain::PrincipalId::new(3).unwrap(), None, None),

@@ -10,16 +10,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 
 - `hubuum-domain`, `hubuum-events-core`, `hubuum-query`,
-  `hubuum-task-core`, and `hubuum-storage-core` are now experimental public
-  crates with versioned dependencies and explicit compatibility, MSRV, error,
-  runtime, cancellation, and security policies. External storage backends can
-  consume the complete trait and DTO contract through crates.io, Git, or path
-  dependencies; backend selection remains statically composed by the
-  application, with no dynamic plugin ABI or runtime contract version.
+  `hubuum-task-core`, and `hubuum-storage-core` now have explicit compatibility,
+  MSRV, error, runtime, cancellation, and security policies in preparation for
+  a possible later crate split. They remain workspace-internal and unpublished
+  in this release. An external-crate integration test exercises the future
+  adapter-facing surface without making a crates.io support promise.
 - The redacted administrator configuration now reports the selected complete
   storage backend and effective non-secret pool settings. Startup logs and
   Prometheus metrics expose the same backend identity, and storage calls have
-  uniform bounded tracing plus duration and failure metrics.
+  uniform bounded tracing plus duration and failure metrics. The server and
+  administrator CLI accept the typed `HUBUUM_STORAGE_BACKEND` selector;
+  `postgresql` is the sole registered value, empty selects that default, and
+  other unknown values fail startup.
 - Class object lists now accept up to four named `related.<alias>` filter
   groups. Each group selects one target class, normal target-object fields, and
   an optional bidirectional depth up to 10; groups are combined with `AND`, and
@@ -35,11 +37,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for every registered backend, and uses adapter-private deterministic
   failpoints to verify rollback of compound collection and task-finalization
   writes.
-- Storage backend certification now includes a reusable five-part audit
+- Storage backend certification now includes a reusable six-part audit
   conformance harness. Every selectable backend must prove that committed
   receipts match durable events, no-ops append nothing, failed mutations roll
   back state and events, durable outbox work reaches a recording sink, and
-  logical, backend, and failure telemetry is reported.
+  logical, backend, and failure telemetry is reported, and stale writes return
+  the exact current revision. A reusable retention verifier additionally proves
+  durable retry identity and idempotent completion.
 - Storage backends now provide a mandatory backend-neutral unit of work for
   composing collection, class, object, and relation operations. Transactional
   mutations inherit one audit context, and shared PostgreSQL and memory-model
@@ -47,6 +51,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Removed the root PostgreSQL compatibility and SQL-test tree. PostgreSQL
+  composition is now confined to the storage factory, adapter-native fixtures
+  are typed and feature-gated in `hubuum-storage-postgres`, and reusable
+  application/service/HTTP expectations live in
+  `hubuum-storage-conformance`. Deterministic storage fault coverage now
+  includes delivery acknowledgement, restore coordination, lease loss, and
+  connection loss; high-availability failover remains out of scope.
 - Main-branch CI no longer updates a rolling GitHub Release. Native binaries
   remain available as per-run Actions artifacts, while multi-architecture GHCR
   images receive a commit-SHA tag before the movable `main` and `main-full`
@@ -65,28 +76,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   policy-aware workflows explicitly require the stronger application context.
   PostgreSQL is the only selectable production backend, and compatibility tests
   exercise every required family for every selectable backend. Validated domain
-  identifiers now live in the publishable domain crate, and their OpenAPI
+  identifiers now live in the backend-neutral domain crate, and their OpenAPI
   schemas explicitly declare the existing positive-integer invariant. Public
   HTTP request and response shapes are unchanged; the deprecated administrator
   configuration field `exports.database_statement_timeout_ms` remains as an
   alias for `exports.storage_query_budget_ms`.
   No client migration is required because the token-resource and
-  remote-invocation `oneOf` variants are schema-identical to v0.0.9.
-- **Breaking (experimental Rust API):** complete storage adapters must now
+  remote-invocation `oneOf` variants are schema-identical to v0.0.9 and
+  optional provenance task IDs retain the same integer-or-null representation.
+- **Breaking (workspace storage API):** complete storage adapters must now
   implement `TransactionalStorage` in addition to the existing capability
   traits. External adapter authors must provide an atomic callback runner and
   all transaction-scoped lifecycle accessors; applications continue to select
   adapters statically, with no dynamic plugin interface.
-- **Breaking (experimental Rust API):** ordinary storage mutations now require
+- **Breaking (workspace storage API):** ordinary storage mutations now require
   `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
-  durable `AuditReceipt` for commits and no receipt for genuine no-ops. Import
+  non-empty set of durable `AuditReceipt` values for commits and no receipt for
+  genuine no-ops. Import
   and restore are grouped under `MaintenanceStorage`, and storage/PostgreSQL
   telemetry is supplied explicitly by application composition. External
   adapter authors must remove optional audit contexts, return the new outcome
   type from resource methods, provide telemetry observers, implement the
   reusable audit fixture, and be added to the sealed certification registry.
   No database or HTTP migration is required.
-- **Breaking (experimental Rust API):** the publishable domain, query, event,
+- **Breaking (workspace storage API):** the backend-neutral domain, query, event,
   and storage contracts now keep database and application implementation
   details behind their crate boundaries. External adapter authors must replace
   raw lifecycle, event, principal, metadata, and revision integers with the
@@ -98,6 +111,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   methods instead of `from_db`; and update matches to the semantic
   `StorageErrorKind` names. HTTP shapes, database schemas, and persisted event
   documents are unchanged by this Rust boundary cleanup.
+- **Breaking (storage operations):** event retention now uses durable
+  claim/archive/complete batches. `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` names a
+  directory, not an append-only JSONL file; operators using local archival must
+  create or point to a durable directory and must not reuse the old file path.
+  Each claim is atomically written as `<batch-uuid>.jsonl`. Failed archives
+  retain the same claim and source events for retry, and completion deletes
+  exactly the claimed IDs. The new retention-claim migration is applied
+  automatically before the worker runs.
 - Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;
   PostgreSQL pool statistics are converted into private, structured contract
   values at the adapter boundary rather than being represented by root-owned

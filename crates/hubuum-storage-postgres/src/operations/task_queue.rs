@@ -11,8 +11,10 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{BigInt, Bool};
 use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{PrincipalId, TaskId};
-use hubuum_events_core::{Action, ActorKind, EntityType, MutationProvenance, NewEvent};
+use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId};
+use hubuum_events_core::{
+    Action, ActorKind, EntityType, EventSequence, MutationProvenance, NewEvent,
+};
 use hubuum_query::{CursorValue, FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
@@ -57,21 +59,11 @@ struct NewTaskRow {
 
 impl NewTaskRow {
     fn from_request(request: &StorageTaskCreateRequest) -> Result<Self, PostgresStorageError> {
-        if request.submitted_by() <= 0 {
-            return Err(PostgresStorageError::bad_request(
-                "submitted task principal id must be positive",
-            ));
-        }
         let scope = request.scope_snapshot();
-        if scope.token_id().is_some_and(|token_id| token_id <= 0) {
-            return Err(PostgresStorageError::bad_request(
-                "submitted task token id must be positive",
-            ));
-        }
         Ok(Self {
             kind: request.kind().as_str().to_string(),
             status: StorageTaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(request.submitted_by()),
+            submitted_by: Some(request.submitted_by().id()),
             idempotency_key: request
                 .idempotency_key()
                 .map(|key| key.as_str().to_string()),
@@ -82,13 +74,13 @@ impl NewTaskRow {
             processed_items: 0,
             success_items: 0,
             failed_items: 0,
-            submitted_token_id: scope.token_id(),
+            submitted_token_id: scope.token_id().map(|id| id.id()),
             submitted_token_scoped: scope.scoped(),
             submitted_token_scopes: scope.scopes().clone(),
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
-            initiator_user_id: Some(request.submitted_by()),
+            initiator_user_id: Some(request.submitted_by().id()),
         })
     }
 }
@@ -117,18 +109,21 @@ impl TaskEventRow {
             Some(data) => Some(data.clone()),
         };
         Ok(StorageTaskEvent::builder(
-            self.id,
-            task_id,
+            EventSequence::new(self.id)?,
+            TaskId::new(task_id)?,
             self.action,
             self.summary,
             self.occurred_at,
             self.actor_kind,
         )
         .data(data)
-        .actor_principal_id(self.actor_user_id)
+        .actor_principal_id(self.actor_user_id.map(PrincipalId::new).transpose()?)
         .provenance(
-            self.initiator_user_id,
-            self.provenance_task_id.or(Some(task_id)),
+            self.initiator_user_id.map(PrincipalId::new).transpose()?,
+            self.provenance_task_id
+                .or(Some(task_id))
+                .map(TaskId::new)
+                .transpose()?,
         )
         .build())
     }
@@ -150,10 +145,10 @@ struct ImportTaskResultRow {
 }
 
 impl ImportTaskResultRow {
-    fn into_storage(self) -> StorageImportTaskResult {
-        StorageImportTaskResult::builder(
-            self.id,
-            self.task_id,
+    fn into_storage(self) -> Result<StorageImportTaskResult, PostgresStorageError> {
+        Ok(StorageImportTaskResult::builder(
+            ImportTaskResultId::new(self.id)?,
+            TaskId::new(self.task_id)?,
             self.entity_kind,
             self.action,
             self.outcome,
@@ -163,7 +158,7 @@ impl ImportTaskResultRow {
         .identifier(self.identifier)
         .error(self.error)
         .details(self.details)
-        .build()
+        .build())
     }
 }
 
@@ -188,9 +183,9 @@ struct ExportOutputRow {
 }
 
 impl ExportOutputRow {
-    fn into_storage(self) -> StorageExportOutput {
-        StorageExportOutput::builder(
-            self.task_id,
+    fn into_storage(self) -> Result<StorageExportOutput, PostgresStorageError> {
+        Ok(StorageExportOutput::builder(
+            TaskId::new(self.task_id)?,
             self.content_type,
             self.meta_json,
             self.warnings_json,
@@ -206,7 +201,7 @@ impl ExportOutputRow {
             self.hydration_duration_ms,
             self.render_duration_ms,
         ))
-        .build()
+        .build())
     }
 }
 
@@ -226,9 +221,9 @@ struct ExportOutputSummaryRow {
 }
 
 impl ExportOutputSummaryRow {
-    fn into_storage(self) -> StorageExportOutputSummary {
-        StorageExportOutputSummary::new(
-            self.task_id,
+    fn into_storage(self) -> Result<StorageExportOutputSummary, PostgresStorageError> {
+        Ok(StorageExportOutputSummary::new(
+            TaskId::new(self.task_id)?,
             self.template_name,
             self.content_type,
             self.warning_count,
@@ -240,7 +235,7 @@ impl ExportOutputSummaryRow {
                 self.hydration_duration_ms,
                 self.render_duration_ms,
             ),
-        )
+        ))
     }
 }
 
@@ -256,15 +251,15 @@ struct BackupOutputRow {
 }
 
 impl BackupOutputRow {
-    fn into_storage(self) -> StorageBackupOutput {
-        StorageBackupOutput::new(
-            self.task_id,
+    fn into_storage(self) -> Result<StorageBackupOutput, PostgresStorageError> {
+        Ok(StorageBackupOutput::new(
+            TaskId::new(self.task_id)?,
             self.document,
             self.byte_size,
             self.sha256,
             self.output_expires_at,
             self.created_at,
-        )
+        ))
     }
 }
 
@@ -278,13 +273,13 @@ struct BackupOutputSummaryRow {
 }
 
 impl BackupOutputSummaryRow {
-    fn into_storage(self) -> StorageBackupOutputSummary {
-        StorageBackupOutputSummary::new(
-            self.task_id,
+    fn into_storage(self) -> Result<StorageBackupOutputSummary, PostgresStorageError> {
+        Ok(StorageBackupOutputSummary::new(
+            TaskId::new(self.task_id)?,
             self.byte_size,
             self.sha256,
             self.output_expires_at,
-        )
+        ))
     }
 }
 
@@ -299,7 +294,7 @@ pub async fn create_task(
     request: StorageTaskCreateRequest,
 ) -> Result<StorageTask, PostgresStorageError> {
     let new_task = NewTaskRow::from_request(&request)?;
-    let submitted_by = request.submitted_by();
+    let submitted_by = request.submitted_by().id();
     let kind = request.kind();
     let idempotency_key = new_task.idempotency_key.clone();
     let request_hash = new_task.request_hash.clone();
@@ -373,7 +368,10 @@ pub async fn get_task_access(
             Ok::<_, PostgresStorageError>((task, owner_group_id))
         })
         .await?;
-    Ok(StorageTaskAccess::new(task.into_storage()?, owner_group_id))
+    Ok(StorageTaskAccess::new(
+        task.into_storage()?,
+        owner_group_id.map(GroupId::new).transpose()?,
+    ))
 }
 
 pub async fn list_tasks(
@@ -381,6 +379,7 @@ pub async fn list_tasks(
     query: StorageTaskListQuery,
 ) -> Result<StorageTaskPage, PostgresStorageError> {
     let (submitted_by, kind, status, options) = query.into_parts();
+    let submitted_by = submitted_by.map(PrincipalId::id);
     let total = if options.include_total() {
         Some(
             runtime
@@ -416,7 +415,7 @@ pub async fn list_task_events(
     query: StorageTaskPageQuery,
 ) -> Result<StorageTaskEventPage, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
-    validate_positive_task_id(task_id)?;
+    let task_id = task_id.id();
     let total = if options.include_total() {
         Some(count_task_events(runtime, task_id).await?)
     } else {
@@ -436,7 +435,7 @@ pub async fn list_import_task_results(
     query: StorageTaskPageQuery,
 ) -> Result<StorageImportTaskResultPage, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
-    validate_positive_task_id(task_id)?;
+    let task_id = task_id.id();
     let total = if options.include_total() {
         Some(
             runtime
@@ -488,7 +487,7 @@ pub async fn list_import_task_results(
         .await?
         .into_iter()
         .map(ImportTaskResultRow::into_storage)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(StorageImportTaskResultPage::new(results, total))
 }
 
@@ -509,7 +508,7 @@ pub async fn list_export_output_summaries(
                 .await
         })
         .await
-        .map(|rows| {
+        .and_then(|rows| {
             rows.into_iter()
                 .map(ExportOutputSummaryRow::into_storage)
                 .collect()
@@ -533,7 +532,7 @@ pub async fn list_backup_output_summaries(
                 .await
         })
         .await
-        .map(|rows| {
+        .and_then(|rows| {
             rows.into_iter()
                 .map(BackupOutputSummaryRow::into_storage)
                 .collect()
@@ -556,11 +555,7 @@ pub async fn get_export_output_summary(
                 .optional()
         })
         .await?;
-    Ok(classify_output(
-        row,
-        |row| row.output_expires_at,
-        |row| row.into_storage(),
-    ))
+    classify_output(row, |row| row.output_expires_at, |row| row.into_storage())
 }
 
 pub async fn get_backup_output_summary(
@@ -579,11 +574,7 @@ pub async fn get_backup_output_summary(
                 .optional()
         })
         .await?;
-    Ok(classify_output(
-        row,
-        |row| row.output_expires_at,
-        |row| row.into_storage(),
-    ))
+    classify_output(row, |row| row.output_expires_at, |row| row.into_storage())
 }
 
 pub async fn get_export_output(
@@ -602,11 +593,7 @@ pub async fn get_export_output(
                 .optional()
         })
         .await?;
-    Ok(classify_output(
-        row,
-        |row| row.output_expires_at,
-        |row| row.into_storage(),
-    ))
+    classify_output(row, |row| row.output_expires_at, |row| row.into_storage())
 }
 
 pub async fn get_backup_output(
@@ -625,11 +612,7 @@ pub async fn get_backup_output(
                 .optional()
         })
         .await?;
-    Ok(classify_output(
-        row,
-        |row| row.output_expires_at,
-        |row| row.into_storage(),
-    ))
+    classify_output(row, |row| row.output_expires_at, |row| row.into_storage())
 }
 
 fn build_task_query(
@@ -996,19 +979,19 @@ fn page_limit(options: &QueryOptions) -> i64 {
 fn classify_output<T, U>(
     row: Option<T>,
     expires_at: impl FnOnce(&T) -> NaiveDateTime,
-    convert: impl FnOnce(T) -> U,
-) -> StorageTaskOutputLookup<U> {
-    match row {
+    convert: impl FnOnce(T) -> Result<U, PostgresStorageError>,
+) -> Result<StorageTaskOutputLookup<U>, PostgresStorageError> {
+    Ok(match row {
         Some(row) => {
             let expires_at = expires_at(&row);
             if expires_at > Utc::now().naive_utc() {
-                StorageTaskOutputLookup::Available(convert(row))
+                StorageTaskOutputLookup::Available(convert(row)?)
             } else {
                 StorageTaskOutputLookup::Expired { expires_at }
             }
         }
         None => StorageTaskOutputLookup::Missing,
-    }
+    })
 }
 
 fn validate_positive_task_id(task_id: i32) -> Result<(), PostgresStorageError> {

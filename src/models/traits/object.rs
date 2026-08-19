@@ -579,7 +579,9 @@ impl CollectionAdapter for HubuumObjectID {
             .map_err(ApiError::from)?;
         storage_handle(pool)
             .collection_store()
-            .get_collection(collection_id_to_storage(target.object().collection_id()))
+            .get_collection(collection_id_to_storage(
+                target.object().collection_id().id(),
+            ))
             .await
             .map_err(ApiError::from)
             .and_then(collection_from_storage)

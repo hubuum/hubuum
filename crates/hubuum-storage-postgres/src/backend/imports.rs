@@ -1,5 +1,6 @@
 use crate::operations::import_workflow;
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 
 use hubuum_storage_core::{
     ImportStorage, StorageClassRecord, StorageCollection, StorageError, StorageImportApply,
@@ -19,9 +20,9 @@ impl ImportStorage for PostgresStorage {
 
     async fn import_collection_by_id(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        import_workflow::collection_by_id(self.runtime(), collection_id)
+        import_workflow::collection_by_id(self.runtime(), collection_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -46,72 +47,80 @@ impl ImportStorage for PostgresStorage {
 
     async fn import_collection_child_by_name(
         &self,
-        parent_collection_id: i32,
+        parent_collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        import_workflow::collection_child_by_name(self.runtime(), parent_collection_id, name)
+        import_workflow::collection_child_by_name(self.runtime(), parent_collection_id.id(), name)
             .await
             .map_err(StorageError::from)
     }
 
     async fn import_class_by_name(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError> {
-        import_workflow::class_by_name(self.runtime(), collection_id, name)
+        import_workflow::class_by_name(self.runtime(), collection_id.id(), name)
             .await
             .map_err(StorageError::from)
     }
 
     async fn import_classes_by_names(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError> {
-        import_workflow::classes_by_names(self.runtime(), collection_id, names)
+        import_workflow::classes_by_names(self.runtime(), collection_id.id(), names)
             .await
             .map_err(StorageError::from)
     }
 
     async fn import_object_by_name(
         &self,
-        class_id: i32,
+        class_id: ClassId,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError> {
-        import_workflow::object_by_name(self.runtime(), class_id, name)
+        import_workflow::object_by_name(self.runtime(), class_id.id(), name)
             .await
             .map_err(StorageError::from)
     }
 
     async fn import_objects_by_names(
         &self,
-        class_id: i32,
+        class_id: ClassId,
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError> {
-        import_workflow::objects_by_names(self.runtime(), class_id, names)
+        import_workflow::objects_by_names(self.runtime(), class_id.id(), names)
             .await
             .map_err(StorageError::from)
     }
 
     async fn import_class_relation_exists(
         &self,
-        left_class_id: i32,
-        right_class_id: i32,
+        left_class_id: ClassId,
+        right_class_id: ClassId,
     ) -> Result<bool, StorageError> {
-        import_workflow::class_relation_exists(self.runtime(), left_class_id, right_class_id)
-            .await
-            .map_err(StorageError::from)
+        import_workflow::class_relation_exists(
+            self.runtime(),
+            left_class_id.id(),
+            right_class_id.id(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_object_relation_exists(
         &self,
-        left_object_id: i32,
-        right_object_id: i32,
+        left_object_id: ObjectId,
+        right_object_id: ObjectId,
     ) -> Result<bool, StorageError> {
-        import_workflow::object_relation_exists(self.runtime(), left_object_id, right_object_id)
-            .await
-            .map_err(StorageError::from)
+        import_workflow::object_relation_exists(
+            self.runtime(),
+            left_object_id.id(),
+            right_object_id.id(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn import_group_exists(

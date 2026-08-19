@@ -79,18 +79,23 @@ These families are a documentation map over one indivisible contract. They are n
 
 Adapters are statically linked Rust crates. Trait checking and crate versions are therefore the compatibility mechanism; Hubuum has no duplicate runtime contract version or dynamic capability negotiation.
 
-Startup logs, metrics, and the administrator configuration endpoint report the selected backend and the same non-sensitive effective settings.
+The server and administrator CLI select one registered adapter through the
+typed `HUBUUM_STORAGE_BACKEND` setting. The only current value is
+`postgresql`; an empty value selects that default, while every other unknown
+value fails configuration parsing. Startup logs, metrics, and the administrator
+configuration endpoint report the selected backend and the same non-sensitive
+effective settings.
 
 ## Services Depend on Exact Operation Families
 
 Collection, class, object, class-relation, and object-relation services use the specific traits that own their operations:
 
 ```text
-CollectionService -------> CollectionStore
-ClassService ------------> ClassStore
-ObjectService -----------> ObjectStore
-ClassRelationService ----> ClassRelationStore
-ObjectRelationService ---> ObjectRelationStore
+CollectionService -------> CollectionStorage
+ClassService ------------> ClassStorage
+ObjectService -----------> ObjectStorage
+ClassRelationService ----> ClassRelationStorage
+ObjectRelationService ---> ObjectRelationStorage
                                 ^
                                 |
                      PostgreSQL or focused model
@@ -144,7 +149,7 @@ The following rules are architectural invariants:
   Entity IDs, names, queries, URLs, credentials, and payloads never become log
   or metric labels.
 - A backend is selectable only after it passes the shared compatibility suite
-  and five-part conformance verifier plus its own native consistency,
+  and six-part conformance verifier plus its own native consistency,
   concurrency, recovery, and failure tests.
 
 Architecture tests enforce these rules for the current source tree. The [maintainer guide](storage_boundary/maintainer-guide.md) locates those checks; the [testing guide](storage_boundary/testing.md) explains what they do and do not prove.
@@ -182,19 +187,24 @@ hubuum application
   configuration, or `ApiError` dependency. Resource lifecycle, revision,
   metadata, and principal boundaries use domain IDs and revisions rather than
   persistence-shaped strings and integers.
-- `hubuum-storage-conformance` owns the reusable five-part behavioral verifier
-  for receipts, no-ops, rollback, fan-out to a recording sink, and telemetry.
+- `hubuum-storage-conformance` owns the reusable six-part behavioral verifier
+  for receipts, no-ops, rollback, fan-out to a recording sink, telemetry, and
+  exact revision-conflict propagation. It also owns the retention retry
+  verifier for durable claim identity and idempotent completion and the common
+  application, service, readiness, and authenticated HTTP expectations.
   It is workspace-internal and used only as a development dependency.
 - `hubuum-storage-postgres` owns the native pool, TLS, endpoint diagnostics, generated schema, migrations, JSONB validation, query instrumentation, and all production PostgreSQL operations.
 - The root crate owns application services and static composition. It constructs the PostgreSQL adapter with telemetry and dedicated operational pools, then places it behind the opaque handle.
-- The root crate retains a legacy PostgreSQL row-and-SQL harness for old tests. It is compiled only for unit tests or the explicit `integration-test-support` feature and is not part of a production build.
+- The root crate has no PostgreSQL module tree. Adapter-specific integration
+  fixtures are typed, feature-gated APIs owned by `hubuum-storage-postgres`.
 
-The backend-neutral contracts needed by an out-of-tree adapter are publishable
-crates. An external-crate integration test compiles the transaction ports and
-representative typed DTO/query APIs without crate-private access. Backend
-registration remains explicit, exhaustive, and application-owned. An adapter
-may therefore be supplied by a crates.io, Git, or path dependency. Hubuum does
-not load storage plugins dynamically.
+The backend-neutral contracts needed by an out-of-tree adapter remain
+workspace-internal in this pull request; they are not being published yet. An
+external-crate integration test nevertheless compiles the transaction ports
+and representative typed DTO/query APIs without crate-private access so a
+later crate split does not require an interface redesign. Backend registration
+remains explicit, exhaustive, and application-owned. Hubuum does not load
+storage plugins dynamically.
 
 Moving a file does not by itself improve the boundary. Dependencies must continue to point from the application to contracts and from adapters to contracts, never from a contract or adapter back into the application.
 
@@ -203,14 +213,14 @@ Moving a file does not by itself improve the boundary. Dependencies must continu
 The PostgreSQL path is exercised against a real migrated database by shared backend contracts, PostgreSQL-specific tests, service tests, HTTP integration tests, destructive restore tests, query-budget tests, platform and feature builds, production-container tests, and benchmarks. CI also migrates representative data from the adjacent stable release, starts the new application, and restarts the previous application against the migrated schema.
 
 The contract's methods and selected input variants are inventoried mechanically.
-Every registered backend runs the reusable five-part audit verifier plus
+Every registered backend runs the reusable six-part audit verifier plus
 compact service, readiness, and authenticated HTTP point/list scenarios.
 Adapter-private deterministic failpoints prove rollback at representative
 compound-write and task-state-machine seams.
 
 This is strong practical coverage, not a formal proof of portability.
-PostgreSQL is the only complete production adapter. The portable five-part
-verifier is extracted, while the broader compatibility suite still uses root
-application fixtures and remains in the root test module.
+PostgreSQL is the only complete production adapter. The portable six-part and
+retention-retry verifiers are extracted, while the broader compatibility suite
+still uses root application fixtures and remains in the root test module.
 
 The [testing guide](storage_boundary/testing.md) gives the detailed assessment and the highest-value remaining improvements.

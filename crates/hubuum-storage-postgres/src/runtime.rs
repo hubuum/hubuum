@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use diesel::QueryableByName;
+use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel::sql_types::{BigInt, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::MutationProvenance;
@@ -19,7 +20,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000025";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260818000001";
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// Adapter-level telemetry supplied by the application composition root.
@@ -290,9 +291,15 @@ impl PostgresRuntime {
         let result = connection
             .transaction::<R, PostgresStorageError, _>(async move |connection| {
                 context.apply(connection).await?;
-                operation(connection)
+                let value = operation(&mut *connection)
                     .await
-                    .map_err(PostgresStorageError::from)
+                    .map_err(PostgresStorageError::from)?;
+                crate::reach_fault_point(
+                    crate::PostgresFaultPoint::TransactionBeforeCommit,
+                    Some(connection),
+                )
+                .await?;
+                Ok(value)
             })
             .await;
         self.record_completion("transaction", started_at, &result);
@@ -461,12 +468,23 @@ pub(crate) async fn assert_locked_revision_precondition(
     owner_key: &str,
     revision: crate::PostgresRevision,
 ) -> Result<(), PostgresStorageError> {
-    diesel::sql_query("SELECT hubuum_assert_revision_precondition($1, $2)")
+    let result = diesel::sql_query("SELECT hubuum_assert_revision_precondition($1, $2)")
         .bind::<Text, _>(owner_key)
         .bind::<BigInt, _>(revision.get())
         .execute(connection)
-        .await?;
-    Ok(())
+        .await;
+    match result {
+        Ok(_) => Ok(()),
+        Err(DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info))
+            if info.message() == "hubuum_stale_resource" =>
+        {
+            Err(PostgresStorageError::revision_conflict(
+                "The resource changed since the supplied validator was issued",
+                Some(revision.into_domain()),
+            ))
+        }
+        Err(error) => Err(PostgresStorageError::from(error)),
+    }
 }
 
 /// Reject a conditional mutation when its authoritative row disappeared

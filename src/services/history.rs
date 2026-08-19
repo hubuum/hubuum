@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId};
 
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
@@ -21,13 +22,19 @@ pub enum HistoryCollectionFilter<'a> {
     Visible(&'a [i32]),
 }
 
-impl From<HistoryCollectionFilter<'_>> for HistoryCollectionScope {
-    fn from(value: HistoryCollectionFilter<'_>) -> Self {
+impl TryFrom<HistoryCollectionFilter<'_>> for HistoryCollectionScope {
+    type Error = ApiError;
+
+    fn try_from(value: HistoryCollectionFilter<'_>) -> Result<Self, Self::Error> {
         match value {
-            HistoryCollectionFilter::All => Self::All,
-            HistoryCollectionFilter::Visible(collection_ids) => {
-                Self::Visible(collection_ids.to_vec())
-            }
+            HistoryCollectionFilter::All => Ok(Self::All),
+            HistoryCollectionFilter::Visible(collection_ids) => Ok(Self::Visible(
+                collection_ids
+                    .iter()
+                    .copied()
+                    .map(CollectionId::new)
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
         }
     }
 }
@@ -44,10 +51,8 @@ struct AppHistoryMetadata {
     revision: ResourceRevision,
 }
 
-impl TryFrom<HistoryMetadata> for AppHistoryMetadata {
-    type Error = ApiError;
-
-    fn try_from(value: HistoryMetadata) -> Result<Self, Self::Error> {
+impl From<HistoryMetadata> for AppHistoryMetadata {
+    fn from(value: HistoryMetadata) -> Self {
         let (
             operation,
             valid_from,
@@ -59,31 +64,32 @@ impl TryFrom<HistoryMetadata> for AppHistoryMetadata {
             task_id,
             revision,
         ) = value.into_parts();
-        Ok(Self {
+        Self {
             operation,
             valid_from,
             valid_to,
-            actor_id,
-            history_id,
+            actor_id: actor_id.map(|id| id.id()),
+            history_id: history_id.id(),
             actor_kind,
-            initiator_principal_id,
-            task_id,
-            revision: ResourceRevision::new(revision)?,
-        })
+            initiator_principal_id: initiator_principal_id.map(|id| id.id()),
+            task_id: task_id.map(|id| id.id()),
+            revision,
+        }
     }
 }
 
 fn collection_from_storage(row: CollectionHistoryRecord) -> Result<CollectionHistory, ApiError> {
-    let (id, name, description, created_at, updated_at, parent_collection_id, metadata) =
-        row.into_parts();
-    let metadata = AppHistoryMetadata::try_from(metadata)?;
+    let (record, metadata) = row.into_parts();
+    let (id, name, description, created_at, updated_at, parent_collection_id, _) =
+        record.into_parts();
+    let metadata = AppHistoryMetadata::from(metadata);
     Ok(CollectionHistory {
-        id,
+        id: id.id(),
         name,
         description,
         created_at,
         updated_at,
-        parent_collection_id,
+        parent_collection_id: parent_collection_id.map(|id| id.id()),
         op: metadata.operation,
         valid_from: metadata.valid_from,
         valid_to: metadata.valid_to,
@@ -97,6 +103,7 @@ fn collection_from_storage(row: CollectionHistoryRecord) -> Result<CollectionHis
 }
 
 fn class_from_storage(row: ClassHistoryRecord) -> Result<HubuumClassHistory, ApiError> {
+    let (record, metadata) = row.into_parts();
     let (
         id,
         name,
@@ -106,13 +113,13 @@ fn class_from_storage(row: ClassHistoryRecord) -> Result<HubuumClassHistory, Api
         description,
         created_at,
         updated_at,
-        metadata,
-    ) = row.into_parts();
-    let metadata = AppHistoryMetadata::try_from(metadata)?;
+        _,
+    ) = record.into_parts();
+    let metadata = AppHistoryMetadata::from(metadata);
     Ok(HubuumClassHistory {
-        id,
+        id: id.id(),
         name,
-        collection_id,
+        collection_id: collection_id.id(),
         json_schema,
         validate_schema,
         description,
@@ -131,23 +138,15 @@ fn class_from_storage(row: ClassHistoryRecord) -> Result<HubuumClassHistory, Api
 }
 
 fn object_from_storage(row: ObjectHistoryRecord) -> Result<HubuumObjectHistory, ApiError> {
-    let (
-        id,
-        name,
-        collection_id,
-        hubuum_class_id,
-        data,
-        description,
-        created_at,
-        updated_at,
-        metadata,
-    ) = row.into_parts();
-    let metadata = AppHistoryMetadata::try_from(metadata)?;
+    let (record, metadata) = row.into_parts();
+    let (id, name, collection_id, hubuum_class_id, data, description, created_at, updated_at, _) =
+        record.into_parts();
+    let metadata = AppHistoryMetadata::from(metadata);
     Ok(HubuumObjectHistory {
-        id,
+        id: id.id(),
         name,
-        collection_id,
-        hubuum_class_id,
+        collection_id: collection_id.id(),
+        hubuum_class_id: hubuum_class_id.id(),
         data,
         description,
         created_at,
@@ -167,10 +166,9 @@ fn object_from_storage(row: ObjectHistoryRecord) -> Result<HubuumObjectHistory, 
 fn export_template_from_storage(
     row: ExportTemplateHistoryRecord,
 ) -> Result<ExportTemplateHistory, ApiError> {
+    let (record, metadata) = row.into_parts();
+    let (record_metadata, collection_id, name, definition) = record.into_parts();
     let (
-        id,
-        collection_id,
-        name,
         description,
         content_type,
         template,
@@ -182,21 +180,19 @@ fn export_template_from_storage(
         relation_context,
         default_missing_data_policy,
         default_limits,
-        created_at,
-        updated_at,
-        metadata,
-    ) = row.into_parts();
-    let metadata = AppHistoryMetadata::try_from(metadata)?;
+    ) = definition.into_parts();
+    let (id, created_at, updated_at, _) = record_metadata.into_parts();
+    let metadata = AppHistoryMetadata::from(metadata);
     Ok(ExportTemplateHistory {
-        id,
-        collection_id,
+        id: id.id(),
+        collection_id: collection_id.id(),
         name,
         description,
         content_type,
         template,
         kind,
         scope_kind,
-        class_id,
+        class_id: class_id.map(|id| id.id()),
         default_query,
         include,
         relation_context,
@@ -219,29 +215,20 @@ fn export_template_from_storage(
 fn remote_target_from_storage(
     row: RemoteTargetHistoryRecord,
 ) -> Result<RemoteTargetHistory, ApiError> {
-    let (
-        id,
-        collection_id,
-        class_id,
-        name,
-        description,
-        method,
-        url_template,
-        headers_template,
-        body_template,
-        auth_config,
-        allowed_subject_types,
-        timeout_ms,
-        enabled,
-        created_at,
-        updated_at,
-        metadata,
-    ) = row.into_parts();
-    let metadata = AppHistoryMetadata::try_from(metadata)?;
+    let (record, metadata) = row.into_parts();
+    let (record_metadata, collection_id, name, definition) = record.into_parts();
+    let (description, transport, policy) = definition.into_parts();
+    let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
+        transport.into_parts();
+    let (class_id, allowed_subject_types, enabled) = policy.into_parts();
+    let (id, created_at, updated_at, _) = record_metadata.into_parts();
+    let (allowed_subject_types, metadata) =
+        (serde_json::to_value(allowed_subject_types)?, metadata);
+    let metadata = AppHistoryMetadata::from(metadata);
     Ok(RemoteTargetHistory {
-        id,
-        collection_id,
-        class_id,
+        id: id.id(),
+        collection_id: collection_id.id(),
+        class_id: class_id.map(|id| id.id()),
         name,
         description,
         method,
@@ -270,11 +257,18 @@ pub async fn resolve_principal_names(
     backend: &impl StorageContext,
     principal_ids: Vec<i32>,
 ) -> Result<PrincipalNames, ApiError> {
+    let principal_ids = principal_ids
+        .into_iter()
+        .map(PrincipalId::new)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(storage_handle(backend)
         .resolve_history_principal_names(principal_ids)
         .await?
         .into_iter()
-        .map(|row| row.into_parts())
+        .map(|row| {
+            let (principal_id, name) = row.into_parts();
+            (principal_id.id(), name)
+        })
         .collect())
 }
 
@@ -288,9 +282,9 @@ macro_rules! history_service {
         ) -> Result<(Vec<$ty>, i64), ApiError> {
             let (rows, total_count) = storage_handle(backend)
                 .$storage_list(HistoryListQuery::new(
-                    entity_id,
+                    ResourceId::new(entity_id)?,
                     query_options.clone(),
-                    collection_filter.into(),
+                    collection_filter.try_into()?,
                 ))
                 .await?
                 .into_parts();
@@ -306,7 +300,7 @@ macro_rules! history_service {
             backend: &impl StorageContext,
         ) -> Result<Option<$ty>, ApiError> {
             storage_handle(backend)
-                .$storage_as_of(HistoryAsOfQuery::new(entity_id, at))
+                .$storage_as_of(HistoryAsOfQuery::new(ResourceId::new(entity_id)?, at))
                 .await?
                 .map($from)
                 .transpose()
@@ -356,10 +350,10 @@ pub async fn object_history_paginated_with_total_count(
 ) -> Result<(Vec<HubuumObjectHistory>, i64), ApiError> {
     let (rows, total_count) = storage_handle(backend)
         .list_object_history(ObjectHistoryListQuery::new(
-            object_id,
-            class_id,
+            ObjectId::new(object_id)?,
+            ClassId::new(class_id)?,
             query_options.clone(),
-            collection_filter.into(),
+            collection_filter.try_into()?,
         ))
         .await?
         .into_parts();
@@ -378,7 +372,11 @@ pub async fn object_as_of(
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumObjectHistory>, ApiError> {
     storage_handle(backend)
-        .object_history_as_of(ObjectHistoryAsOfQuery::new(object_id, class_id, at))
+        .object_history_as_of(ObjectHistoryAsOfQuery::new(
+            ObjectId::new(object_id)?,
+            ClassId::new(class_id)?,
+            at,
+        ))
         .await?
         .map(object_from_storage)
         .transpose()

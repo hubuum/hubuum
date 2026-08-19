@@ -3,8 +3,21 @@
 /// This registry belongs to application composition, not to the reusable
 /// storage contract. A backend crate implements the contract without knowing
 /// which adapters a particular Hubuum binary chooses to include.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StorageBackendKind {
+#[derive(
+    clap::ValueEnum,
+    serde::Deserialize,
+    serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackendKind {
+    #[default]
+    #[value(alias = "")]
     Postgresql,
 }
 
@@ -13,7 +26,7 @@ impl StorageBackendKind {
     #[cfg(test)]
     pub(crate) const ALL: [Self; 1] = [Self::Postgresql];
 
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Postgresql => "postgresql",
         }

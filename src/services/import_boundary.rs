@@ -264,7 +264,9 @@ pub(crate) fn import_operation_to_storage(
             collection_id,
             input,
         } => StorageImportOperation::UpdateCollection {
-            collection_id,
+            collection_id: crate::services::storage_boundary::collection_id_to_storage(
+                collection_id,
+            ),
             input: collection_to_storage(input)?,
         },
         ApplicationImportOperation::CreateClass(input) => {
@@ -272,7 +274,7 @@ pub(crate) fn import_operation_to_storage(
         }
         ApplicationImportOperation::UpdateClass { class_id, input } => {
             StorageImportOperation::UpdateClass {
-                class_id,
+                class_id: crate::services::storage_boundary::class_id_to_storage(class_id),
                 input: class_to_storage(input)?,
             }
         }
@@ -281,7 +283,7 @@ pub(crate) fn import_operation_to_storage(
         }
         ApplicationImportOperation::UpdateObject { object_id, input } => {
             StorageImportOperation::UpdateObject {
-                object_id,
+                object_id: crate::services::storage_boundary::object_id_to_storage(object_id),
                 input: object_to_storage(input)?,
             }
         }

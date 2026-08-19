@@ -4,11 +4,11 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{PrincipalId, TaskId};
+use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ServiceAccountId, TaskId};
 use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
-    StorageIdentityPage, StorageServiceAccount, StorageServiceAccountCreate,
+    MutationOutcome, StorageIdentityPage, StorageServiceAccount, StorageServiceAccountCreate,
     StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
     StorageServiceAccountUpdate,
@@ -89,16 +89,16 @@ pub(crate) struct ServiceAccountRow {
 }
 
 impl ServiceAccountRow {
-    fn into_storage(self) -> StorageServiceAccount {
-        StorageServiceAccount::new(
-            self.id,
+    fn into_storage(self) -> Result<StorageServiceAccount, PostgresStorageError> {
+        Ok(StorageServiceAccount::new(
+            ServiceAccountId::new(self.id)?,
             self.description,
-            self.owner_group_id,
-            self.created_by,
+            GroupId::new(self.owner_group_id)?,
+            self.created_by.map(PrincipalId::new).transpose()?,
             self.disabled_at,
             self.created_at,
             self.updated_at,
-        )
+        ))
     }
 
     fn snapshot(&self, name: &str, revision: PostgresRevision) -> Value {
@@ -135,8 +135,8 @@ pub async fn load_service_account(
     runtime
         .with_connection(async move |connection| {
             load_service_account_row(connection, service_account_id)
-                .await
-                .map(ServiceAccountRow::into_storage)
+                .await?
+                .into_storage()
         })
         .await
 }
@@ -165,10 +165,10 @@ pub async fn load_service_account_point(
                     .first::<(ServiceAccountRow, i32, String, PostgresRevision)>(connection)
                     .await?;
             Ok::<_, PostgresStorageError>(StorageServiceAccountPoint::new(
-                account.into_storage(),
-                identity_scope_id,
+                account.into_storage()?,
+                IdentityScopeId::new(identity_scope_id)?,
                 name,
-                revision.get(),
+                revision.into_domain(),
             ))
         })
         .await
@@ -179,6 +179,7 @@ pub async fn list_manageable_service_accounts(
     query: StorageServiceAccountListQuery,
 ) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, PostgresStorageError> {
     let (requestor_id, administrator, options) = query.into_parts();
+    let requestor_id = requestor_id.id();
     validate_positive_id(requestor_id, "requestor id")?;
     runtime
         .with_read_only_snapshot(async move |connection| {
@@ -232,14 +233,14 @@ pub async fn list_manageable_service_accounts(
                 .await?
                 .into_iter()
                 .map(|(account, scope, name, revision)| {
-                    StorageServiceAccountListItem::new(
-                        account.into_storage(),
+                    Ok::<_, PostgresStorageError>(StorageServiceAccountListItem::new(
+                        account.into_storage()?,
                         scope,
                         name,
-                        revision.get(),
-                    )
+                        revision.into_domain(),
+                    ))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(StorageIdentityPage::new(rows, total))
         })
         .await
@@ -248,14 +249,14 @@ pub async fn list_manageable_service_accounts(
 pub async fn create_service_account(
     runtime: &PostgresRuntime,
     request: StorageServiceAccountCreate,
-) -> Result<StorageServiceAccount, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageServiceAccount>, PostgresStorageError> {
     let (name, description, owner_group_id, created_by, context) = request.into_parts();
     create_service_account_parts(
         runtime,
         name,
         description,
-        owner_group_id,
-        created_by,
+        owner_group_id.id(),
+        created_by.map(|principal_id| principal_id.id()),
         context,
     )
     .await
@@ -282,6 +283,7 @@ pub async fn create_service_account_without_events(
         EventContext::system(),
     )
     .await
+    .map(MutationOutcome::into_value)
 }
 
 async fn create_service_account_parts(
@@ -291,7 +293,7 @@ async fn create_service_account_parts(
     owner_group_id: i32,
     created_by: Option<i32>,
     context: EventContext,
-) -> Result<StorageServiceAccount, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageServiceAccount>, PostgresStorageError> {
     validate_positive_id(owner_group_id, "owner group id")?;
     if let Some(created_by) = created_by {
         validate_positive_id(created_by, "creator id")?;
@@ -330,8 +332,13 @@ async fn create_service_account_parts(
                 "owner_group_id": account.owner_group_id,
                 "created_by": created_by,
             }));
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(account.into_storage())
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(
+                account.into_storage()?,
+                audit,
+            ))
         })
         .await
 }
@@ -339,8 +346,10 @@ async fn create_service_account_parts(
 pub async fn update_service_account(
     runtime: &PostgresRuntime,
     request: StorageServiceAccountUpdate,
-) -> Result<StorageServiceAccount, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageServiceAccount>, PostgresStorageError> {
     let (service_account_id, description, owner_group_id, context) = request.into_parts();
+    let service_account_id = service_account_id.id();
+    let owner_group_id = owner_group_id.map(|group_id| group_id.id());
     validate_positive_id(service_account_id, "service account id")?;
     if let Some(owner_group_id) = owner_group_id {
         validate_positive_id(owner_group_id, "owner group id")?;
@@ -354,7 +363,7 @@ pub async fn update_service_account(
                 .is_some_and(|value| value != &before.description)
                 || owner_group_id.is_some_and(|value| value != before.owner_group_id);
             if !changed {
-                return Ok(before.into_storage());
+                return Ok(MutationOutcome::unchanged(before.into_storage()?));
             }
             let after = diesel::update(
                 crate::schema::service_accounts::table
@@ -378,8 +387,10 @@ pub async fn update_service_account(
             .with_before(before.snapshot(&name, before_revision))
             .with_after(after.snapshot(&name, after_revision))
             .with_metadata(json!({ "owner_group_id": after.owner_group_id }));
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(after.into_storage())
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
         })
         .await
 }
@@ -387,9 +398,9 @@ pub async fn update_service_account(
 pub async fn disable_service_account(
     runtime: &PostgresRuntime,
     request: StorageServiceAccountMutation,
-) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, PostgresStorageError> {
     let (service_account_id, context) = request.into_parts();
-    disable_service_account_parts(runtime, service_account_id, context).await
+    disable_service_account_parts(runtime, service_account_id.id(), context).await
 }
 
 /// Disable a fixture service account with system audit attribution.
@@ -401,44 +412,48 @@ pub async fn disable_service_account_without_events(
     runtime: &PostgresRuntime,
     service_account_id: i32,
 ) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
-    disable_service_account_parts(runtime, service_account_id, EventContext::system()).await
+    disable_service_account_parts(runtime, service_account_id, EventContext::system())
+        .await
+        .map(MutationOutcome::into_value)
 }
 
 async fn disable_service_account_parts(
     runtime: &PostgresRuntime,
     service_account_id: i32,
     context: EventContext,
-) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, PostgresStorageError> {
     validate_positive_id(service_account_id, "service account id")?;
     runtime
         .with_transaction(async move |connection| {
             let before_revision = lock_principal_revision(connection, service_account_id).await?;
             let before = load_service_account_row(connection, service_account_id).await?;
-            let disabled = if before.disabled_at.is_some() {
-                before
-            } else {
-                let disabled = diesel::update(
-                    crate::schema::service_accounts::table
-                        .filter(crate::schema::service_accounts::id.eq(service_account_id)),
-                )
-                .set(crate::schema::service_accounts::disabled_at.eq(diesel::dsl::now))
-                .get_result::<ServiceAccountRow>(connection)
-                .await?;
-                let name = principal_name(connection, service_account_id).await?;
-                let after_revision = principal_revision(connection, service_account_id).await?;
-                let event = service_account_event(
-                    &disabled,
-                    &name,
-                    Action::Disabled,
-                    &context,
-                    format!("Service account '{name}' disabled"),
-                )?
-                .with_before(before.snapshot(&name, before_revision))
-                .with_after(disabled.snapshot(&name, after_revision))
-                .with_metadata(json!({ "owner_group_id": disabled.owner_group_id }));
-                append_event(connection, &event).await?;
-                disabled
-            };
+            if before.disabled_at.is_some() {
+                return Ok(MutationOutcome::unchanged(
+                    StorageServiceAccountDisableOutcome::new(before.into_storage()?, Vec::new()),
+                ));
+            }
+            let disabled = diesel::update(
+                crate::schema::service_accounts::table
+                    .filter(crate::schema::service_accounts::id.eq(service_account_id)),
+            )
+            .set(crate::schema::service_accounts::disabled_at.eq(diesel::dsl::now))
+            .get_result::<ServiceAccountRow>(connection)
+            .await?;
+            let name = principal_name(connection, service_account_id).await?;
+            let after_revision = principal_revision(connection, service_account_id).await?;
+            let event = service_account_event(
+                &disabled,
+                &name,
+                Action::Disabled,
+                &context,
+                format!("Service account '{name}' disabled"),
+            )?
+            .with_before(before.snapshot(&name, before_revision))
+            .with_after(disabled.snapshot(&name, after_revision))
+            .with_metadata(json!({ "owner_group_id": disabled.owner_group_id }));
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
 
             crate::operations::token::revoke_all_principal_tokens_on_connection(
                 connection,
@@ -447,9 +462,12 @@ async fn disable_service_account_parts(
             .await?;
             let cancelled_task_kinds =
                 cancel_pending_tasks(connection, service_account_id, &context).await?;
-            Ok::<_, PostgresStorageError>(StorageServiceAccountDisableOutcome::new(
-                disabled.into_storage(),
-                cancelled_task_kinds,
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(
+                StorageServiceAccountDisableOutcome::new(
+                    disabled.into_storage()?,
+                    cancelled_task_kinds,
+                ),
+                audit,
             ))
         })
         .await
@@ -458,8 +476,9 @@ async fn disable_service_account_parts(
 pub async fn delete_service_account(
     runtime: &PostgresRuntime,
     request: StorageServiceAccountMutation,
-) -> Result<(), PostgresStorageError> {
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     let (service_account_id, context) = request.into_parts();
+    let service_account_id = service_account_id.id();
     validate_positive_id(service_account_id, "service account id")?;
     runtime
         .with_transaction(async move |connection| {
@@ -475,14 +494,16 @@ pub async fn delete_service_account(
             )?
             .with_before(account.snapshot(&name, before_revision))
             .with_metadata(json!({ "owner_group_id": account.owner_group_id }));
-            append_event(connection, &event).await?;
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
             diesel::delete(
                 crate::schema::principals::table
                     .filter(crate::schema::principals::id.eq(service_account_id)),
             )
             .execute(connection)
             .await?;
-            Ok::<_, PostgresStorageError>(())
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit))
         })
         .await
 }

@@ -11,14 +11,14 @@ mod tests {
         PrincipalTokenPointResponse, Token, TokenResourceScope,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
-    use crate::storage::postgres::operations::ActiveTokens;
-    use crate::storage::postgres::prelude::*;
-    use crate::storage::postgres::with_connection;
+    use crate::test_support::TestActiveTokens;
     use crate::test_support::sync_external_user;
     use crate::traits::UserIdApplicationExt;
     use actix_web::{http::StatusCode, test};
     use hubuum_auth_core::{AuthenticatedExternalUser, ExternalUserProfile};
     use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
     use rstest::rstest;
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -30,7 +30,7 @@ mod tests {
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
 
-    async fn token_id_for_raw(pool: &crate::storage::postgres::PostgresPool, raw: &str) -> i32 {
+    async fn token_id_for_raw(pool: &hubuum_storage_postgres::PostgresPool, raw: &str) -> i32 {
         let token_hash = Token::storage_hash_from_raw(raw);
         with_connection(pool, async |conn| {
             crate::schema::tokens::table
@@ -44,7 +44,7 @@ mod tests {
     }
 
     async fn set_token_expiry(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         raw: &str,
         expires_at: chrono::NaiveDateTime,
     ) {
@@ -99,7 +99,7 @@ mod tests {
     }
 
     async fn assert_user_response_matches(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         user: &User,
         response: &UserPointResponse,
     ) {
@@ -1141,8 +1141,8 @@ mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_api_anonymize_user(#[future(awt)] test_context: TestContext) {
-        use crate::storage::postgres::prelude::*;
-        use crate::storage::postgres::with_connection;
+        use hubuum_storage_postgres::diesel_async_prelude::*;
+        use hubuum_storage_postgres::with_connection;
 
         let context = test_context;
 

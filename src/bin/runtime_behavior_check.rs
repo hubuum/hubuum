@@ -11,8 +11,8 @@ use hubuum::observability::runtime_behavior::{
     MetricSnapshot, ProcessIdleReport, ReadinessReport, RuntimeBehaviorAssessment,
     RuntimeBehaviorBudgets, RuntimeBehaviorReport, TaskNotificationReport,
 };
-use hubuum::storage::postgres::{
-    PostgresPool, init_postgres_pool, with_connection, with_transaction,
+use hubuum_storage_postgres::{
+    PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection, with_transaction,
 };
 use reqwest::{Client, StatusCode};
 use tokio::time::sleep;
@@ -26,6 +26,15 @@ const TERMINAL_TASK_STATUSES: [&str; 4] =
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
+
+fn runtime_check_pool(database_url: &str) -> Result<PostgresPool> {
+    let settings = PostgresPoolSettings::builder(database_url)
+        .max_size(2)
+        .statement_timeout_ms(0)
+        .acquire_timeout_ms(30_000)
+        .build()?;
+    Ok(build_postgres_pool(&settings)?)
+}
 
 #[derive(Debug, Parser)]
 #[command(about = "Measure and assess Hubuum runtime background behavior")]
@@ -379,7 +388,7 @@ async fn measure_task_notification(
     notification_timeout: Duration,
     claim_timeout: Duration,
 ) -> Result<TaskNotificationReport> {
-    let pool = init_postgres_pool(database_url, 2);
+    let pool = runtime_check_pool(database_url)?;
     warm_database_pool(&pool).await?;
 
     let idle_before = initial_snapshot.value(TASK_IDLE_COUNTER, &[("outcome", "idle")]);

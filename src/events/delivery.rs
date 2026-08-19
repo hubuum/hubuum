@@ -138,10 +138,10 @@ pub(crate) async fn process_event_delivery_work_item(
         Err(error) => {
             warn!(
                 message = "Event sink delivery failed",
-                event_delivery_id = claim.delivery_id(),
+                event_delivery_id = claim.delivery_id().id(),
                 event_id = %envelope.event_id,
-                event_sink_id = sink.id(),
-                event_subscription_id = subscription.id(),
+                event_sink_id = sink.id().id(),
+                event_subscription_id = subscription.id().id(),
                 sink_kind = sink.kind(),
                 error = %error,
             );
@@ -449,8 +449,18 @@ mod tests {
             metadata: serde_json::json!({}),
             schema_version: 1,
         };
-        let subscription = EventDeliverySubscription::new(1, "subscription", serde_json::json!({}));
-        let sink = EventDeliverySink::new(1, "sink", "webhook", serde_json::json!({}), None);
+        let subscription = EventDeliverySubscription::new(
+            hubuum_domain::EventSubscriptionId::new(1).unwrap(),
+            "subscription",
+            serde_json::json!({}),
+        );
+        let sink = EventDeliverySink::new(
+            hubuum_domain::EventSinkId::new(1).unwrap(),
+            "sink",
+            "webhook",
+            serde_json::json!({}),
+            None,
+        );
 
         let error = deliver_one(&NoopSinkResolver, &envelope, &subscription, &sink)
             .await
@@ -481,8 +491,18 @@ mod tests {
             metadata: serde_json::json!({}),
             schema_version: 1,
         };
-        let subscription = EventDeliverySubscription::new(1, "subscription", serde_json::json!({}));
-        let sink = EventDeliverySink::new(1, "sink", "webhook", serde_json::json!({}), None);
+        let subscription = EventDeliverySubscription::new(
+            hubuum_domain::EventSubscriptionId::new(1).unwrap(),
+            "subscription",
+            serde_json::json!({}),
+        );
+        let sink = EventDeliverySink::new(
+            hubuum_domain::EventSinkId::new(1).unwrap(),
+            "sink",
+            "webhook",
+            serde_json::json!({}),
+            None,
+        );
         let failing = FailingSink;
         let resolver = StaticResolver {
             kind: EventSinkKind::Webhook,

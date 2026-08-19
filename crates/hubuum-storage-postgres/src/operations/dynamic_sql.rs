@@ -19,6 +19,7 @@ pub(crate) enum SqlValue {
     DateTime(chrono::NaiveDateTime),
 }
 
+#[derive(Debug)]
 pub(crate) struct SqlComponent {
     pub(crate) sql: String,
     pub(crate) bind_variables: Vec<SqlValue>,

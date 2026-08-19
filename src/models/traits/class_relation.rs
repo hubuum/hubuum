@@ -11,12 +11,13 @@ use crate::models::{
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
 use crate::services::storage_boundary::{
-    class_relation_create_to_storage, class_relation_from_storage,
+    class_relation_create_to_storage, class_relation_from_storage, class_relation_id_to_storage,
     object_relation_create_selector_to_storage, object_relation_selector_to_storage,
     prepared_class_relation_from_storage, prepared_object_relation_from_storage,
     resolved_class_relation_from_storage, resolved_object_relation_from_storage,
 };
 use crate::services::storage_boundary::{collection_from_storage, collection_id_to_storage};
+use crate::services::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{
     ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter, ObjectAdapter,
@@ -45,7 +46,7 @@ async fn resolve_class_relation(
 ) -> Result<ResolvedClassRelationTarget, ApiError> {
     storage_handle(backend)
         .class_relation_store()
-        .resolve_class_relation(id.id())
+        .resolve_class_relation(class_relation_id_to_storage(id.id()))
         .await
         .map_err(ApiError::from)
         .and_then(resolved_class_relation_from_storage)
@@ -142,15 +143,15 @@ impl DeleteAdapter for HubuumClassRelation {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        storage_handle(pool)
-            .class_relation_store()
-            .delete_class_relation_by_id(
-                HubuumClassRelationID::new(self.id)?.id(),
-                &EventContext::system(),
-            )
-            .await
-            .map_err(ApiError::from)
-            .map(|outcome| outcome.into_value())
+        let storage = storage_handle(pool).class_relation_store();
+        resolve_and_delete_class_relation(
+            storage.as_ref(),
+            HubuumClassRelationID::new(self.id)?.id(),
+            &EventContext::system(),
+        )
+        .await
+        .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
     }
 
     async fn delete_adapter(
@@ -158,12 +159,15 @@ impl DeleteAdapter for HubuumClassRelation {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        storage_handle(pool)
-            .class_relation_store()
-            .delete_class_relation_by_id(HubuumClassRelationID::new(self.id)?.id(), context)
-            .await
-            .map_err(ApiError::from)
-            .map(|outcome| outcome.into_value())
+        let storage = storage_handle(pool).class_relation_store();
+        resolve_and_delete_class_relation(
+            storage.as_ref(),
+            HubuumClassRelationID::new(self.id)?.id(),
+            context,
+        )
+        .await
+        .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
     }
 }
 
@@ -174,16 +178,16 @@ impl SaveAdapter for NewHubuumClassRelation {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClassRelation, ApiError> {
-        storage_handle(pool)
-            .class_relation_store()
-            .create_class_relation_from_command(
-                class_relation_create_to_storage(self.clone()),
-                &EventContext::system(),
-            )
-            .await
-            .map_err(ApiError::from)
-            .map(|outcome| outcome.into_value())
-            .and_then(class_relation_from_storage)
+        let storage = storage_handle(pool).class_relation_store();
+        prepare_and_create_class_relation(
+            storage.as_ref(),
+            class_relation_create_to_storage(self.clone()),
+            &EventContext::system(),
+        )
+        .await
+        .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
+        .and_then(class_relation_from_storage)
     }
 
     async fn save_adapter(
@@ -191,16 +195,16 @@ impl SaveAdapter for NewHubuumClassRelation {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<HubuumClassRelation, ApiError> {
-        storage_handle(pool)
-            .class_relation_store()
-            .create_class_relation_from_command(
-                class_relation_create_to_storage(self.clone()),
-                context,
-            )
-            .await
-            .map_err(ApiError::from)
-            .map(|outcome| outcome.into_value())
-            .and_then(class_relation_from_storage)
+        let storage = storage_handle(pool).class_relation_store();
+        prepare_and_create_class_relation(
+            storage.as_ref(),
+            class_relation_create_to_storage(self.clone()),
+            context,
+        )
+        .await
+        .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
+        .and_then(class_relation_from_storage)
     }
 }
 
@@ -209,9 +213,8 @@ impl DeleteAdapter for HubuumClassRelationID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
-        storage_handle(pool)
-            .class_relation_store()
-            .delete_class_relation_by_id(self.id(), &EventContext::system())
+        let storage = storage_handle(pool).class_relation_store();
+        resolve_and_delete_class_relation(storage.as_ref(), self.id(), &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -222,9 +225,8 @@ impl DeleteAdapter for HubuumClassRelationID {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        storage_handle(pool)
-            .class_relation_store()
-            .delete_class_relation_by_id(self.id(), context)
+        let storage = storage_handle(pool).class_relation_store();
+        resolve_and_delete_class_relation(storage.as_ref(), self.id(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

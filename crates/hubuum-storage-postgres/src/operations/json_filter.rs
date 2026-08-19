@@ -331,3 +331,142 @@ fn negated_json_component(
         bind_variables,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDate;
+    use hubuum_query::{ParsedQueryParam, SearchOperator};
+
+    use super::*;
+
+    fn parameter(operator: SearchOperator, value: &str) -> ParsedQueryParam {
+        ParsedQueryParam::new("json_data", Some(operator), value)
+            .expect("test JSON filter must parse")
+    }
+
+    #[test]
+    fn malformed_json_paths_are_rejected_before_sql_construction() {
+        let error = json_filter_sql(
+            &parameter(
+                SearchOperator::Equals { is_negated: false },
+                "profile,bad}=value",
+            ),
+            "json_data",
+        )
+        .expect_err("an unsafe JSON path must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            hubuum_storage_core::StorageErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn string_numeric_date_and_boolean_filters_use_typed_bind_values() {
+        let cases = [
+            (
+                parameter(
+                    SearchOperator::IContains { is_negated: false },
+                    "profile,name=Alice",
+                ),
+                "json_data #>> '{profile,name}' ILIKE ?",
+                "string",
+            ),
+            (
+                parameter(
+                    SearchOperator::Gte { is_negated: false },
+                    "metrics,count=42",
+                ),
+                "try_numeric(json_data #>> '{metrics,count}') IS NOT NULL AND try_numeric(json_data #>> '{metrics,count}') >= ?",
+                "numeric",
+            ),
+            (
+                parameter(
+                    SearchOperator::Gte { is_negated: false },
+                    "metadata,created=2021-01-01",
+                ),
+                "try_timestamp(json_data #>> '{metadata,created}') IS NOT NULL AND try_timestamp(json_data #>> '{metadata,created}') >= ?",
+                "date",
+            ),
+            (
+                parameter(
+                    SearchOperator::Equals { is_negated: false },
+                    "flags,enabled=true",
+                ),
+                "try_boolean(json_data #>> '{flags,enabled}') IS NOT NULL AND try_boolean(json_data #>> '{flags,enabled}') = ?",
+                "boolean",
+            ),
+        ];
+
+        for (parameter, expected_sql, value_type) in cases {
+            let component = json_filter_sql(&parameter, "json_data").expect("filter must compile");
+            assert_eq!(component.sql, expected_sql);
+            assert_eq!(component.bind_variables.len(), 1);
+            match (value_type, &component.bind_variables[0]) {
+                ("string", SqlValue::String(value)) => assert_eq!(value, "%Alice%"),
+                ("numeric", SqlValue::Integer(value)) => assert_eq!(*value, 42),
+                ("date", SqlValue::DateTime(value)) => assert_eq!(
+                    *value,
+                    NaiveDate::from_ymd_opt(2021, 1, 1)
+                        .expect("valid date")
+                        .and_hms_opt(0, 0, 0)
+                        .expect("valid timestamp")
+                ),
+                ("boolean", SqlValue::Boolean(value)) => assert!(*value),
+                _ => panic!("unexpected bind type for {value_type}"),
+            }
+        }
+    }
+
+    #[test]
+    fn host_addresses_are_normalized_and_invalid_networks_are_rejected() {
+        let component = json_filter_sql(
+            &parameter(
+                SearchOperator::InetEquals { is_negated: false },
+                "network,address=10.0.0.1",
+            ),
+            "json_data",
+        )
+        .expect("host address must compile");
+        assert!(component.sql.contains("try_inet"));
+        assert!(matches!(
+            component.bind_variables.as_slice(),
+            [SqlValue::String(value)] if value == "10.0.0.1/32"
+        ));
+
+        let error = json_filter_sql(
+            &parameter(
+                SearchOperator::WithinNetwork { is_negated: false },
+                "network,address=not-a-network",
+            ),
+            "json_data",
+        )
+        .expect_err("invalid CIDR must be rejected");
+        assert_eq!(
+            error.kind(),
+            hubuum_storage_core::StorageErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn negation_is_explicit_and_non_json_fields_are_rejected() {
+        let component = json_filter_sql(
+            &parameter(
+                SearchOperator::Equals { is_negated: true },
+                "profile,name=Alice",
+            ),
+            "json_data",
+        )
+        .expect("negated filter must compile");
+        assert_eq!(component.sql, "NOT (json_data #>> '{profile,name}' = ?)");
+
+        let non_json =
+            ParsedQueryParam::new("name", None, "Alice").expect("ordinary test field must parse");
+        let error = json_filter_sql(&non_json, "json_data")
+            .expect_err("non-JSON filter must not enter JSON compilation");
+        assert_eq!(
+            error.kind(),
+            hubuum_storage_core::StorageErrorKind::Internal
+        );
+    }
+}

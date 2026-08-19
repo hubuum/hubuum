@@ -4,13 +4,14 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageRemoteTarget, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPage, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    AuditReceipt, MutationOutcome, StorageRemoteTarget, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetPatch,
+    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
 };
 use serde_json::{Value, json};
 
@@ -76,8 +77,8 @@ impl RemoteTargetRow {
     fn into_storage(self) -> Result<StorageRemoteTarget, PostgresStorageError> {
         let allowed_subject_types = decode_subject_types(self.allowed_subject_types)?;
         Ok(StorageRemoteTarget::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
-            self.collection_id,
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+            CollectionId::new(self.collection_id)?,
             self.name,
             StorageRemoteTargetDefinition::new(
                 self.description,
@@ -89,7 +90,11 @@ impl RemoteTargetRow {
                     self.auth_config,
                     self.timeout_ms,
                 ),
-                StorageRemoteTargetPolicy::new(self.class_id, allowed_subject_types, self.enabled),
+                StorageRemoteTargetPolicy::new(
+                    self.class_id.map(ClassId::new).transpose()?,
+                    allowed_subject_types,
+                    self.enabled,
+                ),
             ),
         ))
     }
@@ -153,7 +158,7 @@ impl NewRemoteTargetRow {
         let definition = RemoteTargetDefinitionParts::from_definition(definition)?;
         Ok((
             Self {
-                collection_id,
+                collection_id: collection_id.id(),
                 class_id: definition.class_id,
                 name,
                 description: definition.description,
@@ -217,8 +222,8 @@ impl UpdateRemoteTargetRow {
             enabled,
         ) = patch.into_parts();
         Ok(Self {
-            collection_id,
-            class_id,
+            collection_id: collection_id.map(|id| id.id()),
+            class_id: class_id.map(|value| value.map(|id| id.id())),
             name,
             description,
             method,
@@ -302,7 +307,7 @@ impl RemoteTargetDefinitionParts {
             transport.into_parts();
         let (class_id, allowed_subject_types, enabled) = policy.into_parts();
         Ok(Self {
-            class_id,
+            class_id: class_id.map(|id| id.id()),
             description,
             method,
             url_template,
@@ -335,6 +340,10 @@ pub async fn list_remote_targets(
     query: StorageRemoteTargetListQuery,
 ) -> Result<StorageRemoteTargetPage, PostgresStorageError> {
     let (allowed_collection_ids, options) = query.into_parts();
+    let allowed_collection_ids = allowed_collection_ids
+        .into_iter()
+        .map(|collection_id| collection_id.id())
+        .collect::<Vec<_>>();
     if options.include_total() {
         runtime
             .with_read_only_snapshot(async |connection| {
@@ -361,32 +370,42 @@ pub async fn list_remote_targets(
 pub async fn create_remote_target(
     runtime: &PostgresRuntime,
     request: StorageRemoteTargetCreate,
-) -> Result<StorageRemoteTarget, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageRemoteTarget>, PostgresStorageError> {
     let (new_target, event_context) = NewRemoteTargetRow::from_request(request)?;
     runtime
-        .with_transaction(async |connection| {
+        .with_transaction(
+            async |connection| -> Result<MutationOutcome<StorageRemoteTarget>, PostgresStorageError> {
             use crate::schema::remote_targets::dsl::remote_targets;
 
             let created = diesel::insert_into(remote_targets)
                 .values(new_target)
                 .get_result::<RemoteTargetRow>(connection)
                 .await?;
-            append_remote_target_audit(connection, Action::Created, &event_context, None, &created)
-                .await?;
-            created.into_storage()
-        })
+            let audit = append_remote_target_audit(
+                connection,
+                Action::Created,
+                &event_context,
+                None,
+                &created,
+            )
+            .await?;
+            Ok(MutationOutcome::committed(created.into_storage()?, audit))
+            },
+        )
         .await
 }
 
 pub async fn update_remote_target(
     runtime: &PostgresRuntime,
     request: StorageRemoteTargetUpdate,
-) -> Result<StorageRemoteTarget, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageRemoteTarget>, PostgresStorageError> {
     let (target_id, patch, event_context) = request.into_parts();
+    let target_id = target_id.id();
     ensure_positive_target_id(target_id)?;
     let changes = UpdateRemoteTargetRow::from_patch(patch)?;
     runtime
-        .with_transaction(async |connection| {
+        .with_transaction(
+            async |connection| -> Result<MutationOutcome<StorageRemoteTarget>, PostgresStorageError> {
             use crate::schema::remote_targets::dsl::{id, remote_targets};
 
             let before = remote_targets
@@ -401,13 +420,13 @@ pub async fn update_remote_target(
             )
             .await?;
             if !changes.has_changes(&before) {
-                return before.into_storage();
+                return Ok(MutationOutcome::unchanged(before.into_storage()?));
             }
             let updated = diesel::update(remote_targets.filter(id.eq(target_id)))
                 .set(changes)
                 .get_result::<RemoteTargetRow>(connection)
                 .await?;
-            append_remote_target_audit(
+            let audit = append_remote_target_audit(
                 connection,
                 Action::Updated,
                 &event_context,
@@ -415,16 +434,18 @@ pub async fn update_remote_target(
                 &updated,
             )
             .await?;
-            updated.into_storage()
-        })
+            Ok(MutationOutcome::committed(updated.into_storage()?, audit))
+            },
+        )
         .await
 }
 
 pub async fn delete_remote_target(
     runtime: &PostgresRuntime,
     request: StorageRemoteTargetDelete,
-) -> Result<(), PostgresStorageError> {
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     let (target_id, event_context) = request.into_parts();
+    let target_id = target_id.id();
     ensure_positive_target_id(target_id)?;
     runtime
         .with_transaction(async |connection| {
@@ -441,7 +462,7 @@ pub async fn delete_remote_target(
                 before.revision,
             )
             .await?;
-            append_remote_target_audit(
+            let audit = append_remote_target_audit(
                 connection,
                 Action::Deleted,
                 &event_context,
@@ -452,7 +473,7 @@ pub async fn delete_remote_target(
             diesel::delete(remote_targets.filter(id.eq(target_id)))
                 .execute(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(())
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit))
         })
         .await
 }
@@ -460,30 +481,36 @@ pub async fn delete_remote_target(
 pub async fn record_remote_target_invocation(
     runtime: &PostgresRuntime,
     request: StorageRemoteTargetInvocation,
-) -> Result<(), PostgresStorageError> {
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     let (target_id, task_id, subject_type, subject_id, event_context) = request.into_parts();
+    let target_id = target_id.id();
     ensure_positive_target_id(target_id)?;
     runtime
-        .with_transaction(async |connection| {
-            let target = load_remote_target_row(connection, target_id).await?;
-            let event = NewEvent::new(
-                EntityType::RemoteTarget,
-                Action::Invoked,
-                event_context.actor_kind(),
-                format!("Remote target '{}' invoked", target.name),
-            )
-            .map_err(|error| PostgresStorageError::database(error.to_string()))?
-            .with_context(&event_context)
-            .with_entity_id(hubuum_events_core::EventEntityId::new(target.id)?)
-            .with_entity_name(&target.name)
-            .with_collection_id(hubuum_domain::CollectionId::new(target.collection_id)?)
-            .with_metadata(json!({
-                "task_id": task_id,
-                "subject_type": subject_type,
-                "subject_id": subject_id,
-            }));
-            append_event(connection, &event).await.map(|_| ())
-        })
+        .with_transaction(
+            async |connection| -> Result<MutationOutcome<()>, PostgresStorageError> {
+                let target = load_remote_target_row(connection, target_id).await?;
+                let event = NewEvent::new(
+                    EntityType::RemoteTarget,
+                    Action::Invoked,
+                    event_context.actor_kind(),
+                    format!("Remote target '{}' invoked", target.name),
+                )
+                .map_err(|error| PostgresStorageError::database(error.to_string()))?
+                .with_context(&event_context)
+                .with_entity_id(hubuum_events_core::EventEntityId::new(target.id)?)
+                .with_entity_name(&target.name)
+                .with_collection_id(hubuum_domain::CollectionId::new(target.collection_id)?)
+                .with_metadata(json!({
+                    "task_id": task_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                }));
+                let audit = append_event(connection, &event)
+                    .await?
+                    .into_audit_receipt()?;
+                Ok(MutationOutcome::committed((), audit))
+            },
+        )
         .await
 }
 
@@ -526,7 +553,7 @@ async fn append_remote_target_audit(
     context: &EventContext,
     before: Option<&RemoteTargetRow>,
     after: &RemoteTargetRow,
-) -> Result<(), PostgresStorageError> {
+) -> Result<AuditReceipt, PostgresStorageError> {
     let event = NewEvent::new(
         EntityType::RemoteTarget,
         action,
@@ -540,7 +567,10 @@ async fn append_remote_target_audit(
     .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
     .with_before_opt(before.map(RemoteTargetRow::audit_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| after.audit_snapshot()));
-    append_event(connection, &event).await.map(|_| ())
+    append_event(connection, &event)
+        .await?
+        .into_audit_receipt()
+        .map_err(Into::into)
 }
 
 fn build_list_query<'a>(

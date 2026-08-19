@@ -63,7 +63,11 @@ export RUST_TEST_THREADS="$TEST_THREADS"
 # See https://github.com/diesel-rs/diesel/issues/1482.
 diesel migration run --migration-dir "$MIGRATIONS_DIR" --database-url "$HUBUUM_DATABASE_URL" --locked-schema
 
-# Run the tests
+# Run adapter-native tests before the application suite while the isolated,
+# migrated database is available.
+cargo test -p hubuum-storage-postgres --features integration-test-support "$@"
+
+# Run the application and request-level suites.
 if cargo test --features integration-test-support "$@"; then
     echo "Test database dropped: $TEST_DB_NAME"
 else

@@ -1,19 +1,19 @@
-# `hubuum-task-core` Rust API Policy
+# `hubuum-task-core` Future Rust API Design
 
-Status: experimental public API.
+Status: workspace-internal; candidate for a later publication review.
 
 ## Purpose and Callers
 
 `hubuum-task-core` provides validated task identifiers and idempotency values
-used across application and storage boundaries. External backend crates may use
-these values without depending on Hubuum's server implementation.
+used across application and storage boundaries. A future external backend crate
+could use them without depending on Hubuum's server implementation.
 
 ## Compatibility
 
-The crate follows SemVer from its first crates.io release. During the `0.x`
-experimental period, incompatible public API changes require a minor-version
-bump and migration guidance. The MSRV is Rust 1.88. There are no feature flags
-or independent serialization guarantees.
+There is no current third-party SemVer promise or crates.io release. A separate
+promotion change must define the initial supported surface and compatibility
+policy. The workspace MSRV is Rust 1.88. There are no feature flags or
+independent serialization guarantees.
 
 ## Errors, Runtime, and Security
 
@@ -24,6 +24,6 @@ their type promises redaction.
 
 ## Ownership and Verification
 
-Hubuum maintainers own releases. CI builds rustdoc with warnings denied, tests a
-clean package, and checks SemVer compatibility. `hubuum-storage-core` and the
-root task services are pinned downstream consumers.
+Hubuum maintainers own the workspace crate. `hubuum-storage-core` and the root
+task services verify it today. A later promotion must enable rustdoc, package,
+and crates.io compatibility gates.

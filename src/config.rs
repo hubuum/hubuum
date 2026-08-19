@@ -16,6 +16,7 @@ use crate::errors::ApiError;
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
+use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
 
 mod client_network;
@@ -170,6 +171,15 @@ pub struct AppConfig {
     /// Runtime role: combined API/workers, API-only, or worker-only.
     #[clap(long, env = "HUBUUM_RUNTIME_ROLE", default_value = "all")]
     pub runtime_role: RuntimeRole,
+
+    /// Storage adapter compiled into this application build.
+    #[clap(
+        long,
+        env = "HUBUUM_STORAGE_BACKEND",
+        value_enum,
+        default_value = "postgresql"
+    )]
+    pub storage_backend: StorageBackendKind,
 
     /// IP address to bind to
     #[clap(long, env = "HUBUUM_BIND_IP", default_value = "127.0.0.1")]
@@ -391,7 +401,7 @@ pub struct AppConfig {
     )]
     pub event_retention_file_archive_enabled: bool,
 
-    /// Optional JSONL archive path for events selected by the retention purge.
+    /// Optional directory for atomic per-claim JSONL event archive files.
     #[clap(
         long,
         env = "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
@@ -1459,6 +1469,21 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         })
     }
 
+    fn env_or_default_storage_backend(
+        key: &str,
+        default: StorageBackendKind,
+    ) -> StorageBackendKind {
+        env::var(key).map_or(default, |value| {
+            if value.is_empty() {
+                default
+            } else {
+                StorageBackendKind::from_str(&value, true).unwrap_or_else(|err| {
+                    panic!("Invalid storage backend in {key}: {value} ({err})")
+                })
+            }
+        })
+    }
+
     fn env_or_default_login_rate_limit_backend(
         key: &str,
         default: LoginRateLimitBackendKind,
@@ -1486,6 +1511,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
 
     let config = AppConfig {
         runtime_role: env_or_default_runtime_role("HUBUUM_RUNTIME_ROLE", RuntimeRole::All),
+        storage_backend: env_or_default_storage_backend(
+            "HUBUUM_STORAGE_BACKEND",
+            StorageBackendKind::Postgresql,
+        ),
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
             .parse()
@@ -1867,9 +1896,9 @@ mod tests {
         DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_TASK_POLL_INTERVAL_MS,
         DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
         DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE, DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
-        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole, TEST_ENV_LOCK,
-        TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
-        token_hash_key_bytes, token_hash_key_is_ephemeral,
+        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole,
+        StorageBackendKind, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
+        get_config_from_env, token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -2007,6 +2036,40 @@ mod tests {
         assert_eq!(loaded.runtime_role, RuntimeRole::Worker);
         assert!(!loaded.runtime_role.serves_http());
         assert!(loaded.runtime_role.runs_background_workers());
+    }
+
+    #[test]
+    fn storage_backend_is_explicit_and_strict() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _unset_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", None);
+        let default = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let selected =
+            AppConfig::try_parse_from(["hubuum-server", "--storage-backend", "postgresql"])
+                .unwrap();
+        let empty = {
+            let _empty_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", Some(""));
+            let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+            let loaded = get_config_from_env().unwrap();
+            assert_eq!(loaded.storage_backend, StorageBackendKind::Postgresql);
+            parsed
+        };
+        let error =
+            AppConfig::try_parse_from(["hubuum-server", "--storage-backend", "unsupported"])
+                .expect_err("an unregistered storage backend must be rejected");
+        let whitespace_error = {
+            let _whitespace_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", Some(" "));
+            AppConfig::try_parse_from(["hubuum-server"])
+                .expect_err("a non-empty invalid storage backend must be rejected")
+        };
+
+        assert_eq!(default.storage_backend, StorageBackendKind::Postgresql);
+        assert_eq!(selected.storage_backend, StorageBackendKind::Postgresql);
+        assert_eq!(empty.storage_backend, StorageBackendKind::Postgresql);
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        assert_eq!(
+            whitespace_error.kind(),
+            clap::error::ErrorKind::InvalidValue
+        );
     }
 
     #[rstest]
@@ -2156,7 +2219,7 @@ mod tests {
             EnvVarGuard::set("HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED", Some("true"));
         let _archive_guard = EnvVarGuard::set(
             "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
-            Some("/tmp/hubuum-events.jsonl"),
+            Some("/tmp/hubuum-event-archive"),
         );
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
@@ -2170,7 +2233,7 @@ mod tests {
         assert!(parsed.event_retention_file_archive_enabled);
         assert_eq!(
             parsed.event_retention_archive_path.as_deref(),
-            Some("/tmp/hubuum-events.jsonl")
+            Some("/tmp/hubuum-event-archive")
         );
         assert!(loaded.event_retention_purge_enabled);
         assert_eq!(loaded.event_retention_days, 90);
@@ -2180,7 +2243,7 @@ mod tests {
         assert!(loaded.event_retention_file_archive_enabled);
         assert_eq!(
             loaded.event_retention_archive_path.as_deref(),
-            Some("/tmp/hubuum-events.jsonl")
+            Some("/tmp/hubuum-event-archive")
         );
     }
 

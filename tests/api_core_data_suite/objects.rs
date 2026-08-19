@@ -2,8 +2,8 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::storage::postgres::prelude::*;
     use diesel::sql_types::{Bool, Integer, Text};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
     use crate::events::EventContext;
@@ -12,9 +12,9 @@ mod tests {
         ClassSelector, HubuumClassID, HubuumObject, HubuumObjectID, NewHubuumClass,
         NewHubuumObject, UpdateHubuumObject,
     };
-    use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
+    use hubuum_storage_postgres::{PostgresPool, with_connection, with_transaction};
 
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};

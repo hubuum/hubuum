@@ -4,14 +4,21 @@ use crate::models::{
     UnifiedSearchSpec,
 };
 use crate::services::storage_boundary::{
-    class_from_storage, collection_from_storage, object_from_storage, visibility,
+    class_from_storage, collection_from_storage, object_from_storage, resource_id_to_storage,
+    visibility,
 };
 use crate::storage::{
     StorageContext, UnifiedSearchCursor, UnifiedSearchQuery, UnifiedSearchStorage, storage_handle,
 };
 
 fn cursor(cursor: Option<&UnifiedSearchCursorToken>) -> Option<UnifiedSearchCursor> {
-    cursor.map(|cursor| UnifiedSearchCursor::new(cursor.rank, cursor.name.clone(), cursor.id))
+    cursor.map(|cursor| {
+        UnifiedSearchCursor::new(
+            cursor.rank,
+            cursor.name.clone(),
+            resource_id_to_storage(cursor.id),
+        )
+    })
 }
 
 fn query(

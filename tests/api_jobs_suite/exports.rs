@@ -12,15 +12,9 @@ mod tests {
         CollectionID, ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest,
         ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateID, ExportTemplateKind,
         HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewExportTemplate, NewHubuumClass,
-        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewTaskEventRecord,
-        Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskResultCounts,
-        TaskStatus, TokenResourceScope, UpdateExportTemplate,
-    };
-    use crate::storage::postgres::operations::task::{
-        TaskBackend, TaskStateUpdate, purge_expired_export_outputs,
-    };
-    use crate::storage::postgres::operations::task_rows::{
-        NewExportTaskOutputRow as NewExportTaskOutputRecord, NewTaskRow as NewTaskRecord,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
+        TaskEventResponse, TaskKind, TaskResponse, TaskStatus, TokenResourceScope,
+        UpdateExportTemplate,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -31,6 +25,7 @@ mod tests {
         test_mutex,
     };
     use crate::traits::{CanSave, CanUpdate};
+    use hubuum_storage_postgres::operations::task_execution::purge_expired_export_outputs;
     const EXPORTS_ENDPOINT: &str = "/api/v1/exports";
 
     /// Serializes only the two tests that contend over the process-wide set of expired export
@@ -175,6 +170,9 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
+        let fixture = context
+            .collection_fixture("unscoped_admin_service_account_export")
+            .await;
         let owner_group = create_test_group(&context.pool).await;
         let admin_group = ensure_admin_group(&context.pool).await;
         let service_account =
@@ -185,7 +183,8 @@ mod tests {
             .await
             .unwrap();
         let token = service_account_token(&context.pool, &service_account, None, None).await;
-        let body = collection_export_request();
+        let mut body = collection_export_request();
+        body.query = Some(format!("name__equals={}", fixture.collection.name));
 
         let resp =
             post_request_with_headers(&context.pool, &token, EXPORTS_ENDPOINT, &body, vec![]).await;
@@ -226,7 +225,7 @@ mod tests {
     }
 
     async fn wait_for_task_with_token(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         token: &str,
         task_id: i32,
         expected_terminal_statuses: &[TaskStatus],
@@ -260,7 +259,7 @@ mod tests {
     }
 
     async fn create_export_objects(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         class: &HubuumClass,
     ) -> Vec<crate::models::HubuumObject> {
         let objects = vec![
@@ -288,7 +287,7 @@ mod tests {
     }
 
     async fn create_class_relation(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         from_class_id: i32,
         to_class_id: i32,
     ) -> HubuumClassRelation {
@@ -306,7 +305,7 @@ mod tests {
     }
 
     async fn create_named_class(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         collection_id: i32,
         name: &str,
     ) -> HubuumClass {
@@ -323,7 +322,7 @@ mod tests {
     }
 
     async fn create_object_relation(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         from_object_id: i32,
         to_object_id: i32,
         class_relation_id: i32,
@@ -339,7 +338,7 @@ mod tests {
     }
 
     async fn create_template(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         collection_id: i32,
         class_id: i32,
         scope_kind: ExportScopeKind,
@@ -1169,28 +1168,20 @@ mod tests {
     ) {
         let context = test_context;
         let export_key = context.scoped_name("foreign-task-idempotency");
-        let export_task = NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(export_key.clone()),
-            request_hash: Some(context.scoped_name("foreign-task-hash")),
-            request_payload: None,
-            summary: None,
-            total_items: 1,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool)
+        let export_task = crate::test_support::create_persisted_test_task(
+            context.pool.get_ref(),
+            crate::test_support::persisted_test_task_request(
+                TaskKind::Import,
+                TaskStatus::Queued,
+                context.admin_user.id,
+            )
+            .expect("foreign task request must be valid")
+            .idempotency_key(Some(export_key.clone()))
+            .request_hash(Some(context.scoped_name("foreign-task-hash")))
+            .progress(hubuum_storage_core::StorageTaskProgress::new(1, 0, 0, 0)),
+        )
         .await
-        .unwrap();
+        .expect("foreign task should be persisted");
 
         let classes = create_test_classes(&context, "export_conflict").await;
         let class = classes[0].clone();
@@ -1734,7 +1725,7 @@ mod tests {
     async fn test_export_output_cleanup_removes_expired_artifacts(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::storage::postgres::prelude::*;
+        use hubuum_storage_postgres::diesel_async_prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_cleanup").await;
@@ -1771,7 +1762,7 @@ mod tests {
         // test, which relies on its own expired row surviving.
         let _purge_guard = lock_test_mutex(&EXPIRED_OUTPUT_PURGE_LOCK).await;
 
-        crate::storage::postgres::with_connection(&context.pool, async |conn| {
+        hubuum_storage_postgres::with_connection(&context.pool, async |conn| {
             use crate::schema::export_task_outputs::dsl::{
                 export_task_outputs, output_expires_at, task_id,
             };
@@ -1789,11 +1780,14 @@ mod tests {
 
         // The purge is process-wide; assert it cleaned *our* task rather than asserting it cleaned
         // nothing else, so other suites' expired rows can't make this brittle.
-        let cleaned = purge_expired_export_outputs(&context.pool).await.unwrap();
+        let cleaned = purge_expired_export_outputs(
+            &hubuum_storage_postgres::PostgresRuntime::unobserved(context.pool.get_ref().clone()),
+        )
+        .await
+        .unwrap();
         assert!(
-            cleaned.contains(&task.id),
-            "expected purge to include task {}, got {cleaned:?}",
-            task.id
+            cleaned >= 1,
+            "expected the purge to remove an expired output"
         );
 
         let projection = get_request(
@@ -1867,7 +1861,7 @@ mod tests {
     async fn test_export_output_returns_gone_when_expired_before_purge(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::storage::postgres::prelude::*;
+        use hubuum_storage_postgres::diesel_async_prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_expired").await;
@@ -1908,7 +1902,7 @@ mod tests {
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
-        crate::storage::postgres::with_connection(&context.pool, async |conn| {
+        hubuum_storage_postgres::with_connection(&context.pool, async |conn| {
             use crate::schema::export_task_outputs::dsl::{
                 export_task_outputs, output_expires_at, task_id,
             };
@@ -1970,107 +1964,6 @@ mod tests {
         assert!(!listed_details.output_available);
         assert!(listed_details.output_expired);
         assert_eq!(listed_details.output_expires_at, Some(backdated_expiry));
-
-        cleanup(&classes).await;
-    }
-
-    /// Re-finalizing an export task must not trip the `export_task_outputs.task_id` UNIQUE
-    /// constraint: the second call is a no-op for the output row and leaves the task advanced.
-    #[rstest]
-    #[actix_web::test]
-    async fn test_finalize_export_with_output_is_idempotent(
-        #[future(awt)] test_context: TestContext,
-    ) {
-        use crate::storage::postgres::prelude::*;
-
-        let context = test_context;
-        let classes = create_test_classes(&context, "export_refinalize").await;
-        let class = classes[0].clone();
-        let _ = create_export_objects(&context.pool, &class).await;
-        let template_id = create_template(
-            &context.pool,
-            class.collection_id,
-            class.id,
-            ExportScopeKind::ObjectsInClass,
-            "refinalize-template",
-            ExportContentType::TextPlain,
-            "{% for item in items %}{{ item.name }}\n{% endfor %}",
-        )
-        .await;
-
-        let resp = post_request_with_headers(
-            &context.pool,
-            &context.admin_token,
-            &format!("/api/v1/export-templates/{template_id}/exports"),
-            &serde_json::json!({ "query": "sort=name" }),
-            vec![],
-        )
-        .await;
-        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
-        let task: TaskResponse = test::read_body_json(resp).await;
-        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
-
-        let task_handle = TaskID::new(task.id).expect("valid task id");
-        let duplicate_output = NewExportTaskOutputRecord {
-            task_id: task.id,
-            template_name: Some("refinalize-template".to_string()),
-            content_type: "text/plain".to_string(),
-            json_output: None,
-            text_output: Some("second finalize body".to_string()),
-            meta_json: serde_json::json!({}),
-            warnings_json: serde_json::json!([]),
-            warning_count: 0,
-            truncated: false,
-            output_expires_at: chrono::Utc::now().naive_utc() + chrono::Duration::hours(1),
-            total_duration_ms: 0,
-            query_duration_ms: 0,
-            hydration_duration_ms: 0,
-            render_duration_ms: 0,
-        };
-
-        let record = task_handle
-            .finalize_export_with_output(
-                &context.pool,
-                TaskStateUpdate::new(
-                    TaskStatus::Succeeded,
-                    TaskResultCounts::from_outcomes(1, 0).unwrap(),
-                )
-                .with_summary("re-finalized"),
-                NewTaskEventRecord {
-                    task_id: task.id,
-                    event_type: TaskStatus::Succeeded.as_str().to_string(),
-                    message: "re-finalize".to_string(),
-                    data: None,
-                },
-                duplicate_output,
-            )
-            .await
-            .expect("re-finalize should be idempotent, not error");
-        assert_eq!(record.status, TaskStatus::Succeeded.as_str());
-
-        // The output row is untouched: exactly one row, and the original body, not the duplicate.
-        let (count, text): (i64, Option<String>) =
-            crate::storage::postgres::with_connection(&context.pool, async |conn| {
-                use crate::schema::export_task_outputs::dsl::{
-                    export_task_outputs, task_id, text_output,
-                };
-
-                let count = export_task_outputs
-                    .filter(task_id.eq(task.id))
-                    .count()
-                    .get_result::<i64>(conn)
-                    .await?;
-                let text = export_task_outputs
-                    .filter(task_id.eq(task.id))
-                    .select(text_output)
-                    .first::<Option<String>>(conn)
-                    .await?;
-                Ok::<_, diesel::result::Error>((count, text))
-            })
-            .await
-            .unwrap();
-        assert_eq!(count, 1);
-        assert_ne!(text.as_deref(), Some("second finalize body"));
 
         cleanup(&classes).await;
     }

@@ -15,7 +15,16 @@ For source locations, see the [maintainer guide](maintainer-guide.md).
 
 A **trait** is the Rust interface that makes an operation available. A
 **capability family** is a documentation grouping for related traits and
-semantics. It is not a separately versioned or negotiable runtime feature.
+semantics. The same groupings are discoverable under
+`hubuum_storage_core::capabilities`; they are not separately versioned or
+negotiable runtime features.
+
+Persistence ports use the suffix `Storage`: for example,
+`CollectionStorage`, `CatalogStorage`, and `EventRetentionStorage`.
+Cross-cutting wrappers and roles use a descriptive `Storage` prefix or role
+name: `StorageExecution`, `StorageTelemetry`, `StorageBackendIdentity`, and
+`EventArchive`. In particular, backend diagnostic identity is distinct from
+the persisted identity capability, `IdentityStorage`.
 
 `StorageBackend` aggregates every required trait. An adapter implements that
 aggregate explicitly when it is ready to be selectable. Rust checks all
@@ -95,10 +104,10 @@ the atomic operations each use case requires.
 
 Required traits:
 
-- `StorageIdentity`;
+- `StorageBackendIdentity`;
 - `TransactionalStorage`;
-- `CollectionStore`, `ClassStore`, and `ObjectStore`; and
-- `ClassRelationStore` and `ObjectRelationStore`.
+- `CollectionStorage`, `ClassStorage`, and `ObjectStorage`; and
+- `ClassRelationStorage` and `ObjectRelationStorage`.
 
 This family owns collection, class, object, and relation resolution and
 mutation. Implementations own locking, hierarchy maintenance, JSON validation
@@ -266,7 +275,8 @@ validation, authorization, and collision policy.
 
 ### `export_queries`
 
-Required trait: `ExportQueryStorage`.
+Required trait: `StorageExecution` with a `StorageExecutionScope` query-budget
+override.
 
 Owns a backend-enforced, optional non-zero query budget around each export read
 stage. The application specifies a logical budget, not a database timeout
@@ -325,14 +335,22 @@ EventFanoutStorage -> durable deliveries -> EventDeliveryStorage
                                               v
                                       external transport
 
-EventRetentionStorage archives and removes eligible audit events
+EventRetentionStorage durably claims, externally archives, then completes batches
 WorkerNotificationStorage wakes workers without exposing native listeners
 ```
 
-`StorageExecution` is cross-cutting. It carries bounded call-site attribution,
-mutation provenance, and revision preconditions. The adapter translates those
-values into its native mechanism; callers never select task locals, session
-variables, or transaction settings.
+`StorageExecution` is cross-cutting. One composable `StorageExecutionScope`
+carries bounded call-site attribution, mutation provenance, revision
+preconditions, and optional query budgets. `run_in_scope` supports task-local
+work; `run_in_scope_send` is the explicit `Send` form. An absent override
+inherits its surrounding value, while a present `None` deliberately clears
+one. The adapter translates the scope into its native mechanism; callers never
+select task locals, session variables, or transaction settings.
+
+Retention uses durable claim/archive/complete coordination. Archive calls run
+outside the database transaction and are idempotent by batch ID. Failed
+archives preserve the exact claim and source events for retry; completion
+deletes exactly that claim and is itself idempotent.
 
 ## Changing a Family
 

@@ -6,8 +6,32 @@ use rstest::rstest;
 
 use super::*;
 use crate::models::Collection;
-use crate::storage::postgres::operations::collection::CollectionRow;
-use crate::storage::postgres::operations::user::UserWithNameQueryRow;
+
+struct UserCursorContract;
+
+impl CursorPaginated for UserCursorContract {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::Id | FilterField::Username)
+    }
+
+    fn cursor_value(&self, _field: &FilterField) -> Result<CursorValue, ApiError> {
+        unreachable!("the pagination preparation contract does not inspect a row")
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Username,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+}
 
 #[derive(Clone, Debug)]
 struct JsonCursorItem {
@@ -127,26 +151,6 @@ fn test_paginate_collections_with_cursor() {
         vec![1, 2]
     );
     assert!(first_page.next_cursor.is_some());
-
-    let prepared_query = prepare_db_pagination::<Collection>(
-        &QueryOptions::new(
-            vec![],
-            vec![],
-            Some(2),
-            first_page.next_cursor.clone(),
-            true,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-
-    let cursor_sql = cursor_filter_sql::<CollectionRow>(
-        prepared_query.sort(),
-        prepared_query.cursor().map(|cursor| cursor.as_str()),
-    )
-    .unwrap();
-
-    assert_eq!(cursor_sql, Some("((collections.id > 2))".to_string()));
 
     let second_page = finalize_page(
         vec![collection(3, "gamma")],
@@ -309,7 +313,7 @@ fn cursor_decoding_rejects_an_oversized_token_before_parsing() {
 
 #[test]
 fn test_prepare_db_pagination_adds_limit_and_tie_breaker() {
-    let prepared = prepare_db_pagination::<UserWithNameQueryRow>(
+    let prepared = prepare_db_pagination::<UserCursorContract>(
         &QueryOptions::new(
             vec![],
             vec![SortParam {
@@ -343,34 +347,6 @@ async fn exact_total_count_can_be_skipped() {
     let headers = pagination_headers(&None, count, 25);
     assert!(!headers.contains_key(TOTAL_COUNT_HEADER));
     assert_eq!(headers.get(PAGE_LIMIT_HEADER), Some(&"25".to_string()));
-}
-
-#[test]
-fn test_cursor_filter_sql_handles_nullable_descending_strings() {
-    let sql = cursor_filter_sql::<UserWithNameQueryRow>(
-        &[SortParam {
-            field: FilterField::Email,
-            descending: true,
-        }],
-        Some(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-                serde_json::to_vec(&CursorToken {
-                    sorts: vec![CursorSort {
-                        field: "email".to_string(),
-                        descending: true,
-                    }],
-                    values: vec![CursorValue::String("b@example.com".to_string())],
-                })
-                .unwrap(),
-            ),
-        ),
-    )
-    .unwrap();
-
-    assert_eq!(
-        sql,
-        Some("(((users.email < 'b@example.com' OR users.email IS NULL)))".to_string())
-    );
 }
 
 fn encoded_cursor(sort: &SortParam, value: CursorValue) -> String {

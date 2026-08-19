@@ -54,7 +54,10 @@ async fn get_class_relations(
         Err(e) => return Err(e),
     };
 
-    debug!(message = "Listing class relations", user_id = user.id());
+    debug!(
+        message = "Listing class relations",
+        user_id = user.id().id()
+    );
 
     let (classes, total_count) = if context
         .permission_backend()
@@ -75,7 +78,7 @@ async fn get_class_relations(
         candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_class_relations(
             &context,
-            relation_queries::RelationAccess::new(user.id(), true, None),
+            relation_queries::RelationAccess::new(user.id().id(), true, None),
             candidate_options,
         )
         .await?;
@@ -132,7 +135,7 @@ async fn get_class_relation(
 
     debug!(
         message = "Getting class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         relation_id = ?relation_id,
     );
 
@@ -181,7 +184,7 @@ async fn create_class_relation(
 
     debug!(
         message = "Creating class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         from_class = relation.from_hubuum_class_id,
         to_class = relation.to_hubuum_class_id,
     );
@@ -236,7 +239,7 @@ async fn delete_class_relation(
 
     debug!(
         message = "Deleting class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         relation_id = ?relation_id,
     );
 
@@ -297,7 +300,10 @@ async fn get_object_relations(
         Err(e) => return Err(e),
     };
 
-    debug!(message = "Listing object relations", user_id = user.id());
+    debug!(
+        message = "Listing object relations",
+        user_id = user.id().id()
+    );
 
     let (object_relations, total_count) = if context
         .permission_backend()
@@ -318,7 +324,7 @@ async fn get_object_relations(
         candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_object_relations(
             &context,
-            relation_queries::RelationAccess::new(user.id(), true, None),
+            relation_queries::RelationAccess::new(user.id().id(), true, None),
             candidate_options,
         )
         .await?;
@@ -375,7 +381,7 @@ async fn get_object_relation(
 
     debug!(
         message = "Getting object relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         relation_id = ?relation_id,
     );
 
@@ -424,7 +430,7 @@ async fn create_object_relation(
 
     debug!(
         message = "Creating object relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         from_object = relation.from_hubuum_object_id,
         to_object = relation.to_hubuum_object_id,
     );
@@ -479,7 +485,7 @@ async fn delete_object_relation(
 
     debug!(
         message = "Deleting object relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         relation_id = ?relation_id,
     );
 

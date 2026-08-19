@@ -21,7 +21,7 @@ impl AuthenticationStorage for StorageHandle {
 
     async fn load_authentication_identity(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<AuthenticationIdentity, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -116,7 +116,7 @@ impl IdentityStorage for StorageHandle {
         .await
     }
 
-    async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError> {
+    async fn identity_scope_name(&self, scope_id: IdentityScopeId) -> Result<String, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "load_scope_name", async {
             dispatch_backend!(self, |backend| {
                 backend.identity_scope_name(scope_id).await
@@ -127,8 +127,8 @@ impl IdentityStorage for StorageHandle {
 
     async fn identity_scope_names(
         &self,
-        scope_ids: Vec<i32>,
-    ) -> Result<Vec<(i32, String)>, StorageError> {
+        scope_ids: Vec<IdentityScopeId>,
+    ) -> Result<Vec<(IdentityScopeId, String)>, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "load_scope_names", async {
             dispatch_backend!(self, |backend| {
                 backend.identity_scope_names(scope_ids).await
@@ -139,8 +139,8 @@ impl IdentityStorage for StorageHandle {
 
     async fn load_principal_group(
         &self,
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
     ) -> Result<StoragePrincipalGroup, StorageError> {
         observe_storage_call(self.backend_name(), "identity", "load_membership", async {
             dispatch_backend!(self, |backend| {
@@ -191,8 +191,8 @@ impl IdentityStorage for StorageHandle {
 
     async fn is_human_owner_group_member(
         &self,
-        principal_id: i32,
-        owner_group_id: i32,
+        principal_id: PrincipalId,
+        owner_group_id: GroupId,
     ) -> Result<bool, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -209,7 +209,7 @@ impl IdentityStorage for StorageHandle {
         .await
     }
 
-    async fn principal_is_disabled(&self, principal_id: i32) -> Result<bool, StorageError> {
+    async fn principal_is_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -225,7 +225,7 @@ impl IdentityStorage for StorageHandle {
 
     async fn load_service_account(
         &self,
-        service_account_id: i32,
+        service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccount, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -242,7 +242,7 @@ impl IdentityStorage for StorageHandle {
 
     async fn load_service_account_point(
         &self,
-        service_account_id: i32,
+        service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccountPoint, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -277,7 +277,7 @@ impl IdentityStorage for StorageHandle {
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
-    ) -> Result<StorageServiceAccount, StorageError> {
+    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -294,7 +294,7 @@ impl IdentityStorage for StorageHandle {
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
-    ) -> Result<StorageServiceAccount, StorageError> {
+    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -311,7 +311,7 @@ impl IdentityStorage for StorageHandle {
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<StorageServiceAccountDisableOutcome, StorageError> {
+    ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -328,7 +328,7 @@ impl IdentityStorage for StorageHandle {
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -344,7 +344,7 @@ impl IdentityStorage for StorageHandle {
 
     async fn external_principal_state(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -359,7 +359,10 @@ impl IdentityStorage for StorageHandle {
         .await
     }
 
-    async fn mark_external_sync_attempted(&self, principal_id: i32) -> Result<(), StorageError> {
+    async fn mark_external_sync_attempted(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<(), StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -376,7 +379,7 @@ impl IdentityStorage for StorageHandle {
     async fn sync_external_user(
         &self,
         request: StorageExternalUserSync,
-    ) -> Result<StorageSyncedHuman, StorageError> {
+    ) -> Result<MutationOutcome<StorageSyncedHuman>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "identity",
@@ -393,7 +396,7 @@ impl IdentityStorage for StorageHandle {
 
 #[async_trait]
 impl UserStorage for StorageHandle {
-    async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError> {
+    async fn load_user(&self, id: UserId) -> Result<StorageUser, StorageError> {
         observe_storage_call(self.backend_name(), "user", "load", async {
             dispatch_backend!(self, |backend| backend.load_user(id).await)
         })
@@ -413,7 +416,7 @@ impl UserStorage for StorageHandle {
         .await
     }
 
-    async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError> {
+    async fn load_user_point(&self, id: UserId) -> Result<StorageUserPoint, StorageError> {
         observe_storage_call(self.backend_name(), "user", "load_point", async {
             dispatch_backend!(self, |backend| backend.load_user_point(id).await)
         })
@@ -430,14 +433,20 @@ impl UserStorage for StorageHandle {
         .await
     }
 
-    async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError> {
+    async fn create_user(
+        &self,
+        request: StorageUserCreate,
+    ) -> Result<MutationOutcome<StorageUser>, StorageError> {
         observe_storage_call(self.backend_name(), "user", "create", async {
             dispatch_backend!(self, |backend| backend.create_user(request).await)
         })
         .await
     }
 
-    async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError> {
+    async fn update_user(
+        &self,
+        request: StorageUserUpdate,
+    ) -> Result<MutationOutcome<StorageUser>, StorageError> {
         observe_storage_call(self.backend_name(), "user", "update", async {
             dispatch_backend!(self, |backend| backend.update_user(request).await)
         })
@@ -447,21 +456,27 @@ impl UserStorage for StorageHandle {
     async fn set_user_password(
         &self,
         request: StorageUserPasswordUpdate,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         observe_storage_call(self.backend_name(), "user", "set_password", async {
             dispatch_backend!(self, |backend| { backend.set_user_password(request).await })
         })
         .await
     }
 
-    async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError> {
+    async fn delete_user(
+        &self,
+        request: StorageUserDelete,
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         observe_storage_call(self.backend_name(), "user", "delete", async {
             dispatch_backend!(self, |backend| backend.delete_user(request).await)
         })
         .await
     }
 
-    async fn anonymize_user(&self, request: StorageUserAnonymize) -> Result<(), StorageError> {
+    async fn anonymize_user(
+        &self,
+        request: StorageUserAnonymize,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(self.backend_name(), "user", "anonymize", async {
             dispatch_backend!(self, |backend| backend.anonymize_user(request).await)
         })
@@ -474,7 +489,7 @@ impl TokenStorage for StorageHandle {
     async fn create_token(
         &self,
         request: StorageTokenCreate,
-    ) -> Result<StorageTokenMetadata, StorageError> {
+    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "create", async {
             dispatch_backend!(self, |backend| backend.create_token(request).await)
         })
@@ -484,7 +499,7 @@ impl TokenStorage for StorageHandle {
     async fn renew_token(
         &self,
         request: StorageTokenRenew,
-    ) -> Result<StorageTokenMetadata, StorageError> {
+    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "renew", async {
             dispatch_backend!(self, |backend| backend.renew_token(request).await)
         })
@@ -493,8 +508,8 @@ impl TokenStorage for StorageHandle {
 
     async fn load_token_metadata(
         &self,
-        principal_id: i32,
-        token_id: i32,
+        principal_id: PrincipalId,
+        token_id: TokenId,
         observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError> {
         observe_storage_call(self.backend_name(), "token", "load_metadata", async {
@@ -509,7 +524,7 @@ impl TokenStorage for StorageHandle {
 
     async fn load_token_metadata_batch(
         &self,
-        token_ids: Vec<i32>,
+        token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "load_metadata_batch", async {
@@ -522,7 +537,10 @@ impl TokenStorage for StorageHandle {
         .await
     }
 
-    async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError> {
+    async fn revoke_token(
+        &self,
+        request: StorageTokenRevoke,
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke", async {
             dispatch_backend!(self, |backend| backend.revoke_token(request).await)
         })
@@ -532,7 +550,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke_by_hash", async {
             dispatch_backend!(self, |backend| {
                 backend.revoke_token_by_hash(request).await
@@ -544,7 +562,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         observe_storage_call(self.backend_name(), "token", "revoke_all", async {
             dispatch_backend!(self, |backend| backend
                 .revoke_all_principal_tokens(request)
@@ -558,7 +576,7 @@ impl TokenStorage for StorageHandle {
 impl AuthorizationStorage for StorageHandle {
     async fn load_authorization_principal(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<AuthorizationPrincipal, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -780,7 +798,7 @@ impl AuthorizationStorage for StorageHandle {
     async fn apply_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
-    ) -> Result<AuthorizationGrant, StorageError> {
+    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "authorization",
@@ -797,7 +815,7 @@ impl AuthorizationStorage for StorageHandle {
     async fn revoke_local_collection_grant(
         &self,
         mutation: AuthorizationGrantMutation,
-    ) -> Result<AuthorizationGrant, StorageError> {
+    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "authorization",
@@ -814,7 +832,7 @@ impl AuthorizationStorage for StorageHandle {
     async fn revoke_all_local_collection_grants(
         &self,
         request: AuthorizationGrantDelete,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "authorization",

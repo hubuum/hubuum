@@ -147,8 +147,7 @@ impl StorageClassRecordBuilder {
     #[must_use]
     pub fn build(self) -> StorageClassRecord {
         StorageClassRecord {
-            id: ClassId::new(self.metadata.id().id())
-                .expect("resource metadata id must be positive"),
+            id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection_id: self.collection_id,
             json_schema: self.json_schema,
@@ -655,7 +654,7 @@ impl StorageResolvedObject {
 /// Every mutation is audited. Restore and import operations use the separate
 /// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
-pub trait CollectionStore: Send + Sync {
+pub trait CollectionStorage: Send + Sync {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError>;
 
     async fn create_collection(
@@ -700,7 +699,7 @@ pub trait CollectionStore: Send + Sync {
 /// Every mutation is audited. Restore and import operations use the separate
 /// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
-pub trait ClassStore: Send + Sync {
+pub trait ClassStorage: Send + Sync {
     async fn resolve_class(
         &self,
         selector: StorageClassSelector,
@@ -740,7 +739,7 @@ pub trait ClassStore: Send + Sync {
 /// Every mutation is audited. Restore and import operations use the separate
 /// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
-pub trait ObjectStore: Send + Sync {
+pub trait ObjectStorage: Send + Sync {
     /// Load one object and its class by object ID.
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError>;
 

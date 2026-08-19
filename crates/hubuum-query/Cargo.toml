@@ -6,11 +6,10 @@ rust-version = "1.88"
 description = "App-neutral query parsing and search parameter types for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = true
+publish = false
 
 [package.metadata.hubuum]
-rust-api = "experimental-public"
-policy-document = "docs/rust_api/hubuum-query.md"
+rust-api = "workspace-internal"
 
 [dependencies]
 base64 = "0.23"

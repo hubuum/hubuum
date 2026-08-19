@@ -5,41 +5,43 @@ use hubuum_domain::{IdentityScopeId, ResourceId, ResourceRevision};
 use hubuum_events_core::EventContext;
 use hubuum_query::{QueryOptions, parse_query_parameter};
 use hubuum_storage_core::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
     StoragePrincipal, StorageRecordMetadata, TransactionalClassRelations, TransactionalClasses,
     TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
+    capabilities::resources::{
+        ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
+    },
 };
 
 fn collection_port<'a>(
-    storage: &'a dyn CollectionStore,
+    storage: &'a dyn CollectionStorage,
     context: &'a EventContext,
 ) -> TransactionalCollections<'a> {
     TransactionalCollections::new(storage, context)
 }
 
 fn class_port<'a>(
-    storage: &'a dyn ClassStore,
+    storage: &'a dyn ClassStorage,
     context: &'a EventContext,
 ) -> TransactionalClasses<'a> {
     TransactionalClasses::new(storage, context)
 }
 
 fn class_relation_port<'a>(
-    storage: &'a dyn ClassRelationStore,
+    storage: &'a dyn ClassRelationStorage,
     context: &'a EventContext,
 ) -> TransactionalClassRelations<'a> {
     TransactionalClassRelations::new(storage, context)
 }
 
 fn object_port<'a>(
-    storage: &'a dyn ObjectStore,
+    storage: &'a dyn ObjectStorage,
     context: &'a EventContext,
 ) -> TransactionalObjects<'a> {
     TransactionalObjects::new(storage, context)
 }
 
 fn object_relation_port<'a>(
-    storage: &'a dyn ObjectRelationStore,
+    storage: &'a dyn ObjectRelationStorage,
     context: &'a EventContext,
 ) -> TransactionalObjectRelations<'a> {
     TransactionalObjectRelations::new(storage, context)

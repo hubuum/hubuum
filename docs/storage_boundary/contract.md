@@ -17,9 +17,10 @@ models and test doubles may implement narrow capability traits, but they are
 not selectable backends and must not claim the guarantees in this document.
 
 The contract is a statically linked Rust interface, not a dynamic plugin ABI.
-An external adapter can implement `hubuum-storage-core`, but Hubuum must still
-add it explicitly to exhaustive dispatch and the sealed application
-certification registry before operators can select it.
+An external adapter can implement the capability traits from
+`hubuum-storage-core`, but Hubuum must still add it explicitly to exhaustive
+dispatch and the sealed application certification registry before operators
+can select it.
 
 ## Contract Layers
 
@@ -81,9 +82,9 @@ unsupported implementations do not satisfy the semantic contract. Truly
 optional or best-effort behavior must be stated on its narrow operation, with
 a durable correctness path where applicable.
 
-## Five-Part Audited Mutation Contract
+## Six-Part Audited Storage Contract
 
-The following five parts are mandatory and are tested together for every
+The following six parts are mandatory and are tested together for every
 registered backend.
 
 ### 1. Attribution Is Mandatory
@@ -101,8 +102,8 @@ event-suppression escape hatch.
 
 An ordinary audited mutation returns `MutationOutcome<T>`:
 
-- `Committed { value, audit }` means state changed and `audit` identifies the
-  durable event written for that change.
+- `Committed { value, audits }` means state changed and the non-empty `audits`
+  set identifies every durable event written for that atomic change.
 - `Unchanged(value)` means the requested operation was a semantic no-op. It
   carries no receipt, writes no lifecycle event, and must not advance revision
   or modification time merely to manufacture a change.
@@ -153,7 +154,15 @@ and bounded. IDs, names, queries, URLs, credentials, payloads, and error text
 must never become metric labels. Failed and rolled-back operations must still
 produce failure observation.
 
-### 5. Selection Requires Behavioral Certification
+### 5. Revision Conflicts Preserve the Current Revision
+
+Optimistic-concurrency failures use `StorageErrorKind::RevisionConflict` and
+must carry the positive current `ResourceRevision`. Adapters must not discard,
+guess, or stringify this value while translating native errors. The
+application projects the same value to its API error so a caller can refresh
+or retry against an authoritative revision.
+
+### 6. Selection Requires Behavioral Certification
 
 `hubuum-storage-conformance` supplies the reusable `BackendAuditFixture` and
 `verify_backend_audit_contract` runner. For each `StorageBackendKind::ALL`
@@ -164,7 +173,9 @@ entry, it verifies:
 3. an injected failure persists neither state nor event;
 4. the committed event creates durable fan-out and reaches a recording sink;
    and
-5. logical, native-backend, and failure telemetry are observed.
+5. logical, native-backend, and failure telemetry are observed; and
+6. a stale precondition returns the exact current revision without persisting
+   the attempted mutation.
 
 The root compatibility registry additionally exercises every capability
 family plus service, readiness, and authenticated HTTP behavior. Backend-native
@@ -189,6 +200,24 @@ coordination, durable results, and rollback requirements. Ordinary request,
 service, worker, and fixture writes must use audited mutation APIs. Adding a
 new maintenance operation requires an explicit contract and review of how its
 history is preserved or recorded.
+
+## Event Retention and External Archives
+
+Retention separates durable database coordination from external archival:
+
+1. `claim_event_retention_batch` durably records one immutable batch ID and
+   its exact event documents without deleting them;
+2. `EventArchive::archive` runs outside the database transaction and must be
+   idempotent for that batch ID; and
+3. `complete_event_retention_batch` deletes exactly the claimed events and
+   records completion atomically.
+
+An archive failure leaves the claim and events intact. Retrying must return the
+same batch ID and documents. Completion is idempotent, but it is valid only
+after the caller has durably archived that batch (or deliberately selected a
+discard archive). A count mismatch, malformed claimed document, concurrent
+maintenance state, or unavailable coordinator is an error; it must never be
+reported as a successful empty purge.
 
 ## Transactions, Concurrency, and Cancellation
 
@@ -239,11 +268,11 @@ container inputs, and native migration tests as required.
 
 ## Packaging and Public API
 
-`hubuum-storage-core` is the experimental public extension surface. It may
-depend only on publishable backend-neutral crates and must remain usable by an
-out-of-tree adapter without root or adapter-private access. Its public API is
-judged as though it were released on crates.io even when release ordering means
-a dependency must be published first.
+`hubuum-storage-core` is the experimental extension surface. It and its
+backend-neutral dependencies remain workspace-internal in this change; this
+pull request does not publish them as external crates. Their APIs are still
+reviewed as future publication boundaries and must remain usable by an
+out-of-tree adapter without root or adapter-private access.
 
 `hubuum-storage-postgres`, `hubuum-storage-conformance`, and the root `hubuum`
 crate are workspace-internal. The conformance crate is a development dependency

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::errors::ApiError;
 use crate::models::{HubuumClassRelation, HubuumObjectRelation};
 use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
+use crate::services::storage_boundary::resource_id_to_storage;
 use crate::storage::{
     AuthorizationObjectResource, AuthorizationResourceIds, AuthorizationStorage, StorageContext,
     storage_handle,
@@ -13,10 +14,12 @@ async fn load_classes(
     class_ids: impl IntoIterator<Item = i32>,
 ) -> Result<HashMap<i32, crate::storage::AuthorizationClassResource>, ApiError> {
     Ok(storage_handle(backend)
-        .load_authorization_classes(AuthorizationResourceIds::new(class_ids))
+        .load_authorization_classes(AuthorizationResourceIds::new(
+            class_ids.into_iter().map(resource_id_to_storage),
+        ))
         .await?
         .into_iter()
-        .map(|class| (class.id(), class))
+        .map(|class| (class.id().id(), class))
         .collect())
 }
 
@@ -25,10 +28,12 @@ async fn load_objects(
     object_ids: impl IntoIterator<Item = i32>,
 ) -> Result<HashMap<i32, AuthorizationObjectResource>, ApiError> {
     Ok(storage_handle(backend)
-        .load_authorization_objects(AuthorizationResourceIds::new(object_ids))
+        .load_authorization_objects(AuthorizationResourceIds::new(
+            object_ids.into_iter().map(resource_id_to_storage),
+        ))
         .await?
         .into_iter()
-        .map(|object| (object.id(), object))
+        .map(|object| (object.id().id(), object))
         .collect())
 }
 
@@ -64,11 +69,11 @@ pub(crate) async fn class_relation_authorization_resources(
                 id: relation.id,
                 attrs: ResourceAttrs {
                     collection_id: (from.collection_id() == to.collection_id())
-                        .then_some(from.collection_id()),
-                    from_collection_id: Some(from.collection_id()),
-                    to_collection_id: Some(to.collection_id()),
-                    from_class_id: Some(from.id()),
-                    to_class_id: Some(to.id()),
+                        .then_some(from.collection_id().id()),
+                    from_collection_id: Some(from.collection_id().id()),
+                    to_collection_id: Some(to.collection_id().id()),
+                    from_class_id: Some(from.id().id()),
+                    to_class_id: Some(to.id().id()),
                     ..Default::default()
                 },
             })
@@ -91,10 +96,10 @@ pub(crate) async fn object_authorization_resources(
             })?;
             Ok(ResourceRef {
                 kind: ResourceKind::Object,
-                id: object.id(),
+                id: object.id().id(),
                 attrs: ResourceAttrs {
-                    collection_id: Some(object.collection_id()),
-                    class_id: Some(object.class_id()),
+                    collection_id: Some(object.collection_id().id()),
+                    class_id: Some(object.class_id().id()),
                     name: Some(object.name().to_string()),
                     ..Default::default()
                 },
@@ -137,13 +142,13 @@ pub(crate) async fn object_relation_authorization_resources(
                 id: relation.id,
                 attrs: ResourceAttrs {
                     collection_id: (from.collection_id() == to.collection_id())
-                        .then_some(from.collection_id()),
-                    from_collection_id: Some(from.collection_id()),
-                    to_collection_id: Some(to.collection_id()),
-                    from_class_id: Some(from.class_id()),
-                    to_class_id: Some(to.class_id()),
-                    from_object_id: Some(from.id()),
-                    to_object_id: Some(to.id()),
+                        .then_some(from.collection_id().id()),
+                    from_collection_id: Some(from.collection_id().id()),
+                    to_collection_id: Some(to.collection_id().id()),
+                    from_class_id: Some(from.class_id().id()),
+                    to_class_id: Some(to.class_id().id()),
+                    from_object_id: Some(from.id().id()),
+                    to_object_id: Some(to.id().id()),
                     class_relation_id: Some(relation.class_relation_id),
                     ..Default::default()
                 },

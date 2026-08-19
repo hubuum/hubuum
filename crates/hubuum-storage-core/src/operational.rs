@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use hubuum_domain::{MaintenanceState, TokenRetentionSettings};
+use hubuum_domain::{
+    CollectionId, EventSinkId, EventSubscriptionId, ExportTemplateId, MaintenanceState,
+    TokenRetentionSettings,
+};
 use std::fmt;
 
 use crate::StorageError;
@@ -237,8 +240,8 @@ pub struct OperationalExportTemplateHealth {
 /// Stored template material required by the explicit administrator audit.
 #[derive(Clone, PartialEq, Eq)]
 pub struct OperationalExportTemplateAuditEntry {
-    id: i32,
-    collection_id: i32,
+    id: ExportTemplateId,
+    collection_id: CollectionId,
     name: String,
     template: String,
     content_type: String,
@@ -247,8 +250,8 @@ pub struct OperationalExportTemplateAuditEntry {
 impl OperationalExportTemplateAuditEntry {
     #[must_use]
     pub fn new(
-        id: i32,
-        collection_id: i32,
+        id: ExportTemplateId,
+        collection_id: CollectionId,
         name: impl Into<String>,
         template: impl Into<String>,
         content_type: impl Into<String>,
@@ -263,12 +266,12 @@ impl OperationalExportTemplateAuditEntry {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ExportTemplateId {
         self.id
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -560,7 +563,7 @@ impl EventQueueSnapshot {
 /// Backend-neutral identity and configuration of an event sink.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventSinkSnapshot {
-    id: i32,
+    id: EventSinkId,
     name: String,
     kind: String,
     enabled: bool,
@@ -568,7 +571,7 @@ pub struct EventSinkSnapshot {
 
 impl EventSinkSnapshot {
     #[must_use]
-    pub fn new(id: i32, name: String, kind: String, enabled: bool) -> Self {
+    pub fn new(id: EventSinkId, name: String, kind: String, enabled: bool) -> Self {
         Self {
             id,
             name,
@@ -578,7 +581,7 @@ impl EventSinkSnapshot {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> EventSinkId {
         self.id
     }
 
@@ -639,9 +642,9 @@ impl EventSinkHealthSnapshot {
 /// Persisted queue health grouped by subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventSubscriptionHealthSnapshot {
-    id: i32,
+    id: EventSubscriptionId,
     name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
     enabled: bool,
     sink: EventSinkSnapshot,
     queue: EventQueueSnapshot,
@@ -650,9 +653,9 @@ pub struct EventSubscriptionHealthSnapshot {
 impl EventSubscriptionHealthSnapshot {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: EventSubscriptionId,
         name: String,
-        collection_id: i32,
+        collection_id: CollectionId,
         enabled: bool,
         sink: EventSinkSnapshot,
         queue: EventQueueSnapshot,
@@ -668,7 +671,7 @@ impl EventSubscriptionHealthSnapshot {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> EventSubscriptionId {
         self.id
     }
 
@@ -678,7 +681,7 @@ impl EventSubscriptionHealthSnapshot {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -786,12 +789,13 @@ pub trait EventHealthStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::OperationalExportTemplateAuditEntry;
+    use hubuum_domain::{CollectionId, ExportTemplateId};
 
     #[test]
     fn export_template_audit_debug_redacts_name_and_source() {
         let entry = OperationalExportTemplateAuditEntry::new(
-            1,
-            2,
+            ExportTemplateId::new(1).unwrap(),
+            CollectionId::new(2).unwrap(),
             "sensitive-template-name",
             "sensitive-template-source",
             "text/plain",

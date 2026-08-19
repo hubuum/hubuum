@@ -1,22 +1,21 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::NaiveDateTime;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
-    use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
     use crate::models::{
         MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS, Permissions,
         PrincipalID, PrincipalSettingsResponse, ResourceRevision,
     };
-    use crate::storage::postgres::{PostgresPool, with_connection};
     use crate::tests::api_operations::{
         get_request, patch_request_with_content_type, patch_request_with_raw_body, put_request,
     };
     use crate::tests::{TestContext, create_test_group, create_test_service_account, scoped_token};
     use crate::traits::PrincipalIdApplicationExt;
+    use hubuum_storage_postgres::{PostgresPool, with_connection};
 
     const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
     const JSON_MERGE_PATCH_MEDIA_TYPE: &str = "application/merge-patch+json";
@@ -78,7 +77,7 @@ mod tests {
                 .select((principals::revision, principals::updated_at))
                 .first::<(PostgresRevision, NaiveDateTime)>(conn)
                 .await?;
-            Ok::<_, ApiError>((revision.into_domain(), updated_at))
+            Ok::<_, diesel::result::Error>((revision.into_domain(), updated_at))
         })
         .await
         .unwrap();

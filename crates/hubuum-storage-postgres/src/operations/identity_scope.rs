@@ -4,6 +4,7 @@ use crate::schema::identity_scopes;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
+use hubuum_domain::IdentityScopeId;
 use hubuum_storage_core::StorageIdentityScope;
 use hubuum_storage_core::StorageIdentityScopeEnsure;
 
@@ -18,16 +19,18 @@ struct IdentityScopeRow {
     revision: PostgresRevision,
 }
 
-impl From<IdentityScopeRow> for StorageIdentityScope {
-    fn from(row: IdentityScopeRow) -> Self {
-        Self::new(
-            row.id,
+impl TryFrom<IdentityScopeRow> for StorageIdentityScope {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: IdentityScopeRow) -> Result<Self, Self::Error> {
+        Ok(Self::new(
+            IdentityScopeId::new(row.id)?,
             row.name,
             row.provider_kind,
             row.created_at,
             row.updated_at,
-            row.revision.get(),
-        )
+            row.revision.into_domain(),
+        ))
     }
 }
 
@@ -60,8 +63,8 @@ pub async fn identity_scope_by_name_on_connection(
         .filter(name.eq(scope_name))
         .first::<IdentityScopeRow>(connection)
         .await
-        .map(Into::into)
-        .map_err(PostgresStorageError::from)
+        .map_err(PostgresStorageError::from)?
+        .try_into()
 }
 
 pub async fn identity_scope_name_by_id_on_connection(
@@ -118,13 +121,13 @@ pub async fn ensure_identity_scope_on_connection(
         .await
         .optional()?;
     match written {
-        Some(scope) => Ok(scope.into()),
+        Some(scope) => scope.try_into(),
         None => scopes
             .filter(name.eq(scope_name))
             .first::<IdentityScopeRow>(connection)
             .await
-            .map(Into::into)
-            .map_err(PostgresStorageError::from),
+            .map_err(PostgresStorageError::from)?
+            .try_into(),
     }
 }
 

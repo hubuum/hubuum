@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::RestoreJobId;
 use uuid::Uuid;
 
 use hubuum_storage_core::{
@@ -21,26 +22,35 @@ impl RestoreStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn get_restore_job(&self, job_id: i64) -> Result<StorageRestoreJob, StorageError> {
-        crate::operations::restore_lifecycle::get_restore_job(self.runtime(), job_id)
+    async fn get_restore_job(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<StorageRestoreJob, StorageError> {
+        crate::operations::restore_lifecycle::get_restore_job(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn get_restore_status(&self, job_id: i64) -> Result<StorageRestoreStatus, StorageError> {
-        crate::operations::restore_lifecycle::get_restore_status(self.runtime(), job_id)
+    async fn get_restore_status(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<StorageRestoreStatus, StorageError> {
+        crate::operations::restore_lifecycle::get_restore_status(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn expire_restore_stage(&self, job_id: i64) -> Result<bool, StorageError> {
-        crate::operations::restore_lifecycle::expire_restore_stage(self.runtime(), job_id)
+    async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError> {
+        crate::operations::restore_lifecycle::expire_restore_stage(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn start_restore_draining(&self, job_id: i64) -> Result<NaiveDateTime, StorageError> {
-        crate::operations::restore_lifecycle::start_restore_draining(self.runtime(), job_id)
+    async fn start_restore_draining(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<NaiveDateTime, StorageError> {
+        crate::operations::restore_lifecycle::start_restore_draining(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -77,8 +87,8 @@ impl RestoreStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn resume_terminal_restore(&self, job_id: i64) -> Result<(), StorageError> {
-        crate::operations::restore_lifecycle::resume_terminal_restore(self.runtime(), job_id)
+    async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError> {
+        crate::operations::restore_lifecycle::resume_terminal_restore(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
     }

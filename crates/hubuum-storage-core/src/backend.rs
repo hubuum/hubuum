@@ -1,13 +1,13 @@
 use crate::{
     AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRelationStore, ClassStore, CollectionAuthorizationStorage,
-    CollectionStore, ComputedFieldLifecycleStorage, ComputedObjectStorage,
+    CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationStorage,
+    CollectionStorage, ComputedFieldLifecycleStorage, ComputedObjectStorage,
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportQueryStorage,
-    ExportTemplateStorage, GroupStorage, HistoryStorage, IdentityStorage, InventoryStorage,
-    MaintenanceStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStore, ObjectStore,
+    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportTemplateStorage,
+    GroupStorage, HistoryStorage, IdentityStorage, InventoryStorage, MaintenanceStorage,
+    MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
-    StorageExecution, StorageIdentity, TaskExecutionStorage, TaskQueueStorage,
+    StorageBackendIdentity, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
     TokenRetentionStorage, TokenStorage, TransactionalStorage, UnifiedSearchStorage, UserStorage,
     WorkerNotificationStorage,
 };
@@ -22,12 +22,12 @@ use crate::{
 /// This trait describes static Rust composition. It is not a dynamic plugin
 /// interface and does not define runtime discovery or contract versioning.
 pub trait StorageBackend:
-    StorageIdentity
-    + CollectionStore
-    + ClassStore
-    + ObjectStore
-    + ClassRelationStore
-    + ObjectRelationStore
+    StorageBackendIdentity
+    + CollectionStorage
+    + ClassStorage
+    + ObjectStorage
+    + ClassRelationStorage
+    + ObjectRelationStorage
     + AuthenticationStorage
     + IdentityStorage
     + UserStorage
@@ -59,7 +59,6 @@ pub trait StorageBackend:
     + TaskExecutionStorage
     + BackupSnapshotStorage
     + MaintenanceStorage
-    + ExportQueryStorage
     + ExportTemplateStorage
     + WorkerNotificationStorage
     + StorageExecution

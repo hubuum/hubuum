@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -21,8 +21,8 @@ use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
-    EventArchive, EventRetentionStorage, EventRetentionSummary, RetainedEvent, StorageError,
-    StorageHandle, storage_handle,
+    EventArchive, EventRetentionBatch, EventRetentionStorage, EventRetentionSummary, RetainedEvent,
+    StorageError, StorageHandle, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
@@ -39,6 +39,7 @@ struct EventRetentionWorkerConfig {
 
 #[derive(Debug, Serialize)]
 struct ArchivedEventRecord<'a> {
+    retention_batch_id: uuid::Uuid,
     archived_at: chrono::NaiveDateTime,
     event: &'a serde_json::Value,
 }
@@ -48,11 +49,11 @@ struct FileEventArchive<'a> {
 }
 
 impl EventArchive for FileEventArchive<'_> {
-    fn archive(&self, events: &[RetainedEvent]) -> Result<(), StorageError> {
+    fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError> {
         if let Some(path) = self.path
-            && !events.is_empty()
+            && !batch.is_empty()
         {
-            append_event_archive(path, events).map_err(|error| {
+            archive_event_batch(path, batch).map_err(|error| {
                 StorageError::internal(format!("Event archive output failed: {error}"))
             })?;
         }
@@ -193,20 +194,132 @@ where
     });
 }
 
-fn append_event_archive(path: &Path, events: &[RetainedEvent]) -> Result<(), ApiError> {
+fn archive_event_batch(path: &Path, batch: &EventRetentionBatch) -> Result<(), ApiError> {
+    secure_event_archive_directory(path)?;
+    let final_path = path.join(format!("{}.jsonl", batch.id().as_uuid()));
+    if final_path.try_exists().map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to inspect event archive batch: {error}"))
+    })? {
+        validate_existing_archive_batch(&final_path, batch)?;
+        return Ok(());
+    }
+
+    let temporary_path = path.join(format!(
+        ".{}.{}.tmp",
+        batch.id().as_uuid(),
+        uuid::Uuid::new_v4()
+    ));
     let archived_at = chrono::Utc::now().naive_utc();
     let mut options = OpenOptions::new();
-    options.create(true).append(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(path).map_err(|error| {
+    let mut file = options.open(&temporary_path).map_err(|error| {
         ApiError::InternalServerError(format!("Failed to open event archive: {error}"))
     })?;
     secure_event_archive_file(&file).map_err(|error| {
         ApiError::InternalServerError(format!("Failed to secure event archive: {error}"))
     })?;
+    if let Err(error) =
+        write_event_archive(&mut file, batch.id().as_uuid(), archived_at, batch.events())
+    {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary_path, &final_path) {
+        let _ = fs::remove_file(&temporary_path);
+        if final_path.try_exists().unwrap_or(false) {
+            validate_existing_archive_batch(&final_path, batch)?;
+            return Ok(());
+        }
+        return Err(ApiError::InternalServerError(format!(
+            "Failed to commit event archive batch: {error}"
+        )));
+    }
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Failed to sync event archive directory: {error}"
+            ))
+        })
+}
 
-    write_event_archive(&mut file, archived_at, events)
+fn secure_event_archive_directory(path: &Path) -> Result<(), ApiError> {
+    fs::create_dir_all(path).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to create event archive directory: {error}"))
+    })?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Failed to inspect event archive directory: {error}"
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ApiError::InternalServerError(
+            "Event archive path must be a real directory".to_string(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Failed to secure event archive directory: {error}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_existing_archive_batch(
+    path: &Path,
+    batch: &EventRetentionBatch,
+) -> Result<(), ApiError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to inspect event archive batch: {error}"))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(ApiError::InternalServerError(
+            "Event archive batch must be a regular file".to_string(),
+        ));
+    }
+    let contents = fs::read_to_string(path).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to read event archive batch: {error}"))
+    })?;
+    let archived = contents
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).map_err(|error| {
+                ApiError::InternalServerError(format!(
+                    "Existing event archive batch is invalid JSON: {error}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if archived.len() != batch.events().len() {
+        return Err(ApiError::InternalServerError(
+            "Existing event archive batch does not match the retention claim".to_string(),
+        ));
+    }
+    let batch_id = batch.id().as_uuid().to_string();
+    for (record, retained) in archived.iter().zip(batch.events()) {
+        let archived_batch_id = record
+            .get("retention_batch_id")
+            .and_then(serde_json::Value::as_str);
+        let archived_event = record.get("event");
+        let retained_event: serde_json::Value =
+            serde_json::from_str(retained.json()).map_err(|error| {
+                ApiError::InternalServerError(format!(
+                    "Storage returned an invalid retained event document: {error}"
+                ))
+            })?;
+        if archived_batch_id != Some(batch_id.as_str()) || archived_event != Some(&retained_event) {
+            return Err(ApiError::InternalServerError(
+                "Existing event archive batch does not match the retention claim".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -229,6 +342,7 @@ fn secure_event_archive_file(_file: &File) -> io::Result<()> {
 
 fn write_event_archive(
     file: &mut impl EventArchiveOutput,
+    retention_batch_id: uuid::Uuid,
     archived_at: chrono::NaiveDateTime,
     events: &[RetainedEvent],
 ) -> Result<(), ApiError> {
@@ -239,6 +353,7 @@ fn write_event_archive(
             ))
         })?;
         let record = ArchivedEventRecord {
+            retention_batch_id,
             archived_at,
             event: &event,
         };
@@ -327,7 +442,21 @@ mod tests {
             "before_revision": null,
             "after_revision": null,
         });
-        RetainedEvent::new(1, serde_json::to_string(&event).unwrap())
+        RetainedEvent::new(
+            crate::events::EventSequence::new(1).unwrap(),
+            serde_json::to_string(&event).unwrap(),
+        )
+    }
+
+    fn batch() -> EventRetentionBatch {
+        EventRetentionBatch::new(
+            crate::storage::EventRetentionBatchId::new(Uuid::new_v4()),
+            vec![event()],
+        )
+    }
+
+    fn archive_directory() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("hubuum-event-archive-{}", Uuid::new_v4()))
     }
 
     #[test]
@@ -347,62 +476,103 @@ mod tests {
     }
 
     #[test]
-    fn append_event_archive_writes_json_lines() {
-        let path =
-            std::env::temp_dir().join(format!("hubuum-event-archive-{}.jsonl", Uuid::new_v4()));
-        append_event_archive(&path, &[event()]).unwrap();
+    fn event_archive_writes_one_atomic_file_per_batch() {
+        let path = archive_directory();
+        let batch = batch();
+        archive_event_batch(&path, &batch).unwrap();
 
-        let archived = std::fs::read_to_string(&path).unwrap();
+        let batch_path = path.join(format!("{}.jsonl", batch.id().as_uuid()));
+        let archived = std::fs::read_to_string(batch_path).unwrap();
 
         assert_eq!(archived.lines().count(), 1);
+        assert!(archived.contains(&batch.id().as_uuid().to_string()));
         assert!(archived.contains("\"archived_at\""));
         assert!(archived.contains("\"event\""));
         assert!(archived.contains("\"entity_type\":\"collection\""));
         assert!(archived.contains("\"initiator_user_id\":17"));
         assert!(archived.contains("\"task_id\":18"));
-        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn append_event_archive_restricts_existing_file_permissions() {
+    fn event_archive_restricts_directory_and_batch_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path =
-            std::env::temp_dir().join(format!("hubuum-event-archive-{}.jsonl", Uuid::new_v4()));
-        std::fs::write(&path, b"").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let path = archive_directory();
+        let batch = batch();
+        archive_event_batch(&path, &batch).unwrap();
 
-        append_event_archive(&path, &[event()]).unwrap();
+        let batch_path = path.join(format!("{}.jsonl", batch.id().as_uuid()));
 
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(batch_path).unwrap().permissions().mode() & 0o777,
             0o600
         );
-        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn append_event_archive_rejects_symbolic_link_path() {
+    fn event_archive_rejects_symbolic_link_directory() {
         use std::os::unix::fs::symlink;
 
         let suffix = Uuid::new_v4();
-        let target = std::env::temp_dir().join(format!("hubuum-event-archive-{suffix}.jsonl"));
+        let target = std::env::temp_dir().join(format!("hubuum-event-archive-{suffix}"));
         let link = std::env::temp_dir().join(format!("hubuum-event-archive-{suffix}.link"));
-        std::fs::write(&target, b"existing\n").unwrap();
+        std::fs::create_dir(&target).unwrap();
         symlink(&target, &link).unwrap();
 
-        let result = append_event_archive(&link, &[event()]);
+        let result = archive_event_batch(&link, &batch());
 
         assert!(matches!(
             result,
             Err(ApiError::InternalServerError(message))
-                if message.starts_with("Failed to open event archive:")
+                if message == "Event archive path must be a real directory"
         ));
-        assert_eq!(std::fs::read(&target).unwrap(), b"existing\n");
         std::fs::remove_file(link).unwrap();
-        std::fs::remove_file(target).unwrap();
+        std::fs::remove_dir(target).unwrap();
+    }
+
+    #[test]
+    fn event_archive_is_idempotent_by_batch_id() {
+        let path = archive_directory();
+        let batch = batch();
+
+        archive_event_batch(&path, &batch).unwrap();
+        archive_event_batch(&path, &batch).unwrap();
+
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn event_archive_rejects_an_existing_file_for_different_contents() {
+        let path = archive_directory();
+        let batch = batch();
+        std::fs::create_dir_all(&path).unwrap();
+        let batch_path = path.join(format!("{}.jsonl", batch.id().as_uuid()));
+        std::fs::write(
+            &batch_path,
+            format!(
+                "{{\"retention_batch_id\":\"{}\",\"archived_at\":\"2026-01-01T00:00:00\",\"event\":{{\"id\":999}}}}\n",
+                batch.id().as_uuid(),
+            ),
+        )
+        .unwrap();
+
+        let result = archive_event_batch(&path, &batch);
+
+        assert!(matches!(
+            result,
+            Err(ApiError::InternalServerError(message))
+                if message == "Existing event archive batch does not match the retention claim"
+        ));
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[cfg(unix)]
@@ -422,7 +592,13 @@ mod tests {
     fn event_archive_is_synced_after_writing() {
         let mut output = ArchiveOutputSpy::default();
 
-        write_event_archive(&mut output, chrono::Utc::now().naive_utc(), &[event()]).unwrap();
+        write_event_archive(
+            &mut output,
+            Uuid::new_v4(),
+            chrono::Utc::now().naive_utc(),
+            &[event()],
+        )
+        .unwrap();
 
         assert!(output.sync_called.get());
         assert_eq!(output.bytes.last(), Some(&b'\n'));
@@ -435,7 +611,12 @@ mod tests {
             ..ArchiveOutputSpy::default()
         };
 
-        let result = write_event_archive(&mut output, chrono::Utc::now().naive_utc(), &[event()]);
+        let result = write_event_archive(
+            &mut output,
+            Uuid::new_v4(),
+            chrono::Utc::now().naive_utc(),
+            &[event()],
+        );
 
         assert!(matches!(
             result,

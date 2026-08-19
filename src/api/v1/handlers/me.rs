@@ -66,7 +66,7 @@ pub async fn get_me(
     context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let principal = load_principal_by_id(&context, requestor.principal.id()).await?;
+    let principal = load_principal_by_id(&context, requestor.principal.id().id()).await?;
     let token =
         CurrentTokenMetadata::from_authenticated_token(&requestor.token_meta, requestor.scope)?;
 
@@ -177,7 +177,7 @@ pub async fn get_my_settings(
     context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id())?;
+    let principal_id = PrincipalID::new(requestor.principal.id().id())?;
     ApiResponse::ok_revisioned(principal_id.settings(&context).await?)
 }
 
@@ -200,7 +200,7 @@ pub async fn put_my_settings(
     settings: web::Json<PrincipalSettings>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id())?;
+    let principal_id = PrincipalID::new(requestor.principal.id().id())?;
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
@@ -254,7 +254,7 @@ pub async fn patch_my_settings(
     patch: PrincipalSettingsPatchPayload,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id())?;
+    let principal_id = PrincipalID::new(requestor.principal.id().id())?;
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
@@ -283,7 +283,7 @@ pub async fn delete_my_settings(
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id())?;
+    let principal_id = PrincipalID::new(requestor.principal.id().id())?;
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);

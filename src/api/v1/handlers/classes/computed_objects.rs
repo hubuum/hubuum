@@ -55,13 +55,13 @@ impl ResolvedComputedObjectQuery<'_> {
         };
         let access = match visibility {
             ComputedListVisibility::SqlPushdown => ComputedObjectAccess::Storage {
-                principal_id: self.requestor.principal.id(),
+                principal_id: self.requestor.principal.id().id(),
                 is_admin: AuthzSubject::is_admin(&self.requestor.principal, self.context).await?,
                 scope: self.requestor.scopes(),
             },
             ComputedListVisibility::Policy(object_ids) => {
                 ComputedObjectAccess::AuthorizedObjectIds {
-                    principal_id: self.requestor.principal.id(),
+                    principal_id: self.requestor.principal.id().id(),
                     object_ids,
                 }
             }
@@ -169,7 +169,7 @@ async fn can_list_objects_in_class(
     let is_admin = crate::traits::AuthzSubject::is_admin(&requestor.principal, context).await?;
     let (visible_objects, _) = catalog_service::list_objects(
         context,
-        requestor.principal.id(),
+        requestor.principal.id().id(),
         is_admin,
         requestor.scopes(),
         visibility_query,
@@ -187,7 +187,7 @@ async fn authorized_object_ids_in_class(
     scope_object_query_to_class(&mut visibility_query, class)?;
     let (candidates, _) = catalog_service::list_objects(
         context,
-        requestor.principal.id(),
+        requestor.principal.id().id(),
         true,
         None,
         visibility_query,

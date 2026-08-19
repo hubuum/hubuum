@@ -15,6 +15,7 @@ use crate::permissions::{
     AuthorizationContext, PermissionDecision, PrincipalRef, ResourceAttrs, ResourceKind,
     ResourceRef,
 };
+use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
     AuthenticationStorage, ComputedFieldLifecycleStorage, StorageBackupOutput,
     StorageBackupOutputSummary, StorageContext, StorageExportOutput, StorageExportOutputSummary,
@@ -47,7 +48,7 @@ pub struct ClaimedTask {
 }
 
 impl ClaimedTask {
-    fn from_storage(claim: StorageTaskClaim) -> Result<Self, ApiError> {
+    pub(crate) fn from_storage(claim: StorageTaskClaim) -> Result<Self, ApiError> {
         let (task, lease) = claim.into_parts();
         Ok(Self {
             task: task_from_storage(task)?,
@@ -67,7 +68,7 @@ impl ClaimedTask {
         })?;
         Ok(Self {
             lease: StorageTaskLease::new(
-                task.id,
+                TaskID::new(task.id).expect("validated task id must be positive"),
                 crate::storage::StorageTaskClaimToken::new(token.to_string()),
             ),
             task,
@@ -325,7 +326,7 @@ pub(crate) fn task_scope_snapshot(
     scopes: Option<&TokenScope>,
 ) -> StorageTaskScopeSnapshot {
     StorageTaskScopeSnapshot::new(
-        token_id.map(TokenID::id),
+        token_id,
         scopes.is_some(),
         scopes
             .map(TokenScope::snapshot_json)
@@ -339,7 +340,7 @@ pub(crate) async fn submit_task(
 ) -> Result<TaskRecord, ApiError> {
     let request = StorageTaskCreateRequest::builder(
         task_kind_to_storage(submission.kind),
-        submission.submitted_by.id(),
+        principal_id_to_storage(submission.submitted_by.id()),
         submission.payload,
         submission.total_items,
     )
@@ -359,7 +360,7 @@ pub(crate) async fn find_task(
     task_id: TaskID,
 ) -> Result<TaskRecord, ApiError> {
     let (task, _) = storage_handle(backend)
-        .get_task_access(task_id.id())
+        .get_task_access(task_id)
         .await?
         .into_parts();
     task_from_storage(task)
@@ -445,7 +446,7 @@ where
     S: AuthzSubject + ?Sized,
 {
     let (stored, submitter_owner_group_id) = storage_handle(backend)
-        .get_task_access(task_id.id())
+        .get_task_access(task_id)
         .await?
         .into_parts();
     let task = task_from_storage(stored)?;
@@ -461,14 +462,14 @@ where
     let local = permissions.is_none_or(|backend| backend.uses_local_permission_store());
     let allowed = if local {
         let (identity, _) = storage_handle(backend)
-            .load_authentication_identity(requestor.principal_id())
+            .load_authentication_identity(principal_id_to_storage(requestor.principal_id()))
             .await?
             .into_parts();
         requestor.is_admin(backend).await?
             || task.submitted_by == Some(principal.user_id)
             || (identity.is_human()
                 && submitter_owner_group_id
-                    .is_some_and(|group_id| principal.group_ids.contains(&group_id)))
+                    .is_some_and(|group_id| principal.group_ids.contains(&group_id.id())))
     } else {
         permissions
             .expect("external authorization path requires a permission backend")
@@ -494,7 +495,7 @@ pub(crate) async fn list_tasks(
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
     let (tasks, total) = storage_handle(backend)
         .list_tasks(StorageTaskListQuery::new(
-            submitted_by,
+            submitted_by.map(principal_id_to_storage),
             kind.map(task_kind_to_storage),
             status.map(task_status_to_storage),
             options,
@@ -516,7 +517,7 @@ pub(crate) async fn list_task_events(
     options: QueryOptions,
 ) -> Result<(Vec<crate::models::TaskEventResponse>, i64), ApiError> {
     let (events, total) = storage_handle(backend)
-        .list_task_events(StorageTaskPageQuery::new(task_id.id(), options))
+        .list_task_events(StorageTaskPageQuery::new(task_id, options))
         .await?
         .into_parts();
     let records = events
@@ -547,7 +548,7 @@ pub(crate) async fn list_import_results(
     options: QueryOptions,
 ) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
     let (results, total) = storage_handle(backend)
-        .list_import_task_results(StorageTaskPageQuery::new(task_id.id(), options))
+        .list_import_task_results(StorageTaskPageQuery::new(task_id, options))
         .await?
         .into_parts();
     Ok((
@@ -564,7 +565,12 @@ pub(crate) async fn list_export_output_summaries(
     task_ids: Vec<i32>,
 ) -> Result<Vec<ExportTaskOutputSummary>, ApiError> {
     Ok(storage_handle(backend)
-        .list_export_output_summaries(task_ids)
+        .list_export_output_summaries(
+            task_ids
+                .into_iter()
+                .map(|id| TaskID::new(id).expect("validated task id must be positive"))
+                .collect(),
+        )
         .await?
         .into_iter()
         .map(export_summary_from_storage)
@@ -576,7 +582,12 @@ pub(crate) async fn list_backup_output_summaries(
     task_ids: Vec<i32>,
 ) -> Result<Vec<BackupTaskOutputSummary>, ApiError> {
     Ok(storage_handle(backend)
-        .list_backup_output_summaries(task_ids)
+        .list_backup_output_summaries(
+            task_ids
+                .into_iter()
+                .map(|id| TaskID::new(id).expect("validated task id must be positive"))
+                .collect(),
+        )
         .await?
         .into_iter()
         .map(backup_summary_from_storage)
@@ -589,7 +600,7 @@ pub(crate) async fn export_output_summary(
 ) -> Result<ExportOutputLookup<ExportTaskOutputSummary>, ApiError> {
     Ok(map_export_lookup(
         storage_handle(backend)
-            .get_export_output_summary(task_id.id())
+            .get_export_output_summary(task_id)
             .await?,
         export_summary_from_storage,
     ))
@@ -601,7 +612,7 @@ pub(crate) async fn backup_output_summary(
 ) -> Result<BackupOutputLookup<BackupTaskOutputSummary>, ApiError> {
     Ok(map_backup_lookup(
         storage_handle(backend)
-            .get_backup_output_summary(task_id.id())
+            .get_backup_output_summary(task_id)
             .await?,
         backup_summary_from_storage,
     ))
@@ -612,9 +623,7 @@ pub(crate) async fn export_output(
     task_id: TaskID,
 ) -> Result<ExportOutputLookup<ExportTaskOutput>, ApiError> {
     Ok(map_export_lookup(
-        storage_handle(backend)
-            .get_export_output(task_id.id())
-            .await?,
+        storage_handle(backend).get_export_output(task_id).await?,
         export_output_from_storage,
     ))
 }
@@ -624,9 +633,7 @@ pub(crate) async fn backup_output(
     task_id: TaskID,
 ) -> Result<BackupOutputLookup<BackupTaskOutput>, ApiError> {
     Ok(map_backup_lookup(
-        storage_handle(backend)
-            .get_backup_output(task_id.id())
-            .await?,
+        storage_handle(backend).get_backup_output(task_id).await?,
         backup_output_from_storage,
     ))
 }
@@ -664,16 +671,16 @@ fn task_status_to_storage(status: TaskStatus) -> StorageTaskStatus {
     }
 }
 
-fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiError> {
+pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiError> {
     let kind = TaskKind::from_db(task.kind().as_str())?;
     let status = TaskStatus::from_db(task.status().as_str())?;
     let scope = task.scope_snapshot();
     let progress = task.progress();
     Ok(TaskRecord {
-        id: task.id(),
+        id: task.id().id(),
         kind: kind.as_str().to_string(),
         status: status.as_str().to_string(),
-        submitted_by: task.submitted_by(),
+        submitted_by: task.submitted_by().map(|id| id.id()),
         idempotency_key: task.idempotency_key().map(str::to_string),
         request_hash: task.request_hash().map(str::to_string),
         request_payload: task.request_payload().cloned(),
@@ -682,42 +689,42 @@ fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiError> {
         processed_items: progress.processed(),
         success_items: progress.succeeded(),
         failed_items: progress.failed(),
-        submitted_token_id: scope.token_id(),
+        submitted_token_id: scope.token_id().map(|id| id.id()),
         submitted_token_scoped: scope.scoped(),
         submitted_token_scopes: scope.scopes().clone(),
         request_redacted_at: task.request_redacted_at(),
         started_at: task.started_at(),
         finished_at: task.finished_at(),
         deleted_at: task.deleted_at(),
-        deleted_by: task.deleted_by(),
+        deleted_by: task.deleted_by().map(|id| id.id()),
         created_at: task.created_at(),
         updated_at: task.updated_at(),
         lease_token: task.lease_token(),
         lease_expires_at: task.lease_expires_at(),
         attempt_count: task.attempt_count(),
-        initiator_user_id: task.initiator_principal_id(),
+        initiator_user_id: task.initiator_principal_id().map(|id| id.id()),
     })
 }
 
 fn task_event_from_storage(event: StorageTaskEvent) -> TaskEventRecord {
     TaskEventRecord {
-        id: event.id(),
-        task_id: event.task_id(),
+        id: event.id().get(),
+        task_id: event.task_id().id(),
         event_type: event.event_type().to_string(),
         message: event.message().to_string(),
         data: event.data().cloned(),
         created_at: event.created_at(),
-        actor_user_id: event.actor_principal_id(),
+        actor_user_id: event.actor_principal_id().map(|id| id.id()),
         actor_kind: event.actor_kind().to_string(),
-        initiator_user_id: event.initiator_principal_id(),
-        provenance_task_id: event.provenance_task_id(),
+        initiator_user_id: event.initiator_principal_id().map(|id| id.id()),
+        provenance_task_id: event.provenance_task_id().map(|id| id.id()),
     }
 }
 
 fn import_result_from_storage(result: StorageImportTaskResult) -> ImportTaskResultRecord {
     ImportTaskResultRecord {
-        id: result.id(),
-        task_id: result.task_id(),
+        id: result.id().id(),
+        task_id: result.task_id().id(),
         item_ref: result.item_ref().map(str::to_string),
         entity_kind: result.entity_kind().to_string(),
         action: result.action().to_string(),
@@ -732,7 +739,7 @@ fn import_result_from_storage(result: StorageImportTaskResult) -> ImportTaskResu
 fn export_summary_from_storage(output: StorageExportOutputSummary) -> ExportTaskOutputSummary {
     let durations = output.durations();
     ExportTaskOutputSummary {
-        task_id: output.task_id(),
+        task_id: output.task_id().id(),
         template_name: output.template_name().map(str::to_string),
         content_type: output.content_type().to_string(),
         warning_count: output.warning_count(),
@@ -747,7 +754,7 @@ fn export_summary_from_storage(output: StorageExportOutputSummary) -> ExportTask
 
 fn backup_summary_from_storage(output: StorageBackupOutputSummary) -> BackupTaskOutputSummary {
     BackupTaskOutputSummary {
-        task_id: output.task_id(),
+        task_id: output.task_id().id(),
         byte_size: output.byte_size(),
         sha256: output.sha256().to_string(),
         output_expires_at: output.output_expires_at(),

@@ -34,20 +34,19 @@ pub(crate) struct PrincipalRow {
 }
 
 impl PrincipalRow {
-    pub(crate) fn into_storage(self) -> StoragePrincipal {
-        StoragePrincipal::builder(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
+    pub(crate) fn into_storage(self) -> Result<StoragePrincipal, PostgresStorageError> {
+        Ok(StoragePrincipal::builder(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.kind,
             self.name,
-            IdentityScopeId::new(self.identity_scope_id)
-                .expect("persisted identity scope id must be positive"),
+            IdentityScopeId::new(self.identity_scope_id)?,
         )
         .provider_managed(self.provider_managed)
         .settings(self.settings)
         .external_subject(self.external_subject)
         .last_sync_attempted_at(self.last_sync_attempted_at)
         .last_sync_success_at(self.last_sync_success_at)
-        .build()
+        .build())
     }
 }
 
@@ -65,8 +64,8 @@ pub async fn load_principal(
                 .first::<PrincipalRow>(connection)
                 .await
         })
-        .await
-        .map(PrincipalRow::into_storage)
+        .await?
+        .into_storage()
 }
 
 /// Load one principal-settings document and its owning revision.
@@ -89,8 +88,8 @@ pub async fn load_principal_settings(
         .await?;
     validate_stored_settings(principal_id, &document)?;
     Ok(StoragePrincipalSettings::new(
-        principal_id,
-        revision.get(),
+        hubuum_domain::PrincipalId::new(principal_id)?,
+        revision.into_domain(),
         document,
     ))
 }
@@ -128,8 +127,8 @@ pub async fn mutate_principal_settings(
 
                 if before == after {
                     return Ok(MutationOutcome::unchanged(StoragePrincipalSettings::new(
-                        principal_id,
-                        before_revision.get(),
+                        hubuum_domain::PrincipalId::new(principal_id)?,
+                        before_revision.into_domain(),
                         after,
                     )));
                 }
@@ -156,11 +155,11 @@ pub async fn mutate_principal_settings(
                 .with_entity_name(name)
                 .with_before(json!({ "revision": before_revision, "settings": before }))
                 .with_after(json!({ "revision": after_revision, "settings": after }));
-                let audit = append_event(connection, &event).await?.into_audit_receipt();
+                let audit = append_event(connection, &event).await?.into_audit_receipt()?;
 
                 Ok(MutationOutcome::committed(StoragePrincipalSettings::new(
-                    principal_id,
-                    after_revision.get(),
+                    hubuum_domain::PrincipalId::new(principal_id)?,
+                    after_revision.into_domain(),
                     after,
                 ), audit))
             },

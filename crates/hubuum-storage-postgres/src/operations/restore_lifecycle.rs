@@ -7,7 +7,7 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{Jsonb, Timestamp};
 use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::MaintenanceState;
+use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
 use hubuum_storage_core::{
     BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
@@ -196,10 +196,10 @@ fn summary_from_parts(
     parts: RestoreSummaryParts,
 ) -> Result<StorageRestoreJobSummary, PostgresStorageError> {
     Ok(StorageRestoreJobSummary::new(
-        parts.id,
+        RestoreJobId::new(parts.id)?,
         StorageRestoreJobStatus::from_stored(&parts.status)?,
         StorageRestoreInitiator::new(
-            parts.requested_by,
+            parts.requested_by.map(PrincipalId::new).transpose()?,
             parts.requested_by_identity_scope,
             parts.requested_by_name,
         ),
@@ -282,7 +282,7 @@ pub async fn stage_restore(
     let (byte_size, sha256) = artifact.into_parts();
     let input = NewRestoreJobRow {
         status: StorageRestoreJobStatus::Validated.as_str().to_string(),
-        requested_by,
+        requested_by: requested_by.map(|principal_id| principal_id.id()),
         requested_by_identity_scope,
         requested_by_name,
         document,
@@ -421,6 +421,11 @@ pub async fn start_restore_draining(
             diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'draining')")
                 .execute(connection)
                 .await?;
+            crate::reach_fault_point(
+                crate::PostgresFaultPoint::RestoreAfterDrainTransition,
+                Some(connection),
+            )
+            .await?;
             Ok(confirmation_time)
         })
         .await
@@ -432,6 +437,7 @@ pub async fn apply_restore(
     request: StorageRestoreApply,
 ) -> Result<StorageRestoreCompletion, PostgresStorageError> {
     let (job_id, document) = request.into_parts();
+    let job_id = job_id.id();
     let (metadata, snapshot) = document.into_parts();
     let (backup_version, backup_created_at, backup_source_version) = metadata.into_parts();
     let (state_sections, history_sections) = snapshot.into_parts();
@@ -666,6 +672,7 @@ pub async fn fail_restore_and_resume(
     request: StorageRestoreFailure,
 ) -> Result<(), PostgresStorageError> {
     let (job_id, public_error) = request.into_parts();
+    let job_id = job_id.id();
     runtime
         .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query(
@@ -716,7 +723,7 @@ pub async fn restore_coordinator_snapshot(
                 })?;
             Ok(StorageRestoreCoordinatorSnapshot::new(
                 maintenance_state,
-                restore_job_id,
+                restore_job_id.map(RestoreJobId::new).transpose()?,
                 backend_now,
             ))
         })
@@ -824,9 +831,14 @@ pub async fn tick_restore_coordinator(
                     ))
                     .execute(connection)
                     .await?;
+                crate::reach_fault_point(
+                    crate::PostgresFaultPoint::RestoreCoordinatorAfterHeartbeat,
+                    Some(connection),
+                )
+                .await?;
                 Ok(StorageRestoreCoordinatorSnapshot::new(
                     maintenance_state,
-                    restore_job_id,
+                    restore_job_id.map(RestoreJobId::new).transpose()?,
                     backend_now,
                 ))
             })

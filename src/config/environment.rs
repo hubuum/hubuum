@@ -60,6 +60,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_LOG_LEVEL", Server),
     option!("HUBUUM_ACTIX_WORKERS", Server),
     option!("HUBUUM_RUNTIME_ROLE", Server),
+    option!("HUBUUM_STORAGE_BACKEND", Database),
     option!("HUBUUM_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DB_POOL_SIZE", Database),
     option!("HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS", Database),
@@ -205,6 +206,7 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/tasks/remote_call.rs",
     "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-events-core/src/lib.rs",
+    "crates/hubuum-storage-postgres/src/test_support.rs",
 ];
 
 pub fn declared(name: &str) -> bool {

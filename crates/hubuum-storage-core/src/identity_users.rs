@@ -2,15 +2,16 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{IdentityScopeId, ResourceRevision, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{StorageError, StorageIdentityPage};
+use crate::{MutationOutcome, StorageError, StorageIdentityPage};
 
 /// Owned fields returned when a storage user crosses into an adapter or
 /// application model.
 pub type StorageUserParts = (
-    i32,
+    UserId,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -28,26 +29,26 @@ pub type StorageUserListItemParts = (
     bool,
     Option<NaiveDateTime>,
     Option<NaiveDateTime>,
-    i64,
+    ResourceRevision,
 );
 
 /// Owned fields returned when a point projection is consumed.
 pub type StorageUserPointParts = (
-    i32,
+    UserId,
     Option<String>,
     Option<String>,
     NaiveDateTime,
     NaiveDateTime,
-    i32,
+    IdentityScopeId,
     bool,
     String,
-    i64,
+    ResourceRevision,
 );
 
 /// Backend-neutral human principal row.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUser {
-    id: i32,
+    id: UserId,
     password_hash: Option<String>,
     proper_name: Option<String>,
     email: Option<String>,
@@ -59,7 +60,7 @@ pub struct StorageUser {
 impl StorageUser {
     #[must_use]
     pub const fn new(
-        id: i32,
+        id: UserId,
         password_hash: Option<String>,
         proper_name: Option<String>,
         email: Option<String>,
@@ -115,7 +116,7 @@ pub struct StorageUserListItem {
     provider_managed: bool,
     last_sync_attempted_at: Option<NaiveDateTime>,
     last_sync_success_at: Option<NaiveDateTime>,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageUserListItem {
@@ -125,7 +126,7 @@ impl StorageUserListItem {
         identity_scope: impl Into<String>,
         provider_kind: impl Into<String>,
         name: impl Into<String>,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> StorageUserListItemBuilder {
         StorageUserListItemBuilder {
             user,
@@ -163,7 +164,7 @@ pub struct StorageUserListItemBuilder {
     provider_managed: bool,
     last_sync_attempted_at: Option<NaiveDateTime>,
     last_sync_success_at: Option<NaiveDateTime>,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageUserListItemBuilder {
@@ -216,26 +217,26 @@ impl fmt::Debug for StorageUserListItem {
 /// Strong point projection governed by the principal revision.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUserPoint {
-    id: i32,
+    id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
     provider_managed: bool,
     name: String,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageUserPoint {
     #[must_use]
     pub fn builder(
-        id: i32,
+        id: UserId,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
-        identity_scope_id: i32,
+        identity_scope_id: IdentityScopeId,
         name: impl Into<String>,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> StorageUserPointBuilder {
         StorageUserPointBuilder {
             id,
@@ -268,15 +269,15 @@ impl StorageUserPoint {
 
 /// Builder for the strongly versioned user point projection.
 pub struct StorageUserPointBuilder {
-    id: i32,
+    id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
     provider_managed: bool,
     name: String,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageUserPointBuilder {
@@ -430,7 +431,7 @@ impl fmt::Debug for StorageUserCreate {
 /// Human profile and credential patch after application-owned password hashing.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUserUpdate {
-    id: i32,
+    id: UserId,
     password_hash: Option<String>,
     proper_name: Option<String>,
     email: Option<String>,
@@ -440,7 +441,7 @@ pub struct StorageUserUpdate {
 impl StorageUserUpdate {
     #[must_use]
     pub const fn new(
-        id: i32,
+        id: UserId,
         password_hash: Option<String>,
         proper_name: Option<String>,
         email: Option<String>,
@@ -459,7 +460,7 @@ impl StorageUserUpdate {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        UserId,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -491,18 +492,18 @@ impl fmt::Debug for StorageUserUpdate {
 /// Point user deletion with mandatory lifecycle event attribution.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUserDelete {
-    id: i32,
+    id: UserId,
     event_context: EventContext,
 }
 
 impl StorageUserDelete {
     #[must_use]
-    pub const fn new(id: i32, event_context: EventContext) -> Self {
+    pub const fn new(id: UserId, event_context: EventContext) -> Self {
         Self { id, event_context }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, EventContext) {
+    pub fn into_parts(self) -> (UserId, EventContext) {
         (self.id, self.event_context)
     }
 }
@@ -520,14 +521,14 @@ impl fmt::Debug for StorageUserDelete {
 /// Pre-hashed local password replacement.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUserPasswordUpdate {
-    id: i32,
+    id: UserId,
     password_hash: String,
     event_context: EventContext,
 }
 
 impl StorageUserPasswordUpdate {
     #[must_use]
-    pub fn new(id: i32, password_hash: impl Into<String>, event_context: EventContext) -> Self {
+    pub fn new(id: UserId, password_hash: impl Into<String>, event_context: EventContext) -> Self {
         Self {
             id,
             password_hash: password_hash.into(),
@@ -536,7 +537,7 @@ impl StorageUserPasswordUpdate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String, EventContext) {
+    pub fn into_parts(self) -> (UserId, String, EventContext) {
         (self.id, self.password_hash, self.event_context)
     }
 }
@@ -555,18 +556,18 @@ impl fmt::Debug for StorageUserPasswordUpdate {
 /// User anonymization with mandatory audit attribution.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUserAnonymize {
-    id: i32,
+    id: UserId,
     event_context: EventContext,
 }
 
 impl StorageUserAnonymize {
     #[must_use]
-    pub const fn new(id: i32, event_context: EventContext) -> Self {
+    pub const fn new(id: UserId, event_context: EventContext) -> Self {
         Self { id, event_context }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, EventContext) {
+    pub fn into_parts(self) -> (UserId, EventContext) {
         (self.id, self.event_context)
     }
 }
@@ -584,7 +585,7 @@ impl fmt::Debug for StorageUserAnonymize {
 /// Complete human-user persistence required of every selectable backend.
 #[async_trait]
 pub trait UserStorage: Send + Sync {
-    async fn load_user(&self, id: i32) -> Result<StorageUser, StorageError>;
+    async fn load_user(&self, id: UserId) -> Result<StorageUser, StorageError>;
 
     async fn load_user_by_name(
         &self,
@@ -592,26 +593,38 @@ pub trait UserStorage: Send + Sync {
         name: String,
     ) -> Result<StorageUser, StorageError>;
 
-    async fn load_user_point(&self, id: i32) -> Result<StorageUserPoint, StorageError>;
+    async fn load_user_point(&self, id: UserId) -> Result<StorageUserPoint, StorageError>;
 
     async fn list_users(
         &self,
         query: StorageUserListQuery,
     ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError>;
 
-    async fn create_user(&self, request: StorageUserCreate) -> Result<StorageUser, StorageError>;
+    async fn create_user(
+        &self,
+        request: StorageUserCreate,
+    ) -> Result<MutationOutcome<StorageUser>, StorageError>;
 
-    async fn update_user(&self, request: StorageUserUpdate) -> Result<StorageUser, StorageError>;
+    async fn update_user(
+        &self,
+        request: StorageUserUpdate,
+    ) -> Result<MutationOutcome<StorageUser>, StorageError>;
 
     /// Replace a local password and revoke active credentials atomically.
     async fn set_user_password(
         &self,
         request: StorageUserPasswordUpdate,
-    ) -> Result<usize, StorageError>;
+    ) -> Result<MutationOutcome<usize>, StorageError>;
 
-    async fn delete_user(&self, request: StorageUserDelete) -> Result<usize, StorageError>;
+    async fn delete_user(
+        &self,
+        request: StorageUserDelete,
+    ) -> Result<MutationOutcome<usize>, StorageError>;
 
-    async fn anonymize_user(&self, request: StorageUserAnonymize) -> Result<(), StorageError>;
+    async fn anonymize_user(
+        &self,
+        request: StorageUserAnonymize,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
@@ -624,9 +637,9 @@ mod tests {
             Some("sensitive-scope".to_string()),
             "sensitive-name",
             "sensitive-password-hash",
+            None,
+            None,
             EventContext::system(),
-            None,
-            None,
         );
         let debug = format!("{create:?}");
         assert!(!debug.contains("sensitive-scope"));

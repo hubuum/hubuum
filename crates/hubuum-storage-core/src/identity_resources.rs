@@ -2,7 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use hubuum_domain::{IdentityScopeId, PrincipalId, ResourceRevision};
+use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ResourceRevision};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
@@ -167,8 +167,7 @@ impl StoragePrincipalBuilder {
     #[must_use]
     pub fn build(self) -> StoragePrincipal {
         StoragePrincipal {
-            id: PrincipalId::new(self.metadata.id().id())
-                .expect("validated resource id must remain positive"),
+            id: PrincipalId::from(self.metadata.id()),
             kind: self.kind,
             name: self.name,
             created_at: self.metadata.created_at(),
@@ -238,14 +237,18 @@ impl StorageGroupUpdate {
 /// One principal-settings document and the revision that owns it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoragePrincipalSettings {
-    principal_id: i32,
-    revision: i64,
+    principal_id: PrincipalId,
+    revision: ResourceRevision,
     document: Value,
 }
 
 impl StoragePrincipalSettings {
     #[must_use]
-    pub const fn new(principal_id: i32, revision: i64, document: Value) -> Self {
+    pub const fn new(
+        principal_id: PrincipalId,
+        revision: ResourceRevision,
+        document: Value,
+    ) -> Self {
         Self {
             principal_id,
             revision,
@@ -254,7 +257,7 @@ impl StoragePrincipalSettings {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i64, Value) {
+    pub fn into_parts(self) -> (PrincipalId, ResourceRevision, Value) {
         (self.principal_id, self.revision, self.document)
     }
 
@@ -276,9 +279,9 @@ pub enum StoragePrincipalSettingsMutation {
 /// Complete group lifecycle and membership behavior required from a backend.
 #[async_trait]
 pub trait GroupStorage: Send + Sync {
-    async fn load_group(&self, group_id: i32) -> Result<StorageIdentityGroup, StorageError>;
+    async fn load_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError>;
 
-    async fn group_identity_scope_name(&self, group_id: i32) -> Result<String, StorageError>;
+    async fn group_identity_scope_name(&self, group_id: GroupId) -> Result<String, StorageError>;
 
     async fn create_group(
         &self,
@@ -288,47 +291,48 @@ pub trait GroupStorage: Send + Sync {
 
     async fn update_group(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         update: StorageGroupUpdate,
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError>;
 
     async fn delete_group(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<usize>, StorageError>;
 
-    async fn group_members(&self, group_id: i32) -> Result<Vec<StoragePrincipal>, StorageError>;
+    async fn group_members(&self, group_id: GroupId)
+    -> Result<Vec<StoragePrincipal>, StorageError>;
 
     async fn group_members_page(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError>;
 
     async fn count_group_members(
         &self,
-        group_id: i32,
+        group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<i64, StorageError>;
 
     async fn group_member_principal(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError>;
 
     async fn add_group_member(
         &self,
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<StoragePrincipalGroup>, StorageError>;
 
     async fn remove_group_member(
         &self,
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<()>, StorageError>;
 }
@@ -336,16 +340,19 @@ pub trait GroupStorage: Send + Sync {
 /// Principal point and settings behavior required from every backend.
 #[async_trait]
 pub trait PrincipalStorage: Send + Sync {
-    async fn load_principal(&self, principal_id: i32) -> Result<StoragePrincipal, StorageError>;
+    async fn load_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<StoragePrincipal, StorageError>;
 
     async fn load_principal_settings(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<StoragePrincipalSettings, StorageError>;
 
     async fn mutate_principal_settings(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<StoragePrincipalSettings>, StorageError>;

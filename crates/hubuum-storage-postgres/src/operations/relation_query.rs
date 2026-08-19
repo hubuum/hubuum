@@ -13,6 +13,7 @@ use diesel::dsl::not;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_query::{DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SortParam};
 use hubuum_storage_core::{
     AuthorizationPermission, BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery,
@@ -87,7 +88,7 @@ pub async fn list_class_relations(
                 .await?
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
         })
         .await
@@ -125,7 +126,7 @@ pub async fn list_object_relations(
                 .await?
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
         })
         .await
@@ -138,7 +139,7 @@ pub async fn list_class_relations_touching(
 ) -> Result<RelationPage<StorageClassRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (class_id, options, visibility) = query.into_parts();
-    validate_positive_id(class_id, "class id")?;
+    validate_positive_id(class_id.id(), "class id")?;
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
         return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
@@ -153,7 +154,7 @@ pub async fn list_class_relations_touching(
                     &options,
                     &visibility,
                     &collection_ids,
-                    Some(class_id),
+                    Some(class_id.id()),
                     None,
                     None,
                 )
@@ -172,7 +173,7 @@ pub async fn list_class_relations_touching(
                 .await?
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
         })
         .await
@@ -185,7 +186,7 @@ pub async fn list_object_relations_touching(
 ) -> Result<RelationPage<StorageObjectRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (object_id, options, visibility) = query.into_parts();
-    validate_positive_id(object_id, "object id")?;
+    validate_positive_id(object_id.id(), "object id")?;
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
         return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
@@ -196,7 +197,12 @@ pub async fn list_object_relations_touching(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             let build_query = || {
-                build_object_relation_query(&options, &visibility, &collection_ids, Some(object_id))
+                build_object_relation_query(
+                    &options,
+                    &visibility,
+                    &collection_ids,
+                    Some(object_id.id()),
+                )
             };
             let total = if include_total {
                 Some(build_query()?.count().get_result::<i64>(connection).await?)
@@ -212,7 +218,7 @@ pub async fn list_object_relations_touching(
                 .await?
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
         })
         .await
@@ -243,6 +249,7 @@ pub async fn object_relations_between_ids(
     if ids.is_empty() || !visibility.allows_permissions(&[OBJECT_RELATION_PERMISSION]) {
         return Ok(Vec::new());
     }
+    let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     runtime
         .with_connection(async move |connection| {
             let collection_ids =
@@ -256,11 +263,9 @@ pub async fn object_relations_between_ids(
                 .select(ObjectRelationRow::as_select())
                 .load::<ObjectRelationRow>(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter()
-                    .map(ObjectRelationRow::into_storage)
-                    .collect(),
-            )
+            rows.into_iter()
+                .map(ObjectRelationRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -280,6 +285,11 @@ pub async fn object_relations_touching_ids(
     let max_results = i64::try_from(max_results).map_err(|_| {
         PostgresStorageError::bad_request("Object-relation result limit is too large")
     })?;
+    let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
+    let excluded_ids = excluded_ids
+        .into_iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
     runtime
         .with_connection(async move |connection| {
             let collection_ids =
@@ -303,11 +313,9 @@ pub async fn object_relations_touching_ids(
                 .select(ObjectRelationRow::as_select())
                 .load::<ObjectRelationRow>(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter()
-                    .map(ObjectRelationRow::into_storage)
-                    .collect(),
-            )
+            rows.into_iter()
+                .map(ObjectRelationRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -319,7 +327,7 @@ pub async fn related_classes(
 ) -> Result<RelationPage<StorageClassGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
-    validate_positive_id(root_id, "class id")?;
+    validate_positive_id(root_id.id(), "class id")?;
     let permissions = required_permissions(
         &options,
         [
@@ -340,7 +348,7 @@ pub async fn related_classes(
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Class,
-                root_id,
+                root_id.id(),
                 &collection_ids,
                 &options,
                 &visibility,
@@ -369,7 +377,7 @@ pub async fn related_classes(
                 .await?
                 .into_iter()
                 .map(ClassGraphQueryRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
         })
         .await
@@ -382,7 +390,7 @@ pub async fn related_objects(
 ) -> Result<RelationPage<StorageObjectGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
-    validate_positive_id(root_id, "object id")?;
+    validate_positive_id(root_id.id(), "object id")?;
     let permissions = required_permissions(
         &options,
         [
@@ -403,7 +411,7 @@ pub async fn related_objects(
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Object,
-                root_id,
+                root_id.id(),
                 &collection_ids,
                 &options,
                 &visibility,
@@ -432,7 +440,7 @@ pub async fn related_objects(
                 .await?
                 .into_iter()
                 .map(ObjectGraphQueryRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
         })
         .await
@@ -465,6 +473,12 @@ pub async fn related_objects_for_roots(
     if !visibility.allows_permissions(&permissions) {
         return Ok(Vec::new());
     }
+    let root_ids = root_ids
+        .into_iter()
+        .map(|root_id| root_id.id())
+        .collect::<Vec<_>>();
+    let class_relation_id = class_relation_id.map(|relation_id| relation_id.id());
+    let class_id = class_id.id();
 
     runtime
         .with_connection(async move |connection| {
@@ -497,11 +511,9 @@ pub async fn related_objects_for_roots(
             let rows = bind_raw_sql_query!(spec)
                 .get_results::<RelatedObjectIncludeQueryRow>(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter()
-                    .map(RelatedObjectIncludeQueryRow::into_storage)
-                    .collect(),
-            )
+            rows.into_iter()
+                .map(RelatedObjectIncludeQueryRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -524,6 +536,10 @@ pub async fn bidirectionally_related_objects_for_roots(
     if !visibility.allows_permissions(&permissions) {
         return Ok(Vec::new());
     }
+    let root_ids = root_ids
+        .into_iter()
+        .map(|root_id| root_id.id())
+        .collect::<Vec<_>>();
 
     runtime
         .with_connection(async move |connection| {
@@ -553,11 +569,9 @@ pub async fn bidirectionally_related_objects_for_roots(
             let rows = bind_raw_sql_query!(spec)
                 .get_results::<RelatedObjectForRootQueryRow>(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter()
-                    .map(RelatedObjectForRootQueryRow::into_storage)
-                    .collect(),
-            )
+            rows.into_iter()
+                .map(RelatedObjectForRootQueryRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -668,14 +682,29 @@ fn append_graph_scope_clause(
     let Some(scope) = visibility.resources() else {
         return;
     };
-    let collection_sql = sql_integer_array(scope.collection_ids(), bind_variables);
-    let class_sql = sql_integer_array(scope.class_ids(), bind_variables);
+    let collection_ids = scope
+        .collection_ids()
+        .iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
+    let class_ids = scope
+        .class_ids()
+        .iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
+    let collection_sql = sql_integer_array(&collection_ids, bind_variables);
+    let class_sql = sql_integer_array(&class_ids, bind_variables);
     match kind {
         GraphKind::Class => clauses.push(format!(
             "NOT EXISTS (SELECT 1 FROM unnest(related_classes.path) AS path_class_id JOIN hubuumclass path_class ON path_class.id = path_class_id WHERE NOT (path_class.collection_id = ANY({collection_sql}) OR path_class.id = ANY({class_sql})))"
         )),
         GraphKind::Object => {
-            let object_sql = sql_integer_array(scope.object_ids(), bind_variables);
+            let object_ids = scope
+                .object_ids()
+                .iter()
+                .map(|id| id.id())
+                .collect::<Vec<_>>();
+            let object_sql = sql_integer_array(&object_ids, bind_variables);
             clauses.push(format!(
                 "NOT EXISTS (SELECT 1 FROM unnest(related_objects.path) AS path_object_id JOIN hubuumobject path_object ON path_object.id = path_object_id WHERE NOT (path_object.collection_id = ANY({collection_sql}) OR path_object.hubuum_class_id = ANY({class_sql}) OR path_object.id = ANY({object_sql})))"
             ));
@@ -1388,9 +1417,24 @@ fn scoped_objects_sql(
     let Some(scope) = visibility.resources() else {
         return "SELECT id AS object_id FROM hubuumobject".to_string();
     };
-    let collection_ids = sql_integer_array(scope.collection_ids(), bind_variables);
-    let class_ids = sql_integer_array(scope.class_ids(), bind_variables);
-    let object_ids = sql_integer_array(scope.object_ids(), bind_variables);
+    let collection_id_values = scope
+        .collection_ids()
+        .iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
+    let class_id_values = scope
+        .class_ids()
+        .iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
+    let object_id_values = scope
+        .object_ids()
+        .iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
+    let collection_ids = sql_integer_array(&collection_id_values, bind_variables);
+    let class_ids = sql_integer_array(&class_id_values, bind_variables);
+    let object_ids = sql_integer_array(&object_id_values, bind_variables);
     format!(
         "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_ids}) OR hubuum_class_id = ANY({class_ids}) OR id = ANY({object_ids})"
     )
@@ -1544,16 +1588,16 @@ struct ClassGraphQueryRow {
 }
 
 impl ClassGraphQueryRow {
-    fn into_storage(self) -> StorageClassGraphRow {
+    fn into_storage(self) -> Result<StorageClassGraphRow, PostgresStorageError> {
         let ancestor_resource = StorageGraphResource::new(
             record_metadata_from_raw_revision(
                 self.ancestor_class_id,
                 self.ancestor_created_at,
                 self.ancestor_updated_at,
                 self.ancestor_revision,
-            ),
+            )?,
             self.ancestor_name,
-            self.ancestor_collection_id,
+            CollectionId::new(self.ancestor_collection_id)?,
             self.ancestor_description,
         );
         let descendant_resource = StorageGraphResource::new(
@@ -1562,12 +1606,12 @@ impl ClassGraphQueryRow {
                 self.descendant_created_at,
                 self.descendant_updated_at,
                 self.descendant_revision,
-            ),
+            )?,
             self.descendant_name,
-            self.descendant_collection_id,
+            CollectionId::new(self.descendant_collection_id)?,
             self.descendant_description,
         );
-        StorageClassGraphRow::new(
+        Ok(StorageClassGraphRow::new(
             StorageGraphClass::new(
                 ancestor_resource,
                 self.ancestor_json_schema,
@@ -1579,8 +1623,11 @@ impl ClassGraphQueryRow {
                 self.descendant_validate_schema,
             ),
             self.depth,
-            self.path,
-        )
+            self.path
+                .into_iter()
+                .map(ClassId::new)
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
     }
 }
 
@@ -1629,7 +1676,7 @@ struct ObjectGraphQueryRow {
 }
 
 impl ObjectGraphQueryRow {
-    fn into_storage(self) -> StorageObjectGraphRow {
+    fn into_storage(self) -> Result<StorageObjectGraphRow, PostgresStorageError> {
         let ancestor = GraphObjectParts {
             id: self.ancestor_object_id,
             name: self.ancestor_name,
@@ -1641,7 +1688,7 @@ impl ObjectGraphQueryRow {
             updated_at: self.ancestor_updated_at,
             revision: self.ancestor_revision,
         }
-        .into_storage();
+        .into_storage()?;
         let descendant = GraphObjectParts {
             id: self.descendant_object_id,
             name: self.descendant_name,
@@ -1653,8 +1700,16 @@ impl ObjectGraphQueryRow {
             updated_at: self.descendant_updated_at,
             revision: self.descendant_revision,
         }
-        .into_storage();
-        StorageObjectGraphRow::new(ancestor, descendant, self.depth, self.path)
+        .into_storage()?;
+        Ok(StorageObjectGraphRow::new(
+            ancestor,
+            descendant,
+            self.depth,
+            self.path
+                .into_iter()
+                .map(ObjectId::new)
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
     }
 }
 
@@ -1667,8 +1722,11 @@ struct RelatedObjectIncludeQueryRow {
 }
 
 impl RelatedObjectIncludeQueryRow {
-    fn into_storage(self) -> StorageRelatedObjectIncludeRow {
-        StorageRelatedObjectIncludeRow::new(self.root_object_id, self.graph.into_storage())
+    fn into_storage(self) -> Result<StorageRelatedObjectIncludeRow, PostgresStorageError> {
+        Ok(StorageRelatedObjectIncludeRow::new(
+            ObjectId::new(self.root_object_id)?,
+            self.graph.into_storage()?,
+        ))
     }
 }
 
@@ -1701,7 +1759,7 @@ struct RelatedObjectForRootQueryRow {
 }
 
 impl RelatedObjectForRootQueryRow {
-    fn into_storage(self) -> StorageRelatedObjectForRootRow {
+    fn into_storage(self) -> Result<StorageRelatedObjectForRootRow, PostgresStorageError> {
         let descendant = GraphObjectParts {
             id: self.descendant_object_id,
             name: self.descendant_name,
@@ -1713,8 +1771,16 @@ impl RelatedObjectForRootQueryRow {
             updated_at: self.descendant_updated_at,
             revision: self.descendant_revision,
         }
-        .into_storage();
-        StorageRelatedObjectForRootRow::new(self.root_object_id, descendant, self.depth, self.path)
+        .into_storage()?;
+        Ok(StorageRelatedObjectForRootRow::new(
+            ObjectId::new(self.root_object_id)?,
+            descendant,
+            self.depth,
+            self.path
+                .into_iter()
+                .map(ObjectId::new)
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
     }
 }
 
@@ -1731,16 +1797,24 @@ struct GraphObjectParts {
 }
 
 impl GraphObjectParts {
-    fn into_storage(self) -> StorageGraphObject {
+    fn into_storage(self) -> Result<StorageGraphObject, PostgresStorageError> {
         let metadata = record_metadata_from_raw_revision(
             self.id,
             self.created_at,
             self.updated_at,
             self.revision,
+        )?;
+        let resource = StorageGraphResource::new(
+            metadata,
+            self.name,
+            CollectionId::new(self.collection_id)?,
+            self.description,
         );
-        let resource =
-            StorageGraphResource::new(metadata, self.name, self.collection_id, self.description);
-        StorageGraphObject::new(resource, self.class_id, self.data)
+        Ok(StorageGraphObject::new(
+            resource,
+            ClassId::new(self.class_id)?,
+            self.data,
+        ))
     }
 }
 
@@ -1759,6 +1833,7 @@ async fn class_relations_for_ids(
     if ids.is_empty() || !visibility.allows_permissions(&[CLASS_RELATION_PERMISSION]) {
         return Ok(Vec::new());
     }
+    let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     runtime
         .with_connection(async move |connection| {
             let collection_ids =
@@ -1788,11 +1863,9 @@ async fn class_relations_for_ids(
                 .select(ClassRelationRow::as_select())
                 .load::<ClassRelationRow>(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(
-                rows.into_iter()
-                    .map(ClassRelationRow::into_storage)
-                    .collect(),
-            )
+            rows.into_iter()
+                .map(ClassRelationRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -1830,8 +1903,20 @@ fn build_class_relation_query<'query>(
         let scoped_class_ids = || {
             hubuumclass::table.select(hubuumclass::id).filter(
                 hubuumclass::collection_id
-                    .eq_any(scope.collection_ids())
-                    .or(hubuumclass::id.eq_any(scope.class_ids())),
+                    .eq_any(
+                        scope
+                            .collection_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )
+                    .or(hubuumclass::id.eq_any(
+                        scope
+                            .class_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )),
             )
         };
         records = records
@@ -1915,9 +2000,27 @@ fn build_object_relation_query<'query>(
         let scoped_object_ids = || {
             hubuumobject::table.select(hubuumobject::id).filter(
                 hubuumobject::collection_id
-                    .eq_any(scope.collection_ids())
-                    .or(hubuumobject::hubuum_class_id.eq_any(scope.class_ids()))
-                    .or(hubuumobject::id.eq_any(scope.object_ids())),
+                    .eq_any(
+                        scope
+                            .collection_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )
+                    .or(hubuumobject::hubuum_class_id.eq_any(
+                        scope
+                            .class_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    ))
+                    .or(hubuumobject::id.eq_any(
+                        scope
+                            .object_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )),
             )
         };
         records = records
@@ -2006,8 +2109,20 @@ async fn class_name_filter_ids(
         if let Some(scope) = visibility.resources() {
             classes = classes.filter(
                 hubuumclass::collection_id
-                    .eq_any(scope.collection_ids())
-                    .or(hubuumclass::id.eq_any(scope.class_ids())),
+                    .eq_any(
+                        scope
+                            .collection_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )
+                    .or(hubuumclass::id.eq_any(
+                        scope
+                            .class_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )),
             );
         }
         classes

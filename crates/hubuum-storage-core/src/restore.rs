@@ -2,7 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use hubuum_domain::MaintenanceState;
+use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -47,7 +47,7 @@ impl StorageRestoreJobStatus {
 /// Initiator identity captured when a restore artifact is staged.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRestoreInitiator {
-    principal_id: Option<i32>,
+    principal_id: Option<PrincipalId>,
     identity_scope: String,
     name: String,
 }
@@ -55,7 +55,7 @@ pub struct StorageRestoreInitiator {
 impl StorageRestoreInitiator {
     #[must_use]
     pub fn new(
-        principal_id: Option<i32>,
+        principal_id: Option<PrincipalId>,
         identity_scope: impl Into<String>,
         name: impl Into<String>,
     ) -> Self {
@@ -67,7 +67,7 @@ impl StorageRestoreInitiator {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<i32>, String, String) {
+    pub fn into_parts(self) -> (Option<PrincipalId>, String, String) {
         (self.principal_id, self.identity_scope, self.name)
     }
 }
@@ -170,7 +170,7 @@ impl StorageRestoreTimestamps {
 /// Shared non-secret restore job projection.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRestoreJobSummary {
-    id: i64,
+    id: RestoreJobId,
     status: StorageRestoreJobStatus,
     initiator: StorageRestoreInitiator,
     artifact: StorageRestoreArtifactSummary,
@@ -181,7 +181,7 @@ pub struct StorageRestoreJobSummary {
 impl StorageRestoreJobSummary {
     #[must_use]
     pub const fn new(
-        id: i64,
+        id: RestoreJobId,
         status: StorageRestoreJobStatus,
         initiator: StorageRestoreInitiator,
         artifact: StorageRestoreArtifactSummary,
@@ -199,7 +199,7 @@ impl StorageRestoreJobSummary {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i64 {
+    pub const fn id(&self) -> RestoreJobId {
         self.id
     }
 
@@ -217,7 +217,7 @@ impl StorageRestoreJobSummary {
     pub fn into_parts(
         self,
     ) -> (
-        i64,
+        RestoreJobId,
         StorageRestoreJobStatus,
         StorageRestoreInitiator,
         StorageRestoreArtifactSummary,
@@ -480,18 +480,18 @@ impl fmt::Debug for StorageRestoreDocument {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageRestoreApply {
-    job_id: i64,
+    job_id: RestoreJobId,
     document: StorageRestoreDocument,
 }
 
 impl StorageRestoreApply {
     #[must_use]
-    pub const fn new(job_id: i64, document: StorageRestoreDocument) -> Self {
+    pub const fn new(job_id: RestoreJobId, document: StorageRestoreDocument) -> Self {
         Self { job_id, document }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i64, StorageRestoreDocument) {
+    pub fn into_parts(self) -> (RestoreJobId, StorageRestoreDocument) {
         (self.job_id, self.document)
     }
 }
@@ -520,13 +520,13 @@ impl StorageRestoreCompletion {
 /// Sanitized failure persisted while atomically resuming normal operation.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRestoreFailure {
-    job_id: i64,
+    job_id: RestoreJobId,
     public_error: String,
 }
 
 impl StorageRestoreFailure {
     #[must_use]
-    pub fn new(job_id: i64, public_error: impl Into<String>) -> Self {
+    pub fn new(job_id: RestoreJobId, public_error: impl Into<String>) -> Self {
         Self {
             job_id,
             public_error: public_error.into(),
@@ -534,7 +534,7 @@ impl StorageRestoreFailure {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i64, String) {
+    pub fn into_parts(self) -> (RestoreJobId, String) {
         (self.job_id, self.public_error)
     }
 }
@@ -552,7 +552,7 @@ impl fmt::Debug for StorageRestoreFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageRestoreCoordinatorSnapshot {
     maintenance_state: MaintenanceState,
-    restore_job_id: Option<i64>,
+    restore_job_id: Option<RestoreJobId>,
     backend_now: NaiveDateTime,
 }
 
@@ -560,7 +560,7 @@ impl StorageRestoreCoordinatorSnapshot {
     #[must_use]
     pub const fn new(
         maintenance_state: MaintenanceState,
-        restore_job_id: Option<i64>,
+        restore_job_id: Option<RestoreJobId>,
         backend_now: NaiveDateTime,
     ) -> Self {
         Self {
@@ -576,7 +576,7 @@ impl StorageRestoreCoordinatorSnapshot {
     }
 
     #[must_use]
-    pub const fn restore_job_id(self) -> Option<i64> {
+    pub const fn restore_job_id(self) -> Option<RestoreJobId> {
         self.restore_job_id
     }
 
@@ -662,23 +662,32 @@ pub trait RestoreStorage: Send + Sync {
     /// Load the complete staged artifact for confirmation or recovery.
     ///
     /// Missing jobs must be reported as [`crate::StorageErrorKind::NotFound`].
-    async fn get_restore_job(&self, job_id: i64) -> Result<StorageRestoreJob, StorageError>;
+    async fn get_restore_job(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<StorageRestoreJob, StorageError>;
 
     /// Load a document-free status projection for capability-authenticated reads.
     ///
     /// Missing jobs must be reported as [`crate::StorageErrorKind::NotFound`].
-    async fn get_restore_status(&self, job_id: i64) -> Result<StorageRestoreStatus, StorageError>;
+    async fn get_restore_status(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<StorageRestoreStatus, StorageError>;
 
     /// Atomically expire a still-validated job and erase its staged document.
     ///
     /// Returns `true` only when this call performed the state transition.
-    async fn expire_restore_stage(&self, job_id: i64) -> Result<bool, StorageError>;
+    async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError>;
 
     /// Atomically confirm a validated job and enter global draining maintenance.
     ///
     /// Concurrent confirmation or an existing maintenance operation must fail
     /// with a conflict without partially changing either lifecycle.
-    async fn start_restore_draining(&self, job_id: i64) -> Result<NaiveDateTime, StorageError>;
+    async fn start_restore_draining(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<NaiveDateTime, StorageError>;
 
     /// Replace all restorable state with the validated canonical snapshot.
     ///
@@ -706,7 +715,7 @@ pub trait RestoreStorage: Send + Sync {
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError>;
 
     /// Resume normal operation when maintenance references a terminal restore.
-    async fn resume_terminal_restore(&self, job_id: i64) -> Result<(), StorageError>;
+    async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError>;
 
     /// Publish this process's coordinator heartbeat and return maintenance state.
     ///
@@ -747,7 +756,7 @@ mod tests {
     #[test]
     fn restore_dtos_redact_documents_capabilities_and_identity() {
         let request = StorageRestoreStageCreate::new(
-            StorageRestoreInitiator::new(Some(3), "secret-scope", "secret-name"),
+            StorageRestoreInitiator::new(PrincipalId::new(3).ok(), "secret-scope", "secret-name"),
             b"secret-document".to_vec(),
             StorageRestoreArtifactSummary::new(15, "secret-digest"),
             "secret-capability-hash",

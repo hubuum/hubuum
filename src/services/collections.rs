@@ -7,7 +7,7 @@ use crate::services::storage_boundary::{
     collection_create_to_storage, collection_from_storage, collection_id_to_storage,
     collection_update_to_storage,
 };
-use crate::storage::CollectionStore;
+use crate::storage::CollectionStorage;
 
 /// Application-facing collection use cases.
 ///
@@ -16,11 +16,11 @@ use crate::storage::CollectionStore;
 /// while persistence invariants stay behind the storage capability.
 #[derive(Clone)]
 pub struct CollectionService {
-    storage: Arc<dyn CollectionStore>,
+    storage: Arc<dyn CollectionStorage>,
 }
 
 impl CollectionService {
-    pub(crate) fn new(storage: Arc<dyn CollectionStore>) -> Self {
+    pub(crate) fn new(storage: Arc<dyn CollectionStorage>) -> Self {
         Self { storage }
     }
 
@@ -122,12 +122,13 @@ mod tests {
         UpdateCollection,
     };
     use crate::services::Services;
-    use crate::storage::postgres::PostgresPool;
-    use crate::storage::{MemoryStorageModel, PostgresStorage};
+    use crate::storage::MemoryStorageModel;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
         postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
     };
+    use hubuum_storage_postgres::PostgresPool;
+    use hubuum_storage_postgres::PostgresStorage;
 
     use super::CollectionService;
 

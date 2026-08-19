@@ -17,8 +17,7 @@ use crate::services::computed_fields::{
     class_computation_state_for, create_personal_definition, create_shared_definition,
     update_shared_definition,
 };
-use crate::services::tasks::{ClaimedTask, execute_computed_field_rebuild};
-use crate::storage::postgres::operations::task::claim_task_for_backend_test;
+use crate::services::tasks::execute_computed_field_rebuild;
 use crate::tests::api_operations::get_request;
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{
@@ -199,10 +198,12 @@ async fn finish_active_rebuild(context: &TestContext, class_id: i32) {
         if state.active_task_id.is_none() {
             return;
         }
-        let task = claim_task_for_backend_test(&context.pool, state.active_task_id.unwrap())
-            .await
-            .unwrap();
-        let task = ClaimedTask::from_record(task.into()).unwrap();
+        let task = crate::test_support::claim_persisted_test_task(
+            context.pool.get_ref(),
+            state.active_task_id.unwrap(),
+        )
+        .await
+        .unwrap();
         let _ = execute_computed_field_rebuild(&context.pool, &task).await;
         tokio::task::yield_now().await;
     }

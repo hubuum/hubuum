@@ -2,6 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, TaskId};
 use serde_json::Value;
 
 use crate::{
@@ -562,17 +563,17 @@ pub enum StorageImportOperation {
     },
     CreateCollection(StorageImportCollection),
     UpdateCollection {
-        collection_id: i32,
+        collection_id: CollectionId,
         input: StorageImportCollection,
     },
     CreateClass(StorageImportClass),
     UpdateClass {
-        class_id: i32,
+        class_id: ClassId,
         input: StorageImportClass,
     },
     CreateObject(StorageImportObject),
     UpdateObject {
-        object_id: i32,
+        object_id: ObjectId,
         input: StorageImportObject,
     },
     UpsertComputedField {
@@ -865,12 +866,6 @@ impl StorageImportOperation {
                 if let Some(key) = &parts.parent_collection_key {
                     validate_collection_key(key)?;
                 }
-                if matches!(self, Self::UpdateCollection { collection_id, .. } if *collection_id <= 0)
-                {
-                    return Err(StorageError::bad_request(
-                        "updated collection id must be greater than zero",
-                    ));
-                }
                 Ok(())
             }
             Self::CreateClass(input) | Self::UpdateClass { input, .. } => {
@@ -886,11 +881,6 @@ impl StorageImportOperation {
                 if let Some(key) = &parts.collection_key {
                     validate_collection_key(key)?;
                 }
-                if matches!(self, Self::UpdateClass { class_id, .. } if *class_id <= 0) {
-                    return Err(StorageError::bad_request(
-                        "updated class id must be greater than zero",
-                    ));
-                }
                 Ok(())
             }
             Self::CreateObject(input) | Self::UpdateObject { input, .. } => {
@@ -905,11 +895,6 @@ impl StorageImportOperation {
                 )?;
                 if let Some(key) = &parts.class_key {
                     validate_class_key(key)?;
-                }
-                if matches!(self, Self::UpdateObject { object_id, .. } if *object_id <= 0) {
-                    return Err(StorageError::bad_request(
-                        "updated object id must be greater than zero",
-                    ));
                 }
                 Ok(())
             }
@@ -1187,13 +1172,13 @@ fn validate_collection_and_optional_class(
 #[derive(Debug)]
 pub struct StorageImportPreflightItem {
     index: usize,
-    observed_revision: Option<i64>,
+    observed_revision: Option<ResourceRevision>,
     error: Option<StorageError>,
 }
 
 impl StorageImportPreflightItem {
     #[must_use]
-    pub const fn success(index: usize, observed_revision: Option<i64>) -> Self {
+    pub const fn success(index: usize, observed_revision: Option<ResourceRevision>) -> Self {
         Self {
             index,
             observed_revision,
@@ -1204,7 +1189,7 @@ impl StorageImportPreflightItem {
     #[must_use]
     pub const fn failure(
         index: usize,
-        observed_revision: Option<i64>,
+        observed_revision: Option<ResourceRevision>,
         error: StorageError,
     ) -> Self {
         Self {
@@ -1220,7 +1205,7 @@ impl StorageImportPreflightItem {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (usize, Option<i64>, Option<StorageError>) {
+    pub fn into_parts(self) -> (usize, Option<ResourceRevision>, Option<StorageError>) {
         (self.index, self.observed_revision, self.error)
     }
 }
@@ -1301,7 +1286,7 @@ impl StorageImportApply {
 /// Durable import result supplied after planning or application.
 #[derive(Clone, PartialEq)]
 pub struct StorageImportResult {
-    task_id: i32,
+    task_id: TaskId,
     item_ref: Option<String>,
     entity_kind: String,
     action: String,
@@ -1314,7 +1299,7 @@ pub struct StorageImportResult {
 impl StorageImportResult {
     #[must_use]
     pub fn builder(
-        task_id: i32,
+        task_id: TaskId,
         entity_kind: impl Into<String>,
         action: impl Into<String>,
         outcome: impl Into<String>,
@@ -1343,7 +1328,7 @@ impl StorageImportResult {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        TaskId,
         Option<String>,
         String,
         String,
@@ -1423,7 +1408,7 @@ pub trait ImportStorage: Send + Sync {
 
     async fn import_collection_by_id(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError>;
 
     async fn import_collection_by_key(
@@ -1438,31 +1423,31 @@ pub trait ImportStorage: Send + Sync {
 
     async fn import_collection_child_by_name(
         &self,
-        parent_collection_id: i32,
+        parent_collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageCollection>, StorageError>;
 
     async fn import_class_by_name(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError>;
 
     async fn import_classes_by_names(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError>;
 
     async fn import_object_by_name(
         &self,
-        class_id: i32,
+        class_id: ClassId,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError>;
 
     async fn import_objects_by_names(
         &self,
-        class_id: i32,
+        class_id: ClassId,
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError>;
 
@@ -1472,8 +1457,8 @@ pub trait ImportStorage: Send + Sync {
     /// remain in the application layer and are never passed to a backend.
     async fn import_class_relation_exists(
         &self,
-        left_class_id: i32,
-        right_class_id: i32,
+        left_class_id: ClassId,
+        right_class_id: ClassId,
     ) -> Result<bool, StorageError>;
 
     /// Reports whether a relation exists between two persisted object IDs.
@@ -1482,8 +1467,8 @@ pub trait ImportStorage: Send + Sync {
     /// remain in the application layer and are never passed to a backend.
     async fn import_object_relation_exists(
         &self,
-        left_object_id: i32,
-        right_object_id: i32,
+        left_object_id: ObjectId,
+        right_object_id: ObjectId,
     ) -> Result<bool, StorageError>;
 
     async fn import_group_exists(

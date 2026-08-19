@@ -10,11 +10,15 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     CollectionID, Group, HubuumClassID, HubuumObjectID, IdentityScope, NewServiceAccount,
     Permissions, PrincipalGroup, PrincipalToken, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, ResourceRevision, ServiceAccount, ServiceAccountWithName,
-    TokenListState, TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount,
-    UpdateUser, User, UserPointResponse, UserWithName, configured_token_lifetime,
+    PrincipalTokenMetadata, ServiceAccount, ServiceAccountWithName, TokenListState,
+    TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount, UpdateUser, User,
+    UserPointResponse, UserWithName, configured_token_lifetime,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::services::storage_boundary::{
+    class_id_to_storage, collection_id_to_storage, group_id_to_storage, object_id_to_storage,
+    principal_id_to_storage,
+};
 use crate::storage::{
     AuthenticationResourceScope, AuthenticationTokenScope, IdentityStorage, StorageContext,
     StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
@@ -46,60 +50,52 @@ pub(crate) async fn reset_local_password(
         .await?)
 }
 
-fn revision(value: i64, resource: &str) -> Result<ResourceRevision, ApiError> {
-    ResourceRevision::new(value).map_err(|_| {
-        ApiError::InternalServerError(format!(
-            "Storage backend returned an invalid {resource} revision"
-        ))
-    })
-}
-
 fn identity_scope_from_storage(scope: StorageIdentityScope) -> Result<IdentityScope, ApiError> {
     Ok(IdentityScope {
-        id: scope.id(),
+        id: scope.id().id(),
         name: scope.name().to_string(),
         provider_kind: scope.provider_kind().to_string(),
         created_at: scope.created_at(),
         updated_at: scope.updated_at(),
-        revision: revision(scope.revision(), "identity scope")?,
+        revision: scope.revision(),
     })
 }
 
 fn principal_group_from_storage(group: StoragePrincipalGroup) -> Result<PrincipalGroup, ApiError> {
     Ok(PrincipalGroup {
-        principal_id: group.principal_id(),
-        group_id: group.group_id(),
+        principal_id: group.principal_id().id(),
+        group_id: group.group_id().id(),
         created_at: group.created_at(),
         updated_at: group.updated_at(),
-        revision: revision(group.revision(), "group membership")?,
+        revision: group.revision(),
     })
 }
 
 pub(super) fn identity_group_from_storage(group: StorageIdentityGroup) -> Result<Group, ApiError> {
     Ok(Group {
-        id: group.id(),
+        id: group.id().id(),
         groupname: group.name().to_string(),
         description: group.description().to_string(),
         created_at: group.created_at(),
         updated_at: group.updated_at(),
-        identity_scope_id: group.identity_scope_id(),
+        identity_scope_id: group.identity_scope_id().id(),
         managed_by: group.managed_by().to_string(),
         external_key: group.external_key().map(ToString::to_string),
         last_sync_attempted_at: group.last_sync_attempted_at(),
         last_sync_success_at: group.last_sync_success_at(),
-        revision: revision(group.revision(), "group")?,
+        revision: group.revision(),
     })
 }
 
 fn service_account_from_storage(account: StorageServiceAccount) -> ServiceAccount {
     ServiceAccount {
-        id: account.id(),
+        id: account.id().id(),
         kind: crate::models::PrincipalKind::ServiceAccount
             .as_str()
             .to_string(),
         description: account.description().to_string(),
-        owner_group_id: account.owner_group_id(),
-        created_by: account.created_by(),
+        owner_group_id: account.owner_group_id().id(),
+        created_by: account.created_by().map(|id| id.id()),
         disabled_at: account.disabled_at(),
         created_at: account.created_at(),
         updated_at: account.updated_at(),
@@ -114,7 +110,7 @@ fn service_account_list_item_from_storage(
         service_account: service_account_from_storage(account),
         identity_scope,
         name,
-        revision: revision(item_revision, "service account")?,
+        revision: item_revision,
     })
 }
 
@@ -144,16 +140,16 @@ fn token_scope_from_storage(
             let (collections, classes, objects) = resources.into_parts();
             collections
                 .into_iter()
-                .map(|id| CollectionID::new(id).map(TokenResourceScope::Collection))
+                .map(|id| CollectionID::new(id.id()).map(TokenResourceScope::Collection))
                 .chain(
                     classes
                         .into_iter()
-                        .map(|id| HubuumClassID::new(id).map(TokenResourceScope::Class)),
+                        .map(|id| HubuumClassID::new(id.id()).map(TokenResourceScope::Class)),
                 )
                 .chain(
                     objects
                         .into_iter()
-                        .map(|id| HubuumObjectID::new(id).map(TokenResourceScope::Object)),
+                        .map(|id| HubuumObjectID::new(id.id()).map(TokenResourceScope::Object)),
                 )
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -170,8 +166,8 @@ fn token_metadata_from_storage(
         .map(token_scope_from_storage)
         .transpose()?;
     Ok(PrincipalTokenMetadata {
-        id: crate::models::TokenID::new(metadata.id())?,
-        principal_id: crate::models::PrincipalID::new(metadata.principal_id())?,
+        id: crate::models::TokenID::new(metadata.id().id())?,
+        principal_id: crate::models::PrincipalID::new(metadata.principal_id().id())?,
         name: metadata.name().map(str::to_string),
         description: metadata.description().map(str::to_string),
         issued: metadata.issued(),
@@ -181,7 +177,7 @@ fn token_metadata_from_storage(
         active: metadata.is_active(),
         expired: metadata.is_expired(),
         scope,
-        revision: revision(metadata.revision(), "token")?,
+        revision: metadata.revision(),
     })
 }
 
@@ -189,7 +185,7 @@ fn user_from_storage(user: StorageUser) -> User {
     let (id, password, proper_name, email, created_at, updated_at, anonymized_at) =
         user.into_parts();
     User {
-        id,
+        id: id.id(),
         kind: crate::models::PrincipalKind::Human.as_str().to_string(),
         password,
         proper_name,
@@ -211,7 +207,7 @@ fn user_list_item_from_storage(item: StorageUserListItem) -> Result<UserWithName
         managed,
         attempted,
         succeeded,
-        revision(item_revision, "user")?,
+        item_revision,
     )))
 }
 
@@ -219,15 +215,15 @@ fn user_point_from_storage(point: StorageUserPoint) -> Result<UserPointResponse,
     let (id, proper_name, email, created_at, updated_at, scope_id, managed, name, point_revision) =
         point.into_parts();
     Ok(UserPointResponse {
-        id,
-        identity_scope_id: scope_id,
+        id: id.id(),
+        identity_scope_id: scope_id.id(),
         provider_managed: managed,
         name,
         proper_name,
         email,
         created_at,
         updated_at,
-        revision: revision(point_revision, "user")?,
+        revision: point_revision,
     })
 }
 
@@ -240,9 +236,24 @@ pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> AuthenticationTokenS
     });
     let resources = scope.resource_ids().map(|resources| {
         AuthenticationResourceScope::new(
-            resources.collection_ids().to_vec(),
-            resources.class_ids().to_vec(),
-            resources.object_ids().to_vec(),
+            resources
+                .collection_ids()
+                .iter()
+                .copied()
+                .map(collection_id_to_storage)
+                .collect(),
+            resources
+                .class_ids()
+                .iter()
+                .copied()
+                .map(class_id_to_storage)
+                .collect(),
+            resources
+                .object_ids()
+                .iter()
+                .copied()
+                .map(object_id_to_storage)
+                .collect(),
         )
     });
     AuthenticationTokenScope::new(permissions, resources)
@@ -264,7 +275,9 @@ fn token_observation() -> Result<StorageTokenObservation, ApiError> {
 
 pub async fn load_user(context: &impl StorageContext, id: i32) -> Result<User, ApiError> {
     Ok(user_from_storage(
-        storage_handle(context).load_user(id).await?,
+        storage_handle(context)
+            .load_user(hubuum_domain::UserId::new(id).expect("validated user id must be positive"))
+            .await?,
     ))
 }
 
@@ -284,7 +297,13 @@ pub async fn load_user_point(
     context: &impl StorageContext,
     id: i32,
 ) -> Result<UserPointResponse, ApiError> {
-    user_point_from_storage(storage_handle(context).load_user_point(id).await?)
+    user_point_from_storage(
+        storage_handle(context)
+            .load_user_point(
+                hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
+            )
+            .await?,
+    )
 }
 
 pub async fn list_users(
@@ -326,7 +345,10 @@ pub(crate) async fn create_user_with_password_hash(
         event_context.clone(),
     );
     Ok(user_from_storage(
-        storage_handle(context).create_user(storage_request).await?,
+        storage_handle(context)
+            .create_user(storage_request)
+            .await?
+            .into_value(),
     ))
 }
 
@@ -338,14 +360,17 @@ pub async fn update_user(
 ) -> Result<User, ApiError> {
     let request = request.hash_password().await?;
     let storage_request = StorageUserUpdate::new(
-        id,
+        hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
         request.password,
         request.proper_name,
         request.email,
         event_context.clone(),
     );
     Ok(user_from_storage(
-        storage_handle(context).update_user(storage_request).await?,
+        storage_handle(context)
+            .update_user(storage_request)
+            .await?
+            .into_value(),
     ))
 }
 
@@ -357,11 +382,12 @@ pub async fn set_user_password(
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .set_user_password(StorageUserPasswordUpdate::new(
-            id,
+            hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
             password_hash,
             event_context.clone(),
         ))
-        .await?)
+        .await?
+        .into_value())
 }
 
 pub async fn delete_user(
@@ -370,8 +396,12 @@ pub async fn delete_user(
     event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
-        .delete_user(StorageUserDelete::new(id, event_context.clone()))
-        .await?)
+        .delete_user(StorageUserDelete::new(
+            hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
+            event_context.clone(),
+        ))
+        .await?
+        .into_value())
 }
 
 pub async fn anonymize_user(
@@ -379,9 +409,14 @@ pub async fn anonymize_user(
     id: i32,
     event_context: &EventContext,
 ) -> Result<(), ApiError> {
-    Ok(storage_handle(context)
-        .anonymize_user(StorageUserAnonymize::new(id, event_context.clone()))
-        .await?)
+    storage_handle(context)
+        .anonymize_user(StorageUserAnonymize::new(
+            hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
+            event_context.clone(),
+        ))
+        .await?
+        .into_value();
+    Ok(())
 }
 
 pub async fn create_token(
@@ -393,7 +428,7 @@ pub async fn create_token(
     let parts = request.into_parts();
     let raw = crate::utilities::auth::generate_token();
     let storage_request = StorageTokenCreate::new(
-        parts.principal_id.id(),
+        principal_id_to_storage(parts.principal_id.id()),
         raw.storage_hash(),
         token_policy(issuance_policy),
         event_context.clone(),
@@ -405,7 +440,8 @@ pub async fn create_token(
     let metadata = token_metadata_from_storage(
         storage_handle(context)
             .create_token(storage_request)
-            .await?,
+            .await?
+            .into_value(),
     )?;
     let expires_at = metadata.expires_at.ok_or_else(|| {
         ApiError::InternalServerError(
@@ -425,15 +461,20 @@ pub async fn renew_token(
 ) -> Result<crate::models::IssuedToken, ApiError> {
     let raw = crate::utilities::auth::generate_token();
     let request = StorageTokenRenew::new(
-        source_token_id,
-        principal_id,
+        hubuum_domain::TokenId::new(source_token_id)
+            .expect("validated source token id must be positive"),
+        principal_id_to_storage(principal_id),
         raw.storage_hash(),
         expires_at,
         token_policy(issuance_policy),
         event_context.clone(),
     );
-    let metadata =
-        token_metadata_from_storage(storage_handle(context).renew_token(request).await?)?;
+    let metadata = token_metadata_from_storage(
+        storage_handle(context)
+            .renew_token(request)
+            .await?
+            .into_value(),
+    )?;
     let expires_at = metadata.expires_at.ok_or_else(|| {
         ApiError::InternalServerError(
             "newly renewed token is missing its persisted expiry".to_string(),
@@ -449,7 +490,11 @@ pub async fn load_token_metadata(
 ) -> Result<PrincipalTokenMetadata, ApiError> {
     token_metadata_from_storage(
         storage_handle(context)
-            .load_token_metadata(principal_id, token_id, token_observation()?)
+            .load_token_metadata(
+                principal_id_to_storage(principal_id),
+                hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
+                token_observation()?,
+            )
             .await?,
     )
 }
@@ -460,7 +505,13 @@ pub async fn load_token_metadata_batch(
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     storage_handle(context)
         .load_token_metadata_batch(
-            tokens.iter().map(|token| token.id).collect(),
+            tokens
+                .iter()
+                .map(|token| {
+                    hubuum_domain::TokenId::new(token.id)
+                        .expect("validated token id must be positive")
+                })
+                .collect(),
             token_observation()?,
         )
         .await?
@@ -477,11 +528,12 @@ pub async fn revoke_token(
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .revoke_token(StorageTokenRevoke::new(
-            token_id,
-            principal_id,
+            hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
+            principal_id_to_storage(principal_id),
             event_context.clone(),
         ))
-        .await?)
+        .await?
+        .into_value())
 }
 
 pub async fn revoke_token_by_hash(
@@ -492,11 +544,12 @@ pub async fn revoke_token_by_hash(
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .revoke_token_by_hash(StorageTokenHashRevoke::new(
-            principal_id,
+            principal_id.map(principal_id_to_storage),
             token_hash,
             event_context.clone(),
         ))
-        .await?)
+        .await?
+        .into_value())
 }
 
 pub async fn revoke_all_principal_tokens(
@@ -506,10 +559,11 @@ pub async fn revoke_all_principal_tokens(
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .revoke_all_principal_tokens(StoragePrincipalTokensRevoke::new(
-            principal_id,
+            principal_id_to_storage(principal_id),
             event_context.clone(),
         ))
-        .await?)
+        .await?
+        .into_value())
 }
 
 pub async fn ensure_identity_scope(
@@ -530,7 +584,10 @@ pub async fn identity_scope_name(
     scope_id: i32,
 ) -> Result<String, ApiError> {
     Ok(storage_handle(context)
-        .identity_scope_name(scope_id)
+        .identity_scope_name(
+            hubuum_domain::IdentityScopeId::new(scope_id)
+                .expect("validated identity scope id must be positive"),
+        )
         .await?)
 }
 
@@ -539,9 +596,19 @@ pub async fn identity_scope_names(
     scope_ids: &[i32],
 ) -> Result<HashMap<i32, String>, ApiError> {
     Ok(storage_handle(context)
-        .identity_scope_names(scope_ids.to_vec())
+        .identity_scope_names(
+            scope_ids
+                .iter()
+                .copied()
+                .map(|id| {
+                    hubuum_domain::IdentityScopeId::new(id)
+                        .expect("validated identity scope id must be positive")
+                })
+                .collect(),
+        )
         .await?
         .into_iter()
+        .map(|(id, name)| (id.id(), name))
         .collect())
 }
 
@@ -552,7 +619,10 @@ pub async fn load_principal_group(
 ) -> Result<PrincipalGroup, ApiError> {
     principal_group_from_storage(
         storage_handle(context)
-            .load_principal_group(principal_id, group_id)
+            .load_principal_group(
+                principal_id_to_storage(principal_id),
+                group_id_to_storage(group_id),
+            )
             .await?,
     )
 }
@@ -563,7 +633,10 @@ pub async fn list_principal_groups(
     options: QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError> {
     let (rows, total) = storage_handle(context)
-        .list_principal_groups(StoragePrincipalGroupListQuery::new(principal_id, options))
+        .list_principal_groups(StoragePrincipalGroupListQuery::new(
+            principal_id_to_storage(principal_id),
+            options,
+        ))
         .await?
         .into_parts();
     Ok((
@@ -581,7 +654,7 @@ pub async fn list_retained_tokens(
     state: TokenListState,
 ) -> Result<(Vec<PrincipalTokenMetadata>, i64), ApiError> {
     let query = StorageTokenListQuery::new(
-        principal_id,
+        principal_id_to_storage(principal_id),
         options,
         token_state(state),
         token_observation()?,
@@ -604,7 +677,10 @@ pub async fn is_human_owner_group_member(
     owner_group_id: i32,
 ) -> Result<bool, ApiError> {
     Ok(storage_handle(context)
-        .is_human_owner_group_member(principal_id, owner_group_id)
+        .is_human_owner_group_member(
+            principal_id_to_storage(principal_id),
+            group_id_to_storage(owner_group_id),
+        )
         .await?)
 }
 
@@ -613,7 +689,7 @@ pub async fn principal_is_disabled(
     principal_id: i32,
 ) -> Result<bool, ApiError> {
     Ok(storage_handle(context)
-        .principal_is_disabled(principal_id)
+        .principal_is_disabled(principal_id_to_storage(principal_id))
         .await?)
 }
 
@@ -623,7 +699,10 @@ pub async fn load_service_account(
 ) -> Result<ServiceAccount, ApiError> {
     Ok(service_account_from_storage(
         storage_handle(context)
-            .load_service_account(service_account_id)
+            .load_service_account(
+                hubuum_domain::ServiceAccountId::new(service_account_id)
+                    .expect("validated service account id must be positive"),
+            )
             .await?,
     ))
 }
@@ -634,9 +713,9 @@ fn service_account_point_from_storage(
     let (account, identity_scope_id, name, point_revision) = point.into_parts();
     Ok(crate::models::ServiceAccountPointResponse::from_parts(
         service_account_from_storage(account),
-        identity_scope_id,
+        identity_scope_id.id(),
         name,
-        revision(point_revision, "service account")?,
+        point_revision,
     ))
 }
 
@@ -646,7 +725,10 @@ pub async fn load_service_account_point(
 ) -> Result<crate::models::ServiceAccountPointResponse, ApiError> {
     service_account_point_from_storage(
         storage_handle(context)
-            .load_service_account_point(service_account_id)
+            .load_service_account_point(
+                hubuum_domain::ServiceAccountId::new(service_account_id)
+                    .expect("validated service account id must be positive"),
+            )
             .await?,
     )
 }
@@ -657,7 +739,11 @@ pub async fn list_manageable_service_accounts(
     administrator: bool,
     options: QueryOptions,
 ) -> Result<(Vec<ServiceAccountWithName>, i64), ApiError> {
-    let query = StorageServiceAccountListQuery::new(requestor_id, administrator, options);
+    let query = StorageServiceAccountListQuery::new(
+        principal_id_to_storage(requestor_id),
+        administrator,
+        options,
+    );
     let (rows, total) = storage_handle(context)
         .list_manageable_service_accounts(query)
         .await?
@@ -689,14 +775,15 @@ pub async fn create_service_account(
     let request = StorageServiceAccountCreate::new(
         &account.name,
         account.description.clone().unwrap_or_default(),
-        account.owner_group_id.id(),
-        created_by,
+        group_id_to_storage(account.owner_group_id.id()),
+        created_by.map(principal_id_to_storage),
         event_context.clone(),
     );
     Ok(service_account_from_storage(
         storage_handle(context)
             .create_service_account(request)
-            .await?,
+            .await?
+            .into_value(),
     ))
 }
 
@@ -707,15 +794,17 @@ pub async fn update_service_account(
     event_context: &EventContext,
 ) -> Result<ServiceAccount, ApiError> {
     let request = StorageServiceAccountUpdate::new(
-        id,
+        hubuum_domain::ServiceAccountId::new(id)
+            .expect("validated service account id must be positive"),
         update.description.clone(),
-        update.owner_group_id,
+        update.owner_group_id.map(group_id_to_storage),
         event_context.clone(),
     );
     Ok(service_account_from_storage(
         storage_handle(context)
             .update_service_account(request)
-            .await?,
+            .await?
+            .into_value(),
     ))
 }
 
@@ -724,11 +813,15 @@ pub async fn disable_service_account(
     id: i32,
     event_context: &EventContext,
 ) -> Result<ServiceAccount, ApiError> {
-    let request = StorageServiceAccountMutation::new(id, event_context.clone());
-    let (account, cancelled_task_kinds) = storage_handle(context)
+    let request = StorageServiceAccountMutation::new(
+        hubuum_domain::ServiceAccountId::new(id)
+            .expect("validated service account id must be positive"),
+        event_context.clone(),
+    );
+    let outcome = storage_handle(context)
         .disable_service_account(request)
-        .await?
-        .into_parts();
+        .await?;
+    let (account, cancelled_task_kinds) = outcome.into_value().into_parts();
     for task_kind in cancelled_task_kinds {
         crate::observability::metrics::task_completed(
             &task_kind,
@@ -744,10 +837,16 @@ pub async fn delete_service_account(
     id: i32,
     event_context: &EventContext,
 ) -> Result<(), ApiError> {
-    let request = StorageServiceAccountMutation::new(id, event_context.clone());
-    Ok(storage_handle(context)
+    let request = StorageServiceAccountMutation::new(
+        hubuum_domain::ServiceAccountId::new(id)
+            .expect("validated service account id must be positive"),
+        event_context.clone(),
+    );
+    storage_handle(context)
         .delete_service_account(request)
-        .await?)
+        .await?
+        .into_value();
+    Ok(())
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -774,7 +873,7 @@ pub async fn external_principal_state(
     principal_id: i32,
 ) -> Result<Option<ExternalPrincipalState>, ApiError> {
     Ok(storage_handle(context)
-        .external_principal_state(principal_id)
+        .external_principal_state(principal_id_to_storage(principal_id))
         .await?
         .map(external_state_from_storage))
 }
@@ -784,7 +883,7 @@ pub async fn mark_external_sync_attempted(
     principal_id: i32,
 ) -> Result<(), ApiError> {
     Ok(storage_handle(context)
-        .mark_external_sync_attempted(principal_id)
+        .mark_external_sync_attempted(principal_id_to_storage(principal_id))
         .await?)
 }
 
@@ -810,7 +909,7 @@ fn external_sync_request(
 fn synced_human_from_storage(human: StorageSyncedHuman) -> crate::models::User {
     let (id, proper_name, email, created_at, updated_at, anonymized_at) = human.into_parts();
     crate::models::User {
-        id,
+        id: id.id(),
         kind: crate::models::PrincipalKind::Human.as_str().to_string(),
         password: None,
         proper_name,
@@ -829,7 +928,10 @@ pub async fn sync_external_user(
 ) -> Result<crate::models::User, ApiError> {
     let request = external_sync_request(scope_name, provider_kind, authenticated);
     Ok(synced_human_from_storage(
-        storage_handle(context).sync_external_user(request).await?,
+        storage_handle(context)
+            .sync_external_user(request)
+            .await?
+            .into_value(),
     ))
 }
 

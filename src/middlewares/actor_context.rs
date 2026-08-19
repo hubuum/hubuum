@@ -1,14 +1,12 @@
-use actix_web::body::{BoxBody, MessageBody};
-use actix_web::dev::{ServiceRequest, ServiceResponse};
-use actix_web::middleware::Next;
-use actix_web::{Error, HttpMessage};
-use hubuum_domain::PrincipalId;
-
 use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::Token;
 use crate::permissions::AppContext;
 use crate::storage::{AuthenticatedToken, with_mutation_provenance};
+use actix_web::body::{BoxBody, MessageBody};
+use actix_web::dev::{ServiceRequest, ServiceResponse};
+use actix_web::middleware::Next;
+use actix_web::{Error, HttpMessage};
 
 /// Outcome of resolving the bearer token once per request. Stored in request
 /// extensions and consumed by the auth extractors so they never re-query.
@@ -64,14 +62,10 @@ pub async fn actor_context(
         _ => None,
     };
     if let Some(principal_id) = actor {
-        record_principal_on_current_span(principal_id);
+        record_principal_on_current_span(principal_id.id());
     }
     req.extensions_mut().insert(resolved);
-    let provenance = actor
-        .map(PrincipalId::new)
-        .transpose()
-        .map_err(actix_web::error::ErrorInternalServerError)?
-        .map(MutationProvenance::user);
+    let provenance = actor.map(MutationProvenance::user);
     let res = with_mutation_provenance(&backend, provenance, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
 }

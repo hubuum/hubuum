@@ -3,6 +3,7 @@
 use diesel::prelude::{ExpressionMethods, JoinOnDsl, OptionalExtension, QueryDsl};
 use diesel::{Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{GroupId, PrincipalId};
 use hubuum_storage_core::StoragePrincipalGroup;
 
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
@@ -20,14 +21,14 @@ struct PrincipalGroupRow {
 }
 
 impl PrincipalGroupRow {
-    fn into_storage(self) -> StoragePrincipalGroup {
-        StoragePrincipalGroup::new(
-            self.principal_id,
-            self.group_id,
+    fn into_storage(self) -> Result<StoragePrincipalGroup, PostgresStorageError> {
+        Ok(StoragePrincipalGroup::new(
+            PrincipalId::new(self.principal_id)?,
+            GroupId::new(self.group_id)?,
             self.created_at,
             self.updated_at,
-            self.revision.get(),
-        )
+            self.revision.into_domain(),
+        ))
     }
 }
 
@@ -45,9 +46,8 @@ pub async fn load_principal_group(
                 .filter(crate::schema::group_memberships::group_id.eq(group_id))
                 .select(PrincipalGroupRow::as_select())
                 .first::<PrincipalGroupRow>(connection)
-                .await
-                .map(PrincipalGroupRow::into_storage)
-                .map_err(PostgresStorageError::from)
+                .await?
+                .into_storage()
         })
         .await
 }

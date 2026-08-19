@@ -132,12 +132,12 @@ fn assert_scenario_exists(root: &Path, scenario: &str) {
 
 #[cfg(test)]
 const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
-    "StorageIdentity",
-    "CollectionStore",
-    "ClassStore",
-    "ObjectStore",
-    "ClassRelationStore",
-    "ObjectRelationStore",
+    "StorageBackendIdentity",
+    "CollectionStorage",
+    "ClassStorage",
+    "ObjectStorage",
+    "ClassRelationStorage",
+    "ObjectRelationStorage",
     "AuthenticationStorage",
     "IdentityStorage",
     "UserStorage",
@@ -170,7 +170,6 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "BackupSnapshotStorage",
     "RestoreStorage",
     "ImportStorage",
-    "ExportQueryStorage",
     "ExportTemplateStorage",
     "WorkerNotificationStorage",
     "StorageExecution",
@@ -412,7 +411,7 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         "pub fn postgres_pool",
         "pub fn clone_postgres_pool",
         "impl Deref for AppContext",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "PostgresPool",
         "fn postgres",
     ] {
@@ -557,7 +556,7 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
         .get("traits")
         .and_then(toml::Value::as_table)
         .expect("semantic coverage inventory should have a traits table");
-    let unobserved_traits = ["StorageIdentity", "ExportQueryStorage", "StorageExecution"];
+    let unobserved_traits = ["StorageBackendIdentity", "StorageExecution"];
     let mut expected_observations = 0;
 
     for (trait_name, value) in traits {
@@ -570,11 +569,11 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
         let methods = toml_string_set(entry, "methods");
 
         let (implementation, observer) = match trait_name.as_str() {
-            "CollectionStore"
-            | "ClassStore"
-            | "ObjectStore"
-            | "ClassRelationStore"
-            | "ObjectRelationStore" => (
+            "CollectionStorage"
+            | "ClassStorage"
+            | "ObjectStorage"
+            | "ClassRelationStorage"
+            | "ObjectRelationStorage" => (
                 item_body(
                     &observed_source,
                     "impl<S>",
@@ -628,7 +627,7 @@ fn all_domain_models_are_free_of_database_implementation_details() {
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in [
-            "crate::storage::postgres",
+            "hubuum_storage_postgres",
             "diesel::",
             "diesel_async",
             "crate::schema",
@@ -651,7 +650,7 @@ fn postgres_adapter_helpers_accept_only_postgres_owned_context() {
     let root = repository_root();
     let mut violations = Vec::new();
 
-    for path in rust_files(&root.join("src/storage/postgres")) {
+    for path in rust_files(&root.join("crates/hubuum-storage-postgres/src")) {
         let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         if source.contains("StorageContext") {
@@ -749,7 +748,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
             &source
         };
         for forbidden in [
-            "crate::storage::postgres",
+            "hubuum_storage_postgres",
             "PostgresPool",
             "postgres_pool",
             "spawn_postgres_notification_listener",
@@ -833,17 +832,12 @@ fn resource_services_cannot_request_unrecorded_mutations() {
 }
 
 #[test]
-fn legacy_root_postgres_operations_are_test_only() {
+fn legacy_root_postgres_tree_is_absent() {
     let root = repository_root();
     let path = root.join("src/storage/postgres/mod.rs");
-    let source = read_source(&path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-
     assert!(
-        source.contains(
-            "#[cfg(any(test, feature = \"integration-test-support\"))]\n#[doc(hidden)]\npub mod operations;"
-        ),
-        "the legacy root PostgreSQL operation tree must not compile into production builds"
+        !path.exists(),
+        "the legacy root PostgreSQL compatibility tree must be removed"
     );
 }
 
@@ -869,9 +863,9 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
                 &source
             };
             for forbidden in [
-                "crate::storage::postgres::operations",
-                "crate::storage::postgres::with_connection",
-                "crate::storage::postgres::with_transaction",
+                "hubuum_storage_postgres::operations",
+                "hubuum_storage_postgres::with_connection",
+                "hubuum_storage_postgres::with_transaction",
                 "diesel::",
                 "diesel_async",
                 "postgres_pool",
@@ -892,630 +886,6 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
     assert!(
         violations.is_empty(),
         "backend-neutral service/storage code crossed into the PostgreSQL compatibility layer:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn group_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in ["src/models/group.rs", "src/models/principal_group.rs"] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    let legacy_test_harness_path = root.join("src/storage/postgres/operations/group.rs");
-    let legacy_test_harness = read_source(&legacy_test_harness_path).unwrap_or_else(|error| {
-        panic!(
-            "could not read {}: {error}",
-            legacy_test_harness_path.display()
-        )
-    });
-    for required in [
-        "struct GroupRow",
-        "impl From<GroupRow> for Group",
-        "impl CursorSqlMapping for GroupRow",
-    ] {
-        assert!(
-            legacy_test_harness.contains(required),
-            "legacy PostgreSQL group test projection is missing {required}"
-        );
-    }
-
-    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/group.rs");
-    let adapter = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
-    for required in [
-        "struct GroupRow",
-        "struct PrincipalGroupRow",
-        "struct UpdateGroupRow",
-        "impl GroupRow",
-        "impl PrincipalGroupRow",
-        "StorageIdentityGroup::builder",
-        "StoragePrincipalGroup::new",
-    ] {
-        assert!(
-            adapter.contains(required),
-            "workspace PostgreSQL group adapter is missing {required}"
-        );
-    }
-    assert!(
-        violations.is_empty(),
-        "group domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn principal_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let path = root.join("src/models/principal.rs");
-    let source = read_source(&path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-    let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-    let violations = [
-        "diesel::",
-        "diesel(",
-        "crate::schema",
-        "storage::postgres",
-        "CursorSqlMapping",
-        "CursorSqlField",
-        "CursorSqlType",
-    ]
-    .into_iter()
-    .filter(|forbidden| production_source.contains(forbidden))
-    .collect::<Vec<_>>();
-
-    let legacy_test_harness_path = root.join("src/storage/postgres/operations/principal.rs");
-    let legacy_test_harness = read_source(&legacy_test_harness_path).unwrap_or_else(|error| {
-        panic!(
-            "could not read {}: {error}",
-            legacy_test_harness_path.display()
-        )
-    });
-    for required in [
-        "struct PrincipalRow",
-        "impl From<PrincipalRow> for Principal",
-        "impl CursorSqlMapping for PrincipalRow",
-    ] {
-        assert!(
-            legacy_test_harness.contains(required),
-            "legacy PostgreSQL principal test projection is missing {required}"
-        );
-    }
-
-    let adapter_path = root.join("crates/hubuum-storage-postgres/src/operations/principal.rs");
-    let adapter = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
-    for required in [
-        "pub(crate) struct PrincipalRow",
-        "impl PrincipalRow",
-        "StoragePrincipal::builder",
-    ] {
-        assert!(
-            adapter.contains(required),
-            "workspace PostgreSQL principal adapter is missing {required}"
-        );
-    }
-
-    assert!(
-        violations.is_empty(),
-        "principal domain types crossed into persistence details: {}",
-        violations.join(", ")
-    );
-}
-
-#[test]
-fn identity_subtype_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in [
-        "src/models/identity.rs",
-        "src/models/user.rs",
-        "src/models/service_account.rs",
-        "src/models/token.rs",
-        "src/models/traits/user.rs",
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    for (relative_path, required) in [
-        (
-            "crates/hubuum-storage-postgres/src/operations/identity_scope.rs",
-            &["struct IdentityScopeRow"][..],
-        ),
-        (
-            "src/storage/postgres/operations/user/mod.rs",
-            &[
-                "struct UserRow",
-                "struct UpdateUserRow",
-                "impl From<UserRow> for User",
-                "CursorSqlMapping for UserWithNameQueryRow",
-            ][..],
-        ),
-        (
-            "crates/hubuum-storage-postgres/src/operations/service_account.rs",
-            &[
-                "struct ServiceAccountRow",
-                "struct UpdateServiceAccountRow",
-                "fn into_storage(self) -> StorageServiceAccount",
-                "fn service_account_cursor_field",
-            ][..],
-        ),
-        (
-            "src/storage/postgres/operations/token.rs",
-            &[
-                "struct PrincipalTokenRow",
-                "impl From<PrincipalTokenRow> for PrincipalToken",
-                "CursorSqlMapping for PrincipalTokenRow",
-            ][..],
-        ),
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        for item in required {
-            assert!(
-                source.contains(item),
-                "PostgreSQL identity adapter is missing {item}"
-            );
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "identity subtype domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn permission_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in [
-        "src/models/permissions.rs",
-        "src/models/output.rs",
-        "src/models/traits/output.rs",
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-            "PermissionFilter",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    let adapter_path = root.join("src/storage/postgres/operations/permissions.rs");
-    let adapter_source = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
-    for required in [
-        "struct PermissionRow",
-        "struct NewPermission",
-        "struct UpdatePermission",
-        "impl From<PermissionRow> for Permission",
-        "trait PermissionFilter",
-    ] {
-        assert!(
-            adapter_source.contains(required),
-            "PostgreSQL permission adapter is missing {required}"
-        );
-    }
-
-    let query_path = root.join("src/storage/postgres/operations/collection/permissions.rs");
-    let query_source = read_source(&query_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", query_path.display()));
-    assert!(
-        query_source.contains("impl CursorSqlMapping for GroupPermissionQueryRow"),
-        "PostgreSQL adapter must own the group-permission SQL cursor mapping"
-    );
-
-    assert!(
-        violations.is_empty(),
-        "permission domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn collection_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in [
-        "src/models/collection.rs",
-        "src/models/traits/collection.rs",
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    let adapter_path = root.join("src/storage/postgres/operations/collection/records.rs");
-    let adapter_source = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
-    for required in [
-        "struct CollectionRow",
-        "struct NewCollectionRow",
-        "struct UpdateCollectionRow",
-        "impl From<CollectionRow> for Collection",
-        "impl CursorSqlMapping for CollectionRow",
-    ] {
-        assert!(
-            adapter_source.contains(required),
-            "PostgreSQL collection adapter is missing {required}"
-        );
-    }
-
-    let history_path = root.join("crates/hubuum-storage-postgres/src/operations/history.rs");
-    let history_source = read_source(&history_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
-    assert!(
-        history_source.contains("struct CollectionHistoryRow"),
-        "PostgreSQL history adapter must own the collection-history row"
-    );
-
-    assert!(
-        violations.is_empty(),
-        "collection domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn class_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in ["src/models/class.rs", "src/models/traits/class.rs"] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    let adapter_path = root.join("src/storage/postgres/operations/class.rs");
-    let adapter_source = read_source(&adapter_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
-    for required in [
-        "struct HubuumClassRow",
-        "struct NewHubuumClassRow",
-        "struct UpdateHubuumClassRow",
-        "impl From<HubuumClassRow> for HubuumClass",
-        "impl CursorSqlMapping for HubuumClassRow",
-    ] {
-        assert!(
-            adapter_source.contains(required),
-            "PostgreSQL class adapter is missing {required}"
-        );
-    }
-
-    let history_path = root.join("crates/hubuum-storage-postgres/src/operations/history.rs");
-    let history_source = read_source(&history_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", history_path.display()));
-    assert!(
-        history_source.contains("struct ClassHistoryRow"),
-        "PostgreSQL history adapter must own the class-history row"
-    );
-
-    let output_path = root.join("src/models/traits/output.rs");
-    let output_source = read_source(&output_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", output_path.display()));
-    assert!(
-        !output_source.contains("impl CursorSqlMapping for HubuumClassExpanded"),
-        "expanded class output must not own PostgreSQL cursor mappings"
-    );
-
-    assert!(
-        violations.is_empty(),
-        "class domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn object_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in ["src/models/object.rs", "src/models/traits/object.rs"] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-        ] {
-            if source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    let legacy_query_path = root.join("src/storage/postgres/operations/object.rs");
-    let legacy_query_source = read_source(&legacy_query_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_query_path.display()));
-    for required in [
-        "struct HubuumObjectRow",
-        "struct NewHubuumObjectRow",
-        "struct UpdateHubuumObjectRow",
-        "impl From<HubuumObjectRow> for HubuumObject",
-        "impl CursorSqlMapping for HubuumObjectRow",
-    ] {
-        assert!(
-            legacy_query_source.contains(required),
-            "legacy PostgreSQL object queries are missing {required}"
-        );
-    }
-
-    assert!(
-        violations.is_empty(),
-        "object domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn relation_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in [
-        "src/models/relation.rs",
-        "src/models/traits/class_relation.rs",
-        "src/models/traits/object_relation.rs",
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    let legacy_test_harness_path = root.join("src/storage/postgres/operations/relation_rows.rs");
-    let legacy_test_harness = read_source(&legacy_test_harness_path).unwrap_or_else(|error| {
-        panic!(
-            "could not read {}: {error}",
-            legacy_test_harness_path.display()
-        )
-    });
-    for required in [
-        "struct HubuumClassRelationRow",
-        "struct NewHubuumClassRelationRow",
-        "struct HubuumObjectRelationRow",
-        "struct NewHubuumObjectRelationRow",
-        "struct HubuumClassRelationTransitiveRow",
-        "impl CursorSqlMapping for HubuumClassRelationRow",
-        "impl CursorSqlMapping for HubuumObjectRelationRow",
-        "impl CursorSqlMapping for HubuumClassRelationTransitiveRow",
-    ] {
-        assert!(
-            legacy_test_harness.contains(required),
-            "legacy PostgreSQL relation test projection is missing {required}"
-        );
-    }
-
-    let lifecycle_path = root.join("crates/hubuum-storage-postgres/src/operations/relation.rs");
-    let lifecycle = read_source(&lifecycle_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", lifecycle_path.display()));
-    for required in [
-        "struct ClassRelationRow",
-        "struct NewClassRelationRow",
-        "struct ObjectRelationRow",
-        "struct NewObjectRelationRow",
-        "impl ClassRelationRow",
-        "impl ObjectRelationRow",
-    ] {
-        assert!(
-            lifecycle.contains(required),
-            "workspace PostgreSQL relation lifecycle is missing {required}"
-        );
-    }
-
-    let query_path = root.join("crates/hubuum-storage-postgres/src/operations/relation_query.rs");
-    let query = read_source(&query_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", query_path.display()));
-    for required in [
-        "struct ClassGraphQueryRow",
-        "struct ObjectGraphQueryRow",
-        "impl ClassGraphQueryRow",
-        "impl ObjectGraphQueryRow",
-    ] {
-        assert!(
-            query.contains(required),
-            "workspace PostgreSQL relation query adapter is missing {required}"
-        );
-    }
-
-    assert!(
-        violations.is_empty(),
-        "relation domain types crossed into persistence details:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
-fn workflow_domain_types_are_free_of_persistence_implementation_details() {
-    let root = repository_root();
-    let mut violations = Vec::new();
-
-    for relative_path in [
-        "src/models/task.rs",
-        "src/models/backup.rs",
-        "src/models/computed_field.rs",
-        "src/models/revision.rs",
-        "src/models/search.rs",
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
-        for forbidden in [
-            "diesel::",
-            "diesel(",
-            "crate::schema",
-            "storage::postgres",
-            "CursorSqlMapping",
-            "CursorSqlField",
-            "CursorSqlType",
-            "ParsedQueryParamSqlExt",
-            "SQLComponent",
-            "SQLValue",
-        ] {
-            if production_source.contains(forbidden) {
-                violations.push(format!("{} contains {forbidden}", path.display()));
-            }
-        }
-    }
-
-    for (relative_path, required) in [
-        (
-            "src/storage/postgres/operations/task_rows.rs",
-            &[
-                "struct TaskRow",
-                "struct NewTaskRow",
-                "struct ImportTaskResultRow",
-                "struct ExportTaskOutputRow",
-                "struct BackupTaskOutputRow",
-                "impl From<TaskRow> for crate::models::TaskRecord",
-                "impl CursorSqlMapping for TaskRow",
-            ][..],
-        ),
-        (
-            "src/storage/postgres/operations/computed_field_rows.rs",
-            &[
-                "struct ComputedFieldDefinitionRow",
-                "struct NewComputedFieldDefinitionRow",
-                "struct ClassComputationStateRow",
-                "struct ObjectComputedDataRow",
-                "impl From<ComputedFieldDefinitionRow> for ComputedFieldDefinition",
-                "impl CursorSqlMapping for ComputedFieldDefinitionRow",
-            ][..],
-        ),
-        (
-            "crates/hubuum-storage-postgres/src/revision.rs",
-            &[
-                "struct PostgresRevision",
-                "ToSql<BigInt, Pg> for PostgresRevision",
-                "FromSql<BigInt, DB> for PostgresRevision",
-                "From<PostgresRevision> for ResourceRevision",
-            ][..],
-        ),
-        (
-            "src/storage/postgres/operations/search.rs",
-            &[
-                "struct SQLComponent",
-                "enum SQLValue",
-                "trait ParsedQueryParamSqlExt",
-                "impl ParsedQueryParamSqlExt for ParsedQueryParam",
-            ][..],
-        ),
-    ] {
-        let path = root.join(relative_path);
-        let source = read_source(&path)
-            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        for item in required {
-            assert!(
-                source.contains(item),
-                "PostgreSQL workflow adapter is missing {item}"
-            );
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "workflow domain types crossed into persistence details:\n{}",
         violations.join("\n")
     );
 }
@@ -1611,18 +981,18 @@ fn resource_services_depend_on_their_exact_storage_families() {
     let root = repository_root();
 
     for (file, service, storage_trait) in [
-        ("collections.rs", "CollectionService", "CollectionStore"),
-        ("classes.rs", "ClassService", "ClassStore"),
-        ("objects.rs", "ObjectService", "ObjectStore"),
+        ("collections.rs", "CollectionService", "CollectionStorage"),
+        ("classes.rs", "ClassService", "ClassStorage"),
+        ("objects.rs", "ObjectService", "ObjectStorage"),
         (
             "class_relations.rs",
             "ClassRelationService",
-            "ClassRelationStore",
+            "ClassRelationStorage",
         ),
         (
             "object_relations.rs",
             "ObjectRelationService",
-            "ObjectRelationStore",
+            "ObjectRelationStorage",
         ),
     ] {
         let path = root.join("src/services").join(file);
@@ -1691,10 +1061,15 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "complete storage certification must not rely on marker {forbidden_marker}"
         );
     }
-    assert!(
-        context_source.contains("assert_complete_storage_backend(&backend, backend_kind)"),
-        "application composition must enforce the complete contract and backend identity"
-    );
+    for required in [
+        "S: CertifiedStorageBackend",
+        "assert_complete_storage_backend(&backend, kind)",
+    ] {
+        assert!(
+            context_source.contains(required),
+            "application composition must enforce the complete contract and backend identity through {required}"
+        );
+    }
     let notification_adapter_production = notification_adapter_source
         .split("#[cfg(test)]")
         .next()
@@ -1740,8 +1115,9 @@ fn audited_resource_mutations_return_durable_receipt_outcomes() {
         .expect("mutation outcome contract should be readable");
     for required in [
         "pub struct AuditReceipt",
+        "pub struct AuditReceipts",
         "pub enum MutationOutcome<T>",
-        "Committed { value: T, audit: AuditReceipt }",
+        "Committed { value: T, audits: AuditReceipts }",
         "Unchanged(T)",
     ] {
         assert!(
@@ -1802,7 +1178,7 @@ fn storage_telemetry_is_required_at_production_composition() {
         "tests and one-shot tools need an explicit telemetry opt-out"
     );
 
-    let composition = read_source(&root.join("src/storage/postgres/mod.rs"))
+    let composition = read_source(&root.join("src/storage/factory.rs"))
         .expect("PostgreSQL application composition should be readable");
     assert!(
         composition.contains("PostgresStorage::new(pool, Arc::new(ApplicationPostgresTelemetry))"),
@@ -1811,7 +1187,7 @@ fn storage_telemetry_is_required_at_production_composition() {
 }
 
 #[test]
-fn every_registered_backend_runs_the_reusable_five_part_audit_contract() {
+fn every_registered_backend_runs_the_reusable_six_part_audit_contract() {
     let root = repository_root();
     let manifest = read_source(&root.join("crates/hubuum-storage-conformance/Cargo.toml"))
         .expect("storage conformance manifest should be readable");
@@ -1823,9 +1199,9 @@ fn every_registered_backend_runs_the_reusable_five_part_audit_contract() {
     let fixture = read_source(&root.join("src/tests/storage_contract.rs"))
         .expect("registered backend contract fixture should be readable");
     for required in [
-        "for kind in StorageBackendKind::ALL",
+        "for environment in available_backend_environments()",
         "verify_backend_audit_contract(&fixture)",
-        "assert_eq!(report.checks(), 5)",
+        "assert_eq!(report.checks(), 6)",
     ] {
         assert!(
             fixture.contains(required),
@@ -1852,7 +1228,7 @@ fn process_entry_points_compose_only_through_backend_neutral_storage() {
             .next()
             .unwrap_or(&source);
         for forbidden in [
-            "crate::storage::postgres",
+            "hubuum_storage_postgres",
             "hubuum_storage_postgres",
             "PostgresPool",
             "PgConnection",
@@ -2113,7 +1489,7 @@ fn export_template_lifecycle_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
         "get_config",
     ] {
@@ -2326,7 +1702,7 @@ fn import_execution_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
         "get_config",
     ] {
@@ -2383,7 +1759,7 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2397,7 +1773,7 @@ fn collection_lifecycle_is_owned_by_the_postgres_adapter() {
         root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
-    let implementation = item_body(&capability, "impl", "CollectionStore for PostgresStorage");
+    let implementation = item_body(&capability, "impl", "CollectionStorage for PostgresStorage");
     assert!(
         implementation.contains("crate::operations::collection"),
         "the collection trait implementation must delegate into the adapter crate"
@@ -2426,7 +1802,7 @@ fn catalog_queries_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2472,7 +1848,7 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2534,7 +1910,7 @@ fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
         "crate::config",
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2610,7 +1986,7 @@ fn object_aggregate_queries_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
         "get_config",
     ] {
@@ -2661,7 +2037,7 @@ fn worker_notification_io_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::lifecycle",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
         "actix_rt",
         "get_config",
@@ -2707,7 +2083,7 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
         "get_config",
     ] {
@@ -2762,7 +2138,7 @@ fn class_lifecycle_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2776,7 +2152,7 @@ fn class_lifecycle_is_owned_by_the_postgres_adapter() {
         root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
-    let implementation = item_body(&capability, "impl", "ClassStore for PostgresStorage");
+    let implementation = item_body(&capability, "impl", "ClassStorage for PostgresStorage");
     assert!(
         implementation.contains("crate::operations::class"),
         "the class trait implementation must delegate into the adapter crate"
@@ -2807,7 +2183,7 @@ fn object_lifecycle_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2821,7 +2197,7 @@ fn object_lifecycle_is_owned_by_the_postgres_adapter() {
         root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
-    let implementation = item_body(&capability, "impl", "ObjectStore for PostgresStorage");
+    let implementation = item_body(&capability, "impl", "ObjectStorage for PostgresStorage");
     assert!(
         implementation.contains("crate::operations::object"),
         "the object trait implementation must delegate into the adapter crate"
@@ -2842,22 +2218,7 @@ fn object_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
 
-    let legacy_path = root.join("src/storage/postgres/operations/object.rs");
-    let legacy = read_source(&legacy_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
-    for removed_lifecycle in [
-        "trait CreateObjectRecord",
-        "trait CreateObjectInResolvedClassRecord",
-        "trait SaveObjectRecord",
-        "trait UpdateObjectRecord",
-        "trait PatchObjectDataRecord",
-        "trait DeleteObjectRecord",
-    ] {
-        assert!(
-            !legacy.contains(removed_lifecycle),
-            "legacy application module still owns {removed_lifecycle}"
-        );
-    }
+    assert!(!root.join("src/storage/postgres").exists());
 }
 
 #[test]
@@ -2869,7 +2230,7 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2884,8 +2245,8 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     for contract in [
-        "ClassRelationStore for PostgresStorage",
-        "ObjectRelationStore for PostgresStorage",
+        "ClassRelationStorage for PostgresStorage",
+        "ObjectRelationStorage for PostgresStorage",
     ] {
         let implementation = item_body(&capability, "impl", contract);
         assert!(
@@ -2907,22 +2268,7 @@ fn relation_lifecycles_are_owned_by_the_postgres_adapter() {
         }
     }
 
-    let legacy_path = root.join("src/storage/postgres/operations/relations.rs");
-    let legacy = read_source(&legacy_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
-    for removed_lifecycle in [
-        "trait PrepareClassRelationRecord",
-        "trait SaveClassRelationRecord",
-        "trait DeleteClassRelationRecord",
-        "trait PrepareObjectRelationRecord",
-        "trait SaveObjectRelationRecord",
-        "trait DeleteObjectRelationRecord",
-    ] {
-        assert!(
-            !legacy.contains(removed_lifecycle),
-            "legacy application module still owns {removed_lifecycle}"
-        );
-    }
+    assert!(!root.join("src/storage/postgres").exists());
 }
 
 #[test]
@@ -2934,7 +2280,7 @@ fn relation_queries_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -2983,19 +2329,6 @@ fn relation_queries_are_owned_by_the_postgres_adapter() {
         !legacy_facade.exists(),
         "relation query SQL must not regain an application-owned facade"
     );
-    let legacy_search_path = root.join("src/storage/postgres/operations/user/search.rs");
-    let legacy_search = read_source(&legacy_search_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_search_path.display()));
-    for forbidden in [
-        "get_bidirectionally_related_classes",
-        "get_bidirectionally_related_objects",
-        "RootGraphWalkSpec",
-    ] {
-        assert!(
-            !legacy_search.contains(forbidden),
-            "legacy application search still owns relation query detail {forbidden}"
-        );
-    }
 }
 
 #[test]
@@ -3008,7 +2341,7 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -3050,7 +2383,7 @@ fn service_account_resources_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -3096,7 +2429,7 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
         "hubuum_auth_core",
     ] {
@@ -3145,7 +2478,7 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -3176,20 +2509,7 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let legacy_path = root.join("src/storage/postgres/operations/principal.rs");
-    let legacy = read_source(&legacy_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
-    for removed in [
-        "fn load_principal_by_id",
-        "fn load_principal_settings",
-        "fn mutate_principal_settings",
-        "fn apply_principal_settings_patch",
-    ] {
-        assert!(
-            !legacy.contains(removed),
-            "the application-owned PostgreSQL facade still owns {removed}"
-        );
-    }
+    assert!(!root.join("src/storage/postgres").exists());
 }
 
 #[test]
@@ -3201,7 +2521,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -3265,26 +2585,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let legacy_path = root.join("src/storage/postgres/operations/group.rs");
-    let legacy = read_source(&legacy_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", legacy_path.display()));
-    for removed in [
-        "trait LoadGroupRecord",
-        "trait DeleteGroupRecord",
-        "trait SaveGroupRecord",
-        "trait UpdateGroupRecord",
-        "trait GroupMembersBackend",
-        "struct PrincipalGroupRow",
-        "fn save_manual_membership",
-        "fn group_member_principal",
-        "fn list_principal_groups",
-        "fn list_groups",
-    ] {
-        assert!(
-            !legacy.contains(removed),
-            "the application-owned PostgreSQL projection still owns {removed}"
-        );
-    }
+    assert!(!root.join("src/storage/postgres").exists());
 }
 
 #[test]
@@ -3296,7 +2597,7 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -3333,25 +2634,7 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let facade_path = root.join("src/storage/postgres/operations/identity_operations.rs");
-    let facade = read_source(&facade_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
-    for removed in [
-        "fn load_user(",
-        "fn load_user_by_name(",
-        "fn load_user_point(",
-        "fn list_users(",
-        "fn create_user(",
-        "fn update_user(",
-        "fn set_user_password(",
-        "fn delete_user(",
-        "fn anonymize_user(",
-    ] {
-        assert!(
-            !facade.contains(removed),
-            "the application-owned PostgreSQL facade still owns {removed}"
-        );
-    }
+    assert!(!root.join("src/storage/postgres").exists());
 }
 
 #[test]
@@ -3363,7 +2646,7 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
     for forbidden in [
         "crate::errors",
         "crate::models",
-        "crate::storage::postgres",
+        "hubuum_storage_postgres",
         "ApiError",
     ] {
         assert!(
@@ -3404,24 +2687,7 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
     assert!(list_body.contains("crate::operations::token"));
     assert!(!list_body.contains("&self.pool"));
 
-    let facade_path = root.join("src/storage/postgres/operations/identity_operations.rs");
-    let facade = read_source(&facade_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
-    for removed in [
-        "fn list_retained_tokens(",
-        "fn create_token(",
-        "fn renew_token(",
-        "fn load_token_metadata(",
-        "fn load_token_metadata_batch(",
-        "fn revoke_token(",
-        "fn revoke_token_by_hash(",
-        "fn revoke_all_principal_tokens(",
-    ] {
-        assert!(
-            !facade.contains(removed),
-            "the application-owned PostgreSQL facade still owns {removed}"
-        );
-    }
+    assert!(!root.join("src/storage/postgres").exists());
 }
 
 #[test]
@@ -3466,7 +2732,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
             let source = read_rust_module_tree(&adapter_directory);
             (adapter_directory, source)
         };
-        for forbidden in ["crate::errors", "crate::models", "crate::storage::postgres"] {
+        for forbidden in ["crate::errors", "crate::models", "hubuum_storage_postgres"] {
             assert!(
                 !source.contains(forbidden),
                 "{} depends on application path {forbidden}",
@@ -3475,120 +2741,11 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         }
 
         let old_path = root.join(format!("src/storage/postgres/operations/{operation}.rs"));
-        if operation == "authorization" {
-            assert!(
-                !old_path.exists(),
-                "the obsolete application authorization adapter shim still exists"
-            );
-            let capability_path =
-                root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
-            let capability = read_source(&capability_path).unwrap_or_else(|error| {
-                panic!("could not read {}: {error}", capability_path.display())
-            });
-            assert!(
-                capability.contains("crate::operations::authorization"),
-                "the authorization trait implementation must delegate into the adapter crate"
-            );
-        } else if operation == "event_delivery" {
-            let administration = read_source(&old_path)
-                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
-            for moved_worker_operation in [
-                "pub(crate) async fn claim_event_delivery_batch(",
-                "pub(crate) async fn mark_event_delivery_succeeded(",
-                "pub(crate) async fn mark_event_delivery_failed(",
-                "pub(crate) async fn list_event_deliveries_with_total_count(",
-                "pub(crate) async fn load_event_delivery(",
-                "pub(crate) async fn release_event_delivery_for_retry(",
-                "pub(crate) async fn mark_event_delivery_dead(",
-            ] {
-                assert!(
-                    !administration.contains(moved_worker_operation),
-                    "{} retains worker operation {moved_worker_operation}",
-                    old_path.display()
-                );
-            }
-        } else if operation == "event_record" {
-            let shim = read_source(&old_path)
-                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
-            assert!(
-                shim.contains("hubuum_storage_postgres::operations::event_record"),
-                "the temporary event-record shim must delegate appends into the adapter crate"
-            );
-            for removed_append_detail in ["struct NewEventRow", "insert_into(crate::schema::events"]
-            {
-                assert!(
-                    !shim.contains(removed_append_detail),
-                    "{} retains append detail {removed_append_detail}",
-                    old_path.display()
-                );
-            }
-        } else if operation == "history" {
-            let shim = read_source(&old_path)
-                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
-            assert!(
-                shim.contains("hubuum_storage_postgres::operations::history"),
-                "the temporary history shim must delegate into the adapter crate"
-            );
-            for forbidden in ["diesel::", "crate::schema"] {
-                assert!(
-                    !shim.contains(forbidden),
-                    "{} retains query implementation detail {forbidden}",
-                    old_path.display()
-                );
-            }
-        } else if operation == "remote_target" {
-            let legacy_test_harness = read_source(&old_path)
-                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
-            for moved_lifecycle_detail in [
-                "struct RemoteTargetRow",
-                "struct NewRemoteTargetRow",
-                "struct UpdateRemoteTargetRow",
-                "load_remote_target_record",
-                "save_remote_target_record",
-                "update_remote_target_record",
-                "delete_remote_target_record",
-                "emit_remote_target_invoked_event",
-                "schema::remote_targets",
-            ] {
-                assert!(
-                    !legacy_test_harness.contains(moved_lifecycle_detail),
-                    "{} retains remote-target lifecycle detail {moved_lifecycle_detail}",
-                    old_path.display()
-                );
-            }
-            let facade_path =
-                root.join("crates/hubuum-storage-postgres/src/backend/remote_targets.rs");
-            let facade = read_source(&facade_path).unwrap_or_else(|error| {
-                panic!("could not read {}: {error}", facade_path.display())
-            });
-            assert!(
-                facade.contains("crate::operations::remote_target"),
-                "the remote-target trait implementation must delegate into the adapter crate"
-            );
-            for forbidden in ["diesel::", "crate::schema", "ApiError"] {
-                assert!(
-                    !facade.contains(forbidden),
-                    "{} retains adapter detail {forbidden}",
-                    facade_path.display()
-                );
-            }
-        } else if matches!(
-            operation,
-            "event_fanout" | "event_retention" | "maintenance" | "token_retention"
-        ) {
-            let shim = read_source(&old_path)
-                .unwrap_or_else(|error| panic!("could not read {}: {error}", old_path.display()));
-            assert!(
-                shim.contains(&format!("hubuum_storage_postgres::operations::{operation}")),
-                "the temporary {operation} shim must delegate into the adapter crate"
-            );
-        } else {
-            assert!(
-                !old_path.exists(),
-                "{} must not retain an application-owned implementation",
-                old_path.display()
-            );
-        }
+        assert!(
+            !old_path.exists(),
+            "{} must not retain an application-owned implementation",
+            old_path.display()
+        );
     }
 
     let capability_path =
@@ -3609,27 +2766,9 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
         "the token-retention trait implementation must not expose the PostgreSQL pool"
     );
 
-    let identity_scope_shim = root.join("src/storage/postgres/operations/identity.rs");
-    let shim = read_source(&identity_scope_shim).unwrap_or_else(|error| {
-        panic!("could not read {}: {error}", identity_scope_shim.display())
-    });
     assert!(
-        shim.contains("hubuum_storage_postgres::operations::identity_scope"),
-        "the temporary identity-scope shim must delegate into the adapter crate"
-    );
-    for forbidden in ["diesel::", "crate::schema"] {
-        assert!(
-            !shim.contains(forbidden),
-            "{} retains query implementation detail {forbidden}",
-            identity_scope_shim.display()
-        );
-    }
-
-    assert!(
-        !root
-            .join("src/storage/postgres/operations/event_administration.rs")
-            .exists(),
-        "the application crate must not retain event-administration queries"
+        !root.join("src/storage/postgres").exists(),
+        "the application crate must not retain a PostgreSQL compatibility tree"
     );
 }
 

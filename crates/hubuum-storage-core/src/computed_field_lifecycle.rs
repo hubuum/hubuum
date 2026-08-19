@@ -2,16 +2,40 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{ClassId, CollectionId, ComputedFieldDefinitionId, PrincipalId, TaskId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StorageRecordMetadata, StorageTask, StorageTaskLease};
+use crate::{MutationOutcome, StorageError, StorageRecordMetadata, StorageTask, StorageTaskLease};
+
+/// Non-negative generation of the materialized computed-field state.
+///
+/// Generation zero means that no shared definition has been evaluated yet;
+/// unlike a resource revision, it is therefore a valid initial value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StorageComputationRevision(i64);
+
+impl StorageComputationRevision {
+    pub fn new(value: i64) -> Result<Self, StorageError> {
+        if value < 0 {
+            return Err(StorageError::internal(
+                "backend returned a negative computation revision",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StorageComputedFieldVisibility {
     Shared,
-    Personal { owner_id: i32 },
+    Personal { owner_id: PrincipalId },
 }
 
 impl fmt::Debug for StorageComputedFieldVisibility {
@@ -232,13 +256,13 @@ impl StorageComputedFieldDefinitionContent {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StorageComputedFieldProvenance {
-    created_by: Option<i32>,
-    updated_by: Option<i32>,
+    created_by: Option<PrincipalId>,
+    updated_by: Option<PrincipalId>,
 }
 
 impl StorageComputedFieldProvenance {
     #[must_use]
-    pub const fn new(created_by: Option<i32>, updated_by: Option<i32>) -> Self {
+    pub const fn new(created_by: Option<PrincipalId>, updated_by: Option<PrincipalId>) -> Self {
         Self {
             created_by,
             updated_by,
@@ -249,7 +273,7 @@ impl StorageComputedFieldProvenance {
 #[derive(Clone, PartialEq)]
 pub struct StorageComputedFieldDefinition {
     metadata: StorageRecordMetadata,
-    class_id: i32,
+    class_id: ClassId,
     visibility: StorageComputedFieldVisibility,
     content: StorageComputedFieldDefinitionContent,
     provenance: StorageComputedFieldProvenance,
@@ -259,7 +283,7 @@ impl StorageComputedFieldDefinition {
     #[must_use]
     pub const fn new(
         metadata: StorageRecordMetadata,
-        class_id: i32,
+        class_id: ClassId,
         visibility: StorageComputedFieldVisibility,
         content: StorageComputedFieldDefinitionContent,
         provenance: StorageComputedFieldProvenance,
@@ -279,7 +303,7 @@ impl StorageComputedFieldDefinition {
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> i32 {
+    pub const fn class_id(&self) -> ClassId {
         self.class_id
     }
 
@@ -324,12 +348,12 @@ impl StorageComputedFieldDefinition {
     }
 
     #[must_use]
-    pub const fn created_by(&self) -> Option<i32> {
+    pub const fn created_by(&self) -> Option<PrincipalId> {
         self.provenance.created_by
     }
 
     #[must_use]
-    pub const fn updated_by(&self) -> Option<i32> {
+    pub const fn updated_by(&self) -> Option<PrincipalId> {
         self.provenance.updated_by
     }
 }
@@ -353,10 +377,10 @@ impl fmt::Debug for StorageComputedFieldDefinition {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageClassComputationState {
-    class_id: i32,
-    evaluation_revision: i64,
+    class_id: ClassId,
+    evaluation_revision: StorageComputationRevision,
     rebuild_status: String,
-    active_task_id: Option<i32>,
+    active_task_id: Option<TaskId>,
     last_error: Option<String>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
@@ -365,8 +389,8 @@ pub struct StorageClassComputationState {
 impl StorageClassComputationState {
     #[must_use]
     pub fn new(
-        class_id: i32,
-        evaluation_revision: i64,
+        class_id: ClassId,
+        evaluation_revision: StorageComputationRevision,
         rebuild_status: String,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
@@ -383,7 +407,7 @@ impl StorageClassComputationState {
     }
 
     #[must_use]
-    pub const fn active_task(mut self, active_task_id: Option<i32>) -> Self {
+    pub const fn active_task(mut self, active_task_id: Option<TaskId>) -> Self {
         self.active_task_id = active_task_id;
         self
     }
@@ -395,12 +419,12 @@ impl StorageClassComputationState {
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> i32 {
+    pub const fn class_id(&self) -> ClassId {
         self.class_id
     }
 
     #[must_use]
-    pub const fn evaluation_revision(&self) -> i64 {
+    pub const fn evaluation_revision(&self) -> StorageComputationRevision {
         self.evaluation_revision
     }
 
@@ -410,7 +434,7 @@ impl StorageClassComputationState {
     }
 
     #[must_use]
-    pub const fn active_task_id(&self) -> Option<i32> {
+    pub const fn active_task_id(&self) -> Option<TaskId> {
         self.active_task_id
     }
 
@@ -465,14 +489,18 @@ impl StorageComputedFieldMutation {
 
 #[derive(Clone, PartialEq)]
 pub struct StoragePersonalComputedFieldListQuery {
-    owner_id: i32,
-    class_id: Option<i32>,
+    owner_id: PrincipalId,
+    class_id: Option<ClassId>,
     options: QueryOptions,
 }
 
 impl StoragePersonalComputedFieldListQuery {
     #[must_use]
-    pub const fn new(owner_id: i32, class_id: Option<i32>, options: QueryOptions) -> Self {
+    pub const fn new(
+        owner_id: PrincipalId,
+        class_id: Option<ClassId>,
+        options: QueryOptions,
+    ) -> Self {
         Self {
             owner_id,
             class_id,
@@ -481,7 +509,7 @@ impl StoragePersonalComputedFieldListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, Option<i32>, QueryOptions) {
+    pub fn into_parts(self) -> (PrincipalId, Option<ClassId>, QueryOptions) {
         (self.owner_id, self.class_id, self.options)
     }
 }
@@ -500,29 +528,14 @@ impl fmt::Debug for StoragePersonalComputedFieldListQuery {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct StorageComputedFieldPage {
-    definitions: Vec<StorageComputedFieldDefinition>,
-    total: Option<i64>,
-}
-
-impl StorageComputedFieldPage {
-    #[must_use]
-    pub const fn new(definitions: Vec<StorageComputedFieldDefinition>, total: Option<i64>) -> Self {
-        Self { definitions, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageComputedFieldDefinition>, Option<i64>) {
-        (self.definitions, self.total)
-    }
-}
+/// Computed-field page retained as a domain-specific API name.
+pub type StorageComputedFieldPage = crate::StoragePage<StorageComputedFieldDefinition>;
 
 #[derive(Clone, PartialEq)]
 pub struct StorageSharedComputedFieldCreate {
-    class_id: i32,
-    authorized_collection_id: i32,
-    actor_id: i32,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    actor_id: PrincipalId,
     definition: StorageComputedFieldDefinitionInput,
     event_context: EventContext,
 }
@@ -530,9 +543,9 @@ pub struct StorageSharedComputedFieldCreate {
 impl StorageSharedComputedFieldCreate {
     #[must_use]
     pub const fn new(
-        class_id: i32,
-        authorized_collection_id: i32,
-        actor_id: i32,
+        class_id: ClassId,
+        authorized_collection_id: CollectionId,
+        actor_id: PrincipalId,
         definition: StorageComputedFieldDefinitionInput,
         event_context: EventContext,
     ) -> Self {
@@ -549,9 +562,9 @@ impl StorageSharedComputedFieldCreate {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
-        i32,
-        i32,
+        ClassId,
+        CollectionId,
+        PrincipalId,
         StorageComputedFieldDefinitionInput,
         EventContext,
     ) {
@@ -567,10 +580,10 @@ impl StorageSharedComputedFieldCreate {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageSharedComputedFieldUpdate {
-    class_id: i32,
-    authorized_collection_id: i32,
-    definition_id: i32,
-    actor_id: i32,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    definition_id: ComputedFieldDefinitionId,
+    actor_id: PrincipalId,
     patch: StorageComputedFieldDefinitionPatch,
     event_context: EventContext,
 }
@@ -578,10 +591,10 @@ pub struct StorageSharedComputedFieldUpdate {
 impl StorageSharedComputedFieldUpdate {
     #[must_use]
     pub const fn new(
-        class_id: i32,
-        authorized_collection_id: i32,
-        definition_id: i32,
-        actor_id: i32,
+        class_id: ClassId,
+        authorized_collection_id: CollectionId,
+        definition_id: ComputedFieldDefinitionId,
+        actor_id: PrincipalId,
         patch: StorageComputedFieldDefinitionPatch,
         event_context: EventContext,
     ) -> Self {
@@ -599,10 +612,10 @@ impl StorageSharedComputedFieldUpdate {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
-        i32,
-        i32,
-        i32,
+        ClassId,
+        CollectionId,
+        ComputedFieldDefinitionId,
+        PrincipalId,
         StorageComputedFieldDefinitionPatch,
         EventContext,
     ) {
@@ -619,20 +632,20 @@ impl StorageSharedComputedFieldUpdate {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageSharedComputedFieldDelete {
-    class_id: i32,
-    authorized_collection_id: i32,
-    definition_id: i32,
-    actor_id: i32,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    definition_id: ComputedFieldDefinitionId,
+    actor_id: PrincipalId,
     event_context: EventContext,
 }
 
 impl StorageSharedComputedFieldDelete {
     #[must_use]
     pub const fn new(
-        class_id: i32,
-        authorized_collection_id: i32,
-        definition_id: i32,
-        actor_id: i32,
+        class_id: ClassId,
+        authorized_collection_id: CollectionId,
+        definition_id: ComputedFieldDefinitionId,
+        actor_id: PrincipalId,
         event_context: EventContext,
     ) -> Self {
         Self {
@@ -645,7 +658,15 @@ impl StorageSharedComputedFieldDelete {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, i32, i32, EventContext) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        ClassId,
+        CollectionId,
+        ComputedFieldDefinitionId,
+        PrincipalId,
+        EventContext,
+    ) {
         (
             self.class_id,
             self.authorized_collection_id,
@@ -658,16 +679,16 @@ impl StorageSharedComputedFieldDelete {
 
 #[derive(Clone, PartialEq)]
 pub struct StoragePersonalComputedFieldCreate {
-    class_id: i32,
-    owner_id: i32,
+    class_id: ClassId,
+    owner_id: PrincipalId,
     definition: StorageComputedFieldDefinitionInput,
 }
 
 impl StoragePersonalComputedFieldCreate {
     #[must_use]
     pub const fn new(
-        class_id: i32,
-        owner_id: i32,
+        class_id: ClassId,
+        owner_id: PrincipalId,
         definition: StorageComputedFieldDefinitionInput,
     ) -> Self {
         Self {
@@ -678,23 +699,23 @@ impl StoragePersonalComputedFieldCreate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, StorageComputedFieldDefinitionInput) {
+    pub fn into_parts(self) -> (ClassId, PrincipalId, StorageComputedFieldDefinitionInput) {
         (self.class_id, self.owner_id, self.definition)
     }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct StoragePersonalComputedFieldUpdate {
-    owner_id: i32,
-    definition_id: i32,
+    owner_id: PrincipalId,
+    definition_id: ComputedFieldDefinitionId,
     patch: StorageComputedFieldDefinitionPatch,
 }
 
 impl StoragePersonalComputedFieldUpdate {
     #[must_use]
     pub const fn new(
-        owner_id: i32,
-        definition_id: i32,
+        owner_id: PrincipalId,
+        definition_id: ComputedFieldDefinitionId,
         patch: StorageComputedFieldDefinitionPatch,
     ) -> Self {
         Self {
@@ -705,20 +726,26 @@ impl StoragePersonalComputedFieldUpdate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, StorageComputedFieldDefinitionPatch) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        PrincipalId,
+        ComputedFieldDefinitionId,
+        StorageComputedFieldDefinitionPatch,
+    ) {
         (self.owner_id, self.definition_id, self.patch)
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StoragePersonalComputedFieldDelete {
-    owner_id: i32,
-    definition_id: i32,
+    owner_id: PrincipalId,
+    definition_id: ComputedFieldDefinitionId,
 }
 
 impl StoragePersonalComputedFieldDelete {
     #[must_use]
-    pub const fn new(owner_id: i32, definition_id: i32) -> Self {
+    pub const fn new(owner_id: PrincipalId, definition_id: ComputedFieldDefinitionId) -> Self {
         Self {
             owner_id,
             definition_id,
@@ -726,21 +753,25 @@ impl StoragePersonalComputedFieldDelete {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (i32, i32) {
+    pub const fn into_parts(self) -> (PrincipalId, ComputedFieldDefinitionId) {
         (self.owner_id, self.definition_id)
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StorageComputedFieldRebuildRequest {
-    class_id: i32,
-    authorized_collection_id: i32,
-    actor_id: Option<i32>,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    actor_id: Option<PrincipalId>,
 }
 
 impl StorageComputedFieldRebuildRequest {
     #[must_use]
-    pub const fn new(class_id: i32, authorized_collection_id: i32, actor_id: Option<i32>) -> Self {
+    pub const fn new(
+        class_id: ClassId,
+        authorized_collection_id: CollectionId,
+        actor_id: Option<PrincipalId>,
+    ) -> Self {
         Self {
             class_id,
             authorized_collection_id,
@@ -749,7 +780,7 @@ impl StorageComputedFieldRebuildRequest {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (i32, i32, Option<i32>) {
+    pub const fn into_parts(self) -> (ClassId, CollectionId, Option<PrincipalId>) {
         (self.class_id, self.authorized_collection_id, self.actor_id)
     }
 }
@@ -759,12 +790,12 @@ impl StorageComputedFieldRebuildRequest {
 pub trait ComputedFieldLifecycleStorage: Send + Sync {
     async fn computed_field_state(
         &self,
-        class_id: i32,
+        class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError>;
 
     async fn list_shared_computed_fields(
         &self,
-        class_id: i32,
+        class_id: ClassId,
     ) -> Result<Vec<StorageComputedFieldDefinition>, StorageError>;
 
     async fn list_personal_computed_fields(
@@ -774,23 +805,23 @@ pub trait ComputedFieldLifecycleStorage: Send + Sync {
 
     async fn get_computed_field(
         &self,
-        definition_id: i32,
+        definition_id: ComputedFieldDefinitionId,
     ) -> Result<StorageComputedFieldDefinition, StorageError>;
 
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<StorageComputedFieldMutation, StorageError>;
+    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError>;
 
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<StorageComputedFieldMutation, StorageError>;
+    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError>;
 
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<StorageClassComputationState, StorageError>;
+    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError>;
 
     async fn create_personal_computed_field(
         &self,
@@ -834,8 +865,10 @@ mod tests {
                 now,
                 hubuum_domain::ResourceRevision::new(5).unwrap(),
             ),
-            72,
-            StorageComputedFieldVisibility::Personal { owner_id: 73 },
+            ClassId::new(72).unwrap(),
+            StorageComputedFieldVisibility::Personal {
+                owner_id: PrincipalId::new(73).unwrap(),
+            },
             StorageComputedFieldDefinitionContent::new(
                 StorageComputedFieldDefinitionInput::new(
                     "secret_key".to_string(),
@@ -846,7 +879,10 @@ mod tests {
                 .with_description("secret description".to_string()),
                 4,
             ),
-            StorageComputedFieldProvenance::new(Some(74), Some(75)),
+            StorageComputedFieldProvenance::new(
+                PrincipalId::new(74).ok(),
+                PrincipalId::new(75).ok(),
+            ),
         );
 
         let debug = format!("{definition:?}");
@@ -869,9 +905,15 @@ mod tests {
     #[test]
     fn computation_state_debug_redacts_resource_task_and_error_details() {
         let now = chrono::Utc::now().naive_utc();
-        let state = StorageClassComputationState::new(98_765, 7, "failed".to_string(), now, now)
-            .active_task(Some(87_654))
-            .last_error(Some("secret database detail".to_string()));
+        let state = StorageClassComputationState::new(
+            ClassId::new(98_765).unwrap(),
+            StorageComputationRevision::new(7).unwrap(),
+            "failed".to_string(),
+            now,
+            now,
+        )
+        .active_task(TaskId::new(87_654).ok())
+        .last_error(Some("secret database detail".to_string()));
 
         let debug = format!("{state:?}");
 

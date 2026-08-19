@@ -2,6 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId, ResourceRevision};
 use serde_json::Value;
 
 use crate::{AuthorizationPermission, StorageError, StorageRecordMetadata};
@@ -9,17 +10,17 @@ use crate::{AuthorizationPermission, StorageError, StorageRecordMetadata};
 /// Normalized collection, class, and object boundary for a scoped search.
 #[derive(Clone, PartialEq, Eq)]
 pub struct UnifiedSearchResourceScope {
-    collection_ids: Vec<i32>,
-    class_ids: Vec<i32>,
-    object_ids: Vec<i32>,
+    collection_ids: Vec<CollectionId>,
+    class_ids: Vec<ClassId>,
+    object_ids: Vec<ObjectId>,
 }
 
 impl UnifiedSearchResourceScope {
     #[must_use]
     pub fn new(
-        collection_ids: impl IntoIterator<Item = i32>,
-        class_ids: impl IntoIterator<Item = i32>,
-        object_ids: impl IntoIterator<Item = i32>,
+        collection_ids: impl IntoIterator<Item = CollectionId>,
+        class_ids: impl IntoIterator<Item = ClassId>,
+        object_ids: impl IntoIterator<Item = ObjectId>,
     ) -> Self {
         Self {
             collection_ids: normalized_ids(collection_ids),
@@ -29,17 +30,17 @@ impl UnifiedSearchResourceScope {
     }
 
     #[must_use]
-    pub fn collection_ids(&self) -> &[i32] {
+    pub fn collection_ids(&self) -> &[CollectionId] {
         &self.collection_ids
     }
 
     #[must_use]
-    pub fn class_ids(&self) -> &[i32] {
+    pub fn class_ids(&self) -> &[ClassId] {
         &self.class_ids
     }
 
     #[must_use]
-    pub fn object_ids(&self) -> &[i32] {
+    pub fn object_ids(&self) -> &[ObjectId] {
         &self.object_ids
     }
 }
@@ -55,7 +56,7 @@ impl fmt::Debug for UnifiedSearchResourceScope {
     }
 }
 
-fn normalized_ids(ids: impl IntoIterator<Item = i32>) -> Vec<i32> {
+fn normalized_ids<T: Ord>(ids: impl IntoIterator<Item = T>) -> Vec<T> {
     let mut ids = ids.into_iter().collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
@@ -69,7 +70,7 @@ fn normalized_ids(ids: impl IntoIterator<Item = i32>) -> Vec<i32> {
 /// closed for all search kinds.
 #[derive(Clone, PartialEq, Eq)]
 pub struct UnifiedSearchVisibility {
-    principal_id: i32,
+    principal_id: PrincipalId,
     is_admin: bool,
     permissions: Option<Vec<AuthorizationPermission>>,
     resources: Option<UnifiedSearchResourceScope>,
@@ -78,7 +79,7 @@ pub struct UnifiedSearchVisibility {
 impl UnifiedSearchVisibility {
     #[must_use]
     pub fn new(
-        principal_id: i32,
+        principal_id: PrincipalId,
         is_admin: bool,
         permissions: Option<impl IntoIterator<Item = AuthorizationPermission>>,
         resources: Option<UnifiedSearchResourceScope>,
@@ -98,7 +99,7 @@ impl UnifiedSearchVisibility {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
@@ -144,12 +145,12 @@ impl fmt::Debug for UnifiedSearchVisibility {
 pub struct UnifiedSearchCursor {
     rank: i32,
     normalized_name: String,
-    id: i32,
+    id: ResourceId,
 }
 
 impl UnifiedSearchCursor {
     #[must_use]
-    pub fn new(rank: i32, normalized_name: impl Into<String>, id: i32) -> Self {
+    pub fn new(rank: i32, normalized_name: impl Into<String>, id: ResourceId) -> Self {
         Self {
             rank,
             normalized_name: normalized_name.into(),
@@ -168,7 +169,7 @@ impl UnifiedSearchCursor {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ResourceId {
         self.id
     }
 }
@@ -264,13 +265,28 @@ impl fmt::Debug for UnifiedSearchQuery {
 /// Collection projection returned by unified search.
 #[derive(Clone, PartialEq, Eq)]
 pub struct UnifiedSearchCollection {
-    id: i32,
+    id: CollectionId,
     name: String,
     description: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    parent_collection_id: Option<i32>,
-    revision: i64,
+    parent_collection_id: Option<CollectionId>,
+    revision: ResourceRevision,
+}
+
+impl fmt::Debug for UnifiedSearchCollection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UnifiedSearchCollection")
+            .field("id", &self.id)
+            .field("name", &"[redacted]")
+            .field("description", &"[redacted]")
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("parent_collection_id", &self.parent_collection_id)
+            .field("revision", &self.revision)
+            .finish()
+    }
 }
 
 impl UnifiedSearchCollection {
@@ -279,16 +295,16 @@ impl UnifiedSearchCollection {
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
         description: impl Into<String>,
-        parent_collection_id: Option<i32>,
+        parent_collection_id: Option<CollectionId>,
     ) -> Self {
         Self {
-            id: metadata.id().into(),
+            id: CollectionId::from(metadata.id()),
             name: name.into(),
             description: description.into(),
             created_at: metadata.created_at(),
             updated_at: metadata.updated_at(),
             parent_collection_id,
-            revision: metadata.revision().into(),
+            revision: metadata.revision(),
         }
     }
 
@@ -296,13 +312,13 @@ impl UnifiedSearchCollection {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        CollectionId,
         String,
         String,
         NaiveDateTime,
         NaiveDateTime,
-        Option<i32>,
-        i64,
+        Option<CollectionId>,
+        ResourceRevision,
     ) {
         (
             self.id,
@@ -316,7 +332,7 @@ impl UnifiedSearchCollection {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> CollectionId {
         self.id
     }
 
@@ -341,12 +357,12 @@ impl UnifiedSearchCollection {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 
     #[must_use]
-    pub const fn parent_collection_id(&self) -> Option<i32> {
+    pub const fn parent_collection_id(&self) -> Option<CollectionId> {
         self.parent_collection_id
     }
 }
@@ -354,7 +370,7 @@ impl UnifiedSearchCollection {
 /// Class projection returned by unified search, including its collection.
 #[derive(Clone, PartialEq)]
 pub struct UnifiedSearchClass {
-    id: i32,
+    id: ClassId,
     name: String,
     collection: UnifiedSearchCollection,
     json_schema: Option<Value>,
@@ -362,7 +378,24 @@ pub struct UnifiedSearchClass {
     description: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
+}
+
+impl fmt::Debug for UnifiedSearchClass {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UnifiedSearchClass")
+            .field("id", &self.id)
+            .field("name", &"[redacted]")
+            .field("collection", &self.collection)
+            .field("json_schema", &"[redacted]")
+            .field("validate_schema", &self.validate_schema)
+            .field("description", &"[redacted]")
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("revision", &self.revision)
+            .finish()
+    }
 }
 
 impl UnifiedSearchClass {
@@ -388,7 +421,7 @@ impl UnifiedSearchClass {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        ClassId,
         String,
         UnifiedSearchCollection,
         Option<Value>,
@@ -396,7 +429,7 @@ impl UnifiedSearchClass {
         String,
         NaiveDateTime,
         NaiveDateTime,
-        i64,
+        ResourceRevision,
     ) {
         (
             self.id,
@@ -412,7 +445,7 @@ impl UnifiedSearchClass {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ClassId {
         self.id
     }
 
@@ -452,7 +485,7 @@ impl UnifiedSearchClassBuilder {
     #[must_use]
     pub fn build(self) -> UnifiedSearchClass {
         UnifiedSearchClass {
-            id: self.metadata.id().into(),
+            id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection: self.collection,
             json_schema: self.json_schema,
@@ -460,7 +493,7 @@ impl UnifiedSearchClassBuilder {
             description: self.description,
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),
-            revision: self.metadata.revision().into(),
+            revision: self.metadata.revision(),
         }
     }
 }
@@ -468,15 +501,32 @@ impl UnifiedSearchClassBuilder {
 /// Object projection returned by unified search.
 #[derive(Clone, PartialEq)]
 pub struct UnifiedSearchObject {
-    id: i32,
+    id: ObjectId,
     name: String,
-    collection_id: i32,
-    class_id: i32,
+    collection_id: CollectionId,
+    class_id: ClassId,
     data: Value,
     description: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
+}
+
+impl fmt::Debug for UnifiedSearchObject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UnifiedSearchObject")
+            .field("id", &self.id)
+            .field("name", &"[redacted]")
+            .field("collection_id", &self.collection_id)
+            .field("class_id", &self.class_id)
+            .field("data", &"[redacted]")
+            .field("description", &"[redacted]")
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("revision", &self.revision)
+            .finish()
+    }
 }
 
 impl UnifiedSearchObject {
@@ -484,13 +534,13 @@ impl UnifiedSearchObject {
     pub fn new(
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
-        collection_id: i32,
-        class_id: i32,
+        collection_id: CollectionId,
+        class_id: ClassId,
         data: Value,
         description: impl Into<String>,
     ) -> Self {
         Self {
-            id: metadata.id().into(),
+            id: ObjectId::from(metadata.id()),
             name: name.into(),
             collection_id,
             class_id,
@@ -498,7 +548,7 @@ impl UnifiedSearchObject {
             description: description.into(),
             created_at: metadata.created_at(),
             updated_at: metadata.updated_at(),
-            revision: metadata.revision().into(),
+            revision: metadata.revision(),
         }
     }
 
@@ -507,15 +557,15 @@ impl UnifiedSearchObject {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        ObjectId,
         String,
-        i32,
-        i32,
+        CollectionId,
+        ClassId,
         Value,
         String,
         NaiveDateTime,
         NaiveDateTime,
-        i64,
+        ResourceRevision,
     ) {
         (
             self.id,
@@ -531,7 +581,7 @@ impl UnifiedSearchObject {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ObjectId {
         self.id
     }
 
@@ -541,12 +591,12 @@ impl UnifiedSearchObject {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> i32 {
+    pub const fn class_id(&self) -> ClassId {
         self.class_id
     }
 
@@ -571,7 +621,7 @@ impl UnifiedSearchObject {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
@@ -602,7 +652,7 @@ mod tests {
     #[test]
     fn scoped_permissions_fail_closed() {
         let visibility = UnifiedSearchVisibility::new(
-            42,
+            PrincipalId::new(42).unwrap(),
             true,
             Some([AuthorizationPermission::ReadCollection]),
             None,
@@ -617,19 +667,37 @@ mod tests {
 
     #[test]
     fn resource_scope_normalizes_identifiers() {
-        let scope = UnifiedSearchResourceScope::new([3, 1, 3], [8, 4, 8], [7, 2, 7]);
+        let scope = UnifiedSearchResourceScope::new(
+            [3, 1, 3].map(|id| CollectionId::new(id).unwrap()),
+            [8, 4, 8].map(|id| ClassId::new(id).unwrap()),
+            [7, 2, 7].map(|id| ObjectId::new(id).unwrap()),
+        );
 
-        assert_eq!(scope.collection_ids(), &[1, 3]);
-        assert_eq!(scope.class_ids(), &[4, 8]);
-        assert_eq!(scope.object_ids(), &[2, 7]);
+        assert_eq!(
+            scope.collection_ids(),
+            &[CollectionId::new(1).unwrap(), CollectionId::new(3).unwrap()]
+        );
+        assert_eq!(
+            scope.class_ids(),
+            &[ClassId::new(4).unwrap(), ClassId::new(8).unwrap()]
+        );
+        assert_eq!(
+            scope.object_ids(),
+            &[ObjectId::new(2).unwrap(), ObjectId::new(7).unwrap()]
+        );
     }
 
     #[test]
     fn debug_output_redacts_search_and_principal_values() {
-        let visibility =
-            UnifiedSearchVisibility::new(42, false, None::<[AuthorizationPermission; 0]>, None);
-        let query = UnifiedSearchQuery::new("secret asset", 10, visibility)
-            .cursor(Some(UnifiedSearchCursor::new(2, "secret asset", 99)));
+        let visibility = UnifiedSearchVisibility::new(
+            PrincipalId::new(42).unwrap(),
+            false,
+            None::<[AuthorizationPermission; 0]>,
+            None,
+        );
+        let query = UnifiedSearchQuery::new("secret asset", 10, visibility).cursor(Some(
+            UnifiedSearchCursor::new(2, "secret asset", ResourceId::new(99).unwrap()),
+        ));
 
         let debug = format!("{query:?}");
         assert!(!debug.contains("secret asset"));

@@ -2,31 +2,34 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{
+    GroupId, IdentityScopeId, PrincipalId, ResourceRevision, ServiceAccountId, TokenId, UserId,
+};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{AuthenticationTokenScope, StorageError, StorageRecordMetadata};
+use crate::{AuthenticationTokenScope, MutationOutcome, StorageError, StorageRecordMetadata};
 
 /// One identity scope owned by the selected storage backend.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageIdentityScope {
-    id: i32,
+    id: IdentityScopeId,
     name: String,
     provider_kind: String,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageIdentityScope {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: IdentityScopeId,
         name: impl Into<String>,
         provider_kind: impl Into<String>,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             id,
@@ -39,7 +42,7 @@ impl StorageIdentityScope {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> IdentityScopeId {
         self.id
     }
 
@@ -64,7 +67,7 @@ impl StorageIdentityScope {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
@@ -99,27 +102,27 @@ impl StorageIdentityScopeEnsure {
 /// One effective principal-to-group membership.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StoragePrincipalGroup {
-    principal_id: i32,
-    group_id: i32,
+    principal_id: PrincipalId,
+    group_id: GroupId,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 /// Group projection returned for one principal's effective memberships.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageIdentityGroup {
-    id: i32,
+    id: GroupId,
     name: String,
     description: String,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
     managed_by: String,
     external_key: Option<String>,
     last_sync_attempted_at: Option<NaiveDateTime>,
     last_sync_success_at: Option<NaiveDateTime>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageIdentityGroup {
@@ -128,7 +131,7 @@ impl StorageIdentityGroup {
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
         description: impl Into<String>,
-        identity_scope_id: i32,
+        identity_scope_id: IdentityScopeId,
         managed_by: impl Into<String>,
     ) -> StorageIdentityGroupBuilder {
         StorageIdentityGroupBuilder {
@@ -144,7 +147,7 @@ impl StorageIdentityGroup {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> GroupId {
         self.id
     }
 
@@ -159,7 +162,7 @@ impl StorageIdentityGroup {
     }
 
     #[must_use]
-    pub const fn identity_scope_id(&self) -> i32 {
+    pub const fn identity_scope_id(&self) -> IdentityScopeId {
         self.identity_scope_id
     }
 
@@ -194,7 +197,7 @@ impl StorageIdentityGroup {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
@@ -203,7 +206,7 @@ pub struct StorageIdentityGroupBuilder {
     metadata: StorageRecordMetadata,
     name: String,
     description: String,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
     managed_by: String,
     external_key: Option<String>,
     last_sync_attempted_at: Option<NaiveDateTime>,
@@ -242,7 +245,7 @@ impl StorageIdentityGroupBuilder {
             last_sync_success_at: self.last_sync_success_at,
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),
-            revision: self.metadata.revision().into(),
+            revision: self.metadata.revision(),
         }
     }
 }
@@ -262,13 +265,13 @@ impl fmt::Debug for StorageIdentityGroup {
 /// Stable group-membership list request for one principal.
 #[derive(Clone, PartialEq)]
 pub struct StoragePrincipalGroupListQuery {
-    principal_id: i32,
+    principal_id: PrincipalId,
     options: QueryOptions,
 }
 
 impl StoragePrincipalGroupListQuery {
     #[must_use]
-    pub const fn new(principal_id: i32, options: QueryOptions) -> Self {
+    pub const fn new(principal_id: PrincipalId, options: QueryOptions) -> Self {
         Self {
             principal_id,
             options,
@@ -276,7 +279,7 @@ impl StoragePrincipalGroupListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, QueryOptions) {
+    pub fn into_parts(self) -> (PrincipalId, QueryOptions) {
         (self.principal_id, self.options)
     }
 }
@@ -333,11 +336,11 @@ impl fmt::Debug for StorageGroupListQuery {
 impl StoragePrincipalGroup {
     #[must_use]
     pub const fn new(
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             principal_id,
@@ -349,12 +352,12 @@ impl StoragePrincipalGroup {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
     #[must_use]
-    pub const fn group_id(&self) -> i32 {
+    pub const fn group_id(&self) -> GroupId {
         self.group_id
     }
 
@@ -369,7 +372,7 @@ impl StoragePrincipalGroup {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
@@ -440,7 +443,7 @@ impl std::error::Error for StorageTokenObservationError {}
 /// Backend-neutral token-list request.
 #[derive(Clone, PartialEq)]
 pub struct StorageTokenListQuery {
-    principal_id: i32,
+    principal_id: PrincipalId,
     options: QueryOptions,
     state: StorageTokenListState,
     observation: StorageTokenObservation,
@@ -449,7 +452,7 @@ pub struct StorageTokenListQuery {
 impl StorageTokenListQuery {
     #[must_use]
     pub const fn new(
-        principal_id: i32,
+        principal_id: PrincipalId,
         options: QueryOptions,
         state: StorageTokenListState,
         observation: StorageTokenObservation,
@@ -463,7 +466,7 @@ impl StorageTokenListQuery {
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
@@ -481,7 +484,7 @@ impl StorageTokenListQuery {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        PrincipalId,
         QueryOptions,
         StorageTokenListState,
         StorageTokenObservation,
@@ -514,8 +517,8 @@ impl fmt::Debug for StorageTokenListQuery {
 /// Hash-free metadata for one retained bearer token.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenMetadata {
-    id: i32,
-    principal_id: i32,
+    id: TokenId,
+    principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
     issued: NaiveDateTime,
@@ -525,7 +528,7 @@ pub struct StorageTokenMetadata {
     active: bool,
     expired: bool,
     scope: Option<AuthenticationTokenScope>,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl fmt::Debug for StorageTokenMetadata {
@@ -544,10 +547,10 @@ impl fmt::Debug for StorageTokenMetadata {
 impl StorageTokenMetadata {
     #[must_use]
     pub const fn builder(
-        id: i32,
-        principal_id: i32,
+        id: TokenId,
+        principal_id: PrincipalId,
         issued: NaiveDateTime,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> StorageTokenMetadataBuilder {
         StorageTokenMetadataBuilder {
             id,
@@ -566,12 +569,12 @@ impl StorageTokenMetadata {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> TokenId {
         self.id
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
@@ -626,15 +629,15 @@ impl StorageTokenMetadata {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
 
 /// Builder for retained token metadata.
 pub struct StorageTokenMetadataBuilder {
-    id: i32,
-    principal_id: i32,
+    id: TokenId,
+    principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
     issued: NaiveDateTime,
@@ -644,7 +647,7 @@ pub struct StorageTokenMetadataBuilder {
     active: bool,
     expired: bool,
     scope: Option<AuthenticationTokenScope>,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl StorageTokenMetadataBuilder {
@@ -715,32 +718,16 @@ impl StorageTokenMetadataBuilder {
     }
 }
 
-/// One backend-selected identity page and optional exact total.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageIdentityPage<T> {
-    rows: Vec<T>,
-    total: Option<i64>,
-}
-
-impl<T> StorageIdentityPage<T> {
-    #[must_use]
-    pub const fn new(rows: Vec<T>, total: Option<i64>) -> Self {
-        Self { rows, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<T>, Option<i64>) {
-        (self.rows, self.total)
-    }
-}
+/// Identity page retained as a domain-specific API name.
+pub type StorageIdentityPage<T> = crate::StoragePage<T>;
 
 /// Service-account row without its separately stored principal name.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageServiceAccount {
-    id: i32,
+    id: ServiceAccountId,
     description: String,
-    owner_group_id: i32,
-    created_by: Option<i32>,
+    owner_group_id: GroupId,
+    created_by: Option<PrincipalId>,
     disabled_at: Option<NaiveDateTime>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
@@ -749,10 +736,10 @@ pub struct StorageServiceAccount {
 impl StorageServiceAccount {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: ServiceAccountId,
         description: impl Into<String>,
-        owner_group_id: i32,
-        created_by: Option<i32>,
+        owner_group_id: GroupId,
+        created_by: Option<PrincipalId>,
         disabled_at: Option<NaiveDateTime>,
         created_at: NaiveDateTime,
         updated_at: NaiveDateTime,
@@ -769,7 +756,7 @@ impl StorageServiceAccount {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ServiceAccountId {
         self.id
     }
 
@@ -779,12 +766,12 @@ impl StorageServiceAccount {
     }
 
     #[must_use]
-    pub const fn owner_group_id(&self) -> i32 {
+    pub const fn owner_group_id(&self) -> GroupId {
         self.owner_group_id
     }
 
     #[must_use]
-    pub const fn created_by(&self) -> Option<i32> {
+    pub const fn created_by(&self) -> Option<PrincipalId> {
         self.created_by
     }
 
@@ -815,16 +802,16 @@ pub struct StorageServiceAccountListItem {
     service_account: StorageServiceAccount,
     identity_scope: String,
     name: String,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 /// Strong service-account point with its revision-owned principal fields.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageServiceAccountPoint {
     service_account: StorageServiceAccount,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
     name: String,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 /// Result of atomically disabling one service account.
@@ -858,9 +845,9 @@ impl StorageServiceAccountPoint {
     #[must_use]
     pub fn new(
         service_account: StorageServiceAccount,
-        identity_scope_id: i32,
+        identity_scope_id: IdentityScopeId,
         name: impl Into<String>,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             service_account,
@@ -871,7 +858,14 @@ impl StorageServiceAccountPoint {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageServiceAccount, i32, String, i64) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        StorageServiceAccount,
+        IdentityScopeId,
+        String,
+        ResourceRevision,
+    ) {
         (
             self.service_account,
             self.identity_scope_id,
@@ -887,7 +881,7 @@ impl StorageServiceAccountListItem {
         service_account: StorageServiceAccount,
         identity_scope: impl Into<String>,
         name: impl Into<String>,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             service_account,
@@ -898,7 +892,7 @@ impl StorageServiceAccountListItem {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageServiceAccount, String, String, i64) {
+    pub fn into_parts(self) -> (StorageServiceAccount, String, String, ResourceRevision) {
         (
             self.service_account,
             self.identity_scope,
@@ -911,14 +905,18 @@ impl StorageServiceAccountListItem {
 /// Manageable-service-account query with authorization pushdown inputs.
 #[derive(Clone, PartialEq)]
 pub struct StorageServiceAccountListQuery {
-    requestor_id: i32,
+    requestor_id: PrincipalId,
     administrator: bool,
     options: QueryOptions,
 }
 
 impl StorageServiceAccountListQuery {
     #[must_use]
-    pub const fn new(requestor_id: i32, administrator: bool, options: QueryOptions) -> Self {
+    pub const fn new(
+        requestor_id: PrincipalId,
+        administrator: bool,
+        options: QueryOptions,
+    ) -> Self {
         Self {
             requestor_id,
             administrator,
@@ -927,7 +925,7 @@ impl StorageServiceAccountListQuery {
     }
 
     #[must_use]
-    pub const fn requestor_id(&self) -> i32 {
+    pub const fn requestor_id(&self) -> PrincipalId {
         self.requestor_id
     }
 
@@ -942,7 +940,7 @@ impl StorageServiceAccountListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, bool, QueryOptions) {
+    pub fn into_parts(self) -> (PrincipalId, bool, QueryOptions) {
         (self.requestor_id, self.administrator, self.options)
     }
 }
@@ -967,8 +965,8 @@ impl fmt::Debug for StorageServiceAccountListQuery {
 pub struct StorageServiceAccountCreate {
     name: String,
     description: String,
-    owner_group_id: i32,
-    created_by: Option<i32>,
+    owner_group_id: GroupId,
+    created_by: Option<PrincipalId>,
     event_context: EventContext,
 }
 
@@ -977,8 +975,8 @@ impl StorageServiceAccountCreate {
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
-        owner_group_id: i32,
-        created_by: Option<i32>,
+        owner_group_id: GroupId,
+        created_by: Option<PrincipalId>,
         event_context: EventContext,
     ) -> Self {
         Self {
@@ -1001,12 +999,12 @@ impl StorageServiceAccountCreate {
     }
 
     #[must_use]
-    pub const fn owner_group_id(&self) -> i32 {
+    pub const fn owner_group_id(&self) -> GroupId {
         self.owner_group_id
     }
 
     #[must_use]
-    pub const fn created_by(&self) -> Option<i32> {
+    pub const fn created_by(&self) -> Option<PrincipalId> {
         self.created_by
     }
 
@@ -1016,7 +1014,7 @@ impl StorageServiceAccountCreate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (String, String, i32, Option<i32>, EventContext) {
+    pub fn into_parts(self) -> (String, String, GroupId, Option<PrincipalId>, EventContext) {
         (
             self.name,
             self.description,
@@ -1042,18 +1040,18 @@ impl fmt::Debug for StorageServiceAccountCreate {
 /// Service-account patch owned by the identity storage contract.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageServiceAccountUpdate {
-    id: i32,
+    id: ServiceAccountId,
     description: Option<String>,
-    owner_group_id: Option<i32>,
+    owner_group_id: Option<GroupId>,
     event_context: EventContext,
 }
 
 impl StorageServiceAccountUpdate {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: ServiceAccountId,
         description: Option<String>,
-        owner_group_id: Option<i32>,
+        owner_group_id: Option<GroupId>,
         event_context: EventContext,
     ) -> Self {
         Self {
@@ -1065,7 +1063,7 @@ impl StorageServiceAccountUpdate {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ServiceAccountId {
         self.id
     }
 
@@ -1075,7 +1073,7 @@ impl StorageServiceAccountUpdate {
     }
 
     #[must_use]
-    pub const fn owner_group_id(&self) -> Option<i32> {
+    pub const fn owner_group_id(&self) -> Option<GroupId> {
         self.owner_group_id
     }
 
@@ -1085,7 +1083,14 @@ impl StorageServiceAccountUpdate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, Option<String>, Option<i32>, EventContext) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        ServiceAccountId,
+        Option<String>,
+        Option<GroupId>,
+        EventContext,
+    ) {
         (
             self.id,
             self.description,
@@ -1109,18 +1114,18 @@ impl fmt::Debug for StorageServiceAccountUpdate {
 /// Point mutation for disabling or deleting one service account.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageServiceAccountMutation {
-    id: i32,
+    id: ServiceAccountId,
     event_context: EventContext,
 }
 
 impl StorageServiceAccountMutation {
     #[must_use]
-    pub const fn new(id: i32, event_context: EventContext) -> Self {
+    pub const fn new(id: ServiceAccountId, event_context: EventContext) -> Self {
         Self { id, event_context }
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ServiceAccountId {
         self.id
     }
 
@@ -1130,7 +1135,7 @@ impl StorageServiceAccountMutation {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, EventContext) {
+    pub fn into_parts(self) -> (ServiceAccountId, EventContext) {
         (self.id, self.event_context)
     }
 }
@@ -1406,7 +1411,7 @@ impl StorageExternalUserSyncBuilder {
 /// Password-free human row returned after external synchronization.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageSyncedHuman {
-    id: i32,
+    id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
     created_at: NaiveDateTime,
@@ -1498,7 +1503,7 @@ impl fmt::Debug for StorageLocalPasswordReset {
 impl StorageSyncedHuman {
     #[must_use]
     pub const fn new(
-        id: i32,
+        id: UserId,
         proper_name: Option<String>,
         email: Option<String>,
         created_at: NaiveDateTime,
@@ -1519,7 +1524,7 @@ impl StorageSyncedHuman {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        UserId,
         Option<String>,
         Option<String>,
         NaiveDateTime,
@@ -1569,7 +1574,7 @@ pub trait IdentityStorage: Send + Sync {
 
     /// Resolve one scope ID to its name, returning `NotFound` when it does not
     /// exist.
-    async fn identity_scope_name(&self, scope_id: i32) -> Result<String, StorageError>;
+    async fn identity_scope_name(&self, scope_id: IdentityScopeId) -> Result<String, StorageError>;
 
     /// Resolve every distinct requested scope ID.
     ///
@@ -1577,15 +1582,15 @@ pub trait IdentityStorage: Send + Sync {
     /// rather than return a partial mapping when any ID cannot be resolved.
     async fn identity_scope_names(
         &self,
-        scope_ids: Vec<i32>,
-    ) -> Result<Vec<(i32, String)>, StorageError>;
+        scope_ids: Vec<IdentityScopeId>,
+    ) -> Result<Vec<(IdentityScopeId, String)>, StorageError>;
 
     /// Load one effective principal-to-group membership with its authoritative
     /// revision, returning `NotFound` when no membership source remains.
     async fn load_principal_group(
         &self,
-        principal_id: i32,
-        group_id: i32,
+        principal_id: PrincipalId,
+        group_id: GroupId,
     ) -> Result<StoragePrincipalGroup, StorageError>;
 
     /// List every effective group membership for one principal with stable
@@ -1613,26 +1618,26 @@ pub trait IdentityStorage: Send + Sync {
     /// the service account owner group.
     async fn is_human_owner_group_member(
         &self,
-        principal_id: i32,
-        owner_group_id: i32,
+        principal_id: PrincipalId,
+        owner_group_id: GroupId,
     ) -> Result<bool, StorageError>;
 
     /// Return `true` only for a disabled service-account principal.
     ///
     /// Human principals and IDs without a service-account row return `false`.
-    async fn principal_is_disabled(&self, principal_id: i32) -> Result<bool, StorageError>;
+    async fn principal_is_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError>;
 
     /// Load the service-account row for one principal ID.
     async fn load_service_account(
         &self,
-        service_account_id: i32,
+        service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccount, StorageError>;
 
     /// Load one service account together with the principal-owned name, scope,
     /// and revision needed for a strong point response.
     async fn load_service_account_point(
         &self,
-        service_account_id: i32,
+        service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccountPoint, StorageError>;
 
     /// List service accounts manageable by the requestor, applying owner-group
@@ -1648,28 +1653,28 @@ pub trait IdentityStorage: Send + Sync {
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
-    ) -> Result<StorageServiceAccount, StorageError>;
+    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError>;
 
     /// Atomically apply a service-account patch and its required lifecycle
     /// event, preserving no-op revision behavior.
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
-    ) -> Result<StorageServiceAccount, StorageError>;
+    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError>;
 
     /// Atomically disable a service account, revoke its active credentials,
     /// cancel its pending work, and emit the required lifecycle event.
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<StorageServiceAccountDisableOutcome, StorageError>;
+    ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, StorageError>;
 
     /// Atomically delete an eligible service account and emit the required
     /// lifecycle event, enforcing backend-owned deletion constraints.
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<(), StorageError>;
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     /// Return refresh state only for a provider-managed external human.
     ///
@@ -1677,18 +1682,21 @@ pub trait IdentityStorage: Send + Sync {
     /// external records fail closed.
     async fn external_principal_state(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError>;
 
     /// Record the current external refresh attempt time for one principal.
-    async fn mark_external_sync_attempted(&self, principal_id: i32) -> Result<(), StorageError>;
+    async fn mark_external_sync_attempted(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<(), StorageError>;
 
     /// Atomically reconcile one external human, its profile, effective external
     /// group memberships, synchronization timestamps, and lifecycle events.
     async fn sync_external_user(
         &self,
         request: StorageExternalUserSync,
-    ) -> Result<StorageSyncedHuman, StorageError>;
+    ) -> Result<MutationOutcome<StorageSyncedHuman>, StorageError>;
 }
 
 #[cfg(test)]
@@ -1708,18 +1716,18 @@ mod tests {
             ),
             "operators",
             "Operations team",
-            2,
+            IdentityScopeId::new(2).unwrap(),
             "local",
         )
         .external_key(Some("directory-secret".to_string()))
         .last_sync_success_at(Some(updated_at))
         .build();
 
-        assert_eq!(group.id(), 7);
+        assert_eq!(group.id(), GroupId::new(7).unwrap());
         assert_eq!(group.name(), "operators");
         assert_eq!(group.created_at(), created_at);
         assert_eq!(group.updated_at(), updated_at);
-        assert_eq!(group.revision(), 3);
+        assert_eq!(group.revision(), ResourceRevision::new(3).unwrap());
         assert_eq!(group.last_sync_success_at(), Some(updated_at));
         let debug = format!("{group:?}");
         assert!(!debug.contains("operators"));
@@ -1738,7 +1746,7 @@ mod tests {
         .unwrap();
         let debug = format!(
             "{:?}",
-            StorageServiceAccountListQuery::new(42, false, options)
+            StorageServiceAccountListQuery::new(PrincipalId::new(42).unwrap(), false, options)
         );
 
         assert!(!debug.contains("42"));

@@ -2,6 +2,7 @@
 
 use chrono::NaiveDateTime;
 use diesel::{Queryable, Selectable};
+use hubuum_domain::{PrincipalId, TaskId, TokenId};
 use hubuum_storage_core::{
     StorageTask, StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
 };
@@ -12,7 +13,7 @@ use crate::PostgresStorageError;
 
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::tasks)]
-pub(super) struct TaskRow {
+pub(crate) struct TaskRow {
     pub(super) id: i32,
     pub(super) kind: String,
     pub(super) status: String,
@@ -42,39 +43,46 @@ pub(super) struct TaskRow {
 }
 
 impl TaskRow {
-    pub(super) fn into_storage(self) -> Result<StorageTask, PostgresStorageError> {
+    pub(crate) fn into_storage(self) -> Result<StorageTask, PostgresStorageError> {
         let kind = StorageTaskKind::from_persisted(&self.kind).ok_or_else(|| {
             PostgresStorageError::database(format!("Unknown stored task kind '{}'", self.kind))
         })?;
         let status = StorageTaskStatus::from_persisted(&self.status).ok_or_else(|| {
             PostgresStorageError::database(format!("Unknown stored task status '{}'", self.status))
         })?;
-        Ok(
-            StorageTask::builder(self.id, kind, status, self.created_at, self.updated_at)
-                .submitted_by(self.submitted_by)
-                .idempotency_key(self.idempotency_key)
-                .request_hash(self.request_hash)
-                .request_payload(self.request_payload)
-                .summary(self.summary)
-                .progress(StorageTaskProgress::new(
-                    self.total_items,
-                    self.processed_items,
-                    self.success_items,
-                    self.failed_items,
-                ))
-                .scope_snapshot(StorageTaskScopeSnapshot::new(
-                    self.submitted_token_id,
-                    self.submitted_token_scoped,
-                    self.submitted_token_scopes,
-                ))
-                .request_redacted_at(self.request_redacted_at)
-                .started_at(self.started_at)
-                .finished_at(self.finished_at)
-                .deletion(self.deleted_at, self.deleted_by)
-                .lease(self.lease_token, self.lease_expires_at)
-                .attempt_count(self.attempt_count)
-                .initiator_principal_id(self.initiator_user_id)
-                .build(),
+        Ok(StorageTask::builder(
+            TaskId::new(self.id)?,
+            kind,
+            status,
+            self.created_at,
+            self.updated_at,
         )
+        .submitted_by(self.submitted_by.map(PrincipalId::new).transpose()?)
+        .idempotency_key(self.idempotency_key)
+        .request_hash(self.request_hash)
+        .request_payload(self.request_payload)
+        .summary(self.summary)
+        .progress(StorageTaskProgress::new(
+            self.total_items,
+            self.processed_items,
+            self.success_items,
+            self.failed_items,
+        ))
+        .scope_snapshot(StorageTaskScopeSnapshot::new(
+            self.submitted_token_id.map(TokenId::new).transpose()?,
+            self.submitted_token_scoped,
+            self.submitted_token_scopes,
+        ))
+        .request_redacted_at(self.request_redacted_at)
+        .started_at(self.started_at)
+        .finished_at(self.finished_at)
+        .deletion(
+            self.deleted_at,
+            self.deleted_by.map(PrincipalId::new).transpose()?,
+        )
+        .lease(self.lease_token, self.lease_expires_at)
+        .attempt_count(self.attempt_count)
+        .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
+        .build())
     }
 }

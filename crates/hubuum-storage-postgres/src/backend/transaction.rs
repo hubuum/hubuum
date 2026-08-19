@@ -1,19 +1,18 @@
 use async_trait::async_trait;
-use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
-    ClassRelationStore, ClassStore, CollectionStore, MutationOutcome, ObjectRelationStore,
-    ObjectStore, StorageClassCreate, StorageClassRecord, StorageClassRelation,
-    StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageObject,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelation,
-    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
-    StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClass,
-    StorageResolvedClassRelation, StorageResolvedObject, StorageResolvedObjectRelation,
-    StorageTransaction, StorageTransactionFuture, TransactionalClassRelations,
-    TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,
-    TransactionalObjects, TransactionalStorage,
+    ClassRelationStorage, ClassStorage, CollectionStorage, MutationOutcome, ObjectRelationStorage,
+    ObjectStorage, StorageClassCreate, StorageClassRecord, StorageClassRelationCreate,
+    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
+    StorageObjectDataPatch, StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
+    StorageObjectSelector, StorageObjectUpdate, StoragePreparedClassRelation,
+    StoragePreparedObjectRelation, StorageResolvedClass, StorageResolvedClassRelation,
+    StorageResolvedObject, StorageResolvedObjectRelation, StorageTransaction,
+    StorageTransactionFuture, TransactionalClassRelations, TransactionalClasses,
+    TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
+    TransactionalStorage,
 };
 use tokio::sync::Mutex;
 
@@ -66,7 +65,7 @@ impl StorageTransaction for PostgresTransaction<'_> {
 }
 
 #[async_trait]
-impl CollectionStore for PostgresTransaction<'_> {
+impl CollectionStorage for PostgresTransaction<'_> {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::collection::get_collection_on(&mut connection, id.id())
@@ -152,7 +151,7 @@ impl CollectionStore for PostgresTransaction<'_> {
 }
 
 #[async_trait]
-impl ClassStore for PostgresTransaction<'_> {
+impl ClassStorage for PostgresTransaction<'_> {
     async fn resolve_class(
         &self,
         selector: StorageClassSelector,
@@ -220,7 +219,7 @@ impl ClassStore for PostgresTransaction<'_> {
 }
 
 #[async_trait]
-impl ClassRelationStore for PostgresTransaction<'_> {
+impl ClassRelationStorage for PostgresTransaction<'_> {
     async fn prepare_class_relation(
         &self,
         command: StorageClassRelationCreate,
@@ -233,10 +232,10 @@ impl ClassRelationStore for PostgresTransaction<'_> {
 
     async fn resolve_class_relation(
         &self,
-        id: i32,
+        id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::relation::resolve_class_relation_on(&mut connection, id)
+        crate::operations::relation::resolve_class_relation_on(&mut connection, id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -262,36 +261,10 @@ impl ClassRelationStore for PostgresTransaction<'_> {
             .await
             .map_err(StorageError::from)
     }
-
-    async fn create_class_relation_from_command(
-        &self,
-        command: StorageClassRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
-        let mut connection = self.connection.lock().await;
-        crate::operations::relation::create_class_relation_from_command_on(
-            &mut connection,
-            command,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn delete_class_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        let mut connection = self.connection.lock().await;
-        crate::operations::relation::delete_class_relation_by_id_on(&mut connection, id, context)
-            .await
-            .map_err(StorageError::from)
-    }
 }
 
 #[async_trait]
-impl ObjectStore for PostgresTransaction<'_> {
+impl ObjectStorage for PostgresTransaction<'_> {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::get_object_on(&mut connection, object_id.id())
@@ -408,7 +381,7 @@ impl ObjectStore for PostgresTransaction<'_> {
 }
 
 #[async_trait]
-impl ObjectRelationStore for PostgresTransaction<'_> {
+impl ObjectRelationStorage for PostgresTransaction<'_> {
     async fn prepare_object_relation(
         &self,
         selector: StorageObjectRelationCreateSelector,
@@ -447,32 +420,6 @@ impl ObjectRelationStore for PostgresTransaction<'_> {
     ) -> Result<MutationOutcome<()>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::relation::delete_object_relation_on(&mut connection, target, context)
-            .await
-            .map_err(StorageError::from)
-    }
-
-    async fn create_object_relation_from_command(
-        &self,
-        command: StorageObjectRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
-        let mut connection = self.connection.lock().await;
-        crate::operations::relation::create_object_relation_from_command_on(
-            &mut connection,
-            command,
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn delete_object_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        let mut connection = self.connection.lock().await;
-        crate::operations::relation::delete_object_relation_by_id_on(&mut connection, id, context)
             .await
             .map_err(StorageError::from)
     }

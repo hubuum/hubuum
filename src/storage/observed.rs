@@ -3,16 +3,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use tracing::{Instrument, debug, debug_span, warn};
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, MutationOutcome, ObjectRelationStore,
-    ObjectStore, StorageClassCreate, StorageClassRecord, StorageClassRelation,
+    ClassRelationStorage, ClassStorage, CollectionStorage, MutationOutcome, ObjectRelationStorage,
+    ObjectStorage, StorageBackendIdentity, StorageClassCreate, StorageClassRecord,
     StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageIdentity, StorageObject,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelation,
-    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageObject,
+    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelationCreateSelector,
     StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
     StorageOperationObservation, StoragePreparedClassRelation, StoragePreparedObjectRelation,
     StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
@@ -48,7 +47,7 @@ impl StorageTelemetry for ApplicationStorageTelemetry {
 
 impl<S> ObservedStorage<S>
 where
-    S: StorageIdentity,
+    S: StorageBackendIdentity,
 {
     pub(crate) fn new(storage: S, telemetry: Arc<dyn StorageTelemetry>) -> Self {
         let backend = storage.storage_name();
@@ -163,9 +162,9 @@ pub(super) fn observe_infallible_storage_call<T>(
     result
 }
 
-impl<S> StorageIdentity for ObservedStorage<S>
+impl<S> StorageBackendIdentity for ObservedStorage<S>
 where
-    S: StorageIdentity,
+    S: StorageBackendIdentity,
 {
     fn storage_name(&self) -> &'static str {
         self.backend
@@ -173,9 +172,9 @@ where
 }
 
 #[async_trait]
-impl<S> CollectionStore for ObservedStorage<S>
+impl<S> CollectionStorage for ObservedStorage<S>
 where
-    S: CollectionStore + StorageIdentity,
+    S: CollectionStorage + StorageBackendIdentity,
 {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         self.call("collections", "get", self.inner.get_collection(id))
@@ -262,9 +261,9 @@ where
 }
 
 #[async_trait]
-impl<S> ClassStore for ObservedStorage<S>
+impl<S> ClassStorage for ObservedStorage<S>
 where
-    S: ClassStore + StorageIdentity,
+    S: ClassStorage + StorageBackendIdentity,
 {
     async fn resolve_class(
         &self,
@@ -324,9 +323,9 @@ where
 }
 
 #[async_trait]
-impl<S> ObjectStore for ObservedStorage<S>
+impl<S> ObjectStorage for ObservedStorage<S>
 where
-    S: ObjectStore + StorageIdentity,
+    S: ObjectStorage + StorageBackendIdentity,
 {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         self.call("objects", "get", self.inner.get_object(object_id))
@@ -428,9 +427,9 @@ where
 }
 
 #[async_trait]
-impl<S> ClassRelationStore for ObservedStorage<S>
+impl<S> ClassRelationStorage for ObservedStorage<S>
 where
-    S: ClassRelationStore + StorageIdentity,
+    S: ClassRelationStorage + StorageBackendIdentity,
 {
     async fn prepare_class_relation(
         &self,
@@ -446,7 +445,7 @@ where
 
     async fn resolve_class_relation(
         &self,
-        id: i32,
+        id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
         self.call(
             "class_relations",
@@ -481,39 +480,12 @@ where
         )
         .await
     }
-
-    async fn create_class_relation_from_command(
-        &self,
-        command: StorageClassRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
-        self.call(
-            "class_relations",
-            "create_from_command",
-            self.inner
-                .create_class_relation_from_command(command, context),
-        )
-        .await
-    }
-
-    async fn delete_class_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        self.call(
-            "class_relations",
-            "delete_by_id",
-            self.inner.delete_class_relation_by_id(id, context),
-        )
-        .await
-    }
 }
 
 #[async_trait]
-impl<S> ObjectRelationStore for ObservedStorage<S>
+impl<S> ObjectRelationStorage for ObservedStorage<S>
 where
-    S: ObjectRelationStore + StorageIdentity,
+    S: ObjectRelationStorage + StorageBackendIdentity,
 {
     async fn prepare_object_relation(
         &self,
@@ -561,33 +533,6 @@ where
             "object_relations",
             "delete",
             self.inner.delete_object_relation(target, context),
-        )
-        .await
-    }
-
-    async fn create_object_relation_from_command(
-        &self,
-        command: StorageObjectRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
-        self.call(
-            "object_relations",
-            "create_from_command",
-            self.inner
-                .create_object_relation_from_command(command, context),
-        )
-        .await
-    }
-
-    async fn delete_object_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        self.call(
-            "object_relations",
-            "delete_by_id",
-            self.inner.delete_object_relation_by_id(id, context),
         )
         .await
     }

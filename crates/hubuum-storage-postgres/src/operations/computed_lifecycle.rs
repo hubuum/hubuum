@@ -11,19 +11,19 @@ use hubuum_computed_fields::{
     Definition, FieldKey, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, Operation, ResultType,
     SEMANTICS_VERSION,
 };
-use hubuum_domain::{PrincipalId, TaskId};
+use hubuum_domain::{ClassId, PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
-    StorageClassComputationState, StorageComputedFieldDefinition,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskCompletion, StorageTaskEventInput,
-    StorageTaskKind, StorageTaskLease, StorageTaskResultCounts, StorageTaskStateUpdate,
-    StorageTaskStatus,
+    MutationOutcome, StorageClassComputationState, StorageComputationRevision,
+    StorageComputedFieldDefinition, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation, StorageComputedFieldPage,
+    StorageComputedFieldRebuildRequest, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
+    StorageTaskCompletion, StorageTaskEventInput, StorageTaskKind, StorageTaskLease,
+    StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -76,16 +76,16 @@ impl ComputationStateRow {
         }
     }
 
-    fn into_storage(self) -> StorageClassComputationState {
-        StorageClassComputationState::new(
-            self.class_id,
-            self.evaluation_revision,
+    fn into_storage(self) -> Result<StorageClassComputationState, PostgresStorageError> {
+        Ok(StorageClassComputationState::new(
+            ClassId::new(self.class_id)?,
+            StorageComputationRevision::new(self.evaluation_revision)?,
             self.rebuild_status,
             self.created_at,
             self.updated_at,
         )
-        .active_task(self.active_task_id)
-        .last_error(self.last_error)
+        .active_task(self.active_task_id.map(TaskId::new).transpose()?)
+        .last_error(self.last_error))
     }
 }
 
@@ -279,7 +279,7 @@ pub async fn computed_field_state(
         })
         .await?
         .unwrap_or_else(|| ComputationStateRow::ready_without_definitions(class_id));
-    Ok(state.into_storage())
+    state.into_storage()
 }
 
 pub async fn list_shared_computed_fields(
@@ -309,10 +309,8 @@ pub async fn list_personal_computed_fields(
     query: StoragePersonalComputedFieldListQuery,
 ) -> Result<StorageComputedFieldPage, PostgresStorageError> {
     let (owner_id, class_id, mut options) = query.into_parts();
-    validate_positive("owner", owner_id)?;
-    if let Some(class_id) = class_id {
-        validate_positive("class", class_id)?;
-    }
+    let owner_id = owner_id.id();
+    let class_id = class_id.map(|id| id.id());
     normalize_list_options(&mut options);
     let count_options = options.clone();
     let total = if options.include_total() {
@@ -378,11 +376,13 @@ pub async fn get_computed_field(
 pub async fn create_shared_computed_field(
     runtime: &PostgresRuntime,
     request: StorageSharedComputedFieldCreate,
-) -> Result<StorageComputedFieldMutation, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageComputedFieldMutation>, PostgresStorageError> {
     let (class_id, authorized_collection_id, actor_id, definition, context) = request.into_parts();
-    validate_positive("authorized collection", authorized_collection_id)?;
+    let class_id = class_id.id();
+    let authorized_collection_id = authorized_collection_id.id();
+    let actor_id = actor_id.id();
     let input = NewComputedDefinitionRow::shared(class_id, actor_id, definition)?;
-    let (definition, state) = runtime
+    let (definition, state, audit) = runtime
         .with_transaction(async move |connection| {
             acquire_computed_class_exclusive_lock(connection, class_id).await?;
             let class =
@@ -413,27 +413,29 @@ pub async fn create_shared_computed_field(
                 format!("Shared computed field '{}' created", definition.key()),
             )?
             .with_after(definition.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>((definition, state))
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>((definition, state, audit))
         })
         .await?;
-    Ok(StorageComputedFieldMutation::new(
-        definition.into_storage()?,
-        state.into_storage(),
+    Ok(MutationOutcome::committed(
+        StorageComputedFieldMutation::new(definition.into_storage()?, state.into_storage()?),
+        audit,
     ))
 }
 
 pub async fn update_shared_computed_field(
     runtime: &PostgresRuntime,
     request: StorageSharedComputedFieldUpdate,
-) -> Result<StorageComputedFieldMutation, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageComputedFieldMutation>, PostgresStorageError> {
     let (class_id, authorized_collection_id, definition_id, actor_id, patch, context) =
         request.into_parts();
-    validate_positive("class", class_id)?;
-    validate_positive("authorized collection", authorized_collection_id)?;
-    validate_positive("computed-field definition", definition_id)?;
-    validate_positive("actor", actor_id)?;
-    let (definition, state) = runtime
+    let class_id = class_id.id();
+    let authorized_collection_id = authorized_collection_id.id();
+    let definition_id = definition_id.id();
+    let actor_id = actor_id.id();
+    let (definition, state, audit) = runtime
         .with_transaction(async move |connection| {
             acquire_computed_class_exclusive_lock(connection, class_id).await?;
             let class =
@@ -455,6 +457,7 @@ pub async fn update_shared_computed_field(
                 return Ok((
                     current,
                     ensure_computation_state(connection, class_id).await?,
+                    None,
                 ));
             }
             let definition =
@@ -473,27 +476,31 @@ pub async fn update_shared_computed_field(
             )?
             .with_before(current.snapshot())
             .with_after(definition.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>((definition, state))
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>((definition, state, Some(audit)))
         })
         .await?;
-    Ok(StorageComputedFieldMutation::new(
-        definition.into_storage()?,
-        state.into_storage(),
-    ))
+    let value =
+        StorageComputedFieldMutation::new(definition.into_storage()?, state.into_storage()?);
+    Ok(match audit {
+        Some(audit) => MutationOutcome::committed(value, audit),
+        None => MutationOutcome::unchanged(value),
+    })
 }
 
 pub async fn delete_shared_computed_field(
     runtime: &PostgresRuntime,
     request: StorageSharedComputedFieldDelete,
-) -> Result<StorageClassComputationState, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageClassComputationState>, PostgresStorageError> {
     let (class_id, authorized_collection_id, definition_id, actor_id, context) =
         request.into_parts();
-    validate_positive("class", class_id)?;
-    validate_positive("authorized collection", authorized_collection_id)?;
-    validate_positive("computed-field definition", definition_id)?;
-    validate_positive("actor", actor_id)?;
-    let state = runtime
+    let class_id = class_id.id();
+    let authorized_collection_id = authorized_collection_id.id();
+    let definition_id = definition_id.id();
+    let actor_id = actor_id.id();
+    let (state, audit) = runtime
         .with_transaction(async move |connection| {
             acquire_computed_class_exclusive_lock(connection, class_id).await?;
             let class =
@@ -525,11 +532,13 @@ pub async fn delete_shared_computed_field(
                 format!("Shared computed field '{}' deleted", current.key()),
             )?
             .with_before(current.snapshot());
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(state)
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>((state, audit))
         })
         .await?;
-    Ok(state.into_storage())
+    Ok(MutationOutcome::committed(state.into_storage()?, audit))
 }
 
 pub async fn create_personal_computed_field(
@@ -537,6 +546,8 @@ pub async fn create_personal_computed_field(
     request: StoragePersonalComputedFieldCreate,
 ) -> Result<StorageComputedFieldDefinition, PostgresStorageError> {
     let (class_id, owner_id, definition) = request.into_parts();
+    let class_id = class_id.id();
+    let owner_id = owner_id.id();
     let input = NewComputedDefinitionRow::personal(class_id, owner_id, definition)?;
     let definition = runtime
         .with_transaction(async move |connection| {
@@ -571,8 +582,8 @@ pub async fn update_personal_computed_field(
     request: StoragePersonalComputedFieldUpdate,
 ) -> Result<StorageComputedFieldDefinition, PostgresStorageError> {
     let (owner_id, definition_id, patch) = request.into_parts();
-    validate_positive("owner", owner_id)?;
-    validate_positive("computed-field definition", definition_id)?;
+    let owner_id = owner_id.id();
+    let definition_id = definition_id.id();
     let definition = runtime
         .with_transaction(async move |connection| {
             let current = locked_definition(connection, definition_id).await?;
@@ -602,8 +613,8 @@ pub async fn delete_personal_computed_field(
     request: StoragePersonalComputedFieldDelete,
 ) -> Result<(), PostgresStorageError> {
     let (owner_id, definition_id) = request.into_parts();
-    validate_positive("owner", owner_id)?;
-    validate_positive("computed-field definition", definition_id)?;
+    let owner_id = owner_id.id();
+    let definition_id = definition_id.id();
     runtime
         .with_transaction(async move |connection| {
             let current = locked_definition(connection, definition_id).await?;
@@ -634,11 +645,9 @@ pub async fn request_computed_field_rebuild(
     request: StorageComputedFieldRebuildRequest,
 ) -> Result<StorageClassComputationState, PostgresStorageError> {
     let (class_id, authorized_collection_id, actor_id) = request.into_parts();
-    validate_positive("class", class_id)?;
-    validate_positive("authorized collection", authorized_collection_id)?;
-    if let Some(actor_id) = actor_id {
-        validate_positive("actor", actor_id)?;
-    }
+    let class_id = class_id.id();
+    let authorized_collection_id = authorized_collection_id.id();
+    let actor_id = actor_id.map(|id| id.id());
     let state = runtime
         .with_transaction(async move |connection| {
             acquire_computed_class_exclusive_lock(connection, class_id).await?;
@@ -653,7 +662,7 @@ pub async fn request_computed_field_rebuild(
             enqueue_rebuild(connection, class_id, state.evaluation_revision, actor_id).await
         })
         .await?;
-    Ok(state.into_storage())
+    state.into_storage()
 }
 
 /// Advance one class revision and enqueue its rebuild inside a caller-owned
@@ -670,8 +679,8 @@ pub async fn advance_revision_and_enqueue_on_connection(
     }
     acquire_computed_class_exclusive_lock(connection, class_id).await?;
     advance_revision_and_enqueue(connection, class_id, actor_id)
-        .await
-        .map(ComputationStateRow::into_storage)
+        .await?
+        .into_storage()
 }
 
 /// Enqueue fresh rebuilds for restored shared definitions in the caller's

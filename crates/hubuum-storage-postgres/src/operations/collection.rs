@@ -4,6 +4,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::CollectionId;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     MutationOutcome, StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
@@ -15,8 +16,8 @@ use crate::operations::event_record::append_event;
 use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::{assert_locked_revision_precondition, require_existing_revision_target};
 use crate::{
-    PostgresConnection, PostgresFailpoint, PostgresRevision, PostgresRuntime, PostgresStorageError,
-    check_failpoint,
+    PostgresConnection, PostgresFaultPoint, PostgresRevision, PostgresRuntime,
+    PostgresStorageError, reach_fault_point,
 };
 
 #[derive(Clone, Queryable, Selectable)]
@@ -32,13 +33,15 @@ pub(crate) struct CollectionRow {
 }
 
 impl CollectionRow {
-    pub(crate) fn into_storage(self) -> StorageCollection {
-        StorageCollection::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
+    pub(crate) fn into_storage(self) -> Result<StorageCollection, PostgresStorageError> {
+        Ok(StorageCollection::new(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             self.description,
-            self.parent_collection_id,
-        )
+            self.parent_collection_id
+                .map(CollectionId::new)
+                .transpose()?,
+        ))
     }
 
     fn snapshot(&self) -> serde_json::Value {
@@ -101,6 +104,7 @@ pub(crate) async fn get_collection_on(
     load_collection(connection, collection_id)
         .await
         .map(CollectionRow::into_storage)
+        .and_then(|collection| collection)
 }
 
 pub async fn create_collection(
@@ -133,7 +137,11 @@ pub(crate) async fn create_collection_on(
     insert_collection_closure_rows(connection, created.id, parent_id).await?;
     insert_full_collection_grant(connection, created.id, command.owner_group_id().id()).await?;
 
-    check_failpoint(PostgresFailpoint::CollectionCreateAfterRecords)?;
+    reach_fault_point(
+        PostgresFaultPoint::CollectionCreateAfterRecords,
+        Some(connection),
+    )
+    .await?;
     let event = collection_event(
         &created,
         Action::Created,
@@ -142,8 +150,10 @@ pub(crate) async fn create_collection_on(
     )?
     .with_after(created.snapshot())
     .with_metadata(json!({ "assignee_group_id": command.owner_group_id() }));
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(created.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(created.into_storage()?, audit))
 }
 
 pub async fn update_collection(
@@ -185,7 +195,7 @@ pub(crate) async fn update_collection_on(
     let before = lock_revisioned_collection(connection, collection_id).await?;
     let update = UpdateCollectionRow::from(&changes);
     if !update.changes(&before) {
-        return Ok(MutationOutcome::unchanged(before.into_storage()));
+        return Ok(MutationOutcome::unchanged(before.into_storage()?));
     }
     let updated = diesel::update(
         crate::schema::collections::table.filter(crate::schema::collections::id.eq(collection_id)),
@@ -201,8 +211,10 @@ pub(crate) async fn update_collection_on(
     )?
     .with_before(before.snapshot())
     .with_after(updated.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(updated.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(updated.into_storage()?, audit))
 }
 
 pub async fn delete_collection(
@@ -239,7 +251,9 @@ pub(crate) async fn delete_collection_on(
         format!("Collection '{}' deleted", collection.name),
     )?
     .with_before(collection.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed((), audit))
 }
 
@@ -263,7 +277,7 @@ pub(crate) async fn collection_children_on(
         .order(crate::schema::collections::name.asc())
         .load::<CollectionRow>(connection)
         .await?;
-    Ok(rows.into_iter().map(CollectionRow::into_storage).collect())
+    rows.into_iter().map(CollectionRow::into_storage).collect()
 }
 
 pub async fn collection_ancestors(
@@ -295,7 +309,7 @@ pub(crate) async fn collection_ancestors_on(
         .select(CollectionRow::as_select())
         .load::<CollectionRow>(connection)
         .await?;
-    Ok(rows.into_iter().map(CollectionRow::into_storage).collect())
+    rows.into_iter().map(CollectionRow::into_storage).collect()
 }
 
 pub async fn move_collection(
@@ -335,7 +349,7 @@ pub(crate) async fn move_collection_on(
         ));
     }
     if before.parent_collection_id == Some(new_parent_id) {
-        return Ok(MutationOutcome::unchanged(before.into_storage()));
+        return Ok(MutationOutcome::unchanged(before.into_storage()?));
     }
     if collection_id == new_parent_id {
         return Err(PostgresStorageError::bad_request(
@@ -373,8 +387,10 @@ pub(crate) async fn move_collection_on(
     )?
     .with_before(before.snapshot())
     .with_after(updated.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(updated.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(updated.into_storage()?, audit))
 }
 
 async fn load_collection(

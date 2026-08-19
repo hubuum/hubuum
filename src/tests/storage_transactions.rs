@@ -6,15 +6,16 @@ use diesel_async::RunQueryDsl;
 
 use crate::events::{EntityType, EventContext};
 use crate::models::NewGroup;
-use crate::services::storage_boundary::{collection_id_to_storage, object_id_to_storage};
-use crate::storage::postgres::{PostgresPool, with_connection};
+use crate::services::storage_boundary::collection_id_to_storage;
 use crate::storage::{
-    ClassRelationStore, ClassStore, CollectionStore, MemoryStorageModel, ObjectRelationStore,
-    ObjectStore, PostgresStorage, StorageClassCreate, StorageClassRelationCreate,
+    ClassRelationStorage, ClassStorage, CollectionStorage, MemoryStorageModel,
+    ObjectRelationStorage, ObjectStorage, StorageClassCreate, StorageClassRelationCreate,
     StorageClassSelector, StorageCollectionCreate, StorageError, StorageErrorKind,
     StorageObjectCreate, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
     StorageObjectSelector, TransactionalStorage,
 };
+use hubuum_storage_postgres::PostgresStorage;
+use hubuum_storage_postgres::{PostgresPool, with_connection};
 
 use super::storage_contract::{pool, postgres_permit, prefix};
 
@@ -70,11 +71,11 @@ async fn exercise_resource_transaction<S>(
 ) -> TransactionContractResult
 where
     S: TransactionalStorage
-        + CollectionStore
-        + ClassStore
-        + ClassRelationStore
-        + ObjectStore
-        + ObjectRelationStore,
+        + CollectionStorage
+        + ClassStorage
+        + ClassRelationStorage
+        + ObjectStorage
+        + ObjectRelationStorage,
 {
     let event_context = EventContext::system();
     let collection_name = format!("{label}_collection");
@@ -102,7 +103,7 @@ where
                         .create(
                             StorageClassCreate::builder(
                                 format!("{transaction_label}_from_class"),
-                                collection_id_to_storage(collection.id()),
+                                collection.id(),
                                 "transaction contract from class",
                             )
                             .build(),
@@ -114,7 +115,7 @@ where
                         .create(
                             StorageClassCreate::builder(
                                 format!("{transaction_label}_to_class"),
-                                collection_id_to_storage(collection.id()),
+                                collection.id(),
                                 "transaction contract to class",
                             )
                             .build(),
@@ -133,8 +134,8 @@ where
                         .class_relations()
                         .prepare(
                             StorageClassRelationCreate::builder(
-                                from_class.class().id().id(),
-                                to_class.class().id().id(),
+                                from_class.class().id(),
+                                to_class.class().id(),
                             )
                             .build(),
                         )
@@ -150,7 +151,7 @@ where
                             &from_class,
                             StorageObjectCreate::new(
                                 transaction_from_name,
-                                collection_id_to_storage(collection.id()),
+                                collection.id(),
                                 from_class.class().id(),
                                 serde_json::json!({"side": "from"}),
                                 "transaction contract from object",
@@ -164,7 +165,7 @@ where
                             &to_class,
                             StorageObjectCreate::new(
                                 format!("{transaction_label}_to_object"),
-                                collection_id_to_storage(collection.id()),
+                                collection.id(),
                                 to_class.class().id(),
                                 serde_json::json!({"side": "to"}),
                                 "transaction contract to object",
@@ -178,7 +179,9 @@ where
                             StorageObjectRelationCreate::new(
                                 from_object.id(),
                                 to_object.id(),
-                                class_relation.relation().metadata().id().id(),
+                                hubuum_domain::ClassRelationId::from(
+                                    class_relation.relation().metadata().id(),
+                                ),
                             ),
                         ))
                         .await?;
@@ -203,7 +206,7 @@ where
 
     assert_eq!(
         storage
-            .get_collection(collection_id_to_storage(collection.id()))
+            .get_collection(collection.id())
             .await
             .expect("committed collection should be visible")
             .name(),
@@ -223,13 +226,13 @@ where
     );
     assert_eq!(
         object_relation.relation().from_object_id(),
-        from_object.id().min(to_object.id())
+        std::cmp::min(from_object.id(), to_object.id())
     );
     let committed_ids = TransactionEntityIds {
-        collection: AtomicI32::new(collection.id()),
+        collection: AtomicI32::new(collection.id().id()),
         class: AtomicI32::new(from_class.class().id().id()),
         class_relation: AtomicI32::new(class_relation.relation().metadata().id().id()),
-        object: AtomicI32::new(from_object.id()),
+        object: AtomicI32::new(from_object.id().id()),
         object_relation: AtomicI32::new(object_relation.relation().metadata().id().id()),
     };
     committed_ids.assert_populated();
@@ -253,13 +256,13 @@ where
                     .into_value();
                 rollback_ids_from_work
                     .collection
-                    .store(rollback_collection.id(), Ordering::Relaxed);
+                    .store(rollback_collection.id().id(), Ordering::Relaxed);
                 let rollback_from_class = transaction
                     .classes()
                     .create(
                         StorageClassCreate::builder(
                             format!("{rollback_label}_from_class"),
-                            collection_id_to_storage(rollback_collection.id()),
+                            rollback_collection.id(),
                             "rolled-back from class",
                         )
                         .build(),
@@ -274,7 +277,7 @@ where
                     .create(
                         StorageClassCreate::builder(
                             format!("{rollback_label}_to_class"),
-                            collection_id_to_storage(rollback_collection.id()),
+                            rollback_collection.id(),
                             "rolled-back to class",
                         )
                         .build(),
@@ -293,8 +296,8 @@ where
                     .class_relations()
                     .prepare(
                         StorageClassRelationCreate::builder(
-                            rollback_from_class.class().id().id(),
-                            rollback_to_class.class().id().id(),
+                            rollback_from_class.class().id(),
+                            rollback_to_class.class().id(),
                         )
                         .build(),
                     )
@@ -314,7 +317,7 @@ where
                         &rollback_from_class,
                         StorageObjectCreate::new(
                             format!("{rollback_label}_from_object"),
-                            collection_id_to_storage(rollback_collection.id()),
+                            rollback_collection.id(),
                             rollback_from_class.class().id(),
                             serde_json::json!({"rolled_back": true}),
                             "transaction contract rollback object",
@@ -324,14 +327,14 @@ where
                     .into_value();
                 rollback_ids_from_work
                     .object
-                    .store(object.id(), Ordering::Relaxed);
+                    .store(object.id().id(), Ordering::Relaxed);
                 let to_object = transaction
                     .objects()
                     .create(
                         &rollback_to_class,
                         StorageObjectCreate::new(
                             format!("{rollback_label}_to_object"),
-                            collection_id_to_storage(rollback_collection.id()),
+                            rollback_collection.id(),
                             rollback_to_class.class().id(),
                             serde_json::json!({"rolled_back": true}),
                             "transaction contract rollback object",
@@ -345,7 +348,9 @@ where
                         StorageObjectRelationCreate::new(
                             object.id(),
                             to_object.id(),
-                            rollback_class_relation.relation().metadata().id().id(),
+                            hubuum_domain::ClassRelationId::from(
+                                rollback_class_relation.relation().metadata().id(),
+                            ),
                         ),
                     ))
                     .await?;
@@ -383,7 +388,7 @@ where
         .into_value();
     for object_id in [from_object.id(), to_object.id()] {
         let object = storage
-            .get_object(object_id_to_storage(object_id))
+            .get_object(object_id)
             .await
             .expect("object cleanup target should resolve");
         storage
@@ -405,7 +410,7 @@ where
             .into_value();
     }
     storage
-        .delete_collection(collection_id_to_storage(collection.id()), &event_context)
+        .delete_collection(collection.id(), &event_context)
         .await
         .expect("collection cleanup should succeed")
         .into_value();

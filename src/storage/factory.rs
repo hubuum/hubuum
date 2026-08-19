@@ -5,11 +5,86 @@
 //! backend-specific initialization errors remain inside this module.
 
 use std::fmt;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
+use std::time::Duration;
 
-use hubuum_storage_postgres::{PostgresPoolBuildError, PostgresPoolSettings, build_postgres_pool};
+use hubuum_storage_core::StorageCallSite;
+use hubuum_storage_postgres::{
+    PostgresPool, PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage, PostgresTelemetry,
+    build_postgres_pool,
+};
 use tracing::info;
 
 use super::{StorageBackendKind, StorageError, StorageErrorKind, StorageHandle};
+
+#[derive(Debug)]
+struct ApplicationPostgresTelemetry;
+
+impl PostgresTelemetry for ApplicationPostgresTelemetry {
+    fn connection_acquired(&self, call_site: StorageCallSite, duration: Duration) {
+        crate::observability::metrics::db_connection_acquired(call_site.as_str(), duration);
+    }
+
+    fn connection_acquisition_failed(&self, call_site: StorageCallSite, duration: Duration) {
+        crate::observability::metrics::db_connection_acquire_failed(call_site.as_str(), duration);
+    }
+
+    fn operation_finished(
+        &self,
+        call_site: StorageCallSite,
+        operation: &'static str,
+        duration: Duration,
+        error: Option<StorageErrorKind>,
+    ) {
+        let result = error.map_or(crate::observability::metrics::ResultKind::Ok, |kind| {
+            crate::observability::metrics::ResultKind::Error(kind.as_str())
+        });
+        crate::observability::metrics::db_operation_finished(
+            call_site.as_str(),
+            operation,
+            duration,
+            &result,
+        );
+    }
+
+    fn computed_evaluation(&self, scope: &'static str, error_codes: &[&'static str]) {
+        crate::observability::metrics::computed_evaluation_summary(scope, error_codes);
+    }
+
+    fn computed_live_fallback(&self) {
+        crate::observability::metrics::computed_live_fallback();
+    }
+
+    fn computed_read_repair(&self, outcome: &'static str) {
+        crate::observability::metrics::computed_read_repair(outcome);
+    }
+
+    fn revision_condition(&self, outcome: &'static str) {
+        crate::observability::metrics::revision_condition(outcome);
+    }
+
+    fn task_completed(&self, kind: &'static str, status: &'static str, duration: Option<Duration>) {
+        crate::observability::metrics::task_completed(kind, status, duration);
+    }
+
+    fn computed_rebuild_finished(&self, outcome: &'static str, duration: Duration) {
+        crate::observability::metrics::computed_rebuild_finished(outcome, duration);
+    }
+
+    fn computed_rebuild_batch(&self, object_count: usize) {
+        crate::observability::metrics::computed_rebuild_batch(object_count);
+    }
+}
+
+pub(super) fn compose_postgres(pool: PostgresPool) -> PostgresStorage {
+    let computed_reindex_batch_size = crate::config::get_config()
+        .ok()
+        .and_then(|config| NonZeroUsize::new(config.computed_reindex_batch_size))
+        .unwrap_or(hubuum_storage_postgres::DEFAULT_COMPUTED_REINDEX_BATCH_SIZE);
+    PostgresStorage::new(pool, Arc::new(ApplicationPostgresTelemetry))
+        .with_computed_reindex_batch_size(computed_reindex_batch_size)
+}
 
 pub(crate) struct StorageSettings {
     adapter: StorageAdapterSettings,
@@ -20,8 +95,12 @@ enum StorageAdapterSettings {
 }
 
 impl StorageSettings {
-    pub(crate) fn builder(connection_url: impl Into<String>) -> StorageSettingsBuilder {
+    pub(crate) fn builder(
+        backend: StorageBackendKind,
+        connection_url: impl Into<String>,
+    ) -> StorageSettingsBuilder {
         StorageSettingsBuilder {
+            backend,
             connection_url: connection_url.into(),
             max_connections: None,
             statement_timeout_ms: 0,
@@ -46,6 +125,7 @@ impl fmt::Debug for StorageSettings {
 }
 
 pub(crate) struct StorageSettingsBuilder {
+    backend: StorageBackendKind,
     connection_url: String,
     max_connections: Option<u32>,
     statement_timeout_ms: u64,
@@ -72,16 +152,32 @@ impl StorageSettingsBuilder {
     }
 
     pub(crate) fn build(self) -> Result<StorageSettings, StorageError> {
-        let settings = PostgresPoolSettings::builder(self.connection_url)
-            .max_size(self.max_connections.ok_or_else(|| {
+        match self.backend {
+            StorageBackendKind::Postgresql => PostgresAdapterFactory::build_settings(self),
+        }
+    }
+}
+
+/// Application-local composition for the PostgreSQL adapter.
+///
+/// Backend crates expose implementation primitives. This factory is the only
+/// place that translates Hubuum process settings into those primitives, so a
+/// newly registered adapter adds one sibling factory and one exhaustive match
+/// arm instead of spreading backend decisions through process entry points.
+struct PostgresAdapterFactory;
+
+impl PostgresAdapterFactory {
+    fn build_settings(builder: StorageSettingsBuilder) -> Result<StorageSettings, StorageError> {
+        let settings = PostgresPoolSettings::builder(builder.connection_url)
+            .max_size(builder.max_connections.ok_or_else(|| {
                 StorageError::new(
                     StorageErrorKind::InvalidInput,
                     "storage maximum connection count is required",
                     None,
                 )
             })?)
-            .statement_timeout_ms(self.statement_timeout_ms)
-            .acquire_timeout_ms(self.acquire_timeout_ms.ok_or_else(|| {
+            .statement_timeout_ms(builder.statement_timeout_ms)
+            .acquire_timeout_ms(builder.acquire_timeout_ms.ok_or_else(|| {
                 StorageError::new(
                     StorageErrorKind::InvalidInput,
                     "storage acquire timeout is required",
@@ -89,10 +185,57 @@ impl StorageSettingsBuilder {
                 )
             })?)
             .build()
-            .map_err(storage_initialization_error)?;
+            .map_err(Self::initialization_error)?;
         Ok(StorageSettings {
             adapter: StorageAdapterSettings::Postgresql(settings),
         })
+    }
+
+    fn initialize(settings: &PostgresPoolSettings) -> Result<StorageHandle, StorageError> {
+        let endpoint = settings.endpoint();
+        info!(
+            message = "storage backend configured",
+            backend = StorageBackendKind::Postgresql.as_str(),
+            username = endpoint.username(),
+            host = endpoint.host(),
+            port = endpoint.port(),
+            database = endpoint.database(),
+            max_connections = settings.max_size(),
+            acquire_timeout_ms = settings.acquire_timeout_ms(),
+            statement_timeout_ms = settings.statement_timeout_ms(),
+        );
+        let pool = build_postgres_pool(settings).map_err(Self::initialization_error)?;
+        let operational_pool_settings =
+            PostgresPoolSettings::builder(settings.connection_url().to_string())
+                .max_size(1)
+                .statement_timeout_ms(settings.statement_timeout_ms())
+                .acquire_timeout_ms(settings.acquire_timeout_ms())
+                .build()
+                .map_err(Self::initialization_error)?;
+        let task_lease_pool =
+            build_postgres_pool(&operational_pool_settings).map_err(Self::initialization_error)?;
+        let notification_listener_pool =
+            build_postgres_pool(&operational_pool_settings).map_err(Self::initialization_error)?;
+        let backend = compose_postgres(pool)
+            .with_task_lease_pool(task_lease_pool)
+            .with_notification_listener_pool(notification_listener_pool);
+        Ok(StorageHandle::from_postgres_backend(backend))
+    }
+
+    fn initialization_error(error: PostgresPoolBuildError) -> StorageError {
+        let kind = match error {
+            PostgresPoolBuildError::InvalidSettings(_)
+            | PostgresPoolBuildError::InvalidUrl(_)
+            | PostgresPoolBuildError::UnsupportedDatabaseType
+            | PostgresPoolBuildError::UnsupportedTlsMode(_) => StorageErrorKind::InvalidInput,
+            PostgresPoolBuildError::Tls(_) => StorageErrorKind::Unavailable,
+        };
+        StorageError::new(kind, error.to_string(), None)
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    fn run_migrations(settings: &PostgresPoolSettings) -> Result<usize, StorageError> {
+        hubuum_storage_postgres::run_embedded_migrations(settings.connection_url())
     }
 }
 
@@ -101,50 +244,16 @@ pub(crate) fn initialize_storage(
 ) -> Result<StorageHandle, StorageError> {
     match &settings.adapter {
         StorageAdapterSettings::Postgresql(settings) => {
-            let endpoint = settings.endpoint();
-            info!(
-                message = "storage backend configured",
-                backend = StorageBackendKind::Postgresql.as_str(),
-                username = endpoint.username(),
-                host = endpoint.host(),
-                port = endpoint.port(),
-                database = endpoint.database(),
-                max_connections = settings.max_size(),
-                acquire_timeout_ms = settings.acquire_timeout_ms(),
-                statement_timeout_ms = settings.statement_timeout_ms(),
-            );
-            let pool = build_postgres_pool(settings).map_err(storage_initialization_error)?;
-            let operational_pool_settings =
-                PostgresPoolSettings::builder(settings.connection_url().to_string())
-                    .max_size(1)
-                    .statement_timeout_ms(settings.statement_timeout_ms())
-                    .acquire_timeout_ms(settings.acquire_timeout_ms())
-                    .build()
-                    .map_err(storage_initialization_error)?;
-            Ok(StorageHandle::postgres_with_operational_pool_settings(
-                pool,
-                operational_pool_settings,
-            ))
+            PostgresAdapterFactory::initialize(settings)
         }
     }
-}
-
-fn storage_initialization_error(error: PostgresPoolBuildError) -> StorageError {
-    let kind = match error {
-        PostgresPoolBuildError::InvalidSettings(_)
-        | PostgresPoolBuildError::InvalidUrl(_)
-        | PostgresPoolBuildError::UnsupportedDatabaseType
-        | PostgresPoolBuildError::UnsupportedTlsMode(_) => StorageErrorKind::InvalidInput,
-        PostgresPoolBuildError::Tls(_) => StorageErrorKind::Unavailable,
-    };
-    StorageError::new(kind, error.to_string(), None)
 }
 
 #[cfg(feature = "embedded-migrations")]
 pub(crate) fn run_storage_migrations(settings: &StorageSettings) -> Result<usize, StorageError> {
     match &settings.adapter {
         StorageAdapterSettings::Postgresql(settings) => {
-            super::postgres::run_embedded_migrations(settings.connection_url())
+            PostgresAdapterFactory::run_migrations(settings)
         }
     }
 }
@@ -155,13 +264,15 @@ mod tests {
 
     #[test]
     fn settings_debug_redacts_the_connection_url() {
-        let settings =
-            StorageSettings::builder("postgres://secret-user:secret-password@example.test/hubuum")
-                .max_connections(4)
-                .statement_timeout_ms(500)
-                .acquire_timeout_ms(1_000)
-                .build()
-                .expect("settings should be valid");
+        let settings = StorageSettings::builder(
+            StorageBackendKind::Postgresql,
+            "postgres://secret-user:secret-password@example.test/hubuum",
+        )
+        .max_connections(4)
+        .statement_timeout_ms(500)
+        .acquire_timeout_ms(1_000)
+        .build()
+        .expect("settings should be valid");
 
         let debug = format!("{settings:?}");
         assert!(!debug.contains("secret-user"));
@@ -171,9 +282,12 @@ mod tests {
 
     #[test]
     fn settings_require_backend_neutral_pool_limits() {
-        let error = StorageSettings::builder("postgres://localhost/hubuum")
-            .build()
-            .expect_err("missing connection limits should fail");
+        let error = StorageSettings::builder(
+            StorageBackendKind::Postgresql,
+            "postgres://localhost/hubuum",
+        )
+        .build()
+        .expect_err("missing connection limits should fail");
 
         assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
     }

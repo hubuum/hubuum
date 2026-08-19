@@ -49,7 +49,7 @@ pub async fn create_import(
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id())?),
+        Some(TokenID::new(requestor.token_meta.id().id())?),
         requestor.scopes(),
     );
 
@@ -57,7 +57,7 @@ pub async fn create_import(
         &context,
         TaskSubmission::new(
             TaskKind::Import,
-            PrincipalID::new(requestor.principal.id())?,
+            PrincipalID::new(requestor.principal.id().id())?,
             payload,
             import_request.total_items(),
             max_active_import_tasks_per_user(),

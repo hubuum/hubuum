@@ -5,7 +5,8 @@ use crate::models::principal::Principal;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::services::storage_boundary::{
-    group_from_storage, principal_from_storage, principal_group_from_storage,
+    group_from_storage, group_id_to_storage, principal_from_storage, principal_group_from_storage,
+    principal_id_to_storage,
 };
 use crate::storage::{GroupStorage, StorageContext, storage_handle};
 
@@ -37,7 +38,11 @@ impl SaveAdapter for NewPrincipalGroup {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
-            .add_group_member(self.principal_id, self.group_id, &EventContext::system())
+            .add_group_member(
+                principal_id_to_storage(self.principal_id),
+                group_id_to_storage(self.group_id),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -50,7 +55,11 @@ impl SaveAdapter for NewPrincipalGroup {
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
-            .add_group_member(self.principal_id, self.group_id, context)
+            .add_group_member(
+                principal_id_to_storage(self.principal_id),
+                group_id_to_storage(self.group_id),
+                context,
+            )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -64,7 +73,7 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .group_member_principal(self.principal_id)
+            .group_member_principal(principal_id_to_storage(self.principal_id))
             .await
             .map_err(ApiError::from)
             .and_then(principal_from_storage)
@@ -75,7 +84,7 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .load_group(self.group_id)
+            .load_group(group_id_to_storage(self.group_id))
             .await
             .map_err(ApiError::from)
             .and_then(group_from_storage)
@@ -86,7 +95,11 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .add_group_member(self.principal_id, self.group_id, &EventContext::system())
+            .add_group_member(
+                principal_id_to_storage(self.principal_id),
+                group_id_to_storage(self.group_id),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -98,7 +111,11 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .remove_group_member(self.principal_id, self.group_id, &EventContext::system())
+            .remove_group_member(
+                principal_id_to_storage(self.principal_id),
+                group_id_to_storage(self.group_id),
+                &EventContext::system(),
+            )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

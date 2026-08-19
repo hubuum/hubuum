@@ -7,10 +7,14 @@ import argparse
 import json
 import subprocess
 import sys
-import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NoReturn
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 and earlier
+    import tomli as tomllib
 
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent

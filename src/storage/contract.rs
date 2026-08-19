@@ -1,6 +1,6 @@
-pub(crate) use hubuum_storage_core::{StorageBackend, StorageIdentity};
+pub(crate) use hubuum_storage_core::{StorageBackend, StorageBackendIdentity};
 
-pub(crate) use super::registry::{StorageBackendDescriptor, StorageBackendKind};
+pub(crate) use super::registry::StorageBackendDescriptor;
 
 mod private {
     pub trait Sealed {}
@@ -20,7 +20,7 @@ impl CertifiedStorageBackend for hubuum_storage_postgres::PostgresStorage {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::PostgresStorage;
+    use hubuum_storage_postgres::PostgresStorage;
 
     fn assert_certified_backend<T: CertifiedStorageBackend>() {}
 

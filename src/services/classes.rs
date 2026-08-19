@@ -9,16 +9,16 @@ use crate::services::storage_boundary::{
     class_create_to_storage, class_record_from_storage, class_selector_to_storage,
     class_update_to_storage, resolved_class_from_storage, resolved_class_to_storage,
 };
-use crate::storage::ClassStore;
+use crate::storage::ClassStorage;
 
 /// Application-facing class resolution and lifecycle use cases.
 #[derive(Clone)]
 pub struct ClassService {
-    storage: Arc<dyn ClassStore>,
+    storage: Arc<dyn ClassStorage>,
 }
 
 impl ClassService {
-    pub(crate) fn new(storage: Arc<dyn ClassStore>) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ClassStorage>) -> Self {
         Self { storage }
     }
 
@@ -84,13 +84,14 @@ mod tests {
         NewCollectionWithAssignee, NewGroup, NewHubuumClass, UpdateHubuumClass,
     };
     use crate::services::{CollectionService, Services};
-    use crate::storage::{MemoryStorageModel, PostgresStorage};
+    use crate::storage::MemoryStorageModel;
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
         postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
     };
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::PostgresStorage;
 
     use super::ClassService;
 

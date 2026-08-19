@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::ExportTemplateId;
 
 use crate::{
     EventFanoutSnapshot, EventQueueSnapshot, StorageError, StorageTaskKind, StorageTaskStatus,
@@ -284,21 +285,21 @@ impl InventoryMetricsSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportTemplateMetricIdentity {
-    id: i32,
+    id: ExportTemplateId,
     name: String,
 }
 
 impl ExportTemplateMetricIdentity {
     #[must_use]
-    pub fn new(id: i32, name: impl Into<String>) -> Option<Self> {
-        (id > 0).then(|| Self {
+    pub fn new(id: ExportTemplateId, name: impl Into<String>) -> Self {
+        Self {
             id,
             name: name.into(),
-        })
+        }
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ExportTemplateId {
         self.id
     }
 
@@ -314,11 +315,11 @@ mod tests {
 
     #[test]
     fn export_template_metric_identity_requires_a_positive_id() {
-        assert!(ExportTemplateMetricIdentity::new(0, "invalid").is_none());
-        assert!(ExportTemplateMetricIdentity::new(-1, "invalid").is_none());
-
-        let identity = ExportTemplateMetricIdentity::new(1, "valid").expect("positive id");
-        assert_eq!(identity.id(), 1);
+        let identity = ExportTemplateMetricIdentity::new(
+            hubuum_domain::ExportTemplateId::new(1).unwrap(),
+            "valid",
+        );
+        assert_eq!(identity.id().id(), 1);
         assert_eq!(identity.name(), "valid");
     }
 }

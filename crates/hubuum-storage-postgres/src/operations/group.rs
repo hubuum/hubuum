@@ -4,6 +4,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
@@ -103,18 +104,18 @@ pub(crate) struct GroupRow {
 }
 
 impl GroupRow {
-    fn into_storage(self) -> StorageIdentityGroup {
-        StorageIdentityGroup::builder(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
+    fn into_storage(self) -> Result<StorageIdentityGroup, PostgresStorageError> {
+        Ok(StorageIdentityGroup::builder(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.groupname,
             self.description,
-            self.identity_scope_id,
+            IdentityScopeId::new(self.identity_scope_id)?,
             self.managed_by,
         )
         .external_key(self.external_key)
         .last_sync_attempted_at(self.last_sync_attempted_at)
         .last_sync_success_at(self.last_sync_success_at)
-        .build()
+        .build())
     }
 
     fn snapshot(&self) -> Value {
@@ -143,14 +144,14 @@ struct PrincipalGroupRow {
 }
 
 impl PrincipalGroupRow {
-    fn into_storage(self) -> StoragePrincipalGroup {
-        StoragePrincipalGroup::new(
-            self.principal_id,
-            self.group_id,
+    fn into_storage(self) -> Result<StoragePrincipalGroup, PostgresStorageError> {
+        Ok(StoragePrincipalGroup::new(
+            PrincipalId::new(self.principal_id)?,
+            GroupId::new(self.group_id)?,
             self.created_at,
             self.updated_at,
-            self.revision.get(),
-        )
+            self.revision.into_domain(),
+        ))
     }
 
     fn snapshot(&self) -> Value {
@@ -185,9 +186,24 @@ pub async fn load_group(
     validate_positive_id(group_id, "group id")?;
     runtime
         .with_connection(async |connection| {
-            load_group_row(connection, group_id)
-                .await
-                .map(GroupRow::into_storage)
+            load_group_row(connection, group_id).await?.into_storage()
+        })
+        .await
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn load_group_by_name_for_test(
+    runtime: &PostgresRuntime,
+    group_name: String,
+) -> Result<StorageIdentityGroup, PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            crate::schema::groups::table
+                .filter(crate::schema::groups::groupname.eq(group_name))
+                .select(GroupRow::as_select())
+                .first::<GroupRow>(connection)
+                .await?
+                .into_storage()
         })
         .await
 }
@@ -214,7 +230,7 @@ pub async fn list_principal_groups(
     query: StoragePrincipalGroupListQuery,
 ) -> Result<StorageIdentityPage<StorageIdentityGroup>, PostgresStorageError> {
     let (principal_id, options) = query.into_parts();
-    validate_positive_id(principal_id, "principal id")?;
+    let principal_id = principal_id.id();
     runtime
         .with_read_only_snapshot(async move |connection| {
             let build_query = || -> Result<_, PostgresStorageError> {
@@ -250,7 +266,7 @@ pub async fn list_principal_groups(
                 .await?
                 .into_iter()
                 .map(GroupRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(StorageIdentityPage::new(groups, total))
         })
         .await
@@ -292,7 +308,7 @@ pub async fn list_groups(
                 .await?
                 .into_iter()
                 .map(GroupRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(StorageIdentityPage::new(groups, total))
         })
         .await
@@ -323,8 +339,10 @@ pub async fn create_group(
                 format!("Group '{}' created", group.groupname),
             )?
             .with_after(group.snapshot());
-            let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(group.into_storage(), audit))
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(group.into_storage()?, audit))
         })
         .await
 }
@@ -343,7 +361,7 @@ pub async fn update_group(
             let before = lock_group(connection, group_id).await?;
             ensure_group_allows_local_write(connection, group_id).await?;
             if !update.name().is_some_and(|name| name != before.groupname) {
-                return Ok(MutationOutcome::unchanged(before.into_storage()));
+                return Ok(MutationOutcome::unchanged(before.into_storage()?));
             }
             let after = diesel::update(
                 crate::schema::groups::table.filter(crate::schema::groups::id.eq(group_id)),
@@ -359,8 +377,10 @@ pub async fn update_group(
             )?
             .with_before(before.snapshot())
             .with_after(after.snapshot());
-            let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage(), audit))
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
         })
         .await
 }
@@ -389,7 +409,9 @@ pub async fn delete_group(
                 format!("Group '{}' deleted", group.groupname),
             )?
             .with_before(group.snapshot());
-            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
             Ok::<_, PostgresStorageError>(MutationOutcome::committed(deleted, audit))
         })
         .await
@@ -402,13 +424,13 @@ pub async fn group_members(
     validate_positive_id(group_id, "group id")?;
     runtime
         .with_connection(async |connection| {
-            crate::schema::group_memberships::table
+            let rows = crate::schema::group_memberships::table
                 .filter(crate::schema::group_memberships::group_id.eq(group_id))
                 .inner_join(crate::schema::principals::table)
                 .select(PrincipalRow::as_select())
                 .load::<PrincipalRow>(connection)
-                .await
-                .map(|rows| rows.into_iter().map(PrincipalRow::into_storage).collect())
+                .await?;
+            rows.into_iter().map(PrincipalRow::into_storage).collect()
         })
         .await
 }
@@ -432,18 +454,18 @@ pub async fn group_members_page(
                 .map(|sort| member_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
             crate::apply_query_options_with_fields!(query, options, fields);
-            query
+            let rows = query
                 .select((PrincipalGroupRow::as_select(), PrincipalRow::as_select()))
                 .load::<(PrincipalGroupRow, PrincipalRow)>(connection)
-                .await
-                .map(|rows| {
-                    rows.into_iter()
-                        .map(|(membership, principal)| {
-                            (membership.into_storage(), principal.into_storage())
-                        })
-                        .collect()
+                .await?;
+            rows.into_iter()
+                .map(|(membership, principal)| {
+                    Ok::<_, PostgresStorageError>((
+                        membership.into_storage()?,
+                        principal.into_storage()?,
+                    ))
                 })
-                .map_err(PostgresStorageError::from)
+                .collect()
         })
         .await
 }
@@ -481,8 +503,8 @@ pub async fn group_member_principal(
                 .filter(crate::schema::principals::id.eq(principal_id))
                 .select(PrincipalRow::as_select())
                 .first::<PrincipalRow>(connection)
-                .await
-                .map(PrincipalRow::into_storage)
+                .await?
+                .into_storage()
         })
         .await
 }
@@ -511,13 +533,15 @@ pub async fn add_group_member(
                     ),
                 )?
                 .with_after(membership.snapshot());
-                let audit = append_event(connection, &event).await?.into_audit_receipt();
+                let audit = append_event(connection, &event)
+                    .await?
+                    .into_audit_receipt()?;
                 return Ok::<_, PostgresStorageError>(MutationOutcome::committed(
-                    membership.into_storage(),
+                    membership.into_storage()?,
                     audit,
                 ));
             }
-            Ok::<_, PostgresStorageError>(MutationOutcome::unchanged(membership.into_storage()))
+            Ok::<_, PostgresStorageError>(MutationOutcome::unchanged(membership.into_storage()?))
         })
         .await
 }
@@ -546,7 +570,9 @@ pub async fn remove_group_member(
                     ),
                 )?
                 .with_before(membership.snapshot());
-                let audit = append_event(connection, &event).await?.into_audit_receipt();
+                let audit = append_event(connection, &event)
+                    .await?
+                    .into_audit_receipt()?;
                 return Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit));
             }
             Ok::<_, PostgresStorageError>(MutationOutcome::unchanged(()))
@@ -564,8 +590,8 @@ pub async fn load_principal_group(
     runtime
         .with_connection(async |connection| {
             load_principal_group_row(connection, principal_id, group_id)
-                .await
-                .map(PrincipalGroupRow::into_storage)
+                .await?
+                .into_storage()
         })
         .await
 }

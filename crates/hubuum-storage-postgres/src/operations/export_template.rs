@@ -2,12 +2,13 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, Insertable, OptionalExtension, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
-    StorageExportTemplate, StorageExportTemplateCreate, StorageExportTemplateDefinition,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplatePage,
-    StorageExportTemplateReplace,
+    AuditReceipt, MutationOutcome, StorageExportTemplate, StorageExportTemplateCreate,
+    StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplatePage, StorageExportTemplateReplace,
 };
 use serde_json::{Value, json};
 
@@ -41,10 +42,10 @@ struct ExportTemplateRow {
 }
 
 impl ExportTemplateRow {
-    fn into_storage(self) -> StorageExportTemplate {
-        StorageExportTemplate::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
-            self.collection_id,
+    fn into_storage(self) -> Result<StorageExportTemplate, PostgresStorageError> {
+        Ok(StorageExportTemplate::new(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+            CollectionId::new(self.collection_id)?,
             self.name,
             StorageExportTemplateDefinition::new(
                 self.description,
@@ -52,13 +53,16 @@ impl ExportTemplateRow {
                 self.template,
                 self.kind,
             )
-            .with_scope(self.scope_kind, self.class_id)
+            .with_scope(
+                self.scope_kind,
+                self.class_id.map(ClassId::new).transpose()?,
+            )
             .with_default_query(self.default_query)
             .with_include(self.include)
             .with_relation_context(self.relation_context)
             .with_default_missing_data_policy(self.default_missing_data_policy)
             .with_default_limits(self.default_limits),
-        )
+        ))
     }
 
     fn audit_snapshot(&self) -> Value {
@@ -108,7 +112,7 @@ impl NewExportTemplateRow {
         let definition = ExportTemplateDefinitionParts::from(definition);
         (
             Self {
-                collection_id,
+                collection_id: collection_id.id(),
                 name,
                 description: definition.description,
                 content_type: definition.content_type,
@@ -149,9 +153,9 @@ impl ReplaceExportTemplateRow {
         let (template_id, collection_id, name, definition, event_context) = request.into_parts();
         let definition = ExportTemplateDefinitionParts::from(definition);
         (
-            template_id,
+            template_id.id(),
             Self {
-                collection_id,
+                collection_id: collection_id.id(),
                 name,
                 description: definition.description,
                 template: definition.template,
@@ -240,7 +244,7 @@ impl From<StorageExportTemplateDefinition> for ExportTemplateDefinitionParts {
             template,
             kind,
             scope_kind,
-            class_id,
+            class_id: class_id.map(|id| id.id()),
             default_query,
             include,
             relation_context,
@@ -258,8 +262,8 @@ pub async fn get_export_template(
     runtime
         .with_connection(async |connection| {
             load_export_template_row(connection, template_id)
-                .await
-                .map(ExportTemplateRow::into_storage)
+                .await?
+                .into_storage()
         })
         .await
 }
@@ -269,6 +273,7 @@ pub async fn list_export_templates(
     query: StorageExportTemplateListQuery,
 ) -> Result<StorageExportTemplatePage, PostgresStorageError> {
     let (collection_ids, options) = query.into_parts();
+    let collection_ids = collection_ids.map(|ids| ids.into_iter().map(CollectionId::id).collect());
     let options = normalize_query_options(options)?;
     if collection_ids.as_ref().is_some_and(Vec::is_empty) {
         return Ok(StorageExportTemplatePage::new(
@@ -326,16 +331,13 @@ pub async fn list_export_templates_in_collection(
             if let Some(template_id) = exclude_template_id {
                 query = query.filter(id.ne(template_id));
             }
-            query
+            let rows = query
                 .order_by(id.asc())
                 .load::<ExportTemplateRow>(connection)
-                .await
-                .map_err(PostgresStorageError::from)
-                .map(|rows| {
-                    rows.into_iter()
-                        .map(ExportTemplateRow::into_storage)
-                        .collect()
-                })
+                .await?;
+            rows.into_iter()
+                .map(ExportTemplateRow::into_storage)
+                .collect()
         })
         .await
 }
@@ -363,18 +365,19 @@ pub async fn export_template_class_collection_id(
 pub async fn create_export_template(
     runtime: &PostgresRuntime,
     request: StorageExportTemplateCreate,
-) -> Result<StorageExportTemplate, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageExportTemplate>, PostgresStorageError> {
     let (new_template, event_context) = NewExportTemplateRow::from_request(request);
     ensure_positive_id(new_template.collection_id, "Collection")?;
     runtime
-        .with_transaction(async |connection| {
+        .with_transaction(
+            async |connection| -> Result<MutationOutcome<StorageExportTemplate>, PostgresStorageError> {
             use crate::schema::export_templates::dsl::export_templates;
 
             let created = diesel::insert_into(export_templates)
                 .values(new_template)
                 .get_result::<ExportTemplateRow>(connection)
                 .await?;
-            append_export_template_audit(
+            let audit = append_export_template_audit(
                 connection,
                 Action::Created,
                 &event_context,
@@ -382,20 +385,25 @@ pub async fn create_export_template(
                 &created,
             )
             .await?;
-            Ok::<_, PostgresStorageError>(created.into_storage())
-        })
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(
+                created.into_storage()?,
+                audit,
+            ))
+            },
+        )
         .await
 }
 
 pub async fn replace_export_template(
     runtime: &PostgresRuntime,
     request: StorageExportTemplateReplace,
-) -> Result<StorageExportTemplate, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageExportTemplate>, PostgresStorageError> {
     let (template_id, replacement, event_context) = ReplaceExportTemplateRow::from_request(request);
     ensure_positive_id(template_id, "Export template")?;
     ensure_positive_id(replacement.collection_id, "Collection")?;
     runtime
-        .with_transaction(async |connection| {
+        .with_transaction(
+            async |connection| -> Result<MutationOutcome<StorageExportTemplate>, PostgresStorageError> {
             use crate::schema::export_templates::dsl::{export_templates, id};
 
             let before = export_templates
@@ -410,13 +418,13 @@ pub async fn replace_export_template(
             )
             .await?;
             if !replacement.has_changes(&before) {
-                return Ok(before.into_storage());
+                return Ok(MutationOutcome::unchanged(before.into_storage()?));
             }
             let updated = diesel::update(export_templates.filter(id.eq(template_id)))
                 .set(replacement)
                 .get_result::<ExportTemplateRow>(connection)
                 .await?;
-            append_export_template_audit(
+            let audit = append_export_template_audit(
                 connection,
                 Action::Updated,
                 &event_context,
@@ -424,44 +432,51 @@ pub async fn replace_export_template(
                 &updated,
             )
             .await?;
-            Ok::<_, PostgresStorageError>(updated.into_storage())
-        })
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(
+                updated.into_storage()?,
+                audit,
+            ))
+            },
+        )
         .await
 }
 
 pub async fn delete_export_template(
     runtime: &PostgresRuntime,
     request: StorageExportTemplateDelete,
-) -> Result<(), PostgresStorageError> {
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
     let (template_id, event_context) = request.into_parts();
-    ensure_positive_id(template_id, "Export template")?;
+    let template_id = template_id.id();
     runtime
-        .with_transaction(async |connection| {
-            use crate::schema::export_templates::dsl::{export_templates, id};
+        .with_transaction(
+            async |connection| -> Result<MutationOutcome<()>, PostgresStorageError> {
+                use crate::schema::export_templates::dsl::{export_templates, id};
 
-            let before = export_templates
-                .filter(id.eq(template_id))
-                .for_update()
-                .first::<ExportTemplateRow>(connection)
+                let before = export_templates
+                    .filter(id.eq(template_id))
+                    .for_update()
+                    .first::<ExportTemplateRow>(connection)
+                    .await?;
+                assert_locked_revision_precondition(
+                    connection,
+                    &RevisionOwner::ExportTemplate.key(before.id),
+                    before.revision,
+                )
                 .await?;
-            assert_locked_revision_precondition(
-                connection,
-                &RevisionOwner::ExportTemplate.key(before.id),
-                before.revision,
-            )
-            .await?;
-            diesel::delete(export_templates.filter(id.eq(template_id)))
-                .execute(connection)
+                diesel::delete(export_templates.filter(id.eq(template_id)))
+                    .execute(connection)
+                    .await?;
+                let audit = append_export_template_audit(
+                    connection,
+                    Action::Deleted,
+                    &event_context,
+                    Some(&before),
+                    &before,
+                )
                 .await?;
-            append_export_template_audit(
-                connection,
-                Action::Deleted,
-                &event_context,
-                Some(&before),
-                &before,
-            )
-            .await
-        })
+                Ok(MutationOutcome::committed((), audit))
+            },
+        )
         .await
 }
 
@@ -490,15 +505,10 @@ async fn load_export_template_rows(
         .map(|sort| export_template_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
     crate::apply_query_options_with_fields!(records, options, fields);
-    records
-        .load::<ExportTemplateRow>(connection)
-        .await
-        .map_err(PostgresStorageError::from)
-        .map(|rows| {
-            rows.into_iter()
-                .map(ExportTemplateRow::into_storage)
-                .collect()
-        })
+    let rows = records.load::<ExportTemplateRow>(connection).await?;
+    rows.into_iter()
+        .map(ExportTemplateRow::into_storage)
+        .collect()
 }
 
 fn build_list_query<'a>(
@@ -623,7 +633,7 @@ async fn append_export_template_audit(
     context: &EventContext,
     before: Option<&ExportTemplateRow>,
     after: &ExportTemplateRow,
-) -> Result<(), PostgresStorageError> {
+) -> Result<AuditReceipt, PostgresStorageError> {
     let event = NewEvent::new(
         EntityType::ExportTemplate,
         action,
@@ -637,7 +647,10 @@ async fn append_export_template_audit(
     .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
     .with_before_opt(before.map(ExportTemplateRow::audit_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| after.audit_snapshot()));
-    append_event(connection, &event).await.map(|_| ())
+    append_event(connection, &event)
+        .await?
+        .into_audit_receipt()
+        .map_err(Into::into)
 }
 
 fn ensure_positive_id(id: i32, entity: &str) -> Result<(), PostgresStorageError> {

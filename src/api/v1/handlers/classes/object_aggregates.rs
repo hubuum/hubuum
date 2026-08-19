@@ -128,7 +128,7 @@ async fn read_object_aggregates(
 
     debug!(
         message = "Getting object aggregates in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class.id,
         query = req.query_string()
     );

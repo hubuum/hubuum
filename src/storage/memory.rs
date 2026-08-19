@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use tokio::sync::RwLock;
 
-use crate::events::{Action, EventContext};
+use crate::events::{Action, EntityType, EventContext};
 use crate::models::{
     ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass, HubuumClassRelation,
     HubuumClassRelationID, HubuumObject, HubuumObjectRelation, HubuumObjectRelationID,
@@ -31,17 +31,17 @@ use crate::services::storage_boundary::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
-    StorageClassCreate, StorageClassRecord, StorageClassRelation, StorageClassRelationCreate,
+    ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
+    StorageBackendIdentity, StorageClassCreate, StorageClassRecord, StorageClassRelationCreate,
     StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageIdentity, StorageObject, StorageObjectCreate,
-    StorageObjectDataPatch, StorageObjectRelation, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
-    StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
-    StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
-    StorageResolvedObjectRelation, StorageTransaction, StorageTransactionFuture,
-    TransactionalClassRelations, TransactionalClasses, TransactionalCollections,
-    TransactionalObjectRelations, TransactionalObjects, TransactionalStorage,
+    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
+    StorageObjectDataPatch, StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
+    StorageObjectSelector, StorageObjectUpdate, StoragePreparedClassRelation,
+    StoragePreparedObjectRelation, StorageResolvedClass, StorageResolvedClassRelation,
+    StorageResolvedObject, StorageResolvedObjectRelation, StorageTransaction,
+    StorageTransactionFuture, TransactionalClassRelations, TransactionalClasses,
+    TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
+    TransactionalStorage,
 };
 use error::map_memory_error;
 use hubuum_storage_core::{AuditReceipt, MutationOutcome};
@@ -51,19 +51,19 @@ const ROOT_COLLECTION_ID: i32 = 1;
 static NEXT_MEMORY_EVENT_SEQUENCE: AtomicI64 = AtomicI64::new(1);
 
 fn memory_audit_receipt(
-    entity_type: &'static str,
+    entity_type: EntityType,
     action: Action,
-    before_revision: Option<i64>,
-    after_revision: Option<i64>,
+    before_revision: Option<ResourceRevision>,
+    after_revision: Option<ResourceRevision>,
 ) -> AuditReceipt {
     AuditReceipt::new(
         crate::events::EventSequence::new(
             NEXT_MEMORY_EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         )
         .expect("memory event sequence must remain positive"),
-        Uuid::new_v4(),
+        hubuum_events_core::EventId::from(Uuid::new_v4()),
         entity_type,
-        action.as_str(),
+        action,
         before_revision,
         after_revision,
     )
@@ -564,7 +564,7 @@ impl MemoryStorageModel {
     }
 }
 
-impl StorageIdentity for MemoryStorageModel {
+impl StorageBackendIdentity for MemoryStorageModel {
     fn storage_name(&self) -> &'static str {
         "memory_contract_model"
     }
@@ -631,7 +631,7 @@ impl TransactionalStorage for MemoryStorageModel {
 }
 
 #[async_trait]
-impl CollectionStore for MemoryStorageModel {
+impl CollectionStorage for MemoryStorageModel {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         self.state
@@ -680,7 +680,12 @@ impl CollectionStore for MemoryStorageModel {
         state.record_event(id, Action::Created, context);
         Ok(MutationOutcome::committed(
             collection_to_storage(collection),
-            memory_audit_receipt("collection", Action::Created, None, Some(1)),
+            memory_audit_receipt(
+                EntityType::Collection,
+                Action::Created,
+                None,
+                Some(ResourceRevision::INITIAL),
+            ),
         ))
     }
 
@@ -709,7 +714,7 @@ impl CollectionStore for MemoryStorageModel {
             )));
         }
 
-        let before_revision = current.revision.get();
+        let before_revision = current.revision;
         let collection = state
             .collections
             .get_mut(&id.id())
@@ -730,10 +735,10 @@ impl CollectionStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             collection_to_storage(updated.clone()),
             memory_audit_receipt(
-                "collection",
+                EntityType::Collection,
                 Action::Updated,
                 Some(before_revision),
-                Some(updated.revision.get()),
+                Some(updated.revision),
             ),
         ))
     }
@@ -789,9 +794,9 @@ impl CollectionStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             (),
             memory_audit_receipt(
-                "collection",
+                EntityType::Collection,
                 Action::Deleted,
-                Some(collection.revision.get()),
+                Some(collection.revision),
                 None,
             ),
         ))
@@ -879,7 +884,7 @@ impl CollectionStore for MemoryStorageModel {
             )));
         }
 
-        let before_revision = collection.revision.get();
+        let before_revision = collection.revision;
         let collection = state
             .collections
             .get_mut(&id.id())
@@ -895,17 +900,17 @@ impl CollectionStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             collection_to_storage(moved.clone()),
             memory_audit_receipt(
-                "collection",
+                EntityType::Collection,
                 Action::Updated,
                 Some(before_revision),
-                Some(moved.revision.get()),
+                Some(moved.revision),
             ),
         ))
     }
 }
 
 #[async_trait]
-impl ClassStore for MemoryStorageModel {
+impl ClassStorage for MemoryStorageModel {
     async fn resolve_class(
         &self,
         selector: StorageClassSelector,
@@ -981,7 +986,12 @@ impl ClassStore for MemoryStorageModel {
         state.record_class_event(id, Action::Created, context);
         Ok(MutationOutcome::committed(
             class_record_to_storage(class),
-            memory_audit_receipt("class", Action::Created, None, Some(1)),
+            memory_audit_receipt(
+                EntityType::Class,
+                Action::Created,
+                None,
+                Some(ResourceRevision::INITIAL),
+            ),
         ))
     }
 
@@ -1022,7 +1032,7 @@ impl ClassStore for MemoryStorageModel {
             )));
         }
 
-        let before_revision = current.revision.get();
+        let before_revision = current.revision;
         let class = state
             .classes
             .get_mut(&current.id)
@@ -1049,10 +1059,10 @@ impl ClassStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             class_record_to_storage(updated.clone()),
             memory_audit_receipt(
-                "class",
+                EntityType::Class,
                 Action::Updated,
                 Some(before_revision),
-                Some(updated.revision.get()),
+                Some(updated.revision),
             ),
         ))
     }
@@ -1083,7 +1093,12 @@ impl ClassStore for MemoryStorageModel {
         state.record_class_event(class.id, Action::Deleted, context);
         Ok(MutationOutcome::committed(
             (),
-            memory_audit_receipt("class", Action::Deleted, Some(class.revision.get()), None),
+            memory_audit_receipt(
+                EntityType::Class,
+                Action::Deleted,
+                Some(class.revision),
+                None,
+            ),
         ))
     }
 
@@ -1109,7 +1124,7 @@ impl ClassStore for MemoryStorageModel {
 }
 
 #[async_trait]
-impl ClassRelationStore for MemoryStorageModel {
+impl ClassRelationStorage for MemoryStorageModel {
     async fn prepare_class_relation(
         &self,
         command: StorageClassRelationCreate,
@@ -1136,9 +1151,9 @@ impl ClassRelationStore for MemoryStorageModel {
 
     async fn resolve_class_relation(
         &self,
-        id: i32,
+        id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        let id = HubuumClassRelationID::new(id).map_err(map_memory_error)?;
+        let id = HubuumClassRelationID::new(id.id()).map_err(map_memory_error)?;
         let state = self.state.read().await;
         let relation = state.class_relation(id)?.clone();
         let from_class = state
@@ -1201,7 +1216,12 @@ impl ClassRelationStore for MemoryStorageModel {
         .map_err(map_memory_error)?;
         Ok(MutationOutcome::committed(
             resolved,
-            memory_audit_receipt("class_relation", Action::Created, None, Some(1)),
+            memory_audit_receipt(
+                EntityType::ClassRelation,
+                Action::Created,
+                None,
+                Some(ResourceRevision::INITIAL),
+            ),
         ))
     }
 
@@ -1222,38 +1242,17 @@ impl ClassRelationStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             (),
             memory_audit_receipt(
-                "class_relation",
+                EntityType::ClassRelation,
                 Action::Deleted,
-                Some(target.relation().revision.get()),
+                Some(target.relation().revision),
                 None,
             ),
         ))
     }
-
-    async fn create_class_relation_from_command(
-        &self,
-        command: StorageClassRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
-        let prepared = self.prepare_class_relation(command).await?;
-        Ok(self
-            .create_class_relation(&prepared, context)
-            .await?
-            .map(|resolved| resolved.relation().clone()))
-    }
-
-    async fn delete_class_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        let target = self.resolve_class_relation(id).await?;
-        self.delete_class_relation(&target, context).await
-    }
 }
 
 #[async_trait]
-impl ObjectRelationStore for MemoryStorageModel {
+impl ObjectRelationStorage for MemoryStorageModel {
     async fn prepare_object_relation(
         &self,
         selector: StorageObjectRelationCreateSelector,
@@ -1431,7 +1430,12 @@ impl ObjectRelationStore for MemoryStorageModel {
         .map_err(map_memory_error)?;
         Ok(MutationOutcome::committed(
             resolved,
-            memory_audit_receipt("object_relation", Action::Created, None, Some(1)),
+            memory_audit_receipt(
+                EntityType::ObjectRelation,
+                Action::Created,
+                None,
+                Some(ResourceRevision::INITIAL),
+            ),
         ))
     }
 
@@ -1450,42 +1454,17 @@ impl ObjectRelationStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             (),
             memory_audit_receipt(
-                "object_relation",
+                EntityType::ObjectRelation,
                 Action::Deleted,
-                Some(target.relation().revision.get()),
+                Some(target.relation().revision),
                 None,
             ),
         ))
     }
-
-    async fn create_object_relation_from_command(
-        &self,
-        command: StorageObjectRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
-        let prepared = self
-            .prepare_object_relation(StorageObjectRelationCreateSelector::Explicit(command))
-            .await?;
-        Ok(self
-            .create_object_relation(&prepared, context)
-            .await?
-            .map(|resolved| resolved.relation().clone()))
-    }
-
-    async fn delete_object_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        let target = self
-            .resolve_object_relation(StorageObjectRelationSelector::Id(id))
-            .await?;
-        self.delete_object_relation(&target, context).await
-    }
 }
 
 #[async_trait]
-impl ObjectStore for MemoryStorageModel {
+impl ObjectStorage for MemoryStorageModel {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         let object_id =
             crate::models::HubuumObjectID::new(object_id.id()).map_err(map_memory_error)?;
@@ -1595,7 +1574,12 @@ impl ObjectStore for MemoryStorageModel {
         state.record_object_event(id, Action::Created, context);
         Ok(MutationOutcome::committed(
             object_to_storage(object),
-            memory_audit_receipt("object", Action::Created, None, Some(1)),
+            memory_audit_receipt(
+                EntityType::Object,
+                Action::Created,
+                None,
+                Some(ResourceRevision::INITIAL),
+            ),
         ))
     }
 
@@ -1632,7 +1616,7 @@ impl ObjectStore for MemoryStorageModel {
             )));
         }
 
-        let before_revision = current.revision.get();
+        let before_revision = current.revision;
         let mut updated = current.merge_update(&changes);
         updated.updated_at = Utc::now().naive_utc();
         updated.revision = current
@@ -1644,10 +1628,10 @@ impl ObjectStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             object_to_storage(updated.clone()),
             memory_audit_receipt(
-                "object",
+                EntityType::Object,
                 Action::Updated,
                 Some(before_revision),
-                Some(updated.revision.get()),
+                Some(updated.revision),
             ),
         ))
     }
@@ -1686,10 +1670,10 @@ impl ObjectStore for MemoryStorageModel {
         Ok(MutationOutcome::committed(
             object_to_storage(updated.clone()),
             memory_audit_receipt(
-                "object",
+                EntityType::Object,
                 Action::Updated,
-                Some(current.revision.get()),
-                Some(updated.revision.get()),
+                Some(current.revision),
+                Some(updated.revision),
             ),
         ))
     }
@@ -1703,7 +1687,7 @@ impl ObjectStore for MemoryStorageModel {
         let mut state = self.state.write().await;
         let (_, object) = state.object_target(&target)?;
         let object_id = object.id;
-        let before_revision = object.revision.get();
+        let before_revision = object.revision;
         state.objects.remove(&object_id);
         state.object_relations.retain(|_, relation| {
             relation.from_hubuum_object_id != object_id && relation.to_hubuum_object_id != object_id
@@ -1711,7 +1695,12 @@ impl ObjectStore for MemoryStorageModel {
         state.record_object_event(object_id, Action::Deleted, context);
         Ok(MutationOutcome::committed(
             (),
-            memory_audit_receipt("object", Action::Deleted, Some(before_revision), None),
+            memory_audit_receipt(
+                EntityType::Object,
+                Action::Deleted,
+                Some(before_revision),
+                None,
+            ),
         ))
     }
 

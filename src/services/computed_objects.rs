@@ -7,7 +7,8 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::services::storage_boundary::{
-    object_from_storage, object_to_storage, visibility as storage_visibility,
+    class_id_to_storage, object_from_storage, object_id_to_storage, object_to_storage,
+    principal_id_to_storage, visibility as storage_visibility,
 };
 use crate::storage::{
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
@@ -44,8 +45,12 @@ impl ComputedObjectAccess<'_> {
                 principal_id,
                 object_ids,
             } => Ok(ComputedObjectVisibility::authorized_object_ids(
-                principal_id,
-                object_ids.as_slice().iter().copied(),
+                principal_id_to_storage(principal_id),
+                object_ids
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .map(object_id_to_storage),
             )),
         }
     }
@@ -77,8 +82,8 @@ pub(crate) async fn list_computed_objects(
     };
     let (objects, total, computed, resolved_options) = storage_handle(backend)
         .list_computed_objects(ComputedObjectListQuery::new(
-            class_id,
-            personal_owner_id,
+            class_id_to_storage(class_id),
+            personal_owner_id.map(principal_id_to_storage),
             ComputedObjectQueryOptions::new(options, execution_options),
             access.into_storage()?,
             projection,
@@ -107,7 +112,7 @@ pub(crate) async fn enrich_objects_with_computed(
     storage_handle(backend)
         .enrich_objects_with_computed(ComputedObjectEnrichmentQuery::new(
             objects.into_iter().map(object_to_storage).collect(),
-            personal_owner_id,
+            personal_owner_id.map(principal_id_to_storage),
         ))
         .await?
         .into_iter()
@@ -125,7 +130,7 @@ fn computed_from_storage(
         object: object_from_storage(object)?,
         computed: ComputedObjectScopesResponse {
             shared: SharedComputedScopeResponse {
-                revision,
+                revision: revision.get(),
                 materialization_stale,
                 values,
                 errors,

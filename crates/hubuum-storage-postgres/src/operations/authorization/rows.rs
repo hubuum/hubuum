@@ -1,11 +1,12 @@
 use chrono::NaiveDateTime;
 use diesel::{Queryable, QueryableByName, Selectable};
+use hubuum_domain::{AuthorizationGrantId, CollectionId, GroupId, IdentityScopeId};
 use hubuum_storage_core::{
     AuthorizationCollection, AuthorizationGrant, AuthorizationGroup, AuthorizationGroupIdentity,
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
 };
 
-use crate::PostgresRevision;
+use crate::{PostgresRevision, PostgresStorageError};
 
 #[derive(Clone, Queryable, QueryableByName, Selectable)]
 #[diesel(table_name = crate::schema::collections)]
@@ -20,16 +21,18 @@ pub(super) struct CollectionRow {
 }
 
 impl CollectionRow {
-    pub(super) fn into_storage(self) -> AuthorizationCollection {
-        AuthorizationCollection::new(
-            self.id,
+    pub(super) fn into_storage(self) -> Result<AuthorizationCollection, PostgresStorageError> {
+        Ok(AuthorizationCollection::new(
+            CollectionId::new(self.id)?,
             self.name,
             self.description,
             self.created_at,
             self.updated_at,
-            self.parent_collection_id,
-            self.revision.get(),
-        )
+            self.parent_collection_id
+                .map(CollectionId::new)
+                .transpose()?,
+            self.revision.into_domain(),
+        ))
     }
 }
 
@@ -50,12 +53,12 @@ pub(super) struct GroupRow {
 }
 
 impl GroupRow {
-    pub(super) fn into_storage(self) -> AuthorizationGroup {
-        AuthorizationGroup::new(
+    pub(super) fn into_storage(self) -> Result<AuthorizationGroup, PostgresStorageError> {
+        Ok(AuthorizationGroup::new(
             AuthorizationGroupIdentity::new(
-                self.id,
+                GroupId::new(self.id)?,
                 self.groupname,
-                self.identity_scope_id,
+                IdentityScopeId::new(self.identity_scope_id)?,
                 self.managed_by,
                 self.external_key,
             ),
@@ -63,13 +66,13 @@ impl GroupRow {
                 self.description,
                 self.created_at,
                 self.updated_at,
-                self.revision.get(),
+                self.revision.into_domain(),
             ),
             AuthorizationGroupSyncState::new(
                 self.last_sync_attempted_at,
                 self.last_sync_success_at,
             ),
-        )
+        ))
     }
 }
 
@@ -230,14 +233,14 @@ impl PermissionRow {
             .collect()
     }
 
-    pub(super) fn into_storage(self) -> AuthorizationGrant {
-        AuthorizationGrant::new(
-            self.id,
-            self.collection_id,
-            self.group_id,
+    pub(super) fn into_storage(self) -> Result<AuthorizationGrant, PostgresStorageError> {
+        Ok(AuthorizationGrant::new(
+            AuthorizationGrantId::new(self.id)?,
+            CollectionId::new(self.collection_id)?,
+            GroupId::new(self.group_id)?,
             self.permissions(),
             self.created_at,
             self.updated_at,
-        )
+        ))
     }
 }

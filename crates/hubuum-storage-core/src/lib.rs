@@ -7,6 +7,7 @@
 mod authorization;
 mod backend;
 mod backup_snapshot;
+pub mod capabilities;
 mod catalog;
 mod collection_authorization;
 mod computed_field_lifecycle;
@@ -29,6 +30,7 @@ mod metrics;
 mod mutation;
 mod object_aggregate;
 mod operational;
+mod page;
 mod record;
 mod relation_lifecycle;
 mod relation_query;
@@ -67,14 +69,15 @@ pub use collection_authorization::{
     CollectionAuthorizationStorage,
 };
 pub use computed_field_lifecycle::{
-    ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
-    StorageComputedFieldDefinitionContent, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation, StorageComputedFieldPage,
-    StorageComputedFieldProvenance, StorageComputedFieldRebuildRequest,
-    StorageComputedFieldVisibility, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate,
+    ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputationRevision,
+    StorageComputedFieldDefinition, StorageComputedFieldDefinitionContent,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldProvenance,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate,
 };
 pub use computed_objects::{
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
@@ -94,13 +97,15 @@ pub use event_administration::{
 };
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
-    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
-    EventRetentionSummary, RetainedEvent, StorageRecordedEvent,
+    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionBatch,
+    EventRetentionBatchId, EventRetentionStorage, EventRetentionSummary, RetainedEvent,
+    StorageRecordedEvent,
 };
 pub use execution::{
-    StorageCallSite, StorageExecution, StorageRevisionPrecondition, StorageRevisionTarget,
+    StorageCallSite, StorageExecution, StorageExecutionScope, StorageRevisionPrecondition,
+    StorageRevisionTarget,
 };
-pub use export_query::{ExportQueryStorage, StorageQueryBudget};
+pub use export_query::StorageQueryBudget;
 pub use export_template_lifecycle::{
     ExportTemplateStorage, StorageExportTemplate, StorageExportTemplateCreate,
     StorageExportTemplateDefinition, StorageExportTemplateDefinitionParts,
@@ -177,7 +182,7 @@ pub use metrics::{
     StoragePoolConnectionState, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
     TaskGaugeLastTerminal, TaskGaugeSnapshot,
 };
-pub use mutation::{AuditReceipt, MutationOutcome};
+pub use mutation::{AuditReceipt, AuditReceipts, MutationOutcome};
 pub use object_aggregate::{
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder, StorageComputedFieldSelector,
@@ -197,9 +202,10 @@ pub use operational::{
     OperationalTaskStatusCounts, OperationalTaskTerminalCounts, ReadinessSnapshot,
     TokenRetentionStorage,
 };
+pub use page::StoragePage;
 pub use record::StorageRecordMetadata;
 pub use relation_lifecycle::{
-    ClassRelationStore, ObjectRelationStore, StorageClassRelationCreate,
+    ClassRelationStorage, ObjectRelationStorage, StorageClassRelationCreate,
     StorageClassRelationCreateBuilder, StorageObjectRelationCreate,
     StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
     StorageObjectRelationSelector, StoragePreparedClassRelation, StoragePreparedObjectRelation,
@@ -221,7 +227,7 @@ pub use remote_target::{
     StorageRemoteTargetUpdate,
 };
 pub use resource_lifecycle::{
-    ClassStore, CollectionStore, ObjectStore, StorageClassCreate, StorageClassCreateBuilder,
+    ClassStorage, CollectionStorage, ObjectStorage, StorageClassCreate, StorageClassCreateBuilder,
     StorageClassRecord, StorageClassRecordBuilder, StorageClassSelector, StorageClassUpdate,
     StorageClassUpdateBuilder, StorageCollectionCreate, StorageCollectionUpdate,
     StorageObjectCreate, StorageObjectDataPatch, StorageObjectSelector, StorageObjectUpdate,
@@ -281,7 +287,7 @@ use hubuum_domain::ResourceRevision;
 use std::fmt;
 
 /// Backend identity used for diagnostics and complete-backend composition.
-pub trait StorageIdentity: Send + Sync {
+pub trait StorageBackendIdentity: Send + Sync {
     fn storage_name(&self) -> &'static str;
 }
 
@@ -290,7 +296,7 @@ pub enum StorageErrorKind {
     AuthorizationUnavailable,
     InvalidInput,
     Conflict,
-    Database,
+    Backend,
     PermissionDenied,
     Internal,
     NotFound,
@@ -310,7 +316,7 @@ impl StorageErrorKind {
             Self::AuthorizationUnavailable => "authorization_unavailable",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
-            Self::Database => "database",
+            Self::Backend => "backend",
             Self::PermissionDenied => "permission_denied",
             Self::Internal => "internal",
             Self::NotFound => "not_found",
@@ -328,7 +334,7 @@ impl StorageErrorKind {
     pub const fn is_backend_failure(self) -> bool {
         matches!(
             self,
-            Self::AuthorizationUnavailable | Self::Database | Self::Internal | Self::Unavailable
+            Self::AuthorizationUnavailable | Self::Backend | Self::Internal | Self::Unavailable
         )
     }
 }

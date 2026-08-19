@@ -46,7 +46,7 @@ use crate::services::tasks::{
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{
-    ExportQueryStorage, StorageExportTaskArtifact, StorageQueryBudget,
+    StorageExecution, StorageExecutionScope, StorageExportTaskArtifact, StorageQueryBudget,
     StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
@@ -1197,15 +1197,15 @@ where
     let query_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
     let (items, mut warnings, truncated) = export_storage
-        .run_export_queries(
-            query_budget,
+        .run_in_scope(
+            StorageExecutionScope::default().with_query_budget(query_budget),
             execute_scope(&exporter, runtime.scope, query_options),
         )
         .await?;
     let mut items = items;
     export_storage
-        .run_export_queries(
-            query_budget,
+        .run_in_scope(
+            StorageExecutionScope::default().with_query_budget(query_budget),
             apply_export_includes(&exporter, &runtime.export, &mut items),
         )
         .await?;
@@ -1242,8 +1242,8 @@ where
     let hydration_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Hydration, metric_template_id);
     let (template_items, source) = export_storage
-        .run_export_queries(
-            query_budget,
+        .run_in_scope(
+            StorageExecutionScope::default().with_query_budget(query_budget),
             build_template_items(&exporter, &runtime, &items, relation_hydration),
         )
         .await?;
@@ -2946,9 +2946,9 @@ mod tests {
         validate_export_submission,
     };
     use crate::errors::ApiError;
-    use crate::storage::postgres::capture_queries;
     use crate::tests::{TestContext, create_test_group};
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::capture_queries;
 
     fn test_timestamp() -> chrono::NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)

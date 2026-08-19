@@ -6,10 +6,11 @@ use crate::events::{Action, ActorKind, EntityType, EventContext, EventResponse};
 use crate::models::search::QueryOptions;
 use crate::models::{
     EventDeliveryResponse, EventSink, EventSinkKind, EventSubscription, NewEventSink,
-    NewEventSubscription, ResourceRevision, UpdateEventSink, UpdateEventSubscription,
-    validate_sink_parts, validate_subscription_parts,
+    NewEventSubscription, UpdateEventSink, UpdateEventSubscription, validate_sink_parts,
+    validate_subscription_parts,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
 use crate::storage::{
     AuditEventStorage, EventDeliveryAdministrationStorage, EventSubscriptionStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageContext,
@@ -19,14 +20,6 @@ use crate::storage::{
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, storage_handle,
 };
 use crate::utilities::extensions::CustomStringExtensions;
-
-fn revision(value: i64, resource: &str) -> Result<ResourceRevision, ApiError> {
-    ResourceRevision::new(value).map_err(|_| {
-        ApiError::InternalServerError(format!(
-            "Storage backend returned an invalid {resource} revision"
-        ))
-    })
-}
 
 fn audit_event_from_storage(event: StorageAuditEvent) -> Result<EventResponse, ApiError> {
     let (event, before_revision, after_revision) = event.into_parts();
@@ -49,12 +42,8 @@ fn audit_event_from_storage(event: StorageAuditEvent) -> Result<EventResponse, A
         after: event.after,
         metadata: event.metadata,
         schema_version: event.schema_version,
-        before_revision: before_revision
-            .map(|value| revision(value, "audit event before"))
-            .transpose()?,
-        after_revision: after_revision
-            .map(|value| revision(value, "audit event after"))
-            .transpose()?,
+        before_revision,
+        after_revision,
     })
 }
 
@@ -67,7 +56,10 @@ pub(crate) async fn list_audit_events(
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
     let page = storage_handle(backend)
         .list_audit_events(StorageAuditEventListQuery::new(
-            accessible_collection_ids,
+            accessible_collection_ids
+                .into_iter()
+                .map(collection_id_to_storage)
+                .collect(),
             include_collection_less,
             filters,
             options,
@@ -113,12 +105,15 @@ pub(crate) fn parse_audit_event_filters(
 
     Ok(StorageAuditEventFilters::new()
         .entity_type(entity_type)
-        .entity_id(entity_id)
+        .entity_id(entity_id.map(|id| {
+            hubuum_events_core::EventEntityId::new(id)
+                .expect("validated audit entity id must be positive")
+        }))
         .action(action)
         .actor_kind(actor_kind)
-        .actor_user_id(actor_user_id)
-        .initiator_user_id(initiator_user_id)
-        .collection_id(collection_id)
+        .actor_user_id(actor_user_id.map(principal_id_to_storage))
+        .initiator_user_id(initiator_user_id.map(principal_id_to_storage))
+        .collection_id(collection_id.map(collection_id_to_storage))
         .occurred_after(occurred_after)
         .occurred_before(occurred_before))
 }
@@ -186,7 +181,7 @@ fn event_sink_from_storage(sink: StorageEventSink) -> Result<EventSink, ApiError
         )
     })?;
     Ok(EventSink {
-        id: sink.id(),
+        id: sink.id().id(),
         name: sink.name().to_string(),
         kind,
         config: sink.configuration().clone(),
@@ -194,7 +189,7 @@ fn event_sink_from_storage(sink: StorageEventSink) -> Result<EventSink, ApiError
         enabled: sink.enabled(),
         created_at: sink.created_at(),
         updated_at: sink.updated_at(),
-        revision: revision(sink.revision(), "event sink")?,
+        revision: sink.revision(),
     })
 }
 
@@ -231,7 +226,14 @@ pub(crate) async fn load_event_sink(
     backend: &impl StorageContext,
     sink_id: i32,
 ) -> Result<EventSink, ApiError> {
-    event_sink_from_storage(storage_handle(backend).load_event_sink(sink_id).await?)
+    event_sink_from_storage(
+        storage_handle(backend)
+            .load_event_sink(
+                hubuum_domain::EventSinkId::new(sink_id)
+                    .expect("validated event sink id must be positive"),
+            )
+            .await?,
+    )
 }
 
 pub(crate) async fn create_event_sink(
@@ -245,7 +247,12 @@ pub(crate) async fn create_event_sink(
         .secret_ref(normalize_optional_string(sink.secret_ref))
         .enabled(sink.enabled)
         .build();
-    event_sink_from_storage(storage_handle(backend).create_event_sink(request).await?)
+    event_sink_from_storage(
+        storage_handle(backend)
+            .create_event_sink(request)
+            .await?
+            .into_value(),
+    )
 }
 
 pub(crate) async fn update_event_sink(
@@ -262,13 +269,21 @@ pub(crate) async fn update_event_sink(
         None => existing.secret_ref.as_deref(),
     };
     validate_sink_parts(kind, config, secret_ref)?;
-    let request = StorageEventSinkUpdate::new(sink_id, event_context)
-        .name(update.name)
-        .kind(update.kind.map(|value| value.as_str().to_string()))
-        .configuration(update.config)
-        .secret_ref(update.secret_ref.map(normalize_optional_string))
-        .enabled(update.enabled);
-    event_sink_from_storage(storage_handle(backend).update_event_sink(request).await?)
+    let request = StorageEventSinkUpdate::new(
+        hubuum_domain::EventSinkId::new(sink_id).expect("validated event sink id must be positive"),
+        event_context,
+    )
+    .name(update.name)
+    .kind(update.kind.map(|value| value.as_str().to_string()))
+    .configuration(update.config)
+    .secret_ref(update.secret_ref.map(normalize_optional_string))
+    .enabled(update.enabled);
+    event_sink_from_storage(
+        storage_handle(backend)
+            .update_event_sink(request)
+            .await?
+            .into_value(),
+    )
 }
 
 pub(crate) async fn delete_event_sink(
@@ -276,18 +291,24 @@ pub(crate) async fn delete_event_sink(
     sink_id: i32,
     event_context: EventContext,
 ) -> Result<(), ApiError> {
-    Ok(storage_handle(backend)
-        .delete_event_sink(StorageEventSinkDelete::new(sink_id, event_context))
-        .await?)
+    storage_handle(backend)
+        .delete_event_sink(StorageEventSinkDelete::new(
+            hubuum_domain::EventSinkId::new(sink_id)
+                .expect("validated event sink id must be positive"),
+            event_context,
+        ))
+        .await?
+        .into_value();
+    Ok(())
 }
 
 fn event_subscription_from_storage(
     subscription: StorageEventSubscription,
 ) -> Result<EventSubscription, ApiError> {
     Ok(EventSubscription {
-        id: subscription.id(),
-        collection_id: subscription.collection_id(),
-        sink_id: subscription.sink_id(),
+        id: subscription.id().id(),
+        collection_id: subscription.collection_id().id(),
+        sink_id: subscription.sink_id().id(),
         name: subscription.name().to_string(),
         description: subscription.description().to_string(),
         entity_types: subscription.entity_types().to_vec(),
@@ -297,7 +318,7 @@ fn event_subscription_from_storage(
         enabled: subscription.enabled(),
         created_at: subscription.created_at(),
         updated_at: subscription.updated_at(),
-        revision: revision(subscription.revision(), "event subscription")?,
+        revision: subscription.revision(),
     })
 }
 
@@ -308,7 +329,7 @@ pub(crate) async fn list_event_subscriptions(
 ) -> Result<(Vec<EventSubscription>, i64), ApiError> {
     let page = storage_handle(backend)
         .list_event_subscriptions(StorageEventSubscriptionListQuery::new(
-            collection_id,
+            collection_id_to_storage(collection_id),
             options,
         ))
         .await?;
@@ -329,7 +350,11 @@ pub(crate) async fn load_event_subscription(
 ) -> Result<EventSubscription, ApiError> {
     event_subscription_from_storage(
         storage_handle(backend)
-            .load_event_subscription(collection_id, subscription_id)
+            .load_event_subscription(
+                collection_id_to_storage(collection_id),
+                hubuum_domain::EventSubscriptionId::new(subscription_id)
+                    .expect("validated event subscription id must be positive"),
+            )
             .await?,
     )
 }
@@ -341,7 +366,7 @@ pub(crate) async fn create_event_subscription(
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
     storage_handle(backend)
-        .load_event_sink(subscription.sink_id.id())
+        .load_event_sink(subscription.sink_id)
         .await?;
     validate_subscription_parts(
         &subscription.entity_types,
@@ -350,8 +375,8 @@ pub(crate) async fn create_event_subscription(
         &subscription.routing,
     )?;
     let request = StorageEventSubscriptionCreate::builder(
-        collection_id,
-        subscription.sink_id.id(),
+        collection_id_to_storage(collection_id),
+        subscription.sink_id,
         subscription.name,
         event_context,
     )
@@ -365,7 +390,8 @@ pub(crate) async fn create_event_subscription(
     event_subscription_from_storage(
         storage_handle(backend)
             .create_event_subscription(request)
-            .await?,
+            .await?
+            .into_value(),
     )
 }
 
@@ -378,9 +404,7 @@ pub(crate) async fn update_event_subscription(
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
     if let Some(sink_id) = update.sink_id {
-        storage_handle(backend)
-            .load_event_sink(sink_id.id())
-            .await?;
+        storage_handle(backend).load_event_sink(sink_id).await?;
     }
     let entity_types = update
         .entity_types
@@ -390,20 +414,25 @@ pub(crate) async fn update_event_subscription(
     let filter = update.filter.as_ref().unwrap_or(&existing.filter);
     let routing = update.routing.as_ref().unwrap_or(&existing.routing);
     validate_subscription_parts(entity_types, actions, filter, routing)?;
-    let request =
-        StorageEventSubscriptionUpdate::new(collection_id, subscription_id, event_context)
-            .sink_id(update.sink_id.map(|value| value.id()))
-            .name(update.name)
-            .description(update.description)
-            .entity_types(update.entity_types)
-            .actions(update.actions)
-            .filter(update.filter)
-            .routing(update.routing)
-            .enabled(update.enabled);
+    let request = StorageEventSubscriptionUpdate::new(
+        collection_id_to_storage(collection_id),
+        hubuum_domain::EventSubscriptionId::new(subscription_id)
+            .expect("validated event subscription id must be positive"),
+        event_context,
+    )
+    .sink_id(update.sink_id)
+    .name(update.name)
+    .description(update.description)
+    .entity_types(update.entity_types)
+    .actions(update.actions)
+    .filter(update.filter)
+    .routing(update.routing)
+    .enabled(update.enabled);
     event_subscription_from_storage(
         storage_handle(backend)
             .update_event_subscription(request)
-            .await?,
+            .await?
+            .into_value(),
     )
 }
 
@@ -413,20 +442,23 @@ pub(crate) async fn delete_event_subscription(
     subscription_id: i32,
     event_context: EventContext,
 ) -> Result<(), ApiError> {
-    Ok(storage_handle(backend)
+    storage_handle(backend)
         .delete_event_subscription(StorageEventSubscriptionDelete::new(
-            collection_id,
-            subscription_id,
+            collection_id_to_storage(collection_id),
+            hubuum_domain::EventSubscriptionId::new(subscription_id)
+                .expect("validated event subscription id must be positive"),
             event_context,
         ))
-        .await?)
+        .await?
+        .into_value();
+    Ok(())
 }
 
 fn event_delivery_from_storage(delivery: StorageEventDelivery) -> EventDeliveryResponse {
     EventDeliveryResponse {
-        id: delivery.id(),
-        event_id: delivery.event_id(),
-        subscription_id: delivery.subscription_id(),
+        id: delivery.id().id(),
+        event_id: delivery.event_id().get(),
+        subscription_id: delivery.subscription_id().id(),
         status: delivery.status().to_string(),
         attempts: delivery.attempts(),
         next_attempt_at: delivery.next_attempt_at(),
@@ -460,7 +492,10 @@ pub(crate) async fn load_event_delivery(
 ) -> Result<EventDeliveryResponse, ApiError> {
     Ok(event_delivery_from_storage(
         storage_handle(backend)
-            .load_event_delivery(delivery_id)
+            .load_event_delivery(
+                hubuum_domain::EventDeliveryId::new(delivery_id)
+                    .expect("validated event delivery id must be positive"),
+            )
             .await?,
     ))
 }
@@ -471,7 +506,10 @@ pub(crate) async fn release_event_delivery_for_retry(
 ) -> Result<EventDeliveryResponse, ApiError> {
     Ok(event_delivery_from_storage(
         storage_handle(backend)
-            .release_event_delivery_for_retry(delivery_id)
+            .release_event_delivery_for_retry(
+                hubuum_domain::EventDeliveryId::new(delivery_id)
+                    .expect("validated event delivery id must be positive"),
+            )
             .await?,
     ))
 }
@@ -482,7 +520,10 @@ pub(crate) async fn mark_event_delivery_dead(
 ) -> Result<EventDeliveryResponse, ApiError> {
     Ok(event_delivery_from_storage(
         storage_handle(backend)
-            .mark_event_delivery_dead(delivery_id)
+            .mark_event_delivery_dead(
+                hubuum_domain::EventDeliveryId::new(delivery_id)
+                    .expect("validated event delivery id must be positive"),
+            )
             .await?,
     ))
 }

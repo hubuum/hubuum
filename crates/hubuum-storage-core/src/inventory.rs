@@ -1,22 +1,23 @@
 use async_trait::async_trait;
+use hubuum_domain::ClassId;
 
 use crate::StorageError;
 
 /// Number of persisted objects belonging to one class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageObjectsByClassCount {
-    class_id: i32,
+    class_id: ClassId,
     count: i64,
 }
 
 impl StorageObjectsByClassCount {
     #[must_use]
-    pub const fn new(class_id: i32, count: i64) -> Self {
+    pub const fn new(class_id: ClassId, count: i64) -> Self {
         Self { class_id, count }
     }
 
     #[must_use]
-    pub const fn class_id(self) -> i32 {
+    pub const fn class_id(self) -> ClassId {
         self.class_id
     }
 

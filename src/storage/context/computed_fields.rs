@@ -4,7 +4,7 @@ use super::*;
 impl ComputedFieldLifecycleStorage for StorageHandle {
     async fn computed_field_state(
         &self,
-        class_id: i32,
+        class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError> {
         observe_storage_call(self.backend_name(), "computed_fields", "state", async {
             dispatch_backend!(self, |backend| {
@@ -16,7 +16,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
 
     async fn list_shared_computed_fields(
         &self,
-        class_id: i32,
+        class_id: ClassId,
     ) -> Result<Vec<StorageComputedFieldDefinition>, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -50,7 +50,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
 
     async fn get_computed_field(
         &self,
-        definition_id: i32,
+        definition_id: ComputedFieldDefinitionId,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
         observe_storage_call(self.backend_name(), "computed_fields", "get", async {
             dispatch_backend!(self, |backend| {
@@ -63,7 +63,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<StorageComputedFieldMutation, StorageError> {
+    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "computed_fields",
@@ -80,7 +80,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<StorageComputedFieldMutation, StorageError> {
+    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "computed_fields",
@@ -97,7 +97,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<StorageClassComputationState, StorageError> {
+    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "computed_fields",

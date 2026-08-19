@@ -2,6 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{RemoteTargetId, ResourceId, TaskId};
 use serde_json::Value;
 
 use crate::{StorageError, StorageTask, StorageTaskDurations, StorageTaskStatus};
@@ -55,18 +56,18 @@ impl fmt::Debug for StorageTaskClaimToken {
 /// Proof that a worker owns a task until the backend-managed lease expires.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTaskLease {
-    task_id: i32,
+    task_id: TaskId,
     token: StorageTaskClaimToken,
 }
 
 impl StorageTaskLease {
     #[must_use]
-    pub const fn new(task_id: i32, token: StorageTaskClaimToken) -> Self {
+    pub const fn new(task_id: TaskId, token: StorageTaskClaimToken) -> Self {
         Self { task_id, token }
     }
 
     #[must_use]
-    pub const fn task_id(&self) -> i32 {
+    pub const fn task_id(&self) -> TaskId {
         self.task_id
     }
 
@@ -494,9 +495,9 @@ impl fmt::Debug for StorageBackupTaskArtifact {
 /// Target and rendered request facts stored for a remote-call task.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRemoteCallArtifactTarget {
-    target_id: Option<i32>,
+    target_id: Option<RemoteTargetId>,
     subject_type: String,
-    subject_id: i32,
+    subject_id: ResourceId,
     method: String,
     rendered_url: String,
 }
@@ -504,9 +505,9 @@ pub struct StorageRemoteCallArtifactTarget {
 impl StorageRemoteCallArtifactTarget {
     #[must_use]
     pub fn new(
-        target_id: Option<i32>,
+        target_id: Option<RemoteTargetId>,
         subject_type: impl Into<String>,
-        subject_id: i32,
+        subject_id: ResourceId,
         method: impl Into<String>,
         rendered_url: impl Into<String>,
     ) -> Self {
@@ -520,7 +521,7 @@ impl StorageRemoteCallArtifactTarget {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<i32>, String, i32, String, String) {
+    pub fn into_parts(self) -> (Option<RemoteTargetId>, String, ResourceId, String, String) {
         (
             self.target_id,
             self.subject_type,
@@ -768,8 +769,9 @@ mod tests {
     #[test]
     fn worker_dtos_redact_claims_and_artifacts() {
         let now = chrono::Utc::now().naive_utc();
+        let task_id = TaskId::new(88_001).unwrap();
         let task = StorageTask::builder(
-            88_001,
+            task_id,
             StorageTaskKind::Export,
             StorageTaskStatus::Running,
             now,
@@ -781,7 +783,7 @@ mod tests {
         .build();
         let claim = StorageTaskClaim::new(
             task,
-            StorageTaskLease::new(88_001, StorageTaskClaimToken::new("secret-backend-claim")),
+            StorageTaskLease::new(task_id, StorageTaskClaimToken::new("secret-backend-claim")),
         );
         let artifact = StorageExportTaskArtifact::builder(
             "application/json",
@@ -793,9 +795,9 @@ mod tests {
         .build();
         let remote_artifact = StorageRemoteCallTaskArtifact::new(
             StorageRemoteCallArtifactTarget::new(
-                Some(7),
+                Some(RemoteTargetId::new(7).unwrap()),
                 "object-secret",
-                8,
+                ResourceId::new(8).unwrap(),
                 "POST",
                 "https://example.invalid/?secret=url",
             ),

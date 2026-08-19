@@ -1,22 +1,27 @@
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
+use hubuum_domain::{
+    ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, ResourceId, ResourceRevision,
+    TaskId,
+};
 use hubuum_query::QueryOptions;
-use serde_json::Value;
-use std::num::NonZeroI64;
 
-use crate::StorageError;
+use crate::{
+    StorageClassRecord, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
+    StorageRemoteTarget,
+};
 
 /// Collection visibility applied by the adapter before counting or paging.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HistoryCollectionScope {
     All,
-    Visible(Vec<i32>),
+    Visible(Vec<CollectionId>),
 }
 
 /// Backend-neutral request for one resource's temporal history page.
 #[derive(Clone)]
 pub struct HistoryListQuery {
-    entity_id: i32,
+    entity_id: ResourceId,
     query_options: QueryOptions,
     collection_scope: HistoryCollectionScope,
 }
@@ -24,7 +29,7 @@ pub struct HistoryListQuery {
 impl HistoryListQuery {
     #[must_use]
     pub const fn new(
-        entity_id: i32,
+        entity_id: ResourceId,
         query_options: QueryOptions,
         collection_scope: HistoryCollectionScope,
     ) -> Self {
@@ -36,7 +41,7 @@ impl HistoryListQuery {
     }
 
     #[must_use]
-    pub const fn entity_id(&self) -> i32 {
+    pub const fn entity_id(&self) -> ResourceId {
         self.entity_id
     }
 
@@ -51,7 +56,7 @@ impl HistoryListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, QueryOptions, HistoryCollectionScope) {
+    pub fn into_parts(self) -> (ResourceId, QueryOptions, HistoryCollectionScope) {
         (self.entity_id, self.query_options, self.collection_scope)
     }
 }
@@ -59,8 +64,8 @@ impl HistoryListQuery {
 /// Backend-neutral request for one object's temporal history page.
 #[derive(Clone)]
 pub struct ObjectHistoryListQuery {
-    object_id: i32,
-    class_id: i32,
+    object_id: ObjectId,
+    class_id: ClassId,
     query_options: QueryOptions,
     collection_scope: HistoryCollectionScope,
 }
@@ -68,8 +73,8 @@ pub struct ObjectHistoryListQuery {
 impl ObjectHistoryListQuery {
     #[must_use]
     pub const fn new(
-        object_id: i32,
-        class_id: i32,
+        object_id: ObjectId,
+        class_id: ClassId,
         query_options: QueryOptions,
         collection_scope: HistoryCollectionScope,
     ) -> Self {
@@ -82,7 +87,7 @@ impl ObjectHistoryListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, QueryOptions, HistoryCollectionScope) {
+    pub fn into_parts(self) -> (ObjectId, ClassId, QueryOptions, HistoryCollectionScope) {
         (
             self.object_id,
             self.class_id,
@@ -95,18 +100,18 @@ impl ObjectHistoryListQuery {
 /// Point-in-time lookup shared by non-object history resources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HistoryAsOfQuery {
-    entity_id: i32,
+    entity_id: ResourceId,
     at: DateTime<Utc>,
 }
 
 impl HistoryAsOfQuery {
     #[must_use]
-    pub const fn new(entity_id: i32, at: DateTime<Utc>) -> Self {
+    pub const fn new(entity_id: ResourceId, at: DateTime<Utc>) -> Self {
         Self { entity_id, at }
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (i32, DateTime<Utc>) {
+    pub const fn into_parts(self) -> (ResourceId, DateTime<Utc>) {
         (self.entity_id, self.at)
     }
 }
@@ -114,14 +119,14 @@ impl HistoryAsOfQuery {
 /// Point-in-time lookup for an object constrained by its class route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ObjectHistoryAsOfQuery {
-    object_id: i32,
-    class_id: i32,
+    object_id: ObjectId,
+    class_id: ClassId,
     at: DateTime<Utc>,
 }
 
 impl ObjectHistoryAsOfQuery {
     #[must_use]
-    pub const fn new(object_id: i32, class_id: i32, at: DateTime<Utc>) -> Self {
+    pub const fn new(object_id: ObjectId, class_id: ClassId, at: DateTime<Utc>) -> Self {
         Self {
             object_id,
             class_id,
@@ -130,7 +135,7 @@ impl ObjectHistoryAsOfQuery {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (i32, i32, DateTime<Utc>) {
+    pub const fn into_parts(self) -> (ObjectId, ClassId, DateTime<Utc>) {
         (self.object_id, self.class_id, self.at)
     }
 }
@@ -141,12 +146,12 @@ pub struct HistoryMetadata {
     operation: String,
     valid_from: DateTime<Utc>,
     valid_to: Option<DateTime<Utc>>,
-    actor_id: Option<i32>,
-    history_id: i64,
+    actor_id: Option<PrincipalId>,
+    history_id: HistoryRecordId,
     actor_kind: Option<String>,
-    initiator_principal_id: Option<i32>,
-    task_id: Option<i32>,
-    revision: NonZeroI64,
+    initiator_principal_id: Option<PrincipalId>,
+    task_id: Option<TaskId>,
+    revision: ResourceRevision,
 }
 
 impl HistoryMetadata {
@@ -155,8 +160,8 @@ impl HistoryMetadata {
         operation: impl Into<String>,
         valid_from: DateTime<Utc>,
         valid_to: Option<DateTime<Utc>>,
-        history_id: i64,
-        revision: NonZeroI64,
+        history_id: HistoryRecordId,
+        revision: ResourceRevision,
     ) -> Self {
         Self {
             operation: operation.into(),
@@ -172,20 +177,23 @@ impl HistoryMetadata {
     }
 
     #[must_use]
-    pub fn actor(mut self, actor_id: Option<i32>, actor_kind: Option<String>) -> Self {
+    pub fn actor(mut self, actor_id: Option<PrincipalId>, actor_kind: Option<String>) -> Self {
         self.actor_id = actor_id;
         self.actor_kind = actor_kind;
         self
     }
 
     #[must_use]
-    pub const fn initiator_principal_id(mut self, initiator_principal_id: Option<i32>) -> Self {
+    pub const fn initiator_principal_id(
+        mut self,
+        initiator_principal_id: Option<PrincipalId>,
+    ) -> Self {
         self.initiator_principal_id = initiator_principal_id;
         self
     }
 
     #[must_use]
-    pub const fn task_id(mut self, task_id: Option<i32>) -> Self {
+    pub const fn task_id(mut self, task_id: Option<TaskId>) -> Self {
         self.task_id = task_id;
         self
     }
@@ -198,12 +206,12 @@ impl HistoryMetadata {
         String,
         DateTime<Utc>,
         Option<DateTime<Utc>>,
-        Option<i32>,
-        i64,
+        Option<PrincipalId>,
+        HistoryRecordId,
         Option<String>,
-        Option<i32>,
-        Option<i32>,
-        i64,
+        Option<PrincipalId>,
+        Option<TaskId>,
+        ResourceRevision,
     ) {
         (
             self.operation,
@@ -214,7 +222,7 @@ impl HistoryMetadata {
             self.actor_kind,
             self.initiator_principal_id,
             self.task_id,
-            self.revision.get(),
+            self.revision,
         )
     }
 }
@@ -222,13 +230,13 @@ impl HistoryMetadata {
 /// One resolved principal name used to enrich history provenance.
 #[derive(Clone, PartialEq, Eq)]
 pub struct HistoryPrincipalName {
-    principal_id: i32,
+    principal_id: PrincipalId,
     name: String,
 }
 
 impl HistoryPrincipalName {
     #[must_use]
-    pub fn new(principal_id: i32, name: impl Into<String>) -> Self {
+    pub fn new(principal_id: PrincipalId, name: impl Into<String>) -> Self {
         Self {
             principal_id,
             name: name.into(),
@@ -236,7 +244,7 @@ impl HistoryPrincipalName {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String) {
+    pub fn into_parts(self) -> (PrincipalId, String) {
         (self.principal_id, self.name)
     }
 }
@@ -263,308 +271,76 @@ impl<T> HistoryPage<T> {
 /// One collection revision returned by [`HistoryStorage`].
 #[derive(Clone, PartialEq, Eq)]
 pub struct CollectionHistoryRecord {
-    id: i32,
-    name: String,
-    description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    parent_collection_id: Option<i32>,
+    record: StorageCollection,
     metadata: HistoryMetadata,
 }
 
 impl CollectionHistoryRecord {
     #[must_use]
-    pub fn new(
-        id: i32,
-        name: String,
-        description: String,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        parent_collection_id: Option<i32>,
-        metadata: HistoryMetadata,
-    ) -> Self {
-        Self {
-            id,
-            name,
-            description,
-            created_at,
-            updated_at,
-            parent_collection_id,
-            metadata,
-        }
+    pub const fn new(record: StorageCollection, metadata: HistoryMetadata) -> Self {
+        Self { record, metadata }
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        String,
-        String,
-        NaiveDateTime,
-        NaiveDateTime,
-        Option<i32>,
-        HistoryMetadata,
-    ) {
-        (
-            self.id,
-            self.name,
-            self.description,
-            self.created_at,
-            self.updated_at,
-            self.parent_collection_id,
-            self.metadata,
-        )
+    pub fn into_parts(self) -> (StorageCollection, HistoryMetadata) {
+        (self.record, self.metadata)
     }
 }
 
 /// One class revision returned by [`HistoryStorage`].
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct ClassHistoryRecord {
-    id: i32,
-    name: String,
-    collection_id: i32,
-    json_schema: Option<Value>,
-    validate_schema: bool,
-    description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    record: StorageClassRecord,
     metadata: HistoryMetadata,
 }
 
 impl ClassHistoryRecord {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: i32,
-        name: String,
-        collection_id: i32,
-        json_schema: Option<Value>,
-        validate_schema: bool,
-        description: String,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        metadata: HistoryMetadata,
-    ) -> Self {
-        Self {
-            id,
-            name,
-            collection_id,
-            json_schema,
-            validate_schema,
-            description,
-            created_at,
-            updated_at,
-            metadata,
-        }
+    pub const fn new(record: StorageClassRecord, metadata: HistoryMetadata) -> Self {
+        Self { record, metadata }
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        String,
-        i32,
-        Option<Value>,
-        bool,
-        String,
-        NaiveDateTime,
-        NaiveDateTime,
-        HistoryMetadata,
-    ) {
-        (
-            self.id,
-            self.name,
-            self.collection_id,
-            self.json_schema,
-            self.validate_schema,
-            self.description,
-            self.created_at,
-            self.updated_at,
-            self.metadata,
-        )
+    pub fn into_parts(self) -> (StorageClassRecord, HistoryMetadata) {
+        (self.record, self.metadata)
     }
 }
 
 /// One object revision returned by [`HistoryStorage`].
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct ObjectHistoryRecord {
-    id: i32,
-    name: String,
-    collection_id: i32,
-    class_id: i32,
-    data: Value,
-    description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    record: StorageObject,
     metadata: HistoryMetadata,
 }
 
 impl ObjectHistoryRecord {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: i32,
-        name: String,
-        collection_id: i32,
-        class_id: i32,
-        data: Value,
-        description: String,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        metadata: HistoryMetadata,
-    ) -> Self {
-        Self {
-            id,
-            name,
-            collection_id,
-            class_id,
-            data,
-            description,
-            created_at,
-            updated_at,
-            metadata,
-        }
+    pub const fn new(record: StorageObject, metadata: HistoryMetadata) -> Self {
+        Self { record, metadata }
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        String,
-        i32,
-        i32,
-        Value,
-        String,
-        NaiveDateTime,
-        NaiveDateTime,
-        HistoryMetadata,
-    ) {
-        (
-            self.id,
-            self.name,
-            self.collection_id,
-            self.class_id,
-            self.data,
-            self.description,
-            self.created_at,
-            self.updated_at,
-            self.metadata,
-        )
+    pub fn into_parts(self) -> (StorageObject, HistoryMetadata) {
+        (self.record, self.metadata)
     }
 }
 
 /// One export-template revision returned by [`HistoryStorage`].
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct ExportTemplateHistoryRecord {
-    id: i32,
-    collection_id: i32,
-    name: String,
-    description: String,
-    content_type: String,
-    template: String,
-    kind: String,
-    scope_kind: Option<String>,
-    class_id: Option<i32>,
-    default_query: Option<String>,
-    include: Option<Value>,
-    relation_context: Option<Value>,
-    default_missing_data_policy: Option<String>,
-    default_limits: Option<Value>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    record: StorageExportTemplate,
     metadata: HistoryMetadata,
 }
 
 impl ExportTemplateHistoryRecord {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: i32,
-        collection_id: i32,
-        name: String,
-        description: String,
-        content_type: String,
-        template: String,
-        kind: String,
-        scope_kind: Option<String>,
-        class_id: Option<i32>,
-        default_query: Option<String>,
-        include: Option<Value>,
-        relation_context: Option<Value>,
-        default_missing_data_policy: Option<String>,
-        default_limits: Option<Value>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        metadata: HistoryMetadata,
-    ) -> Self {
-        Self {
-            id,
-            collection_id,
-            name,
-            description,
-            content_type,
-            template,
-            kind,
-            scope_kind,
-            class_id,
-            default_query,
-            include,
-            relation_context,
-            default_missing_data_policy,
-            default_limits,
-            created_at,
-            updated_at,
-            metadata,
-        }
+    pub const fn new(record: StorageExportTemplate, metadata: HistoryMetadata) -> Self {
+        Self { record, metadata }
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        i32,
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<i32>,
-        Option<String>,
-        Option<Value>,
-        Option<Value>,
-        Option<String>,
-        Option<Value>,
-        NaiveDateTime,
-        NaiveDateTime,
-        HistoryMetadata,
-    ) {
-        (
-            self.id,
-            self.collection_id,
-            self.name,
-            self.description,
-            self.content_type,
-            self.template,
-            self.kind,
-            self.scope_kind,
-            self.class_id,
-            self.default_query,
-            self.include,
-            self.relation_context,
-            self.default_missing_data_policy,
-            self.default_limits,
-            self.created_at,
-            self.updated_at,
-            self.metadata,
-        )
+    pub fn into_parts(self) -> (StorageExportTemplate, HistoryMetadata) {
+        (self.record, self.metadata)
     }
 }
 
@@ -572,107 +348,21 @@ impl ExportTemplateHistoryRecord {
 ///
 /// Deliberately does not implement `Debug`: transport templates and
 /// authentication configuration may contain secrets.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct RemoteTargetHistoryRecord {
-    id: i32,
-    collection_id: i32,
-    class_id: Option<i32>,
-    name: String,
-    description: String,
-    method: String,
-    url_template: String,
-    headers_template: Value,
-    body_template: Option<String>,
-    auth_config: Value,
-    allowed_subject_types: Value,
-    timeout_ms: i32,
-    enabled: bool,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    record: StorageRemoteTarget,
     metadata: HistoryMetadata,
 }
 
 impl RemoteTargetHistoryRecord {
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: i32,
-        collection_id: i32,
-        class_id: Option<i32>,
-        name: String,
-        description: String,
-        method: String,
-        url_template: String,
-        headers_template: Value,
-        body_template: Option<String>,
-        auth_config: Value,
-        allowed_subject_types: Value,
-        timeout_ms: i32,
-        enabled: bool,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        metadata: HistoryMetadata,
-    ) -> Self {
-        Self {
-            id,
-            collection_id,
-            class_id,
-            name,
-            description,
-            method,
-            url_template,
-            headers_template,
-            body_template,
-            auth_config,
-            allowed_subject_types,
-            timeout_ms,
-            enabled,
-            created_at,
-            updated_at,
-            metadata,
-        }
+    pub const fn new(record: StorageRemoteTarget, metadata: HistoryMetadata) -> Self {
+        Self { record, metadata }
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        i32,
-        i32,
-        Option<i32>,
-        String,
-        String,
-        String,
-        String,
-        Value,
-        Option<String>,
-        Value,
-        Value,
-        i32,
-        bool,
-        NaiveDateTime,
-        NaiveDateTime,
-        HistoryMetadata,
-    ) {
-        (
-            self.id,
-            self.collection_id,
-            self.class_id,
-            self.name,
-            self.description,
-            self.method,
-            self.url_template,
-            self.headers_template,
-            self.body_template,
-            self.auth_config,
-            self.allowed_subject_types,
-            self.timeout_ms,
-            self.enabled,
-            self.created_at,
-            self.updated_at,
-            self.metadata,
-        )
+    pub fn into_parts(self) -> (StorageRemoteTarget, HistoryMetadata) {
+        (self.record, self.metadata)
     }
 }
 
@@ -681,7 +371,7 @@ impl RemoteTargetHistoryRecord {
 pub trait HistoryStorage: Send + Sync {
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<i32>,
+        principal_ids: Vec<PrincipalId>,
     ) -> Result<Vec<HistoryPrincipalName>, StorageError>;
 
     async fn list_collection_history(
@@ -744,24 +434,35 @@ mod tests {
     #[test]
     fn history_queries_own_their_visibility_boundary() {
         let query = HistoryListQuery::new(
-            17,
+            ResourceId::new(17).unwrap(),
             QueryOptions::new(Vec::new(), Vec::new(), Some(25), None, true).unwrap(),
-            HistoryCollectionScope::Visible(vec![3, 5]),
+            HistoryCollectionScope::Visible(vec![
+                CollectionId::new(3).unwrap(),
+                CollectionId::new(5).unwrap(),
+            ]),
         );
 
         let (entity_id, options, scope) = query.into_parts();
-        assert_eq!(entity_id, 17);
+        assert_eq!(entity_id, ResourceId::new(17).unwrap());
         assert_eq!(options.limit(), Some(25));
-        assert_eq!(scope, HistoryCollectionScope::Visible(vec![3, 5]));
+        assert_eq!(
+            scope,
+            HistoryCollectionScope::Visible(vec![
+                CollectionId::new(3).unwrap(),
+                CollectionId::new(5).unwrap(),
+            ])
+        );
     }
 
     #[test]
     fn history_metadata_preserves_complete_provenance() {
         let valid_from = Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
-        let metadata = HistoryMetadata::new("U", valid_from, None, 41, NonZeroI64::new(7).unwrap())
-            .actor(Some(11), Some("human".to_string()))
-            .initiator_principal_id(Some(13))
-            .task_id(Some(17));
+        let revision = ResourceRevision::new(7).unwrap();
+        let history_id = HistoryRecordId::new(41).unwrap();
+        let metadata = HistoryMetadata::new("U", valid_from, None, history_id, revision)
+            .actor(PrincipalId::new(11).ok(), Some("human".to_string()))
+            .initiator_principal_id(PrincipalId::new(13).ok())
+            .task_id(TaskId::new(17).ok());
 
         assert_eq!(
             metadata.into_parts(),
@@ -769,12 +470,12 @@ mod tests {
                 "U".to_string(),
                 valid_from,
                 None,
-                Some(11),
-                41,
+                PrincipalId::new(11).ok(),
+                history_id,
                 Some("human".to_string()),
-                Some(13),
-                Some(17),
-                7,
+                PrincipalId::new(13).ok(),
+                TaskId::new(17).ok(),
+                revision,
             )
         );
     }

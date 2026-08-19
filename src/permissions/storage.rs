@@ -4,9 +4,7 @@ use hubuum_storage_core::{
 };
 
 use crate::errors::ApiError;
-use crate::models::{
-    Collection, Group, GroupPermission, Permission, Permissions, ResourceRevision,
-};
+use crate::models::{Collection, Group, GroupPermission, Permission, Permissions};
 
 pub(crate) const fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
     match permission {
@@ -84,38 +82,38 @@ pub(crate) fn collection_from_storage(
     collection: AuthorizationCollection,
 ) -> Result<Collection, ApiError> {
     Ok(Collection {
-        id: collection.id(),
+        id: collection.id().id(),
         name: collection.name().to_string(),
         description: collection.description().to_string(),
         created_at: collection.created_at(),
         updated_at: collection.updated_at(),
-        parent_collection_id: collection.parent_collection_id(),
-        revision: ResourceRevision::new(collection.revision())?,
+        parent_collection_id: collection.parent_collection_id().map(|id| id.id()),
+        revision: collection.revision(),
     })
 }
 
 pub(crate) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, ApiError> {
     Ok(Group {
-        id: group.id(),
+        id: group.id().id(),
         groupname: group.group_name().to_string(),
         description: group.description().to_string(),
         created_at: group.created_at(),
         updated_at: group.updated_at(),
-        identity_scope_id: group.identity_scope_id(),
+        identity_scope_id: group.identity_scope_id().id(),
         managed_by: group.managed_by().to_string(),
         external_key: group.external_key().map(str::to_owned),
         last_sync_attempted_at: group.last_sync_attempted_at(),
         last_sync_success_at: group.last_sync_success_at(),
-        revision: ResourceRevision::new(group.revision())?,
+        revision: group.revision(),
     })
 }
 
 pub(crate) fn grant_from_storage(grant: AuthorizationGrant) -> Permission {
     let has = |permission| grant.permissions().contains(&permission);
     Permission {
-        id: grant.id(),
-        collection_id: grant.collection_id(),
-        group_id: grant.group_id(),
+        id: grant.id().id(),
+        collection_id: grant.collection_id().id(),
+        group_id: grant.group_id().id(),
         has_read_collection: has(AuthorizationPermission::ReadCollection),
         has_update_collection: has(AuthorizationPermission::UpdateCollection),
         has_delete_collection: has(AuthorizationPermission::DeleteCollection),

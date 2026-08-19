@@ -8,15 +8,15 @@ use std::sync::Arc;
 
 use crate::services::CollectionService;
 use crate::storage::{
-    ApplicationStorageTelemetry, CollectionStore, ObservedStorage, StorageIdentity,
+    ApplicationStorageTelemetry, CollectionStorage, ObservedStorage, StorageBackendIdentity,
 };
 
 #[cfg(feature = "postgres-bench")]
 use crate::services::Services;
 #[cfg(feature = "postgres-bench")]
-use crate::storage::postgres::PostgresPool;
-#[cfg(feature = "postgres-bench")]
 use crate::storage::{BenchmarkStorageContext, StorageHandle};
+#[cfg(feature = "postgres-bench")]
+use hubuum_storage_postgres::PostgresPool;
 
 /// Build the collection service around the production observability wrapper.
 ///
@@ -26,7 +26,7 @@ use crate::storage::{BenchmarkStorageContext, StorageHandle};
 #[must_use]
 pub fn observed_collection_service<S>(storage: S) -> CollectionService
 where
-    S: CollectionStore + StorageIdentity + 'static,
+    S: CollectionStorage + StorageBackendIdentity + 'static,
 {
     CollectionService::new(Arc::new(ObservedStorage::new(
         storage,

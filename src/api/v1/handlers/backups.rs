@@ -76,14 +76,14 @@ pub async fn create_backup(
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
     let scope_snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id())?),
+        Some(TokenID::new(requestor.token_meta.id().id())?),
         requestor.scopes(),
     );
     let task = submit_task(
         &context,
         TaskSubmission::new(
             TaskKind::Backup,
-            PrincipalID::new(requestor.principal.id())?,
+            PrincipalID::new(requestor.principal.id().id())?,
             payload,
             1,
             settings.max_active_tasks_per_user(),

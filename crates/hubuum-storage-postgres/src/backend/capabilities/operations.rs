@@ -115,8 +115,11 @@ impl EventSubscriptionStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn load_event_sink(&self, sink_id: i32) -> Result<StorageEventSink, StorageError> {
-        crate::operations::event_subscription::load_event_sink(self.runtime(), sink_id)
+    async fn load_event_sink(
+        &self,
+        sink_id: EventSinkId,
+    ) -> Result<StorageEventSink, StorageError> {
+        crate::operations::event_subscription::load_event_sink(self.runtime(), sink_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -124,7 +127,7 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn create_event_sink(
         &self,
         request: StorageEventSinkCreate,
-    ) -> Result<StorageEventSink, StorageError> {
+    ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
         crate::operations::event_subscription::create_event_sink(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -133,13 +136,16 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn update_event_sink(
         &self,
         request: StorageEventSinkUpdate,
-    ) -> Result<StorageEventSink, StorageError> {
+    ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
         crate::operations::event_subscription::update_event_sink(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn delete_event_sink(&self, request: StorageEventSinkDelete) -> Result<(), StorageError> {
+    async fn delete_event_sink(
+        &self,
+        request: StorageEventSinkDelete,
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::event_subscription::delete_event_sink(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -156,13 +162,13 @@ impl EventSubscriptionStorage for PostgresStorage {
 
     async fn load_event_subscription(
         &self,
-        collection_id: i32,
-        subscription_id: i32,
+        collection_id: CollectionId,
+        subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError> {
         crate::operations::event_subscription::load_event_subscription(
             self.runtime(),
-            collection_id,
-            subscription_id,
+            collection_id.id(),
+            subscription_id.id(),
         )
         .await
         .map_err(StorageError::from)
@@ -171,7 +177,7 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn create_event_subscription(
         &self,
         request: StorageEventSubscriptionCreate,
-    ) -> Result<StorageEventSubscription, StorageError> {
+    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
         crate::operations::event_subscription::create_event_subscription(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -180,7 +186,7 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn update_event_subscription(
         &self,
         request: StorageEventSubscriptionUpdate,
-    ) -> Result<StorageEventSubscription, StorageError> {
+    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
         crate::operations::event_subscription::update_event_subscription(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -189,7 +195,7 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn delete_event_subscription(
         &self,
         request: StorageEventSubscriptionDelete,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::event_subscription::delete_event_subscription(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -209,20 +215,20 @@ impl EventDeliveryAdministrationStorage for PostgresStorage {
 
     async fn load_event_delivery(
         &self,
-        delivery_id: i64,
+        delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        crate::operations::event_delivery::load_event_delivery(self.runtime(), delivery_id)
+        crate::operations::event_delivery::load_event_delivery(self.runtime(), delivery_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn release_event_delivery_for_retry(
         &self,
-        delivery_id: i64,
+        delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
         crate::operations::event_delivery::release_event_delivery_for_retry(
             self.runtime(),
-            delivery_id,
+            delivery_id.id(),
         )
         .await
         .map_err(StorageError::from)
@@ -230,11 +236,14 @@ impl EventDeliveryAdministrationStorage for PostgresStorage {
 
     async fn mark_event_delivery_dead(
         &self,
-        delivery_id: i64,
+        delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        crate::operations::event_delivery::mark_event_delivery_dead(self.runtime(), delivery_id)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::event_delivery::mark_event_delivery_dead(
+            self.runtime(),
+            delivery_id.id(),
+        )
+        .await
+        .map_err(StorageError::from)
     }
 }
 
@@ -289,6 +298,24 @@ impl EventFanoutStorage for PostgresStorage {
 
 #[async_trait]
 impl EventRetentionStorage for PostgresStorage {
+    async fn claim_event_retention_batch(
+        &self,
+        settings: EventRetentionSettings,
+    ) -> Result<Option<EventRetentionBatch>, StorageError> {
+        crate::operations::event_retention::claim_event_retention_batch(self.runtime(), settings)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn complete_event_retention_batch(
+        &self,
+        batch_id: EventRetentionBatchId,
+    ) -> Result<EventRetentionSummary, StorageError> {
+        crate::operations::event_retention::complete_event_retention_batch(self.runtime(), batch_id)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn process_event_retention_batch(
         &self,
         settings: EventRetentionSettings,

@@ -11,20 +11,20 @@ use hubuum::services::CollectionService;
 use hubuum_domain::{CollectionId, ResourceId, ResourceRevision};
 use hubuum_events_core::EventSequence;
 use hubuum_storage_core::{
-    AuditReceipt, CollectionStore, MutationOutcome, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageIdentity, StorageRecordMetadata,
+    AuditReceipt, CollectionStorage, MutationOutcome, StorageBackendIdentity, StorageCollection,
+    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageRecordMetadata,
 };
 use uuid::Uuid;
 
 const TARGET_COLLECTION_ID: i32 = 42;
 const ANCESTOR_COUNT: usize = 12;
 
-struct FixedCollectionStore {
+struct FixedCollectionStorage {
     collection: StorageCollection,
     ancestors: Vec<StorageCollection>,
 }
 
-impl FixedCollectionStore {
+impl FixedCollectionStorage {
     fn new() -> Self {
         Self {
             collection: collection(TARGET_COLLECTION_ID, None),
@@ -35,14 +35,14 @@ impl FixedCollectionStore {
     }
 }
 
-impl StorageIdentity for FixedCollectionStore {
+impl StorageBackendIdentity for FixedCollectionStorage {
     fn storage_name(&self) -> &'static str {
         "fixed-benchmark"
     }
 }
 
 #[async_trait]
-impl CollectionStore for FixedCollectionStore {
+impl CollectionStorage for FixedCollectionStorage {
     async fn get_collection(&self, _id: CollectionId) -> Result<StorageCollection, StorageError> {
         Ok(self.collection.clone())
     }
@@ -119,23 +119,24 @@ fn collection(id: i32, parent_collection_id: Option<i32>) -> StorageCollection {
         ),
         format!("collection-{id}"),
         "deterministic benchmark collection",
-        parent_collection_id,
+        parent_collection_id
+            .map(|id| CollectionId::new(id).expect("benchmark collection id should be valid")),
     )
 }
 
 fn audit_receipt() -> AuditReceipt {
     AuditReceipt::new(
         EventSequence::new(1).expect("benchmark event sequence should be valid"),
-        Uuid::nil(),
-        "collection",
-        "created",
+        hubuum_events_core::EventId::from(Uuid::nil()),
+        hubuum_events_core::EntityType::Collection,
+        hubuum_events_core::Action::Created,
         None,
-        Some(1),
+        Some(ResourceRevision::INITIAL),
     )
 }
 
 fn setup() -> CollectionService {
-    observed_collection_service(FixedCollectionStore::new())
+    observed_collection_service(FixedCollectionStorage::new())
 }
 
 #[library_benchmark(setup = setup)]

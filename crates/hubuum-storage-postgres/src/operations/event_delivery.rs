@@ -6,7 +6,10 @@ use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::sql_types::{Nullable, Timestamp};
 use diesel::{Queryable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{EventDeliverySettings, EventDeliveryStatus};
+use hubuum_domain::{
+    EventDeliveryId, EventDeliverySettings, EventDeliveryStatus, EventSinkId, EventSubscriptionId,
+};
+use hubuum_events_core::EventSequence;
 use hubuum_query::{FilterField, Operator, QueryOptions};
 use hubuum_storage_core::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
@@ -61,12 +64,14 @@ struct AdministrationDeliveryRow {
     updated_at: NaiveDateTime,
 }
 
-impl From<AdministrationDeliveryRow> for StorageEventDelivery {
-    fn from(row: AdministrationDeliveryRow) -> Self {
-        Self::builder(
-            row.id,
-            row.event_id,
-            row.subscription_id,
+impl TryFrom<AdministrationDeliveryRow> for StorageEventDelivery {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: AdministrationDeliveryRow) -> Result<Self, Self::Error> {
+        Ok(Self::builder(
+            EventDeliveryId::new(row.id)?,
+            EventSequence::new(row.event_id)?,
+            EventSubscriptionId::new(row.subscription_id)?,
             row.status,
             row.next_attempt_at,
             row.created_at,
@@ -75,7 +80,7 @@ impl From<AdministrationDeliveryRow> for StorageEventDelivery {
         .attempts(row.attempts)
         .last_error(row.last_error)
         .locked_until(row.locked_until)
-        .build()
+        .build())
     }
 }
 
@@ -116,9 +121,78 @@ pub async fn claim_event_delivery_batch(
                 let deliveries =
                     claim_delivery_ids(connection, &delivery_ids, now, settings).await?;
                 let work_items = load_work_items(connection, deliveries).await?;
+                crate::reach_fault_point(
+                    crate::PostgresFaultPoint::EventDeliveryAfterClaim,
+                    Some(connection),
+                )
+                .await?;
                 Ok(EventDeliveryBatch::new(work_items, None))
             },
         )
+        .await
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn load_event_delivery_for_event_for_test(
+    runtime: &PostgresRuntime,
+    event_sequence: EventSequence,
+) -> Result<StorageEventDelivery, PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
+
+            event_deliveries
+                .filter(event_id.eq(event_sequence.get()))
+                .first::<AdministrationDeliveryRow>(connection)
+                .await?
+                .try_into()
+        })
+        .await
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn set_event_delivery_status_for_test(
+    runtime: &PostgresRuntime,
+    delivery_id: EventDeliveryId,
+    delivery_status: EventDeliveryStatus,
+) -> Result<(), PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::event_deliveries::dsl::{event_deliveries, id, status};
+
+            let updated = diesel::update(event_deliveries.filter(id.eq(delivery_id.id())))
+                .set(status.eq(delivery_status.as_str()))
+                .execute(connection)
+                .await?;
+            if updated == 1 {
+                Ok(())
+            } else {
+                Err(PostgresStorageError::not_found("event delivery not found"))
+            }
+        })
+        .await
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn set_event_delivery_claim_token_for_test(
+    runtime: &PostgresRuntime,
+    delivery_id: EventDeliveryId,
+    delivery_claim_token: Uuid,
+) -> Result<(), PostgresStorageError> {
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::event_deliveries::dsl::{claim_token, event_deliveries, id};
+
+            let updated = diesel::update(event_deliveries.filter(id.eq(delivery_id.id())))
+                .set(claim_token.eq(Some(delivery_claim_token)))
+                .execute(connection)
+                .await?;
+            if updated == 1 {
+                Ok(())
+            } else {
+                Err(PostgresStorageError::not_found("event delivery not found"))
+            }
+        })
         .await
 }
 
@@ -260,15 +334,19 @@ async fn load_work_items(
             })?;
 
             Ok(EventDeliveryWorkItem::new(
-                EventDeliveryClaim::new(delivery.id, delivery.attempts, claim_token),
+                EventDeliveryClaim::new(
+                    EventDeliveryId::new(delivery.id)?,
+                    delivery.attempts,
+                    claim_token,
+                ),
                 event.into_envelope(&principal_names)?,
                 EventDeliverySubscription::new(
-                    subscription.id,
+                    EventSubscriptionId::new(subscription.id)?,
                     subscription.name.clone(),
                     subscription.routing.clone(),
                 ),
                 EventDeliverySink::new(
-                    sink.id,
+                    EventSinkId::new(sink.id)?,
                     sink.name.clone(),
                     sink.kind.clone(),
                     sink.configuration.clone(),
@@ -324,10 +402,10 @@ pub async fn mark_event_delivery_succeeded(
     };
 
     runtime
-        .with_connection(async |connection| {
+        .with_transaction(async |connection| -> Result<(), PostgresStorageError> {
             diesel::update(
                 event_deliveries
-                    .filter(id.eq(claim.delivery_id()))
+                    .filter(id.eq(claim.delivery_id().id()))
                     .filter(claim_token.eq(claim.token()))
                     .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
             )
@@ -339,8 +417,13 @@ pub async fn mark_event_delivery_succeeded(
             ))
             .returning(id)
             .get_result::<i64>(connection)
-            .await
-            .map(|_| ())
+            .await?;
+            crate::reach_fault_point(
+                crate::PostgresFaultPoint::EventDeliveryBeforeAcknowledge,
+                Some(connection),
+            )
+            .await?;
+            Ok(())
         })
         .await
 }
@@ -376,7 +459,7 @@ pub async fn mark_event_delivery_failed(
         .with_connection(async |connection| {
             diesel::update(
                 event_deliveries
-                    .filter(id.eq(claim.delivery_id()))
+                    .filter(id.eq(claim.delivery_id().id()))
                     .filter(claim_token.eq(claim.token()))
                     .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
             )
@@ -409,7 +492,9 @@ pub async fn list_event_deliveries(
                 let total = if include_total {
                     Some(
                         build_administration_delivery_query(
-                            query.subscription_id_value(),
+                            query
+                                .subscription_id_value()
+                                .map(EventSubscriptionId::id),
                             query.options(),
                         )?
                         .count()
@@ -420,7 +505,9 @@ pub async fn list_event_deliveries(
                     None
                 };
                 let mut records = build_administration_delivery_query(
-                    query.subscription_id_value(),
+                    query
+                        .subscription_id_value()
+                        .map(EventSubscriptionId::id),
                     query.options(),
                 )?;
                 let fields = query
@@ -434,8 +521,8 @@ pub async fn list_event_deliveries(
                     .load::<AdministrationDeliveryRow>(connection)
                     .await?
                     .into_iter()
-                    .map(StorageEventDelivery::from)
-                    .collect();
+                    .map(StorageEventDelivery::try_from)
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(StorageEventPage::new(rows, total))
             },
         )
@@ -457,7 +544,7 @@ pub async fn load_event_delivery(
                 .await
         })
         .await
-        .map(StorageEventDelivery::from)
+        .and_then(StorageEventDelivery::try_from)
 }
 
 /// Release failed or dead work for immediate retry and notify workers in the
@@ -489,7 +576,7 @@ pub async fn release_event_delivery_for_retry(
                 .get_result::<AdministrationDeliveryRow>(connection)
                 .await?;
                 notify_event_delivery(connection).await?;
-                Ok(StorageEventDelivery::from(delivery))
+                StorageEventDelivery::try_from(delivery)
             },
         )
         .await
@@ -521,7 +608,7 @@ pub async fn mark_event_delivery_dead(
             .await
         })
         .await
-        .map(StorageEventDelivery::from)
+        .and_then(StorageEventDelivery::try_from)
 }
 
 fn build_administration_delivery_query(
@@ -690,13 +777,19 @@ pub async fn claim_event_delivery_by_id(
                 .get_result::<DeliveryRow>(connection)
                 .await?;
 
-                load_work_items(connection, vec![delivery])
+                let work_item = load_work_items(connection, vec![delivery])
                     .await?
                     .into_iter()
                     .next()
                     .ok_or_else(|| {
                         PostgresStorageError::not_found("Event delivery work item not found")
-                    })
+                    })?;
+                crate::reach_fault_point(
+                    crate::PostgresFaultPoint::EventDeliveryAfterClaim,
+                    Some(connection),
+                )
+                .await?;
+                Ok(work_item)
             },
         )
         .await

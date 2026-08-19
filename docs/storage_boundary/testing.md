@@ -125,9 +125,11 @@ timing.
 ## Selectable-Backend Compatibility
 
 `src/tests/storage_contract.rs` owns the current compatibility registry.
-`available_backends()` iterates `StorageBackendKind::ALL`, constructs each
-backend through `StorageHandle`, and verifies its descriptor before running the
-shared tests.
+`available_backend_environments()` iterates `StorageBackendKind::ALL` and owns
+the native fixture resources for each adapter. Generic tests derive an opaque
+`StorageHandle` from that environment and verify its descriptor before running
+the shared scenarios. PostgreSQL pools do not appear in shared fixture
+function signatures.
 
 The application fixture registry also provisions an administrator through each
 backend. Every registered backend is then exercised through `Services`, the
@@ -169,15 +171,20 @@ coverage in PostgreSQL-specific tests, and the inventory records that evidence
 as native rather than pretending it is portable.
 
 `hubuum-storage-conformance` owns the reusable, workspace-internal,
-backend-independent five-part audit verifier. Each adapter supplies an isolated fixture through
-`BackendAuditFixture`; the root registry invokes it for every
-`StorageBackendKind::ALL` entry. A selectable backend must demonstrate:
+backend-independent six-part audit verifier. Each adapter supplies an isolated
+fixture through `BackendAuditFixture`; the root registry invokes it for every
+`BackendTestEnvironment` entry. A selectable backend must demonstrate:
 
 1. a committed mutation receipt that matches its durable event row;
 2. a genuine no-op with neither receipt nor appended event;
 3. rollback of both state and event at an injected failure;
 4. durable fan-out followed by delivery to a recording sink; and
-5. logical, native-backend, and failure telemetry observations.
+5. logical, native-backend, and failure telemetry observations; and
+6. exact current-revision propagation for a stale mutation.
+
+The same crate exposes a retention retry verifier. It proves that an archive
+failure preserves the exact durable claim and source events, retry returns the
+same batch ID, and completion is idempotent.
 
 This is behavioral certification, not a type-system proof of implementation
 semantics. The application seals its `CertifiedStorageBackend` registry so an
@@ -190,7 +197,8 @@ cannot reproduce.
 
 ### Native operations
 
-Tests alongside `crates/hubuum-storage-postgres`, plus the test-only legacy harness under `src/storage/postgres/operations`, cover native behavior such as:
+Tests alongside `crates/hubuum-storage-postgres` and its feature-gated typed
+test support cover native behavior such as:
 
 - pool and TLS settings plus safe endpoint diagnostics;
 - transaction and connection context reset;
@@ -316,13 +324,15 @@ The current suite is solid, but these limitations should remain visible:
    help identify cold error branches, even if it should not become a simplistic
    merge gate.
 4. **Fault and concurrency testing is targeted rather than exhaustive.** The
-   suite tests important races and two deterministic rollback seams, but it
-   does not systematically explore task schedules, connection loss, process
-   death, or database failover at every transition.
-5. **Only the five-part verifier is extracted.** The broader compatibility
-   harness still uses root application, administrator, HTTP, and delivery
-   fixtures, so an external adapter cannot consume that full suite as a
-   standalone crate.
+   suite deterministically covers delivery claim and acknowledgement rollback,
+   restore coordination, lease loss, transaction connection loss, and selected
+   compound writes. It does not systematically explore every task schedule or
+   process-death transition. High-availability failover testing is intentionally
+   outside this change.
+5. **The root still supplies application fixtures.** The common application,
+   service, readiness, authenticated HTTP, six-part audit, and retention-retry
+   expectations live in `hubuum-storage-conformance`, while administrator and
+   resource provisioning remain application-owned fixture code.
 
 ## Highest-Value Improvements
 

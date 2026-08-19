@@ -1,13 +1,15 @@
 use crate::operations::computed_lifecycle as postgres_computed_lifecycle;
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, ComputedFieldDefinitionId};
 
 use hubuum_storage_core::{
-    ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StorageError, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskLease,
+    ComputedFieldLifecycleStorage, MutationOutcome, StorageClassComputationState,
+    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
+    StorageComputedFieldRebuildRequest, StorageError, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
+    StorageTaskLease,
 };
 
 use super::PostgresStorage;
@@ -16,18 +18,18 @@ use super::PostgresStorage;
 impl ComputedFieldLifecycleStorage for PostgresStorage {
     async fn computed_field_state(
         &self,
-        class_id: i32,
+        class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError> {
-        postgres_computed_lifecycle::computed_field_state(self.runtime(), class_id)
+        postgres_computed_lifecycle::computed_field_state(self.runtime(), class_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn list_shared_computed_fields(
         &self,
-        class_id: i32,
+        class_id: ClassId,
     ) -> Result<Vec<StorageComputedFieldDefinition>, StorageError> {
-        postgres_computed_lifecycle::list_shared_computed_fields(self.runtime(), class_id)
+        postgres_computed_lifecycle::list_shared_computed_fields(self.runtime(), class_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -43,9 +45,9 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
 
     async fn get_computed_field(
         &self,
-        definition_id: i32,
+        definition_id: ComputedFieldDefinitionId,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
-        postgres_computed_lifecycle::get_computed_field(self.runtime(), definition_id)
+        postgres_computed_lifecycle::get_computed_field(self.runtime(), definition_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -53,7 +55,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<StorageComputedFieldMutation, StorageError> {
+    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
         postgres_computed_lifecycle::create_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -62,7 +64,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<StorageComputedFieldMutation, StorageError> {
+    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
         postgres_computed_lifecycle::update_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -71,7 +73,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<StorageClassComputationState, StorageError> {
+    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
         postgres_computed_lifecycle::delete_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)

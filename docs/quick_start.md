@@ -70,6 +70,7 @@ examples.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
+| `HUBUUM_STORAGE_BACKEND` | `postgresql` | Storage adapter selected from those registered in this application build; empty selects the default, while other unknown values are rejected at startup |
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
@@ -124,7 +125,7 @@ cancellation, task interruption, and pool-drop ordering.
 | `HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Retention worker interval |
 | `HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum event rows selected per purge batch |
 | `HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED` | `false` | Enables local JSON Lines archive writes before deleting eligible events |
-| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Local JSON Lines archive path; required when file archive writes are enabled |
+| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Durable directory for atomic per-claim JSON Lines files; required when file archive writes are enabled |
 
 **Event note**: The canonical audit stream is always stored in the `events`
 table. External delivery workers default to disabled, and retention purge

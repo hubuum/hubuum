@@ -453,11 +453,11 @@ async fn live_in_flight_termination_fails_closed_and_service_recovers() {
 async fn seed_collection_if_missing(collection_id: i32) {
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
     use crate::schema::collections::{description, name};
-    use crate::storage::postgres::prelude::*;
-    use crate::storage::postgres::with_connection;
     use diesel::dsl::exists;
     use diesel::result::Error as DieselError;
     use diesel::{insert_into, select};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
 
     let pool = get_test_pool();
     let exists: bool = with_connection(&pool, async |connection| {

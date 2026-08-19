@@ -1,15 +1,16 @@
-# `hubuum-storage-core` Rust API Policy
+# `hubuum-storage-core` Future Rust API Design
 
-Status: experimental public API.
+Status: workspace-internal; candidate for a later publication review.
 
 ## Purpose and Callers
 
 `hubuum-storage-core` is the complete backend-neutral storage extension
 contract. It exposes capability traits, private-field DTOs, the bounded
 `StorageError` taxonomy, and the aggregate `StorageBackend` compile-time check.
-Backend crates may live outside this workspace and depend through crates.io,
-Git, or a path. Hubuum uses static Cargo composition; this is not a dynamic
-plugin ABI and has no runtime contract version handshake.
+The interface is designed so a backend crate may later live outside this
+workspace, but this change does not publish or support that packaging yet.
+Hubuum uses static Cargo composition; this is not a dynamic plugin ABI and has
+no runtime contract version handshake.
 
 The normative semantics of that Rust surface are documented in the
 [storage contract](../storage_boundary/contract.md). The Rust declarations,
@@ -21,9 +22,9 @@ operation types returned by `StorageTransaction`; native connections and query
 interfaces remain private to each adapter.
 
 Ordinary resource mutations require `EventContext` and return
-`MutationOutcome`. A committed outcome includes a non-sensitive `AuditReceipt`
-for the durable event written atomically with the state change; a genuine no-op
-returns `Unchanged`. Imports and restores are grouped under the explicit
+`MutationOutcome`. A committed outcome includes a non-empty set of
+non-sensitive `AuditReceipt` values for the durable events written atomically
+with the state change; a genuine no-op returns `Unchanged`. Imports and restores are grouped under the explicit
 `MaintenanceStorage` surface and do not weaken ordinary mutation signatures.
 
 Application composition supplies `StorageTelemetry`, keeping metrics exporters
@@ -34,10 +35,9 @@ HTTP clients should use Hubuum's versioned API instead of this storage API.
 
 ## Compatibility
 
-The crate follows SemVer from its first crates.io release. During the `0.x`
-experimental period, adding a mandatory backend operation or changing a DTO is
-an incompatible API change requiring a minor-version bump, a changelog entry,
-and backend migration guidance. The MSRV is Rust 1.88.
+There is no current third-party SemVer promise or crates.io release. A separate
+promotion change must define the initial supported surface, versioning, and
+adapter migration policy. The workspace MSRV is Rust 1.88.
 
 There are no feature flags. DTOs are in-memory Rust contracts, not durable or
 wire formats unless their documentation explicitly says otherwise. Backend
@@ -79,14 +79,13 @@ labels.
 
 ## Ownership and Verification
 
-Hubuum maintainers own releases. CI builds rustdoc with warnings denied, tests a
-clean package, and compares SemVer compatibility with the latest crates.io
-release. The PostgreSQL adapter is the pinned reference implementation. Shared
-compatibility tests exercise every statically registered backend. The
+Hubuum maintainers own the workspace crate. The PostgreSQL adapter is the
+reference implementation, and shared compatibility tests exercise every
+statically registered backend. The
 workspace-internal `hubuum-storage-conformance` harness certifies durable
-receipts, no-op behavior, rollback, outbox-to-sink delivery, and telemetry,
-while each backend owns native query, transaction, migration, and failure
-tests.
-An external-crate integration test also compiles representative transaction,
+receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
+revision conflicts, and retention retry identity, while each backend owns
+native query, transaction, migration, and failure tests. An external-crate
+integration test also compiles representative transaction,
 query, and typed DTO usage so accidental reliance on crate-private adapter
-hooks fails before publication.
+hooks fails before a later promotion review.

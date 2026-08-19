@@ -5,7 +5,7 @@ need to compose resource operations atomically. It does not expose a database
 connection, a Diesel transaction, or a general query interface.
 
 This is a mandatory part of every selectable `StorageBackend`.
-The normative five-part guarantee is defined in the
+The normative six-part guarantee is defined in the
 [storage contract](contract.md); this guide expands its transaction and event
 semantics.
 
@@ -27,7 +27,7 @@ TransactionalStorage::transaction(EventContext, callback)
 
 The accessors return crate-owned operation types with inherent methods. This
 makes operations discoverable in an editor without creating a mirrored set of
-`TxCollectionStore`, `TxClassStore`, and similar traits.
+`TxCollectionStorage`, `TxClassStorage`, and similar traits.
 
 A callback must compose through the transaction passed to it. Starting another
 unit of work through the outer storage handle creates an independent native

@@ -10,18 +10,26 @@ use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
 };
 use hubuum::services::Services;
-use hubuum::storage::postgres::{
-    ensure_postgres_schema_ready, init_postgres_pool_with_statement_timeout,
-};
 use hubuum::storage::{BenchmarkStorageContext, TransactionalStorage};
 use hubuum::traits::{CanDelete, CanSave};
 use hubuum_storage_core::StorageCollectionCreate;
+use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};
 use tokio::runtime::{Builder, Runtime};
 
 static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
 
 const POSTGRES_DATABASE: &str = "hubuum_bench";
 const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
+
+fn benchmark_pool(database_url: &str) -> PostgresPool {
+    let settings = PostgresPoolSettings::builder(database_url)
+        .max_size(4)
+        .statement_timeout_ms(0)
+        .acquire_timeout_ms(30_000)
+        .build()
+        .expect("benchmark pool settings must be valid");
+    build_postgres_pool(&settings).expect("benchmark pool must be constructible")
+}
 
 fn unique_name(prefix: &str) -> String {
     let id = NEXT_NAME_ID.fetch_add(1, Ordering::Relaxed);
@@ -167,11 +175,12 @@ impl StorageFixture {
     fn new(runtime: &Runtime, database_url: &str) -> Self {
         let pool = {
             let _runtime_guard = runtime.enter();
-            init_postgres_pool_with_statement_timeout(database_url, 4, 0)
+            benchmark_pool(database_url)
         };
-        runtime
-            .block_on(ensure_postgres_schema_ready(&pool))
-            .expect("benchmark database should be migrated");
+        let schema_ready = runtime
+            .block_on(hubuum_storage_postgres::schema_is_ready(&pool))
+            .expect("benchmark database readiness should be queryable");
+        assert!(schema_ready, "benchmark database should be migrated");
         let storage = hubuum::benchmark_support::storage_for_postgres(pool);
         let services = hubuum::benchmark_support::services_for_storage(&storage);
 
@@ -315,8 +324,9 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 let command = StorageCollectionCreate::new(
                     unique_name("storage-bench-transaction-create"),
                     "PostgreSQL storage transaction create benchmark",
-                    fixture.owner_group.id,
-                    Some(point_read_id.id()),
+                    GroupID::new(fixture.owner_group.id)
+                        .expect("persisted owner group id should be positive"),
+                    Some(point_read_id),
                 );
                 let started = Instant::now();
                 let collection = runtime
@@ -332,7 +342,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 let collection = runtime
                     .block_on(
                         collections.get(
-                            CollectionID::new(collection.id())
+                            CollectionID::new(collection.into_value().id().id())
                                 .expect("transaction-created collection id should be positive"),
                         ),
                     )

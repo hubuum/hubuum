@@ -1,11 +1,12 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, ExportTemplateId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StorageRecordMetadata};
+use crate::{MutationOutcome, StorageError, StorageRecordMetadata};
 
 /// Backend-neutral definition of an export template.
 ///
@@ -19,7 +20,7 @@ pub struct StorageExportTemplateDefinition {
     template: String,
     kind: String,
     scope_kind: Option<String>,
-    class_id: Option<i32>,
+    class_id: Option<ClassId>,
     default_query: Option<String>,
     include: Option<Value>,
     relation_context: Option<Value>,
@@ -33,7 +34,7 @@ pub type StorageExportTemplateDefinitionParts = (
     String,
     String,
     Option<String>,
-    Option<i32>,
+    Option<ClassId>,
     Option<String>,
     Option<Value>,
     Option<Value>,
@@ -65,7 +66,7 @@ impl StorageExportTemplateDefinition {
     }
 
     #[must_use]
-    pub fn with_scope(mut self, scope_kind: Option<String>, class_id: Option<i32>) -> Self {
+    pub fn with_scope(mut self, scope_kind: Option<String>, class_id: Option<ClassId>) -> Self {
         self.scope_kind = scope_kind;
         self.class_id = class_id;
         self
@@ -144,7 +145,7 @@ impl fmt::Debug for StorageExportTemplateDefinition {
 #[derive(Clone, PartialEq)]
 pub struct StorageExportTemplate {
     metadata: StorageRecordMetadata,
-    collection_id: i32,
+    collection_id: CollectionId,
     name: String,
     definition: StorageExportTemplateDefinition,
 }
@@ -153,7 +154,7 @@ impl StorageExportTemplate {
     #[must_use]
     pub fn new(
         metadata: StorageRecordMetadata,
-        collection_id: i32,
+        collection_id: CollectionId,
         name: impl Into<String>,
         definition: StorageExportTemplateDefinition,
     ) -> Self {
@@ -170,7 +171,7 @@ impl StorageExportTemplate {
         self,
     ) -> (
         StorageRecordMetadata,
-        i32,
+        CollectionId,
         String,
         StorageExportTemplateDefinition,
     ) {
@@ -198,13 +199,16 @@ impl fmt::Debug for StorageExportTemplate {
 /// List request for either collection-scoped visibility or unscoped candidates.
 #[derive(Clone, PartialEq)]
 pub struct StorageExportTemplateListQuery {
-    collection_ids: Option<Vec<i32>>,
+    collection_ids: Option<Vec<CollectionId>>,
     options: QueryOptions,
 }
 
 impl StorageExportTemplateListQuery {
     #[must_use]
-    pub const fn within_collections(collection_ids: Vec<i32>, options: QueryOptions) -> Self {
+    pub const fn within_collections(
+        collection_ids: Vec<CollectionId>,
+        options: QueryOptions,
+    ) -> Self {
         Self {
             collection_ids: Some(collection_ids),
             options,
@@ -220,7 +224,7 @@ impl StorageExportTemplateListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<Vec<i32>>, QueryOptions) {
+    pub fn into_parts(self) -> (Option<Vec<CollectionId>>, QueryOptions) {
         (self.collection_ids, self.options)
     }
 }
@@ -242,28 +246,13 @@ impl fmt::Debug for StorageExportTemplateListQuery {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct StorageExportTemplatePage {
-    templates: Vec<StorageExportTemplate>,
-    total: Option<i64>,
-}
-
-impl StorageExportTemplatePage {
-    #[must_use]
-    pub const fn new(templates: Vec<StorageExportTemplate>, total: Option<i64>) -> Self {
-        Self { templates, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageExportTemplate>, Option<i64>) {
-        (self.templates, self.total)
-    }
-}
+/// Export-template page retained as a domain-specific API name.
+pub type StorageExportTemplatePage = crate::StoragePage<StorageExportTemplate>;
 
 /// Atomic create command including mandatory audit provenance.
 #[derive(Clone, PartialEq)]
 pub struct StorageExportTemplateCreate {
-    collection_id: i32,
+    collection_id: CollectionId,
     name: String,
     definition: StorageExportTemplateDefinition,
     event_context: EventContext,
@@ -272,7 +261,7 @@ pub struct StorageExportTemplateCreate {
 impl StorageExportTemplateCreate {
     #[must_use]
     pub fn new(
-        collection_id: i32,
+        collection_id: CollectionId,
         name: impl Into<String>,
         definition: StorageExportTemplateDefinition,
         event_context: EventContext,
@@ -286,7 +275,14 @@ impl StorageExportTemplateCreate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String, StorageExportTemplateDefinition, EventContext) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        CollectionId,
+        String,
+        StorageExportTemplateDefinition,
+        EventContext,
+    ) {
         (
             self.collection_id,
             self.name,
@@ -311,8 +307,8 @@ impl fmt::Debug for StorageExportTemplateCreate {
 /// Atomic full replacement used after the application resolves and validates a PATCH.
 #[derive(Clone, PartialEq)]
 pub struct StorageExportTemplateReplace {
-    template_id: i32,
-    collection_id: i32,
+    template_id: ExportTemplateId,
+    collection_id: CollectionId,
     name: String,
     definition: StorageExportTemplateDefinition,
     event_context: EventContext,
@@ -321,8 +317,8 @@ pub struct StorageExportTemplateReplace {
 impl StorageExportTemplateReplace {
     #[must_use]
     pub fn new(
-        template_id: i32,
-        collection_id: i32,
+        template_id: ExportTemplateId,
+        collection_id: CollectionId,
         name: impl Into<String>,
         definition: StorageExportTemplateDefinition,
         event_context: EventContext,
@@ -340,8 +336,8 @@ impl StorageExportTemplateReplace {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
-        i32,
+        ExportTemplateId,
+        CollectionId,
         String,
         StorageExportTemplateDefinition,
         EventContext,
@@ -371,13 +367,13 @@ impl fmt::Debug for StorageExportTemplateReplace {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageExportTemplateDelete {
-    template_id: i32,
+    template_id: ExportTemplateId,
     event_context: EventContext,
 }
 
 impl StorageExportTemplateDelete {
     #[must_use]
-    pub const fn new(template_id: i32, event_context: EventContext) -> Self {
+    pub const fn new(template_id: ExportTemplateId, event_context: EventContext) -> Self {
         Self {
             template_id,
             event_context,
@@ -385,7 +381,7 @@ impl StorageExportTemplateDelete {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, EventContext) {
+    pub fn into_parts(self) -> (ExportTemplateId, EventContext) {
         (self.template_id, self.event_context)
     }
 }
@@ -405,7 +401,7 @@ impl fmt::Debug for StorageExportTemplateDelete {
 pub trait ExportTemplateStorage: Send + Sync {
     async fn get_export_template(
         &self,
-        template_id: i32,
+        template_id: ExportTemplateId,
     ) -> Result<StorageExportTemplate, StorageError>;
 
     async fn list_export_templates(
@@ -415,29 +411,29 @@ pub trait ExportTemplateStorage: Send + Sync {
 
     async fn list_export_templates_in_collection(
         &self,
-        collection_id: i32,
-        exclude_template_id: Option<i32>,
+        collection_id: CollectionId,
+        exclude_template_id: Option<ExportTemplateId>,
     ) -> Result<Vec<StorageExportTemplate>, StorageError>;
 
     async fn export_template_class_collection_id(
         &self,
-        class_id: i32,
-    ) -> Result<Option<i32>, StorageError>;
+        class_id: ClassId,
+    ) -> Result<Option<CollectionId>, StorageError>;
 
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<StorageExportTemplate, StorageError>;
+    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError>;
 
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<StorageExportTemplate, StorageError>;
+    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError>;
 
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<(), StorageError>;
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
@@ -455,7 +451,7 @@ mod tests {
         .with_default_query(Some("secret query".to_string()))
         .with_include(Some(serde_json::json!({"secret": true})));
         let request = StorageExportTemplateCreate::new(
-            7,
+            CollectionId::new(7).unwrap(),
             "secret template name",
             definition,
             EventContext::user(hubuum_domain::PrincipalId::new(3).unwrap(), None, None),

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, ClassRelationId, ObjectId, ObjectRelationId};
 use hubuum_events_core::EventContext;
 
 use crate::{
@@ -9,8 +10,8 @@ use crate::{
 /// Data required to create one class relation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageClassRelationCreate {
-    from_class_id: i32,
-    to_class_id: i32,
+    from_class_id: ClassId,
+    to_class_id: ClassId,
     forward_template_alias: Option<String>,
     reverse_template_alias: Option<String>,
     from_max_relations: Option<i32>,
@@ -19,7 +20,10 @@ pub struct StorageClassRelationCreate {
 
 impl StorageClassRelationCreate {
     #[must_use]
-    pub fn builder(from_class_id: i32, to_class_id: i32) -> StorageClassRelationCreateBuilder {
+    pub fn builder(
+        from_class_id: ClassId,
+        to_class_id: ClassId,
+    ) -> StorageClassRelationCreateBuilder {
         StorageClassRelationCreateBuilder {
             command: Self {
                 from_class_id,
@@ -33,12 +37,12 @@ impl StorageClassRelationCreate {
     }
 
     #[must_use]
-    pub const fn from_class_id(&self) -> i32 {
+    pub const fn from_class_id(&self) -> ClassId {
         self.from_class_id
     }
 
     #[must_use]
-    pub const fn to_class_id(&self) -> i32 {
+    pub const fn to_class_id(&self) -> ClassId {
         self.to_class_id
     }
 
@@ -183,13 +187,13 @@ impl StorageResolvedClassRelation {
 /// One class/object pair used by relation route selectors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageObjectRelationEndpoint {
-    class_id: i32,
-    object_id: i32,
+    class_id: ClassId,
+    object_id: ObjectId,
 }
 
 impl StorageObjectRelationEndpoint {
     #[must_use]
-    pub const fn new(class_id: i32, object_id: i32) -> Self {
+    pub const fn new(class_id: ClassId, object_id: ObjectId) -> Self {
         Self {
             class_id,
             object_id,
@@ -197,12 +201,12 @@ impl StorageObjectRelationEndpoint {
     }
 
     #[must_use]
-    pub const fn class_id(self) -> i32 {
+    pub const fn class_id(self) -> ClassId {
         self.class_id
     }
 
     #[must_use]
-    pub const fn object_id(self) -> i32 {
+    pub const fn object_id(self) -> ObjectId {
         self.object_id
     }
 }
@@ -210,14 +214,18 @@ impl StorageObjectRelationEndpoint {
 /// Data required to create one object relation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageObjectRelationCreate {
-    from_object_id: i32,
-    to_object_id: i32,
-    class_relation_id: i32,
+    from_object_id: ObjectId,
+    to_object_id: ObjectId,
+    class_relation_id: ClassRelationId,
 }
 
 impl StorageObjectRelationCreate {
     #[must_use]
-    pub const fn new(from_object_id: i32, to_object_id: i32, class_relation_id: i32) -> Self {
+    pub const fn new(
+        from_object_id: ObjectId,
+        to_object_id: ObjectId,
+        class_relation_id: ClassRelationId,
+    ) -> Self {
         Self {
             from_object_id,
             to_object_id,
@@ -226,17 +234,17 @@ impl StorageObjectRelationCreate {
     }
 
     #[must_use]
-    pub const fn from_object_id(self) -> i32 {
+    pub const fn from_object_id(self) -> ObjectId {
         self.from_object_id
     }
 
     #[must_use]
-    pub const fn to_object_id(self) -> i32 {
+    pub const fn to_object_id(self) -> ObjectId {
         self.to_object_id
     }
 
     #[must_use]
-    pub const fn class_relation_id(self) -> i32 {
+    pub const fn class_relation_id(self) -> ClassRelationId {
         self.class_relation_id
     }
 }
@@ -254,7 +262,7 @@ pub enum StorageObjectRelationCreateSelector {
 /// Explicit address for a persisted object relation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageObjectRelationSelector {
-    Id(i32),
+    Id(ObjectRelationId),
     Between {
         from: StorageObjectRelationEndpoint,
         to: StorageObjectRelationEndpoint,
@@ -392,7 +400,7 @@ impl StorageResolvedObjectRelation {
 /// Every mutation is audited. Restore and import operations use the separate
 /// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
-pub trait ClassRelationStore: Send + Sync {
+pub trait ClassRelationStorage: Send + Sync {
     async fn prepare_class_relation(
         &self,
         command: StorageClassRelationCreate,
@@ -400,7 +408,7 @@ pub trait ClassRelationStore: Send + Sync {
 
     async fn resolve_class_relation(
         &self,
-        id: i32,
+        id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError>;
 
     async fn create_class_relation(
@@ -414,18 +422,6 @@ pub trait ClassRelationStore: Send + Sync {
         target: &StorageResolvedClassRelation,
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError>;
-
-    async fn create_class_relation_from_command(
-        &self,
-        command: StorageClassRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError>;
-
-    async fn delete_class_relation_by_id(
-        &self,
-        id: i32,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 /// Complete object-relation lifecycle required from a selectable backend.
@@ -433,7 +429,7 @@ pub trait ClassRelationStore: Send + Sync {
 /// Every mutation is audited. Restore and import operations use the separate
 /// [`crate::MaintenanceStorage`] contract and never weaken this interface.
 #[async_trait]
-pub trait ObjectRelationStore: Send + Sync {
+pub trait ObjectRelationStorage: Send + Sync {
     async fn prepare_object_relation(
         &self,
         selector: StorageObjectRelationCreateSelector,
@@ -453,18 +449,6 @@ pub trait ObjectRelationStore: Send + Sync {
     async fn delete_object_relation(
         &self,
         target: &StorageResolvedObjectRelation,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
-
-    async fn create_object_relation_from_command(
-        &self,
-        command: StorageObjectRelationCreate,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError>;
-
-    async fn delete_object_relation_by_id(
-        &self,
-        id: i32,
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError>;
 }

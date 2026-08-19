@@ -59,7 +59,7 @@ pub async fn create_template(
 
     debug!(
         message = "Export template create requested",
-        user_id = user.id(),
+        user_id = user.id().id(),
         collection_id = template.collection_id,
         template_name = template.name
     );
@@ -123,7 +123,7 @@ pub async fn get_templates(
 
     info!(
         message = "Export template list requested",
-        user_id = user.id()
+        user_id = user.id().id()
     );
 
     let (templates, total_count) = if context
@@ -205,7 +205,7 @@ pub async fn get_template(
 
     debug!(
         message = "Export template get requested",
-        user_id = user.id(),
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
@@ -255,7 +255,7 @@ pub async fn run_template_export(
 
     debug!(
         message = "Export template execution requested",
-        user_id = user.id(),
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
@@ -273,7 +273,7 @@ pub async fn run_template_export(
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let submission = ExportTaskSubmission::for_token(
         export,
-        TokenID::new(requestor.token_meta.id())?,
+        TokenID::new(requestor.token_meta.id().id())?,
         requestor.scopes(),
     )
     .template(template)
@@ -320,7 +320,7 @@ pub async fn patch_template(
 
     debug!(
         message = "Export template patch requested",
-        user_id = user.id(),
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
@@ -385,7 +385,7 @@ pub async fn delete_template(
 
     debug!(
         message = "Export template delete requested",
-        user_id = user.id(),
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 

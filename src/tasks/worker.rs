@@ -176,7 +176,7 @@ fn spawn_task_worker_loop(
     });
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "integration-test-support")))]
 fn task_worker_context(context: AppContext) -> AppContext {
     context
 }
@@ -185,7 +185,7 @@ fn task_worker_context(context: AppContext) -> AppContext {
 /// Test cases each own a short-lived Actix runtime, while the background worker
 /// thread is process-global. Build the test worker's pool on its own long-lived
 /// runtime so it never inherits connections driven by a completed test runtime.
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 fn task_worker_context(context: AppContext) -> AppContext {
     drop(context);
     crate::tests::background_worker_app_context()
@@ -254,10 +254,10 @@ pub fn kick_task_worker(context: AppContext) {
 }
 
 #[cfg(test)]
-pub(super) async fn process_one_task(
+pub(super) async fn process_claimed_task_for_test(
     storage: &impl crate::storage::StorageContext,
-    shutdown: Option<&ShutdownSignal>,
-) -> Result<bool, ApiError> {
+    task: &ClaimedTask,
+) -> Result<(), ApiError> {
     let admin_groupname = get_config()
         .map(|config| config.admin_groupname.clone())
         .unwrap_or_else(|_| "admin".to_string());
@@ -267,7 +267,11 @@ pub(super) async fn process_one_task(
         admin_groupname,
     ));
     let context = AppContext::new(storage, permissions);
-    process_one_task_with_settings(&context, shutdown, &configured_backup_settings()).await
+
+    if let Err(error) = process_claimed_task(&context, task, &configured_backup_settings()).await {
+        mark_claimed_task_failed(&context, task, &error).await?;
+    }
+    Ok(())
 }
 
 async fn process_one_task_with_settings(

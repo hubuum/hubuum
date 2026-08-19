@@ -4,7 +4,7 @@ use super::*;
 impl ExportTemplateStorage for StorageHandle {
     async fn get_export_template(
         &self,
-        template_id: i32,
+        template_id: ExportTemplateId,
     ) -> Result<StorageExportTemplate, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "get", async {
             dispatch_backend!(self, |backend| {
@@ -28,8 +28,8 @@ impl ExportTemplateStorage for StorageHandle {
 
     async fn list_export_templates_in_collection(
         &self,
-        collection_id: i32,
-        exclude_template_id: Option<i32>,
+        collection_id: CollectionId,
+        exclude_template_id: Option<ExportTemplateId>,
     ) -> Result<Vec<StorageExportTemplate>, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -48,8 +48,8 @@ impl ExportTemplateStorage for StorageHandle {
 
     async fn export_template_class_collection_id(
         &self,
-        class_id: i32,
-    ) -> Result<Option<i32>, StorageError> {
+        class_id: ClassId,
+    ) -> Result<Option<CollectionId>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "export_templates",
@@ -66,7 +66,7 @@ impl ExportTemplateStorage for StorageHandle {
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<StorageExportTemplate, StorageError> {
+    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "create", async {
             dispatch_backend!(self, |backend| {
                 backend.create_export_template(request).await
@@ -78,7 +78,7 @@ impl ExportTemplateStorage for StorageHandle {
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<StorageExportTemplate, StorageError> {
+    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "replace", async {
             dispatch_backend!(self, |backend| {
                 backend.replace_export_template(request).await
@@ -90,7 +90,7 @@ impl ExportTemplateStorage for StorageHandle {
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(self.backend_name(), "export_templates", "delete", async {
             dispatch_backend!(self, |backend| {
                 backend.delete_export_template(request).await
@@ -102,7 +102,10 @@ impl ExportTemplateStorage for StorageHandle {
 
 #[async_trait]
 impl RemoteTargetStorage for StorageHandle {
-    async fn get_remote_target(&self, target_id: i32) -> Result<StorageRemoteTarget, StorageError> {
+    async fn get_remote_target(
+        &self,
+        target_id: RemoteTargetId,
+    ) -> Result<StorageRemoteTarget, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "get", async {
             dispatch_backend!(self, |backend| {
                 backend.get_remote_target(target_id).await
@@ -124,7 +127,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn create_remote_target(
         &self,
         request: StorageRemoteTargetCreate,
-    ) -> Result<StorageRemoteTarget, StorageError> {
+    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "create", async {
             dispatch_backend!(self, |backend| {
                 backend.create_remote_target(request).await
@@ -136,7 +139,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn update_remote_target(
         &self,
         request: StorageRemoteTargetUpdate,
-    ) -> Result<StorageRemoteTarget, StorageError> {
+    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "update", async {
             dispatch_backend!(self, |backend| {
                 backend.update_remote_target(request).await
@@ -148,7 +151,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn delete_remote_target(
         &self,
         request: StorageRemoteTargetDelete,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(self.backend_name(), "remote_targets", "delete", async {
             dispatch_backend!(self, |backend| {
                 backend.delete_remote_target(request).await
@@ -160,7 +163,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn record_remote_target_invocation(
         &self,
         request: StorageRemoteTargetInvocation,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         observe_storage_call(
             self.backend_name(),
             "remote_targets",
@@ -186,7 +189,7 @@ impl ImportStorage for StorageHandle {
 
     async fn import_collection_by_id(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "collection_by_id", async {
             dispatch_backend!(self, |backend| {
@@ -227,7 +230,7 @@ impl ImportStorage for StorageHandle {
 
     async fn import_collection_child_by_name(
         &self,
-        parent_collection_id: i32,
+        parent_collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageCollection>, StorageError> {
         observe_storage_call(
@@ -247,7 +250,7 @@ impl ImportStorage for StorageHandle {
 
     async fn import_class_by_name(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "class_by_name", async {
@@ -260,7 +263,7 @@ impl ImportStorage for StorageHandle {
 
     async fn import_classes_by_names(
         &self,
-        collection_id: i32,
+        collection_id: CollectionId,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "classes_by_names", async {
@@ -273,7 +276,7 @@ impl ImportStorage for StorageHandle {
 
     async fn import_object_by_name(
         &self,
-        class_id: i32,
+        class_id: ClassId,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "object_by_name", async {
@@ -286,7 +289,7 @@ impl ImportStorage for StorageHandle {
 
     async fn import_objects_by_names(
         &self,
-        class_id: i32,
+        class_id: ClassId,
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError> {
         observe_storage_call(self.backend_name(), "imports", "objects_by_names", async {
@@ -299,8 +302,8 @@ impl ImportStorage for StorageHandle {
 
     async fn import_class_relation_exists(
         &self,
-        left_class_id: i32,
-        right_class_id: i32,
+        left_class_id: ClassId,
+        right_class_id: ClassId,
     ) -> Result<bool, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -319,8 +322,8 @@ impl ImportStorage for StorageHandle {
 
     async fn import_object_relation_exists(
         &self,
-        left_object_id: i32,
-        right_object_id: i32,
+        left_object_id: ObjectId,
+        right_object_id: ObjectId,
     ) -> Result<bool, StorageError> {
         observe_storage_call(
             self.backend_name(),
@@ -410,21 +413,27 @@ impl RestoreStorage for StorageHandle {
         .await
     }
 
-    async fn get_restore_job(&self, job_id: i64) -> Result<StorageRestoreJob, StorageError> {
+    async fn get_restore_job(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<StorageRestoreJob, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "get_job", async {
             dispatch_backend!(self, |backend| backend.get_restore_job(job_id).await)
         })
         .await
     }
 
-    async fn get_restore_status(&self, job_id: i64) -> Result<StorageRestoreStatus, StorageError> {
+    async fn get_restore_status(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<StorageRestoreStatus, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "get_status", async {
             dispatch_backend!(self, |backend| { backend.get_restore_status(job_id).await })
         })
         .await
     }
 
-    async fn expire_restore_stage(&self, job_id: i64) -> Result<bool, StorageError> {
+    async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "expire", async {
             dispatch_backend!(self, |backend| {
                 backend.expire_restore_stage(job_id).await
@@ -433,7 +442,10 @@ impl RestoreStorage for StorageHandle {
         .await
     }
 
-    async fn start_restore_draining(&self, job_id: i64) -> Result<NaiveDateTime, StorageError> {
+    async fn start_restore_draining(
+        &self,
+        job_id: RestoreJobId,
+    ) -> Result<NaiveDateTime, StorageError> {
         observe_storage_call(self.backend_name(), "restores", "start_draining", async {
             dispatch_backend!(self, |backend| {
                 backend.start_restore_draining(job_id).await
@@ -494,7 +506,7 @@ impl RestoreStorage for StorageHandle {
         .await
     }
 
-    async fn resume_terminal_restore(&self, job_id: i64) -> Result<(), StorageError> {
+    async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError> {
         observe_storage_call(self.backend_name(), "restores", "resume_terminal", async {
             dispatch_backend!(self, |backend| {
                 backend.resume_terminal_restore(job_id).await

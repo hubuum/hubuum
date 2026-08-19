@@ -55,24 +55,8 @@ impl fmt::Debug for CatalogListQuery {
     }
 }
 
-/// One backend-selected catalog page and its optional exact total.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CatalogPage<T> {
-    rows: Vec<T>,
-    total: Option<i64>,
-}
-
-impl<T> CatalogPage<T> {
-    #[must_use]
-    pub const fn new(rows: Vec<T>, total: Option<i64>) -> Self {
-        Self { rows, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<T>, Option<i64>) {
-        (self.rows, self.total)
-    }
-}
+/// Catalog page retained as a domain-specific API name.
+pub type CatalogPage<T> = crate::StoragePage<T>;
 
 /// Mandatory backend contract for ordinary collection, class, and object
 /// listing, filtering, cursor paging, and optional exact counts.
@@ -114,7 +98,7 @@ mod tests {
         )
         .unwrap();
         let visibility = StorageVisibility::new(
-            42,
+            hubuum_domain::PrincipalId::new(42).unwrap(),
             false,
             Some([AuthorizationPermission::ReadCollection]),
             None,

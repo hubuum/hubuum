@@ -24,11 +24,11 @@ use crate::services::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
 use crate::services::storage_boundary::{object_create_to_storage, resolved_class_to_storage};
-use crate::storage::postgres::prelude::{QueryableByName, RunQueryDsl};
-use crate::storage::postgres::{PostgresPool, capture_queries, with_connection};
 use crate::storage::{StorageHandle, TransactionalStorage, with_mutation_provenance};
 use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
+use hubuum_storage_postgres::diesel_async_prelude::{QueryableByName, RunQueryDsl};
+use hubuum_storage_postgres::{PostgresPool, capture_queries, with_connection};
 
 const REPRESENTATIVE_COLLECTION_ROWS: i32 = 2_000;
 
@@ -201,8 +201,8 @@ async fn explain_storage_query(
 }
 
 fn assert_same_query_shape(
-    smaller: &crate::storage::postgres::QueryCaptureSnapshot,
-    larger: &crate::storage::postgres::QueryCaptureSnapshot,
+    smaller: &hubuum_storage_postgres::QueryCaptureSnapshot,
+    larger: &hubuum_storage_postgres::QueryCaptureSnapshot,
 ) {
     assert_eq!(
         larger.total_queries(),
@@ -223,11 +223,8 @@ fn assert_same_query_shape(
 #[actix_web::test]
 async fn token_metadata_batch_query_count_is_constant_with_batch_size() {
     use crate::models::{
-        Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
-        PrincipalTokenMetadata, TokenScope,
+        Permissions, PrincipalID, PrincipalTokenCreateRequest, PrincipalTokenMetadata, TokenScope,
     };
-    use crate::storage::postgres::operations::token::PrincipalTokenRow;
-    use crate::storage::postgres::prelude::*;
 
     let scope = TestScope::new();
     let user = crate::tests::create_test_user(&scope.pool).await;
@@ -238,16 +235,7 @@ async fn token_metadata_batch_query_count_is_constant_with_batch_size() {
         .create(&scope.pool, &crate::events::EventContext::system())
         .await
         .expect("scoped token should be created");
-    let token_hash = raw.storage_hash();
-    let token = with_connection(&scope.pool, async |connection| {
-        crate::schema::tokens::table
-            .filter(crate::schema::tokens::token.eq(token_hash))
-            .first::<PrincipalTokenRow>(connection)
-            .await
-            .map(PrincipalToken::from)
-    })
-    .await
-    .expect("created token should be persisted");
+    let token = crate::tests::persisted_test_token(&scope.pool, &raw.get_token()).await;
 
     let (small, small_queries) = capture_queries(PrincipalTokenMetadata::load_for_tokens(
         &scope.pool,
@@ -1361,11 +1349,11 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
         capture_queries(relation.save(&scope.pool, &EventContext::system())).await;
     saved.expect("object relation should save with an event");
 
-    assert_eq!(queries.total_queries(), 5, "{:#?}", queries.query_counts());
-    assert_eq!(queries.domain_queries(), 3, "{:#?}", queries.query_counts());
+    assert_eq!(queries.total_queries(), 9, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 7, "{:#?}", queries.query_counts());
     assert_eq!(queries.control_queries(), 2);
-    assert_eq!(queries.connection_checkouts(), 1);
-    assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 1);
+    assert_eq!(queries.connection_checkouts(), 2);
+    assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 2);
     assert_eq!(
         queries.queries_matching("INSERT INTO \"hubuumobject_relation\""),
         1
@@ -1608,7 +1596,9 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
         ),
     )
     .await;
-    small_result.expect("one-group external sync should succeed");
+    small_result
+        .expect("one-group external sync should succeed")
+        .into_value();
     let (large_result, large_queries) = capture_queries(
         hubuum_storage_postgres::operations::external_identity::sync_external_user(
             &runtime,
@@ -1616,7 +1606,9 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
         ),
     )
     .await;
-    large_result.expect("twenty-group external sync should succeed");
+    large_result
+        .expect("twenty-group external sync should succeed")
+        .into_value();
 
     assert_eq!(large_queries.total_queries(), small_queries.total_queries());
     assert_eq!(

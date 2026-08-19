@@ -469,7 +469,9 @@ impl PrincipalIdApplicationExt for PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .load_principal_settings(self.id())
+            .load_principal_settings(crate::services::storage_boundary::principal_id_to_storage(
+                self.id(),
+            ))
             .await
             .map_err(ApiError::from)
             .and_then(principal_settings_from_storage)
@@ -486,7 +488,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
     {
         storage_handle(backend)
             .mutate_principal_settings(
-                self.id(),
+                crate::services::storage_boundary::principal_id_to_storage(self.id()),
                 StoragePrincipalSettingsMutation::Replace(settings.as_value().clone()),
                 event_context,
             )
@@ -507,7 +509,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
     {
         storage_handle(backend)
             .mutate_principal_settings(
-                self.id(),
+                crate::services::storage_boundary::principal_id_to_storage(self.id()),
                 StoragePrincipalSettingsMutation::MergePatch(patch.as_value().clone()),
                 event_context,
             )
@@ -527,7 +529,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
     {
         storage_handle(backend)
             .mutate_principal_settings(
-                self.id(),
+                crate::services::storage_boundary::principal_id_to_storage(self.id()),
                 StoragePrincipalSettingsMutation::Reset,
                 event_context,
             )
@@ -549,7 +551,7 @@ where
 {
     storage_handle(backend)
         .mutate_principal_settings(
-            principal_id.id(),
+            crate::services::storage_boundary::principal_id_to_storage(principal_id.id()),
             principal_settings_mutation_to_storage(patch)?,
             event_context,
         )
@@ -565,7 +567,9 @@ pub async fn load_principal_by_id(
     principal_id: i32,
 ) -> Result<Principal, ApiError> {
     storage_handle(pool)
-        .load_principal(principal_id)
+        .load_principal(crate::services::storage_boundary::principal_id_to_storage(
+            principal_id,
+        ))
         .await
         .map_err(ApiError::from)
         .and_then(principal_from_storage)

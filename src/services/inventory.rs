@@ -18,7 +18,7 @@ pub(crate) async fn counts(storage: &impl InventoryStorage) -> Result<InventoryC
         .into_objects_by_class()
         .into_iter()
         .map(|row| ObjectsByClass {
-            hubuum_class_id: row.class_id(),
+            hubuum_class_id: row.class_id().id(),
             count: row.count(),
         })
         .collect();

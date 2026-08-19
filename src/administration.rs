@@ -24,7 +24,9 @@ use crate::services::identity as identity_service;
 use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
 use crate::storage::run_storage_migrations;
-use crate::storage::{OperationalStateStorage, StorageHandle, StorageSettings, initialize_storage};
+use crate::storage::{
+    OperationalStateStorage, StorageBackendKind, StorageHandle, StorageSettings, initialize_storage,
+};
 use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_sources_with_limits;
 use crate::utilities::is_valid_log_level;
@@ -73,6 +75,15 @@ struct AdminCli {
     #[cfg(feature = "embedded-migrations")]
     #[arg(long, default_value_t = false)]
     migrate: bool,
+
+    /// Storage adapter compiled into this application build.
+    #[arg(
+        long,
+        env = "HUBUUM_STORAGE_BACKEND",
+        value_enum,
+        default_value = "postgresql"
+    )]
+    storage_backend: StorageBackendKind,
 
     /// Database URL
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
@@ -131,7 +142,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         })
     });
 
-    let storage_settings = StorageSettings::builder(database_url)
+    let storage_settings = StorageSettings::builder(admin_cli.storage_backend, database_url)
         .max_connections(1)
         .statement_timeout_ms(admin_cli.db_statement_timeout_ms)
         .acquire_timeout_ms(DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS)
@@ -570,5 +581,26 @@ fn init_logging(log_level: &str) {
     }
     if let Err(err) = logger::init_json_logging(log_level) {
         fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{AdminCli, StorageBackendKind};
+
+    #[test]
+    fn storage_backend_selection_defaults_only_for_an_empty_value() {
+        let empty = AdminCli::try_parse_from(["hubuum-admin", "--storage-backend", ""])
+            .expect("an empty storage backend should select the default");
+        let unsupported =
+            match AdminCli::try_parse_from(["hubuum-admin", "--storage-backend", "unsupported"]) {
+                Ok(_) => panic!("an unregistered storage backend must be rejected"),
+                Err(error) => error,
+            };
+
+        assert_eq!(empty.storage_backend, StorageBackendKind::Postgresql);
+        assert_eq!(unsupported.kind(), clap::error::ErrorKind::InvalidValue);
     }
 }

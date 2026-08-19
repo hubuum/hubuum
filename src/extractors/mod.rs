@@ -228,7 +228,7 @@ pub trait AccessEventContext {
 
 impl AccessEventContext for Authenticated {
     fn event_context(&self, req: &HttpRequest) -> EventContext {
-        user_event_context(req, self.principal.id())
+        user_event_context(req, self.principal.id().id())
     }
 }
 
@@ -306,7 +306,7 @@ async fn build_authenticated_from_meta(
     token: Token,
     token_meta: AuthenticatedToken,
 ) -> Result<Authenticated, ApiError> {
-    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id()).await?;
+    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
     let storage = storage_handle(backend);
     let identity = storage
         .load_authentication_identity(token_meta.principal_id())
@@ -355,7 +355,7 @@ async fn human_unscoped_user_from_meta(
         ));
     }
 
-    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id()).await?;
+    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
 
     // Single round trip: fetch the backend-neutral principal projection and,
     // when human, a password-free human projection from the same snapshot.
@@ -378,7 +378,7 @@ async fn human_unscoped_user_from_meta(
 fn authentication_human_to_user(human: AuthenticationHuman) -> User {
     let (id, proper_name, email, created_at, updated_at, anonymized_at) = human.into_parts();
     User {
-        id,
+        id: id.id(),
         kind: "human".to_string(),
         password: None,
         proper_name,
@@ -413,17 +413,17 @@ fn authentication_resources_from_storage(
     collection_ids
         .into_iter()
         .map(|id| {
-            CollectionID::new(id)
+            CollectionID::new(id.id())
                 .map(TokenResourceScope::Collection)
                 .map_err(ApiError::from)
         })
         .chain(class_ids.into_iter().map(|id| {
-            HubuumClassID::new(id)
+            HubuumClassID::new(id.id())
                 .map(TokenResourceScope::Class)
                 .map_err(ApiError::from)
         }))
         .chain(object_ids.into_iter().map(|id| {
-            HubuumObjectID::new(id)
+            HubuumObjectID::new(id.id())
                 .map(TokenResourceScope::Object)
                 .map_err(ApiError::from)
         }))

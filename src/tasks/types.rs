@@ -160,7 +160,7 @@ impl ExecutionAccumulator {
         self.success += 1;
         self.results.push(
             StorageImportResult::builder(
-                task_id,
+                crate::models::TaskID::new(task_id).expect("validated task id must be positive"),
                 planned.entity_kind.clone(),
                 planned.action.clone(),
                 outcome,
@@ -183,7 +183,7 @@ impl ExecutionAccumulator {
         self.failed += 1;
         self.results.push(
             StorageImportResult::builder(
-                task_id,
+                crate::models::TaskID::new(task_id).expect("validated task id must be positive"),
                 planned.entity_kind.clone(),
                 planned.action.clone(),
                 outcome,
@@ -239,11 +239,16 @@ impl PlanningFailure {
     pub(super) fn into_result(self, task_id: i32) -> StorageImportResult {
         let error = self.message_for_storage();
         let outcome = self.outcome();
-        StorageImportResult::builder(task_id, self.item.entity_kind, self.item.action, outcome)
-            .item_ref(self.item.item_ref)
-            .identifier(self.item.identifier)
-            .error(Some(error))
-            .details(self.item.details)
-            .build()
+        StorageImportResult::builder(
+            crate::models::TaskID::new(task_id).expect("validated task id must be positive"),
+            self.item.entity_kind,
+            self.item.action,
+            outcome,
+        )
+        .item_ref(self.item.item_ref)
+        .identifier(self.item.identifier)
+        .error(Some(error))
+        .details(self.item.details)
+        .build()
     }
 }

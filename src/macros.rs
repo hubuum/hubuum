@@ -128,7 +128,7 @@ macro_rules! apply_permission_filter {
     ($base_query:ident, $permission:expr, $target:expr) => {{
         use $crate::models::Permissions;
         use $crate::schema::permissions;
-        use $crate::storage::postgres::prelude::*;
+        use $hubuum_storage_postgres::diesel_async_prelude::*;
 
         $base_query = match $permission {
             Permissions::ReadCollection => {
@@ -428,7 +428,7 @@ macro_rules! date_search {
         use diesel::dsl::not;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
-        use $crate::storage::postgres::prelude::*;
+        use $hubuum_storage_postgres::diesel_async_prelude::*;
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -529,7 +529,7 @@ macro_rules! array_search {
         use diesel::dsl::not;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
-        use $crate::storage::postgres::prelude::*;
+        use $hubuum_storage_postgres::diesel_async_prelude::*;
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -585,7 +585,7 @@ macro_rules! string_search {
         use diesel::dsl::not;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
-        use $crate::storage::postgres::prelude::*;
+        use $hubuum_storage_postgres::diesel_async_prelude::*;
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {

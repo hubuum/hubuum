@@ -2,8 +2,8 @@ use actix_web::{http, test};
 use serde::de::DeserializeOwned;
 
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
-use crate::storage::postgres::PostgresPool;
 use crate::tests::api_operations::get_request;
+use hubuum_storage_postgres::PostgresPool;
 
 /// ## Asserts that a given item is found within the specified vector.
 ///

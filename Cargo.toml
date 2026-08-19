@@ -120,6 +120,7 @@ libc = "0.2"
 criterion = "0.8.2"
 gungraun = "0.19.4"
 hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
+hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
 regex = "1"
 rstest = "0.26"
 tokio-rustls = "0.26"

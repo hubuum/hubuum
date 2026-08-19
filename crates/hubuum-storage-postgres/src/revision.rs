@@ -6,6 +6,8 @@ use diesel::sql_types::BigInt;
 use hubuum_domain::{ResourceId, ResourceRevision, ResourceRevisionError};
 use hubuum_storage_core::{StorageRecordMetadata, StorageRevisionTarget};
 
+use crate::PostgresStorageError;
+
 /// Adapter-private Diesel representation of a domain resource revision.
 ///
 /// Query rows use this local newtype so neither Diesel traits nor PostgreSQL
@@ -129,13 +131,13 @@ pub(crate) fn record_metadata(
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
     revision: PostgresRevision,
-) -> StorageRecordMetadata {
-    StorageRecordMetadata::new(
-        ResourceId::new(id).expect("persisted resource id must be positive"),
+) -> Result<StorageRecordMetadata, PostgresStorageError> {
+    Ok(StorageRecordMetadata::new(
+        ResourceId::new(id)?,
         created_at,
         updated_at,
         revision.into_domain(),
-    )
+    ))
 }
 
 pub(crate) fn record_metadata_from_raw_revision(
@@ -143,13 +145,11 @@ pub(crate) fn record_metadata_from_raw_revision(
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
     revision: i64,
-) -> StorageRecordMetadata {
-    record_metadata(
-        id,
-        created_at,
-        updated_at,
-        PostgresRevision::new(revision).expect("persisted resource revision must be positive"),
-    )
+) -> Result<StorageRecordMetadata, PostgresStorageError> {
+    let revision = PostgresRevision::new(revision).map_err(|error| {
+        PostgresStorageError::database(format!("Invalid persisted resource revision: {error}"))
+    })?;
+    record_metadata(id, created_at, updated_at, revision)
 }
 
 impl From<ResourceRevision> for PostgresRevision {

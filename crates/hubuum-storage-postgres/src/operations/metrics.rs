@@ -6,6 +6,7 @@ use diesel::dsl::{count_star, max, min};
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::sql_types::BigInt;
 use diesel_async::RunQueryDsl;
+use hubuum_domain::ExportTemplateId;
 use hubuum_storage_core::{
     ExportTemplateMetricIdentity, InventoryGaugeSnapshot, InventoryMetricsSnapshot,
     StoragePoolAcquisitionState, StoragePoolCapacity, StoragePoolConnectionState, StoragePoolState,
@@ -110,11 +111,10 @@ pub async fn load_inventory_gauge_snapshot(
                 .await?
                 .into_iter()
                 .map(|(id, name)| {
-                    ExportTemplateMetricIdentity::new(id, name).ok_or_else(|| {
-                        PostgresStorageError::database(format!(
-                            "Invalid persisted export template id '{id}'"
-                        ))
-                    })
+                    Ok(ExportTemplateMetricIdentity::new(
+                        ExportTemplateId::new(id)?,
+                        name,
+                    ))
                 })
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
 

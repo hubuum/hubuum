@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test as actix_test};
     use chrono::{NaiveDate, NaiveDateTime};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
     use crate::models::search::{DataType, SearchOperator};
@@ -15,11 +15,11 @@ mod tests {
         created_at as object_created_at, hubuumobject, id as hubuumobject_id,
         updated_at as object_updated_at,
     };
-    use crate::storage::postgres::with_transaction;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{CollectionFixture, TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave};
+    use hubuum_storage_postgres::with_transaction;
 
     const STRING_OPERATORS: &[&str] = &[
         "equals",

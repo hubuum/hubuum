@@ -8,8 +8,8 @@ use hubuum_computed_fields::{
 };
 use hubuum_query::ComputedQueryValueType;
 use hubuum_storage_core::{
-    ComputedObjectEnrichmentQuery, StorageComputedFieldError, StorageComputedObject,
-    StorageComputedScope, StorageObject, StorageSharedComputedScope,
+    ComputedObjectEnrichmentQuery, StorageComputationRevision, StorageComputedFieldError,
+    StorageComputedObject, StorageComputedScope, StorageObject, StorageSharedComputedScope,
 };
 
 use super::query::ComputedQuerySnapshot;
@@ -54,18 +54,22 @@ pub(super) async fn enrich_objects(
     if objects.is_empty() {
         return Ok(Vec::new());
     }
-    validate_objects(&objects, personal_owner_id)?;
+    let personal_owner_id = personal_owner_id.map(|id| id.id());
+    validate_owner_id(personal_owner_id)?;
     let snapshot_runtime = runtime.clone();
     let (enriched, stale_objects) = runtime
         .with_read_only_snapshot(async move |connection| {
             let class_ids = objects
                 .iter()
-                .map(StorageObject::class_id)
+                .map(|object| object.class_id().id())
                 .collect::<BTreeSet<_>>();
             for class_id in &class_ids {
                 acquire_computed_class_shared_lock(connection, *class_id).await?;
             }
-            let object_ids = objects.iter().map(StorageObject::id).collect::<Vec<_>>();
+            let object_ids = objects
+                .iter()
+                .map(|object| object.id().id())
+                .collect::<Vec<_>>();
             let class_ids = class_ids.into_iter().collect::<Vec<_>>();
             let definitions = load_definitions(connection, &class_ids, personal_owner_id).await?;
             let states = load_states(connection, &class_ids).await?;
@@ -111,13 +115,16 @@ pub(super) async fn enrich_with_query_snapshot(
     }
     if objects
         .iter()
-        .any(|object| object.class_id() != snapshot.class_id())
+        .any(|object| object.class_id().id() != snapshot.class_id())
     {
         return Err(PostgresStorageError::internal(
             "Computed sort snapshot cannot enrich objects from another class",
         ));
     }
-    let object_ids = objects.iter().map(StorageObject::id).collect::<Vec<_>>();
+    let object_ids = objects
+        .iter()
+        .map(|object| object.id().id())
+        .collect::<Vec<_>>();
     let materialized = load_materialized(connection, &object_ids).await?;
     let states = vec![ComputationStateRow {
         class_id: snapshot.class_id(),
@@ -171,19 +178,19 @@ fn enrich_from_rows(
     let mut stale_objects = Vec::new();
     let mut enriched = Vec::with_capacity(objects.len());
     for object in objects {
-        let evaluation_revision = states.get(&object.class_id()).copied().unwrap_or(0);
+        let evaluation_revision = states.get(&object.class_id().id()).copied().unwrap_or(0);
         let shared_definitions = shared_by_class
-            .get(&object.class_id())
+            .get(&object.class_id().id())
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         let hash = source_data_sha256(object.data())?;
-        let stored = materialized.get(&object.id());
+        let stored = materialized.get(&object.id().id());
         let has_enabled_definitions = shared_definitions
             .iter()
             .any(ComputedDefinitionRow::enabled);
         let stored_maps = match stored {
             Some(row)
-                if row.class_id == object.class_id()
+                if row.class_id == object.class_id().id()
                     && row.evaluation_revision == evaluation_revision
                     && row.source_data_sha256 == hash =>
             {
@@ -213,7 +220,7 @@ fn enrich_from_rows(
 
         let personal = personal_owner_id.map(|_| {
             let definitions = personal_by_class
-                .get(&object.class_id())
+                .get(&object.class_id().id())
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
             evaluate_scope(
@@ -228,7 +235,11 @@ fn enrich_from_rows(
         let personal = personal.transpose()?;
         enriched.push(StorageComputedObject::new(
             object,
-            StorageSharedComputedScope::new(evaluation_revision, !fresh, shared),
+            StorageSharedComputedScope::new(
+                StorageComputationRevision::new(evaluation_revision)?,
+                !fresh,
+                shared,
+            ),
             personal,
         ));
     }
@@ -395,10 +406,10 @@ async fn repair_stale_materializations(
     runtime: &PostgresRuntime,
     mut stale_objects: Vec<StorageObject>,
 ) -> Result<(), PostgresStorageError> {
-    stale_objects.sort_by_key(StorageObject::id);
+    stale_objects.sort_by_key(|object| object.id().id());
     let object_ids = stale_objects
         .iter()
-        .map(StorageObject::id)
+        .map(|object| object.id().id())
         .collect::<Vec<_>>();
     let evaluations = runtime
         .with_transaction(async move |connection| {
@@ -434,21 +445,10 @@ async fn repair_stale_materializations(
     Ok(())
 }
 
-fn validate_objects(
-    objects: &[StorageObject],
-    personal_owner_id: Option<i32>,
-) -> Result<(), PostgresStorageError> {
+fn validate_owner_id(personal_owner_id: Option<i32>) -> Result<(), PostgresStorageError> {
     if personal_owner_id.is_some_and(|owner_id| owner_id <= 0) {
         return Err(PostgresStorageError::bad_request(
             "computed field owner id must be greater than zero",
-        ));
-    }
-    if objects
-        .iter()
-        .any(|object| object.id() <= 0 || object.class_id() <= 0)
-    {
-        return Err(PostgresStorageError::bad_request(
-            "computed object and class ids must be greater than zero",
         ));
     }
     Ok(())

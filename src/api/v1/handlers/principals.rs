@@ -53,7 +53,7 @@ async fn ensure_can_manage_principal_settings(
     requestor: &Authenticated,
     target_principal_id: i32,
 ) -> Result<(), ApiError> {
-    if requestor.principal.id() == target_principal_id {
+    if requestor.principal.id().id() == target_principal_id {
         return Ok(());
     }
 

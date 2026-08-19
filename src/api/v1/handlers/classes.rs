@@ -149,7 +149,7 @@ async fn computed_personal_owner(
     )
     .await
     {
-        Ok(()) => Ok(Some(requestor.principal.id())),
+        Ok(()) => Ok(Some(requestor.principal.id().id())),
         Err(ApiError::Forbidden(_)) => Ok(None),
         Err(error) => Err(error),
     }
@@ -323,7 +323,7 @@ async fn get_classes(
         Err(e) => return Err(e),
     };
 
-    debug!(message = "Listing classes", user_id = user.id());
+    debug!(message = "Listing classes", user_id = user.id().id());
 
     let (classes, total_count) = if context
         .permission_backend()
@@ -333,7 +333,7 @@ async fn get_classes(
         let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
         let (classes, total_count) = catalog_service::list_classes(
             &context,
-            user.id(),
+            user.id().id(),
             is_admin,
             requestor.scopes(),
             search_params,
@@ -348,7 +348,7 @@ async fn get_classes(
         let mut candidate_options = count_query_options(&params);
         candidate_options.set_include_total(false);
         let (candidates, _) =
-            catalog_service::list_classes(&context, user.id(), true, None, candidate_options)
+            catalog_service::list_classes(&context, user.id().id(), true, None, candidate_options)
                 .await?;
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
@@ -403,7 +403,7 @@ async fn create_class(
 
     debug!(
         message = "Creating class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_name = class_data.name
     );
 
@@ -468,7 +468,7 @@ async fn get_class(
 
     debug!(
         message = "Getting class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id()
     );
 
@@ -586,7 +586,7 @@ async fn update_class(
 
     debug!(
         message = "Updating class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id()
     );
 
@@ -687,7 +687,7 @@ async fn delete_class(
 
     debug!(
         message = "Deleting class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id()
     );
 
@@ -796,7 +796,7 @@ async fn read_resolved_class_permissions(
 
     debug!(
         message = "Getting class permissions",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class.id
     );
 

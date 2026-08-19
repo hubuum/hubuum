@@ -163,7 +163,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            crate::errors::ApiError::PreconditionFailed(_, _)
+            crate::errors::ApiError::RevisionConflict(_, revision) if revision.get() == 2
         ));
 
         child.delete_without_events(&context.pool).await.unwrap();

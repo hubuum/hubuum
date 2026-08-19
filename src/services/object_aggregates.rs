@@ -13,7 +13,9 @@ use crate::permissions::{
     AuthorizationContext, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceAttrs, ResourceKind, ResourceRef, permission_from_storage, permission_to_storage,
 };
-use crate::services::storage_boundary::visibility;
+use crate::services::storage_boundary::{
+    class_id_to_storage, collection_id_to_storage, principal_id_to_storage, visibility,
+};
 use crate::storage::{
     AuthorizationPermission, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
     ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageComputedFieldSelector,
@@ -67,12 +69,16 @@ pub(crate) async fn aggregate_objects(
     let is_admin = AuthzSubject::is_admin(principal, backend).await?;
     let visibility = visibility(principal.principal_id(), is_admin, token_scopes.as_ref())?;
     let query = ObjectAggregateStorageQuery::builder(
-        StorageObjectAggregateTarget::new(class_id.id(), class_name, collection_id.id()),
+        StorageObjectAggregateTarget::new(
+            class_id_to_storage(class_id.id()),
+            class_name,
+            collection_id_to_storage(collection_id.id()),
+        ),
         query_options,
         storage_spec,
         visibility,
     )
-    .personal_owner_id(personal_owner_id.map(|owner| owner.id()))
+    .personal_owner_id(personal_owner_id.map(|owner| principal_id_to_storage(owner.id())))
     .required_permissions(
         required_permissions
             .iter()
@@ -195,18 +201,18 @@ impl ObjectAggregateAuthorizer for DelegatedObjectAggregateAuthorizer<'_> {
         let (class_id, class_name, collection_id, collection_name) = target.into_parts();
         let class = ResourceRef {
             kind: ResourceKind::Class,
-            id: class_id,
+            id: class_id.id(),
             attrs: ResourceAttrs {
-                collection_id: Some(collection_id),
+                collection_id: Some(collection_id.id()),
                 name: Some(class_name),
                 ..Default::default()
             },
         };
         let collection = ResourceRef {
             kind: ResourceKind::Collection,
-            id: collection_id,
+            id: collection_id.id(),
             attrs: ResourceAttrs {
-                collection_id: Some(collection_id),
+                collection_id: Some(collection_id.id()),
                 name: Some(collection_name),
                 ..Default::default()
             },
@@ -261,10 +267,10 @@ impl ObjectAggregateAuthorizer for DelegatedObjectAggregateAuthorizer<'_> {
                 PermissionRequest {
                     resource: ResourceRef {
                         kind: ResourceKind::Object,
-                        id,
+                        id: id.id(),
                         attrs: ResourceAttrs {
-                            collection_id: Some(collection_id),
-                            class_id: Some(class_id),
+                            collection_id: Some(collection_id.id()),
+                            class_id: Some(class_id.id()),
                             name: Some(name),
                             ..Default::default()
                         },

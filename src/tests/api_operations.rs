@@ -9,8 +9,8 @@ use crate::middlewares::tracing::TracingMiddleware;
 use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
 use crate::storage::StorageHandle;
-use crate::storage::postgres::{PostgresPool, PostgresPoolSettings};
 use actix_web::{App, http, test, web::Data};
+use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings};
 use serde::Serialize;
 use std::sync::Arc;
 

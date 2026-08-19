@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use base64::Engine;
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId};
 use hubuum_query::{ComputedFieldScope, JsonFieldPath, QueryOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -291,14 +292,14 @@ impl FromStr for StorageObjectAggregateMeasure {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageObjectAggregateTarget {
-    class_id: i32,
+    class_id: ClassId,
     class_name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
 }
 
 impl StorageObjectAggregateTarget {
     #[must_use]
-    pub const fn new(class_id: i32, class_name: String, collection_id: i32) -> Self {
+    pub const fn new(class_id: ClassId, class_name: String, collection_id: CollectionId) -> Self {
         Self {
             class_id,
             class_name,
@@ -307,7 +308,7 @@ impl StorageObjectAggregateTarget {
     }
 
     #[must_use]
-    pub const fn class_id(&self) -> i32 {
+    pub const fn class_id(&self) -> ClassId {
         self.class_id
     }
 
@@ -317,7 +318,7 @@ impl StorageObjectAggregateTarget {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> i32 {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 }
@@ -627,7 +628,7 @@ pub struct ObjectAggregateStorageQuery {
     target: StorageObjectAggregateTarget,
     options: QueryOptions,
     spec: StorageObjectAggregateSpec,
-    personal_owner_id: Option<i32>,
+    personal_owner_id: Option<PrincipalId>,
     required_permissions: Vec<AuthorizationPermission>,
     visibility: StorageVisibility,
     page_limit: usize,
@@ -639,7 +640,7 @@ pub struct ObjectAggregateStorageQueryBuilder {
     target: StorageObjectAggregateTarget,
     options: QueryOptions,
     spec: StorageObjectAggregateSpec,
-    personal_owner_id: Option<i32>,
+    personal_owner_id: Option<PrincipalId>,
     required_permissions: Option<Vec<AuthorizationPermission>>,
     visibility: StorageVisibility,
     page_limit: Option<usize>,
@@ -684,7 +685,7 @@ impl ObjectAggregateStorageQuery {
     }
 
     #[must_use]
-    pub const fn personal_owner_id(&self) -> Option<i32> {
+    pub const fn personal_owner_id(&self) -> Option<PrincipalId> {
         self.personal_owner_id
     }
 
@@ -716,7 +717,7 @@ impl ObjectAggregateStorageQuery {
 
 impl ObjectAggregateStorageQueryBuilder {
     #[must_use]
-    pub const fn personal_owner_id(mut self, personal_owner_id: Option<i32>) -> Self {
+    pub const fn personal_owner_id(mut self, personal_owner_id: Option<PrincipalId>) -> Self {
         self.personal_owner_id = personal_owner_id;
         self
     }
@@ -812,18 +813,18 @@ impl fmt::Debug for ObjectAggregateStorageQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageObjectAggregateAuthorizationTarget {
-    class_id: i32,
+    class_id: ClassId,
     class_name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
     collection_name: String,
 }
 
 impl StorageObjectAggregateAuthorizationTarget {
     #[must_use]
     pub const fn new(
-        class_id: i32,
+        class_id: ClassId,
         class_name: String,
-        collection_id: i32,
+        collection_id: CollectionId,
         collection_name: String,
     ) -> Self {
         Self {
@@ -835,7 +836,7 @@ impl StorageObjectAggregateAuthorizationTarget {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String, i32, String) {
+    pub fn into_parts(self) -> (ClassId, String, CollectionId, String) {
         (
             self.class_id,
             self.class_name,
@@ -847,15 +848,20 @@ impl StorageObjectAggregateAuthorizationTarget {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageObjectAggregateAuthorizationCandidate {
-    id: i32,
+    id: ObjectId,
     name: String,
-    collection_id: i32,
-    class_id: i32,
+    collection_id: CollectionId,
+    class_id: ClassId,
 }
 
 impl StorageObjectAggregateAuthorizationCandidate {
     #[must_use]
-    pub const fn new(id: i32, name: String, collection_id: i32, class_id: i32) -> Self {
+    pub const fn new(
+        id: ObjectId,
+        name: String,
+        collection_id: CollectionId,
+        class_id: ClassId,
+    ) -> Self {
         Self {
             id,
             name,
@@ -865,7 +871,7 @@ impl StorageObjectAggregateAuthorizationCandidate {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, String, i32, i32) {
+    pub fn into_parts(self) -> (ObjectId, String, CollectionId, ClassId) {
         (self.id, self.name, self.collection_id, self.class_id)
     }
 }
@@ -1133,7 +1139,11 @@ mod tests {
     #[test]
     fn aggregate_query_debug_redacts_target_filters_and_cursor() {
         let query = ObjectAggregateStorageQuery::builder(
-            StorageObjectAggregateTarget::new(7, "secret class".to_string(), 9),
+            StorageObjectAggregateTarget::new(
+                ClassId::new(7).unwrap(),
+                "secret class".to_string(),
+                CollectionId::new(9).unwrap(),
+            ),
             QueryOptions::new(
                 vec![ParsedQueryParam::from_parts(
                     FilterField::Name,
@@ -1158,9 +1168,14 @@ mod tests {
                 StorageObjectAggregateSort::DimensionsAscending,
             )
             .unwrap(),
-            StorageVisibility::new(73, false, None::<[AuthorizationPermission; 0]>, None),
+            StorageVisibility::new(
+                hubuum_domain::PrincipalId::new(73).unwrap(),
+                false,
+                None::<[AuthorizationPermission; 0]>,
+                None,
+            ),
         )
-        .personal_owner_id(Some(42))
+        .personal_owner_id(PrincipalId::new(42).ok())
         .required_permissions([AuthorizationPermission::ReadObject])
         .page_limit(20)
         .cursor_max_encoded_bytes(1_000)
@@ -1186,7 +1201,11 @@ mod tests {
     #[test]
     fn aggregate_query_requires_permissions() {
         let result = ObjectAggregateStorageQuery::builder(
-            StorageObjectAggregateTarget::new(7, "class".to_string(), 9),
+            StorageObjectAggregateTarget::new(
+                ClassId::new(7).unwrap(),
+                "class".to_string(),
+                CollectionId::new(9).unwrap(),
+            ),
             empty_query_options(),
             StorageObjectAggregateSpec::new(
                 [StorageObjectAggregateDimension::Scalar(
@@ -1196,7 +1215,12 @@ mod tests {
                 StorageObjectAggregateSort::DimensionsAscending,
             )
             .unwrap(),
-            StorageVisibility::new(73, false, None::<[AuthorizationPermission; 0]>, None),
+            StorageVisibility::new(
+                hubuum_domain::PrincipalId::new(73).unwrap(),
+                false,
+                None::<[AuthorizationPermission; 0]>,
+                None,
+            ),
         )
         .required_permissions([])
         .page_limit(20)
@@ -1209,7 +1233,11 @@ mod tests {
     #[test]
     fn aggregate_query_requires_a_positive_cursor_budget() {
         let result = ObjectAggregateStorageQuery::builder(
-            StorageObjectAggregateTarget::new(7, "class".to_string(), 9),
+            StorageObjectAggregateTarget::new(
+                ClassId::new(7).unwrap(),
+                "class".to_string(),
+                CollectionId::new(9).unwrap(),
+            ),
             empty_query_options(),
             StorageObjectAggregateSpec::new(
                 [StorageObjectAggregateDimension::Scalar(
@@ -1219,7 +1247,12 @@ mod tests {
                 StorageObjectAggregateSort::DimensionsAscending,
             )
             .unwrap(),
-            StorageVisibility::new(73, false, None::<[AuthorizationPermission; 0]>, None),
+            StorageVisibility::new(
+                hubuum_domain::PrincipalId::new(73).unwrap(),
+                false,
+                None::<[AuthorizationPermission; 0]>,
+                None,
+            ),
         )
         .required_permissions([AuthorizationPermission::ReadObject])
         .page_limit(20)

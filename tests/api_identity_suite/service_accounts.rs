@@ -14,10 +14,10 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::storage::postgres::prelude::*;
     use actix_web::{App, http::StatusCode, test, web};
     use chrono::SubsecRound;
     use diesel::sql_types::{Bool, Integer};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
     use crate::api;
@@ -34,18 +34,11 @@ mod tests {
         HubuumObjectID, HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
         Permissions, PrincipalID, PrincipalMemberResponse, PrincipalTokenCreateRequest,
-        PrincipalTokenMetadata, ServiceAccount, ServiceAccountID, ServiceAccountPointResponse,
+        PrincipalTokenMetadata, ServiceAccount, ServiceAccountPointResponse,
         ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
         TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
-    use crate::storage::postgres::operations::authz::scope_allows;
-    use crate::storage::postgres::operations::service_account::{
-        DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
-    };
-    use crate::storage::postgres::operations::task::scope_snapshot_json;
-    use crate::storage::postgres::operations::task_rows::{NewTaskRow as NewTaskRecord, TaskRow};
-    use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
     use crate::test_support::{
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
@@ -57,8 +50,10 @@ mod tests {
         create_test_service_account, create_test_user, ensure_admin_group, lock_test_mutex,
         resource_scoped_token, scoped_token, scoped_token_with_resources, service_account_token,
     };
+    use crate::traits::scope_allows;
     use crate::traits::{CanSave, PermissionController, TaskAuthorizationExt};
     use crate::utilities::auth::generate_random_password;
+    use hubuum_storage_postgres::{PostgresPool, with_connection, with_transaction};
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const ME_ENDPOINT: &str = "/api/v1/iam/me";
@@ -281,13 +276,17 @@ mod tests {
             .map(|_| ())
         };
         let create_sa = |name: String| async move {
-            NewServiceAccount {
-                identity_scope: None,
-                name,
-                description: None,
-                owner_group_id: GroupID::new(group.id).unwrap(),
-            }
-            .save_without_events(pool, None)
+            crate::services::identity::create_service_account(
+                pool,
+                &NewServiceAccount {
+                    identity_scope: None,
+                    name,
+                    description: None,
+                    owner_group_id: GroupID::new(group.id).unwrap(),
+                },
+                None,
+                &EventContext::system(),
+            )
             .await
             .map(|_| ())
         };
@@ -700,9 +699,7 @@ mod tests {
             "precondition: active SA token validates"
         );
 
-        ServiceAccountID::new(sa.id)
-            .unwrap()
-            .disable_without_events(pool)
+        crate::services::identity::disable_service_account(pool, sa.id, &EventContext::system())
             .await
             .unwrap();
 
@@ -717,9 +714,7 @@ mod tests {
 
         let group = create_test_group(pool).await;
         let sa = create_test_service_account(pool, &group, None).await;
-        ServiceAccountID::new(sa.id)
-            .unwrap()
-            .disable_without_events(pool)
+        crate::services::identity::disable_service_account(pool, sa.id, &EventContext::system())
             .await
             .unwrap();
 
@@ -2437,7 +2432,7 @@ mod tests {
     /// Persist a synthetic task owned by `submitted_by`. `scopes = Some(..)` marks
     /// the task as submitted by a scoped token and stores the scope snapshot.
     async fn synthetic_task(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         submitted_by: i32,
         status: TaskStatus,
         idempotency_key: Option<String>,
@@ -2455,7 +2450,7 @@ mod tests {
     }
 
     async fn synthetic_task_of_kind(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         kind: TaskKind,
         submitted_by: i32,
         status: TaskStatus,
@@ -2465,29 +2460,28 @@ mod tests {
         let scope = scopes.map(|permissions| {
             TokenScope::from_stored_parts(Some(permissions.to_vec()), None).unwrap()
         });
-        NewTaskRecord {
-            kind: kind.as_str().to_string(),
-            status: status.as_str().to_string(),
-            submitted_by: Some(submitted_by),
-            submitted_token_id: None,
-            submitted_token_scoped: scopes.is_some(),
-            submitted_token_scopes: scope_snapshot_json(scope.as_ref()),
-            idempotency_key,
-            request_hash: None,
-            request_payload: None,
-            summary: None,
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(pool)
+        let scope_snapshot = hubuum_storage_core::StorageTaskScopeSnapshot::new(
+            None,
+            scope.is_some(),
+            scope
+                .as_ref()
+                .map(TokenScope::snapshot_json)
+                .unwrap_or_else(|| serde_json::json!([])),
+        );
+        crate::test_support::create_persisted_test_task(
+            pool,
+            crate::test_support::persisted_test_task_request(kind, status, submitted_by)
+                .expect("synthetic task request must be valid")
+                .idempotency_key(idempotency_key)
+                .scope_snapshot(scope_snapshot)
+                .request_payload(if status.is_terminal() {
+                    None
+                } else {
+                    Some(serde_json::json!({}))
+                }),
+        )
         .await
         .unwrap()
-        .into()
     }
 
     /// #17: a service account can own a task (`submitted_by` = SA principal id).
@@ -2523,9 +2517,13 @@ mod tests {
         synthetic_task(pool, sa.id, TaskStatus::Queued, Some(key.clone()), None).await;
 
         let lookup = if same_principal { sa.id } else { other.id };
-        let found = TaskRow::find_by_idempotency(pool, PrincipalID::new(lookup).unwrap(), &key)
-            .await
-            .unwrap();
+        let found = hubuum_storage_postgres::test_support::find_task_by_idempotency(
+            pool.get_ref(),
+            hubuum_domain::PrincipalId::new(lookup).expect("persisted principal id is positive"),
+            key.as_str(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(found.is_some(), expect_found);
     }
@@ -2598,9 +2596,13 @@ mod tests {
             "synthetic task kind must stay outside the worker claim filter"
         );
 
-        cancel_pending_tasks_for_principal(pool, sa.id)
-            .await
-            .unwrap();
+        hubuum_storage_postgres::test_support::cancel_pending_tasks_for_principal(
+            pool.get_ref(),
+            hubuum_domain::PrincipalId::new(sa.id)
+                .expect("persisted principal id must be positive"),
+        )
+        .await
+        .unwrap();
 
         let status: String = with_connection(pool, async |conn| {
             use crate::schema::tasks::dsl::{id, status, tasks};
@@ -2828,38 +2830,41 @@ mod tests {
         let owner_group_id = group.id;
 
         let insert_task = actix_web::rt::spawn(async move {
-            with_transaction(&insert_pool, async move |conn| -> Result<(), ApiError> {
-                use crate::schema::{principals, service_accounts};
+            with_transaction(
+                &insert_pool,
+                async move |conn| -> Result<(), diesel::result::Error> {
+                    use crate::schema::{principals, service_accounts};
 
-                let pid = diesel::sql_query("SELECT pg_backend_pid() AS pid")
-                    .get_result::<BackendPid>(conn)
-                    .await?
-                    .pid;
-                let principal_id = diesel::insert_into(principals::table)
-                    .values((
-                        principals::identity_scope_id.eq(identity_scope_id),
-                        principals::kind.eq(PrincipalKind::ServiceAccount.as_str()),
-                        principals::name.eq(&service_account_name),
-                    ))
-                    .returning(principals::id)
-                    .get_result::<i32>(conn)
-                    .await?;
-                diesel::insert_into(service_accounts::table)
-                    .values((
-                        service_accounts::id.eq(principal_id),
-                        service_accounts::description.eq(""),
-                        service_accounts::owner_group_id.eq(owner_group_id),
-                    ))
-                    .execute(conn)
-                    .await?;
-                inserted_tx
-                    .send(pid)
-                    .expect("group delete test should still be waiting for the insert");
-                commit_rx
-                    .await
-                    .expect("group delete test should release the insert transaction");
-                Ok(())
-            })
+                    let pid = diesel::sql_query("SELECT pg_backend_pid() AS pid")
+                        .get_result::<BackendPid>(conn)
+                        .await?
+                        .pid;
+                    let principal_id = diesel::insert_into(principals::table)
+                        .values((
+                            principals::identity_scope_id.eq(identity_scope_id),
+                            principals::kind.eq(PrincipalKind::ServiceAccount.as_str()),
+                            principals::name.eq(&service_account_name),
+                        ))
+                        .returning(principals::id)
+                        .get_result::<i32>(conn)
+                        .await?;
+                    diesel::insert_into(service_accounts::table)
+                        .values((
+                            service_accounts::id.eq(principal_id),
+                            service_accounts::description.eq(""),
+                            service_accounts::owner_group_id.eq(owner_group_id),
+                        ))
+                        .execute(conn)
+                        .await?;
+                    inserted_tx
+                        .send(pid)
+                        .expect("group delete test should still be waiting for the insert");
+                    commit_rx
+                        .await
+                        .expect("group delete test should release the insert transaction");
+                    Ok(())
+                },
+            )
             .await
         });
 
@@ -3092,9 +3097,13 @@ mod tests {
         let sa = create_test_service_account(pool, &group, None).await;
         let task = synthetic_task(pool, sa.id, TaskStatus::Running, None, None).await;
 
-        cancel_pending_tasks_for_principal(pool, sa.id)
-            .await
-            .unwrap();
+        hubuum_storage_postgres::test_support::cancel_pending_tasks_for_principal(
+            pool.get_ref(),
+            hubuum_domain::PrincipalId::new(sa.id)
+                .expect("persisted principal id must be positive"),
+        )
+        .await
+        .unwrap();
 
         let status: String = with_connection(pool, async |conn| {
             use crate::schema::tasks::dsl::{id, status, tasks};
@@ -3125,9 +3134,13 @@ mod tests {
         )
         .await;
 
-        let cancelled = cancel_pending_tasks_for_principal(pool, sa.id)
-            .await
-            .unwrap();
+        let cancelled = hubuum_storage_postgres::test_support::cancel_pending_tasks_for_principal(
+            pool.get_ref(),
+            hubuum_domain::PrincipalId::new(sa.id)
+                .expect("persisted principal id must be positive"),
+        )
+        .await
+        .unwrap();
 
         let status: String = with_connection(pool, async |conn| {
             use crate::schema::tasks::dsl::{id, status, tasks};
@@ -3139,7 +3152,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cancelled, 0);
+        assert!(cancelled.is_empty());
         assert_ne!(status, TaskStatus::Cancelled.as_str());
     }
 
@@ -3180,13 +3193,17 @@ mod tests {
         let group = create_test_group(pool).await;
         let prefix = format!("page-{}", generate_random_password(8));
         for index in 0..3 {
-            NewServiceAccount {
-                identity_scope: None,
-                name: format!("{prefix}-{index}"),
-                description: None,
-                owner_group_id: GroupID::new(group.id).unwrap(),
-            }
-            .save_without_events(pool, None)
+            crate::services::identity::create_service_account(
+                pool,
+                &NewServiceAccount {
+                    identity_scope: None,
+                    name: format!("{prefix}-{index}"),
+                    description: None,
+                    owner_group_id: GroupID::new(group.id).unwrap(),
+                },
+                None,
+                &EventContext::system(),
+            )
             .await
             .unwrap();
         }

@@ -2,6 +2,8 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId, TokenId};
+use hubuum_events_core::EventSequence;
 use hubuum_query::QueryOptions;
 use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
@@ -163,14 +165,14 @@ impl StorageTaskProgress {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskScopeSnapshot {
-    token_id: Option<i32>,
+    token_id: Option<TokenId>,
     scoped: bool,
     scopes: Value,
 }
 
 impl StorageTaskScopeSnapshot {
     #[must_use]
-    pub const fn new(token_id: Option<i32>, scoped: bool, scopes: Value) -> Self {
+    pub const fn new(token_id: Option<TokenId>, scoped: bool, scopes: Value) -> Self {
         Self {
             token_id,
             scoped,
@@ -188,7 +190,7 @@ impl StorageTaskScopeSnapshot {
     }
 
     #[must_use]
-    pub const fn token_id(&self) -> Option<i32> {
+    pub const fn token_id(&self) -> Option<TokenId> {
         self.token_id
     }
 
@@ -217,7 +219,7 @@ impl fmt::Debug for StorageTaskScopeSnapshot {
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskCreateRequest {
     kind: StorageTaskKind,
-    submitted_by: i32,
+    submitted_by: PrincipalId,
     request_payload: Value,
     total_items: i32,
     idempotency_key: Option<IdempotencyKey>,
@@ -230,7 +232,7 @@ impl StorageTaskCreateRequest {
     #[must_use]
     pub fn builder(
         kind: StorageTaskKind,
-        submitted_by: i32,
+        submitted_by: PrincipalId,
         request_payload: Value,
         total_items: i32,
     ) -> StorageTaskCreateRequestBuilder {
@@ -251,7 +253,7 @@ impl StorageTaskCreateRequest {
     }
 
     #[must_use]
-    pub const fn submitted_by(&self) -> i32 {
+    pub const fn submitted_by(&self) -> PrincipalId {
         self.submitted_by
     }
 
@@ -303,7 +305,7 @@ impl fmt::Debug for StorageTaskCreateRequest {
 
 pub struct StorageTaskCreateRequestBuilder {
     kind: StorageTaskKind,
-    submitted_by: i32,
+    submitted_by: PrincipalId,
     request_payload: Value,
     total_items: i32,
     idempotency_key: Option<IdempotencyKey>,
@@ -347,10 +349,10 @@ impl StorageTaskCreateRequestBuilder {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTask {
-    id: i32,
+    id: TaskId,
     kind: StorageTaskKind,
     status: StorageTaskStatus,
-    submitted_by: Option<i32>,
+    submitted_by: Option<PrincipalId>,
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<Value>,
@@ -361,19 +363,19 @@ pub struct StorageTask {
     started_at: Option<NaiveDateTime>,
     finished_at: Option<NaiveDateTime>,
     deleted_at: Option<NaiveDateTime>,
-    deleted_by: Option<i32>,
+    deleted_by: Option<PrincipalId>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
     lease_token: Option<Uuid>,
     lease_expires_at: Option<NaiveDateTime>,
     attempt_count: i32,
-    initiator_principal_id: Option<i32>,
+    initiator_principal_id: Option<PrincipalId>,
 }
 
 impl StorageTask {
     #[must_use]
     pub fn builder(
-        id: i32,
+        id: TaskId,
         kind: StorageTaskKind,
         status: StorageTaskStatus,
         created_at: NaiveDateTime,
@@ -407,7 +409,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> TaskId {
         self.id
     }
 
@@ -422,7 +424,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn submitted_by(&self) -> Option<i32> {
+    pub const fn submitted_by(&self) -> Option<PrincipalId> {
         self.submitted_by
     }
 
@@ -482,7 +484,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn deleted_by(&self) -> Option<i32> {
+    pub const fn deleted_by(&self) -> Option<PrincipalId> {
         self.deleted_by
     }
 
@@ -507,7 +509,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn initiator_principal_id(&self) -> Option<i32> {
+    pub const fn initiator_principal_id(&self) -> Option<PrincipalId> {
         self.initiator_principal_id
     }
 }
@@ -534,7 +536,7 @@ pub struct StorageTaskBuilder {
 
 impl StorageTaskBuilder {
     #[must_use]
-    pub const fn submitted_by(mut self, submitted_by: Option<i32>) -> Self {
+    pub const fn submitted_by(mut self, submitted_by: Option<PrincipalId>) -> Self {
         self.task.submitted_by = submitted_by;
         self
     }
@@ -597,7 +599,7 @@ impl StorageTaskBuilder {
     pub const fn deletion(
         mut self,
         deleted_at: Option<NaiveDateTime>,
-        deleted_by: Option<i32>,
+        deleted_by: Option<PrincipalId>,
     ) -> Self {
         self.task.deleted_at = deleted_at;
         self.task.deleted_by = deleted_by;
@@ -622,7 +624,10 @@ impl StorageTaskBuilder {
     }
 
     #[must_use]
-    pub const fn initiator_principal_id(mut self, initiator_principal_id: Option<i32>) -> Self {
+    pub const fn initiator_principal_id(
+        mut self,
+        initiator_principal_id: Option<PrincipalId>,
+    ) -> Self {
         self.task.initiator_principal_id = initiator_principal_id;
         self
     }
@@ -636,12 +641,12 @@ impl StorageTaskBuilder {
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskAccess {
     task: StorageTask,
-    submitter_owner_group_id: Option<i32>,
+    submitter_owner_group_id: Option<GroupId>,
 }
 
 impl StorageTaskAccess {
     #[must_use]
-    pub const fn new(task: StorageTask, submitter_owner_group_id: Option<i32>) -> Self {
+    pub const fn new(task: StorageTask, submitter_owner_group_id: Option<GroupId>) -> Self {
         Self {
             task,
             submitter_owner_group_id,
@@ -649,14 +654,14 @@ impl StorageTaskAccess {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageTask, Option<i32>) {
+    pub fn into_parts(self) -> (StorageTask, Option<GroupId>) {
         (self.task, self.submitter_owner_group_id)
     }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskListQuery {
-    submitted_by: Option<i32>,
+    submitted_by: Option<PrincipalId>,
     kind: Option<StorageTaskKind>,
     status: Option<StorageTaskStatus>,
     options: QueryOptions,
@@ -665,7 +670,7 @@ pub struct StorageTaskListQuery {
 impl StorageTaskListQuery {
     #[must_use]
     pub const fn new(
-        submitted_by: Option<i32>,
+        submitted_by: Option<PrincipalId>,
         kind: Option<StorageTaskKind>,
         status: Option<StorageTaskStatus>,
         options: QueryOptions,
@@ -682,7 +687,7 @@ impl StorageTaskListQuery {
     pub fn into_parts(
         self,
     ) -> (
-        Option<i32>,
+        Option<PrincipalId>,
         Option<StorageTaskKind>,
         Option<StorageTaskStatus>,
         QueryOptions,
@@ -727,41 +732,41 @@ impl StorageTaskPage {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskPageQuery {
-    task_id: i32,
+    task_id: TaskId,
     options: QueryOptions,
 }
 
 impl StorageTaskPageQuery {
     #[must_use]
-    pub const fn new(task_id: i32, options: QueryOptions) -> Self {
+    pub const fn new(task_id: TaskId, options: QueryOptions) -> Self {
         Self { task_id, options }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, QueryOptions) {
+    pub fn into_parts(self) -> (TaskId, QueryOptions) {
         (self.task_id, self.options)
     }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskEvent {
-    id: i64,
-    task_id: i32,
+    id: EventSequence,
+    task_id: TaskId,
     event_type: String,
     message: String,
     data: Option<Value>,
     created_at: NaiveDateTime,
-    actor_principal_id: Option<i32>,
+    actor_principal_id: Option<PrincipalId>,
     actor_kind: String,
-    initiator_principal_id: Option<i32>,
-    provenance_task_id: Option<i32>,
+    initiator_principal_id: Option<PrincipalId>,
+    provenance_task_id: Option<TaskId>,
 }
 
 impl StorageTaskEvent {
     #[must_use]
     pub fn builder(
-        id: i64,
-        task_id: i32,
+        id: EventSequence,
+        task_id: TaskId,
         event_type: impl Into<String>,
         message: impl Into<String>,
         created_at: NaiveDateTime,
@@ -784,12 +789,12 @@ impl StorageTaskEvent {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i64 {
+    pub const fn id(&self) -> EventSequence {
         self.id
     }
 
     #[must_use]
-    pub const fn task_id(&self) -> i32 {
+    pub const fn task_id(&self) -> TaskId {
         self.task_id
     }
 
@@ -814,7 +819,7 @@ impl StorageTaskEvent {
     }
 
     #[must_use]
-    pub const fn actor_principal_id(&self) -> Option<i32> {
+    pub const fn actor_principal_id(&self) -> Option<PrincipalId> {
         self.actor_principal_id
     }
 
@@ -824,12 +829,12 @@ impl StorageTaskEvent {
     }
 
     #[must_use]
-    pub const fn initiator_principal_id(&self) -> Option<i32> {
+    pub const fn initiator_principal_id(&self) -> Option<PrincipalId> {
         self.initiator_principal_id
     }
 
     #[must_use]
-    pub const fn provenance_task_id(&self) -> Option<i32> {
+    pub const fn provenance_task_id(&self) -> Option<TaskId> {
         self.provenance_task_id
     }
 }
@@ -846,7 +851,7 @@ impl StorageTaskEventBuilder {
     }
 
     #[must_use]
-    pub const fn actor_principal_id(mut self, actor_principal_id: Option<i32>) -> Self {
+    pub const fn actor_principal_id(mut self, actor_principal_id: Option<PrincipalId>) -> Self {
         self.event.actor_principal_id = actor_principal_id;
         self
     }
@@ -854,8 +859,8 @@ impl StorageTaskEventBuilder {
     #[must_use]
     pub const fn provenance(
         mut self,
-        initiator_principal_id: Option<i32>,
-        provenance_task_id: Option<i32>,
+        initiator_principal_id: Option<PrincipalId>,
+        provenance_task_id: Option<TaskId>,
     ) -> Self {
         self.event.initiator_principal_id = initiator_principal_id;
         self.event.provenance_task_id = provenance_task_id;
@@ -888,8 +893,8 @@ impl StorageTaskEventPage {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageImportTaskResult {
-    id: i32,
-    task_id: i32,
+    id: ImportTaskResultId,
+    task_id: TaskId,
     item_ref: Option<String>,
     entity_kind: String,
     action: String,
@@ -903,8 +908,8 @@ pub struct StorageImportTaskResult {
 impl StorageImportTaskResult {
     #[must_use]
     pub fn builder(
-        id: i32,
-        task_id: i32,
+        id: ImportTaskResultId,
+        task_id: TaskId,
         entity_kind: impl Into<String>,
         action: impl Into<String>,
         outcome: impl Into<String>,
@@ -927,12 +932,12 @@ impl StorageImportTaskResult {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> ImportTaskResultId {
         self.id
     }
 
     #[must_use]
-    pub const fn task_id(&self) -> i32 {
+    pub const fn task_id(&self) -> TaskId {
         self.task_id
     }
 
@@ -1073,7 +1078,7 @@ impl StorageTaskDurations {
 macro_rules! task_output_accessors {
     () => {
         #[must_use]
-        pub const fn task_id(&self) -> i32 {
+        pub const fn task_id(&self) -> TaskId {
             self.task_id
         }
 
@@ -1112,7 +1117,7 @@ macro_rules! task_output_accessors {
 macro_rules! backup_output_accessors {
     () => {
         #[must_use]
-        pub const fn task_id(&self) -> i32 {
+        pub const fn task_id(&self) -> TaskId {
             self.task_id
         }
 
@@ -1135,7 +1140,7 @@ macro_rules! backup_output_accessors {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageExportOutputSummary {
-    task_id: i32,
+    task_id: TaskId,
     template_name: Option<String>,
     content_type: String,
     warning_count: i32,
@@ -1147,7 +1152,7 @@ pub struct StorageExportOutputSummary {
 impl StorageExportOutputSummary {
     #[must_use]
     pub fn new(
-        task_id: i32,
+        task_id: TaskId,
         template_name: Option<String>,
         content_type: impl Into<String>,
         warning_count: i32,
@@ -1171,7 +1176,7 @@ impl StorageExportOutputSummary {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageBackupOutputSummary {
-    task_id: i32,
+    task_id: TaskId,
     byte_size: i64,
     sha256: String,
     output_expires_at: NaiveDateTime,
@@ -1180,7 +1185,7 @@ pub struct StorageBackupOutputSummary {
 impl StorageBackupOutputSummary {
     #[must_use]
     pub fn new(
-        task_id: i32,
+        task_id: TaskId,
         byte_size: i64,
         sha256: impl Into<String>,
         output_expires_at: NaiveDateTime,
@@ -1198,7 +1203,7 @@ impl StorageBackupOutputSummary {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageExportOutput {
-    task_id: i32,
+    task_id: TaskId,
     template_name: Option<String>,
     content_type: String,
     json_output: Option<Value>,
@@ -1215,7 +1220,7 @@ pub struct StorageExportOutput {
 impl StorageExportOutput {
     #[must_use]
     pub fn builder(
-        task_id: i32,
+        task_id: TaskId,
         content_type: impl Into<String>,
         metadata: Value,
         warnings: Value,
@@ -1307,7 +1312,7 @@ impl StorageExportOutputBuilder {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageBackupOutput {
-    task_id: i32,
+    task_id: TaskId,
     document: Vec<u8>,
     byte_size: i64,
     sha256: String,
@@ -1318,7 +1323,7 @@ pub struct StorageBackupOutput {
 impl StorageBackupOutput {
     #[must_use]
     pub fn new(
-        task_id: i32,
+        task_id: TaskId,
         document: Vec<u8>,
         byte_size: i64,
         sha256: impl Into<String>,
@@ -1362,7 +1367,7 @@ pub trait TaskQueueStorage: Send + Sync {
         request: StorageTaskCreateRequest,
     ) -> Result<StorageTask, StorageError>;
 
-    async fn get_task_access(&self, task_id: i32) -> Result<StorageTaskAccess, StorageError>;
+    async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError>;
 
     async fn list_tasks(
         &self,
@@ -1381,32 +1386,32 @@ pub trait TaskQueueStorage: Send + Sync {
 
     async fn list_export_output_summaries(
         &self,
-        task_ids: Vec<i32>,
+        task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageExportOutputSummary>, StorageError>;
 
     async fn list_backup_output_summaries(
         &self,
-        task_ids: Vec<i32>,
+        task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageBackupOutputSummary>, StorageError>;
 
     async fn get_export_output_summary(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError>;
 
     async fn get_backup_output_summary(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError>;
 
     async fn get_export_output(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError>;
 
     async fn get_backup_output(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError>;
 }
 
@@ -1418,20 +1423,20 @@ mod tests {
     fn task_debug_redacts_identity_payload_scope_and_claim() {
         let now = chrono::Utc::now().naive_utc();
         let task = StorageTask::builder(
-            91_001,
+            TaskId::new(91_001).unwrap(),
             StorageTaskKind::Import,
             StorageTaskStatus::Running,
             now,
             now,
         )
-        .submitted_by(Some(91_002))
+        .submitted_by(Some(PrincipalId::new(91_002).unwrap()))
         .idempotency_key(Some("secret idempotency".to_string()))
         .request_hash(Some("secret hash".to_string()))
         .request_payload(Some(serde_json::json!({"secret": "payload"})))
         .summary(Some("summary".to_string()))
         .progress(StorageTaskProgress::new(2, 1, 1, 0))
         .scope_snapshot(StorageTaskScopeSnapshot::new(
-            Some(91_003),
+            Some(TokenId::new(91_003).unwrap()),
             true,
             serde_json::json!({"permissions": ["secret"]}),
         ))
@@ -1441,7 +1446,7 @@ mod tests {
             Some(now),
         )
         .attempt_count(1)
-        .initiator_principal_id(Some(91_004))
+        .initiator_principal_id(Some(PrincipalId::new(91_004).unwrap()))
         .build();
 
         let debug = format!("{task:?}");

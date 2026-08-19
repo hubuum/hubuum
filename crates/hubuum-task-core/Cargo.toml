@@ -6,8 +6,7 @@ rust-version = "1.88"
 description = "Backend-neutral task identity and idempotency types for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = true
+publish = false
 
 [package.metadata.hubuum]
-rust-api = "experimental-public"
-policy-document = "docs/rust_api/hubuum-task-core.md"
+rust-api = "workspace-internal"

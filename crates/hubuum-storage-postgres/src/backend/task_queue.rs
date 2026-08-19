@@ -1,5 +1,6 @@
 use crate::operations::task_queue as postgres_task_queue;
 use async_trait::async_trait;
+use hubuum_domain::TaskId;
 
 use hubuum_storage_core::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageError, StorageExportOutput,
@@ -21,8 +22,8 @@ impl TaskQueueStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn get_task_access(&self, task_id: i32) -> Result<StorageTaskAccess, StorageError> {
-        postgres_task_queue::get_task_access(self.runtime(), task_id)
+    async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError> {
+        postgres_task_queue::get_task_access(self.runtime(), task_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -56,8 +57,9 @@ impl TaskQueueStorage for PostgresStorage {
 
     async fn list_export_output_summaries(
         &self,
-        task_ids: Vec<i32>,
+        task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageExportOutputSummary>, StorageError> {
+        let task_ids = task_ids.into_iter().map(TaskId::id).collect();
         postgres_task_queue::list_export_output_summaries(self.runtime(), task_ids)
             .await
             .map_err(StorageError::from)
@@ -65,8 +67,9 @@ impl TaskQueueStorage for PostgresStorage {
 
     async fn list_backup_output_summaries(
         &self,
-        task_ids: Vec<i32>,
+        task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageBackupOutputSummary>, StorageError> {
+        let task_ids = task_ids.into_iter().map(TaskId::id).collect();
         postgres_task_queue::list_backup_output_summaries(self.runtime(), task_ids)
             .await
             .map_err(StorageError::from)
@@ -74,36 +77,36 @@ impl TaskQueueStorage for PostgresStorage {
 
     async fn get_export_output_summary(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
-        postgres_task_queue::get_export_output_summary(self.runtime(), task_id)
+        postgres_task_queue::get_export_output_summary(self.runtime(), task_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn get_backup_output_summary(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
-        postgres_task_queue::get_backup_output_summary(self.runtime(), task_id)
+        postgres_task_queue::get_backup_output_summary(self.runtime(), task_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn get_export_output(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
-        postgres_task_queue::get_export_output(self.runtime(), task_id)
+        postgres_task_queue::get_export_output(self.runtime(), task_id.id())
             .await
             .map_err(StorageError::from)
     }
 
     async fn get_backup_output(
         &self,
-        task_id: i32,
+        task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
-        postgres_task_queue::get_backup_output(self.runtime(), task_id)
+        postgres_task_queue::get_backup_output(self.runtime(), task_id.id())
             .await
             .map_err(StorageError::from)
     }

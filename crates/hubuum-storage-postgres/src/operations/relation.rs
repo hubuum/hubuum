@@ -4,7 +4,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::normalize_template_alias;
+use hubuum_domain::{ClassId, ClassRelationId, ObjectId, normalize_template_alias};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     MutationOutcome, StorageClassRelation, StorageClassRelationCreate, StorageObject,
@@ -36,14 +36,14 @@ pub(crate) struct ClassRelationRow {
 }
 
 impl ClassRelationRow {
-    pub(crate) fn into_storage(self) -> StorageClassRelation {
-        StorageClassRelation::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
-            self.from_hubuum_class_id,
-            self.to_hubuum_class_id,
+    pub(crate) fn into_storage(self) -> Result<StorageClassRelation, PostgresStorageError> {
+        Ok(StorageClassRelation::new(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+            ClassId::new(self.from_hubuum_class_id)?,
+            ClassId::new(self.to_hubuum_class_id)?,
         )
         .with_template_aliases(self.forward_template_alias, self.reverse_template_alias)
-        .with_relation_limits(self.from_max_relations, self.to_max_relations)
+        .with_relation_limits(self.from_max_relations, self.to_max_relations))
     }
 
     fn snapshot(&self) -> serde_json::Value {
@@ -76,8 +76,8 @@ struct NewClassRelationRow<'command> {
 impl<'command> From<&'command StorageClassRelationCreate> for NewClassRelationRow<'command> {
     fn from(command: &'command StorageClassRelationCreate) -> Self {
         Self {
-            from_hubuum_class_id: command.from_class_id(),
-            to_hubuum_class_id: command.to_class_id(),
+            from_hubuum_class_id: command.from_class_id().id(),
+            to_hubuum_class_id: command.to_class_id().id(),
             forward_template_alias: command.forward_template_alias(),
             reverse_template_alias: command.reverse_template_alias(),
             from_max_relations: command.from_max_relations(),
@@ -99,13 +99,13 @@ pub(crate) struct ObjectRelationRow {
 }
 
 impl ObjectRelationRow {
-    pub(crate) fn into_storage(self) -> StorageObjectRelation {
-        StorageObjectRelation::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
-            self.from_hubuum_object_id,
-            self.to_hubuum_object_id,
-            self.class_relation_id,
-        )
+    pub(crate) fn into_storage(self) -> Result<StorageObjectRelation, PostgresStorageError> {
+        Ok(StorageObjectRelation::new(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+            ObjectId::new(self.from_hubuum_object_id)?,
+            ObjectId::new(self.to_hubuum_object_id)?,
+            ClassRelationId::new(self.class_relation_id)?,
+        ))
     }
 
     fn snapshot(self) -> serde_json::Value {
@@ -132,9 +132,9 @@ struct NewObjectRelationRow {
 impl From<StorageObjectRelationCreate> for NewObjectRelationRow {
     fn from(command: StorageObjectRelationCreate) -> Self {
         Self {
-            from_hubuum_object_id: command.from_object_id(),
-            to_hubuum_object_id: command.to_object_id(),
-            class_relation_id: command.class_relation_id(),
+            from_hubuum_object_id: command.from_object_id().id(),
+            to_hubuum_object_id: command.to_object_id().id(),
+            class_relation_id: command.class_relation_id().id(),
         }
     }
 }
@@ -157,12 +157,16 @@ pub(crate) async fn prepare_class_relation_on(
     command: StorageClassRelationCreate,
 ) -> Result<StoragePreparedClassRelation, PostgresStorageError> {
     let command = normalize_class_relation_create(command)?;
-    let (from_class, to_class) =
-        load_class_endpoints(connection, command.from_class_id(), command.to_class_id()).await?;
+    let (from_class, to_class) = load_class_endpoints(
+        connection,
+        command.from_class_id().id(),
+        command.to_class_id().id(),
+    )
+    .await?;
     Ok(StoragePreparedClassRelation::new(
         command,
-        from_class.into_storage(),
-        to_class.into_storage(),
+        from_class.into_storage()?,
+        to_class.into_storage()?,
     ))
 }
 
@@ -208,10 +212,10 @@ pub(crate) async fn create_class_relation_on(
     context: &EventContext,
 ) -> Result<MutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
     let command = normalize_class_relation_create(prepared.command().clone())?;
-    let from_class = lock_class(connection, command.from_class_id()).await?;
-    let to_class = lock_class(connection, command.to_class_id()).await?;
-    if from_class.clone().into_storage() != *prepared.from_class()
-        || to_class.clone().into_storage() != *prepared.to_class()
+    let from_class = lock_class(connection, command.from_class_id().id()).await?;
+    let to_class = lock_class(connection, command.to_class_id().id()).await?;
+    if from_class.clone().into_storage()? != *prepared.from_class()
+        || to_class.clone().into_storage()? != *prepared.to_class()
     {
         return Err(PostgresStorageError::not_found(
             "Class relation endpoints no longer match the prepared target",
@@ -220,12 +224,14 @@ pub(crate) async fn create_class_relation_on(
     let relation = insert_class_relation(connection, &command).await?;
     let event = class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
         .with_after(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed(
         StorageResolvedClassRelation::new(
-            relation.into_storage(),
-            from_class.into_storage(),
-            to_class.into_storage(),
+            relation.into_storage()?,
+            from_class.into_storage()?,
+            to_class.into_storage()?,
         ),
         audit,
     ))
@@ -256,9 +262,9 @@ pub(crate) async fn delete_class_relation_on(
     let relation = lock_class_relation(connection, target.relation().metadata().id().id()).await?;
     let from_class = lock_class(connection, relation.from_hubuum_class_id).await?;
     let to_class = lock_class(connection, relation.to_hubuum_class_id).await?;
-    if relation.clone().into_storage() != *target.relation()
-        || from_class.clone().into_storage() != *target.from_class()
-        || to_class.clone().into_storage() != *target.to_class()
+    if relation.clone().into_storage()? != *target.relation()
+        || from_class.clone().into_storage()? != *target.from_class()
+        || to_class.clone().into_storage()? != *target.to_class()
     {
         return Err(PostgresStorageError::not_found(
             "Class relation no longer matches the resolved target",
@@ -267,7 +273,9 @@ pub(crate) async fn delete_class_relation_on(
     delete_class_relation_row(connection, relation.id).await?;
     let event = class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
         .with_before(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed((), audit))
 }
 
@@ -297,8 +305,10 @@ pub(crate) async fn create_class_relation_from_command_on(
     let to_class = load_class(connection, relation.to_hubuum_class_id).await?;
     let event = class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
         .with_after(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(relation.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(relation.into_storage()?, audit))
 }
 
 /// Delete a class relation by identifier and record its event atomically.
@@ -328,7 +338,9 @@ pub(crate) async fn delete_class_relation_by_id_on(
     delete_class_relation_row(connection, relation.id).await?;
     let event = class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
         .with_before(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed((), audit))
 }
 
@@ -353,23 +365,28 @@ pub(crate) async fn prepare_object_relation_on(
     let (command, from_object, to_object, class_relation) = match selector {
         StorageObjectRelationCreateSelector::Explicit(command) => {
             let command = normalize_object_relation_create(command)?;
-            let (from_object, to_object) =
-                load_object_endpoints(connection, command.from_object_id(), command.to_object_id())
-                    .await?;
+            let (from_object, to_object) = load_object_endpoints(
+                connection,
+                command.from_object_id().id(),
+                command.to_object_id().id(),
+            )
+            .await?;
             let class_relation =
-                load_resolved_class_relation(connection, command.class_relation_id()).await?;
+                load_resolved_class_relation(connection, command.class_relation_id().id()).await?;
             (command, from_object, to_object, class_relation)
         }
         StorageObjectRelationCreateSelector::Between { from, to } => {
             let (route_from, route_to) =
-                load_object_endpoints(connection, from.object_id(), to.object_id()).await?;
+                load_object_endpoints(connection, from.object_id().id(), to.object_id().id())
+                    .await?;
             validate_route_objects(&from, &to, &route_from, &route_to)?;
             let class_relation =
-                load_direct_class_relation(connection, from.class_id(), to.class_id()).await?;
+                load_direct_class_relation(connection, from.class_id().id(), to.class_id().id())
+                    .await?;
             let command = normalize_object_relation_create(StorageObjectRelationCreate::new(
-                route_from.id,
-                route_to.id,
-                class_relation.relation().metadata().id().id(),
+                ObjectId::new(route_from.id)?,
+                ObjectId::new(route_to.id)?,
+                ClassRelationId::from(class_relation.relation().metadata().id()),
             ))?;
             let (from_object, to_object) = order_object_endpoints(command, route_from, route_to)?;
             (command, from_object, to_object, class_relation)
@@ -378,8 +395,8 @@ pub(crate) async fn prepare_object_relation_on(
     validate_object_relation_membership(command, &from_object, &to_object, &class_relation)?;
     Ok(StoragePreparedObjectRelation::new(
         command,
-        from_object.into_storage(),
-        to_object.into_storage(),
+        from_object.into_storage()?,
+        to_object.into_storage()?,
         class_relation,
     ))
 }
@@ -404,7 +421,7 @@ pub(crate) async fn resolve_object_relation_on(
     validate_object_relation_selector(&selector)?;
     let (relation, from_object, to_object) = match selector {
         StorageObjectRelationSelector::Id(relation_id) => {
-            let relation = load_object_relation(connection, relation_id).await?;
+            let relation = load_object_relation(connection, relation_id.id()).await?;
             let (from_object, to_object) = load_object_endpoints(
                 connection,
                 relation.from_hubuum_object_id,
@@ -415,14 +432,19 @@ pub(crate) async fn resolve_object_relation_on(
         }
         StorageObjectRelationSelector::Between { from, to } => {
             let (route_from, route_to) =
-                load_object_endpoints(connection, from.object_id(), to.object_id()).await?;
+                load_object_endpoints(connection, from.object_id().id(), to.object_id().id())
+                    .await?;
             validate_relation_route_objects(&from, &to, &route_from, &route_to)?;
-            let relation =
-                load_object_relation_between(connection, from.object_id(), to.object_id()).await?;
+            let relation = load_object_relation_between(
+                connection,
+                from.object_id().id(),
+                to.object_id().id(),
+            )
+            .await?;
             let command = StorageObjectRelationCreate::new(
-                relation.from_hubuum_object_id,
-                relation.to_hubuum_object_id,
-                relation.class_relation_id,
+                ObjectId::new(relation.from_hubuum_object_id)?,
+                ObjectId::new(relation.to_hubuum_object_id)?,
+                ClassRelationId::new(relation.class_relation_id)?,
             );
             let (from_object, to_object) = order_object_endpoints(command, route_from, route_to)?;
             (relation, from_object, to_object)
@@ -432,18 +454,18 @@ pub(crate) async fn resolve_object_relation_on(
         load_resolved_class_relation(connection, relation.class_relation_id).await?;
     validate_object_relation_membership(
         StorageObjectRelationCreate::new(
-            relation.from_hubuum_object_id,
-            relation.to_hubuum_object_id,
-            relation.class_relation_id,
+            ObjectId::new(relation.from_hubuum_object_id)?,
+            ObjectId::new(relation.to_hubuum_object_id)?,
+            ClassRelationId::new(relation.class_relation_id)?,
         ),
         &from_object,
         &to_object,
         &class_relation,
     )?;
     Ok(StorageResolvedObjectRelation::new(
-        relation.into_storage(),
-        from_object.into_storage(),
-        to_object.into_storage(),
+        relation.into_storage()?,
+        from_object.into_storage()?,
+        to_object.into_storage()?,
         class_relation,
     ))
 }
@@ -469,8 +491,12 @@ pub(crate) async fn create_object_relation_on(
     context: &EventContext,
 ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
     let command = normalize_object_relation_create(*prepared.command())?;
-    let (from_object, to_object) =
-        load_object_endpoints(connection, command.from_object_id(), command.to_object_id()).await?;
+    let (from_object, to_object) = load_object_endpoints(
+        connection,
+        command.from_object_id().id(),
+        command.to_object_id().id(),
+    )
+    .await?;
     if !object_scope_matches(&from_object, prepared.from_object())
         || !object_scope_matches(&to_object, prepared.to_object())
     {
@@ -479,8 +505,8 @@ pub(crate) async fn create_object_relation_on(
         ));
     }
     let class_relation =
-        lock_class_relation_shared(connection, command.class_relation_id()).await?;
-    if class_relation.clone().into_storage() != *prepared.class_relation().relation() {
+        lock_class_relation_shared(connection, command.class_relation_id().id()).await?;
+    if class_relation.clone().into_storage()? != *prepared.class_relation().relation() {
         return Err(PostgresStorageError::not_found(
             "Class relation no longer matches the prepared object relation",
         ));
@@ -495,12 +521,14 @@ pub(crate) async fn create_object_relation_on(
     let event =
         object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
             .with_after(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed(
         StorageResolvedObjectRelation::new(
-            relation.into_storage(),
-            from_object.into_storage(),
-            to_object.into_storage(),
+            relation.into_storage()?,
+            from_object.into_storage()?,
+            to_object.into_storage()?,
             prepared.class_relation().clone(),
         ),
         audit,
@@ -536,7 +564,7 @@ pub(crate) async fn delete_object_relation_on(
         relation.to_hubuum_object_id,
     )
     .await?;
-    if relation.into_storage() != *target.relation()
+    if relation.into_storage()? != *target.relation()
         || !object_scope_matches(&from_object, target.from_object())
         || !object_scope_matches(&to_object, target.to_object())
     {
@@ -548,7 +576,9 @@ pub(crate) async fn delete_object_relation_on(
     let event =
         object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
             .with_before(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed((), audit))
 }
 
@@ -573,15 +603,21 @@ pub(crate) async fn create_object_relation_from_command_on(
     context: &EventContext,
 ) -> Result<MutationOutcome<StorageObjectRelation>, PostgresStorageError> {
     let command = normalize_object_relation_create(command)?;
-    let (from_object, to_object) =
-        load_object_endpoints(connection, command.from_object_id(), command.to_object_id()).await?;
+    let (from_object, to_object) = load_object_endpoints(
+        connection,
+        command.from_object_id().id(),
+        command.to_object_id().id(),
+    )
+    .await?;
     validate_direct_object_endpoints(&from_object, &to_object)?;
     let relation = insert_object_relation(connection, command).await?;
     let event =
         object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
             .with_after(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(relation.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(relation.into_storage()?, audit))
 }
 
 /// Delete an object relation by identifier and record its event atomically.
@@ -616,15 +652,15 @@ pub(crate) async fn delete_object_relation_by_id_on(
     let event =
         object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
             .with_before(relation.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed((), audit))
 }
 
 pub(crate) fn normalize_class_relation_create(
     command: StorageClassRelationCreate,
 ) -> Result<StorageClassRelationCreate, PostgresStorageError> {
-    validate_positive_id(command.from_class_id(), "from class id")?;
-    validate_positive_id(command.to_class_id(), "to class id")?;
     if command.from_class_id() == command.to_class_id() {
         return Err(PostgresStorageError::bad_request(
             "from_hubuum_class_id and to_hubuum_class_id cannot be the same",
@@ -654,9 +690,6 @@ pub(crate) fn normalize_class_relation_create(
 fn normalize_object_relation_create(
     command: StorageObjectRelationCreate,
 ) -> Result<StorageObjectRelationCreate, PostgresStorageError> {
-    validate_positive_id(command.from_object_id(), "from object id")?;
-    validate_positive_id(command.to_object_id(), "to object id")?;
-    validate_positive_id(command.class_relation_id(), "class relation id")?;
     if command.from_object_id() == command.to_object_id() {
         return Err(PostgresStorageError::bad_request(
             "from_hubuum_object_id and to_hubuum_object_id cannot be the same",
@@ -705,9 +738,7 @@ fn validate_object_relation_selector(
     selector: &StorageObjectRelationSelector,
 ) -> Result<(), PostgresStorageError> {
     match selector {
-        StorageObjectRelationSelector::Id(relation_id) => {
-            validate_positive_id(*relation_id, "object relation id")
-        }
+        StorageObjectRelationSelector::Id(_) => Ok(()),
         StorageObjectRelationSelector::Between { from, to } => {
             validate_relation_endpoints(from, to)
         }
@@ -718,10 +749,6 @@ fn validate_relation_endpoints(
     from: &StorageObjectRelationEndpoint,
     to: &StorageObjectRelationEndpoint,
 ) -> Result<(), PostgresStorageError> {
-    validate_positive_id(from.class_id(), "from class id")?;
-    validate_positive_id(from.object_id(), "from object id")?;
-    validate_positive_id(to.class_id(), "to class id")?;
-    validate_positive_id(to.object_id(), "to object id")?;
     if from.object_id() == to.object_id() {
         return Err(PostgresStorageError::bad_request(
             "from_hubuum_object_id and to_hubuum_object_id cannot be the same",
@@ -741,7 +768,9 @@ fn validate_route_objects(
     route_from: &ObjectRow,
     route_to: &ObjectRow,
 ) -> Result<(), PostgresStorageError> {
-    if route_from.hubuum_class_id == from.class_id() && route_to.hubuum_class_id == to.class_id() {
+    if route_from.hubuum_class_id == from.class_id().id()
+        && route_to.hubuum_class_id == to.class_id().id()
+    {
         Ok(())
     } else {
         Err(PostgresStorageError::not_found(
@@ -767,9 +796,9 @@ fn validate_object_relation_membership(
     to_object: &ObjectRow,
     class_relation: &StorageResolvedClassRelation,
 ) -> Result<(), PostgresStorageError> {
-    if command.from_object_id() != from_object.id
-        || command.to_object_id() != to_object.id
-        || command.class_relation_id() != class_relation.relation().metadata().id().id()
+    if command.from_object_id().id() != from_object.id
+        || command.to_object_id().id() != to_object.id
+        || command.class_relation_id().id() != class_relation.relation().metadata().id().id()
     {
         return Err(PostgresStorageError::internal(
             "Object relation aggregate does not match its command",
@@ -777,10 +806,10 @@ fn validate_object_relation_membership(
     }
     validate_direct_object_endpoints(from_object, to_object)?;
     let relation = class_relation.relation();
-    let matches_class_relation = (from_object.hubuum_class_id == relation.from_class_id()
-        && to_object.hubuum_class_id == relation.to_class_id())
-        || (from_object.hubuum_class_id == relation.to_class_id()
-            && to_object.hubuum_class_id == relation.from_class_id());
+    let matches_class_relation = (from_object.hubuum_class_id == relation.from_class_id().id()
+        && to_object.hubuum_class_id == relation.to_class_id().id())
+        || (from_object.hubuum_class_id == relation.to_class_id().id()
+            && to_object.hubuum_class_id == relation.from_class_id().id());
     if matches_class_relation {
         Ok(())
     } else {
@@ -804,9 +833,9 @@ fn validate_direct_object_endpoints(
 }
 
 fn object_scope_matches(current: &ObjectRow, expected: &StorageObject) -> bool {
-    current.id == expected.id()
-        && current.collection_id == expected.collection_id()
-        && current.hubuum_class_id == expected.class_id()
+    current.id == expected.id().id()
+        && current.collection_id == expected.collection_id().id()
+        && current.hubuum_class_id == expected.class_id().id()
 }
 
 fn order_object_endpoints(
@@ -814,9 +843,10 @@ fn order_object_endpoints(
     first: ObjectRow,
     second: ObjectRow,
 ) -> Result<(ObjectRow, ObjectRow), PostgresStorageError> {
-    if first.id == command.from_object_id() && second.id == command.to_object_id() {
+    if first.id == command.from_object_id().id() && second.id == command.to_object_id().id() {
         Ok((first, second))
-    } else if second.id == command.from_object_id() && first.id == command.to_object_id() {
+    } else if second.id == command.from_object_id().id() && first.id == command.to_object_id().id()
+    {
         Ok((second, first))
     } else {
         Err(PostgresStorageError::internal(
@@ -945,9 +975,9 @@ async fn load_resolved_class_relation(
     )
     .await?;
     Ok(StorageResolvedClassRelation::new(
-        relation.into_storage(),
-        from_class.into_storage(),
-        to_class.into_storage(),
+        relation.into_storage()?,
+        from_class.into_storage()?,
+        to_class.into_storage()?,
     ))
 }
 
@@ -972,9 +1002,9 @@ async fn load_direct_class_relation(
     let (from_class, to_class) =
         load_class_endpoints(connection, from_class_id, to_class_id).await?;
     Ok(StorageResolvedClassRelation::new(
-        relation.into_storage(),
-        from_class.into_storage(),
-        to_class.into_storage(),
+        relation.into_storage()?,
+        from_class.into_storage()?,
+        to_class.into_storage()?,
     ))
 }
 
@@ -1153,18 +1183,19 @@ mod tests {
 
     #[test]
     fn class_relation_normalization_keeps_directional_values_with_their_classes() {
-        let command = StorageClassRelationCreate::builder(9, 3)
-            .template_aliases(
-                Some("Forward Name".to_string()),
-                Some("ReverseName".to_string()),
-            )
-            .relation_limits(Some(4), Some(7))
-            .build();
+        let command =
+            StorageClassRelationCreate::builder(ClassId::new(9).unwrap(), ClassId::new(3).unwrap())
+                .template_aliases(
+                    Some("Forward Name".to_string()),
+                    Some("ReverseName".to_string()),
+                )
+                .relation_limits(Some(4), Some(7))
+                .build();
 
         let normalized = normalize_class_relation_create(command).unwrap();
 
-        assert_eq!(normalized.from_class_id(), 3);
-        assert_eq!(normalized.to_class_id(), 9);
+        assert_eq!(normalized.from_class_id(), ClassId::new(3).unwrap());
+        assert_eq!(normalized.to_class_id(), ClassId::new(9).unwrap());
         assert_eq!(normalized.forward_template_alias(), Some("reverse_name"));
         assert_eq!(normalized.reverse_template_alias(), Some("forward_name"));
         assert_eq!(normalized.from_max_relations(), Some(7));
@@ -1173,24 +1204,31 @@ mod tests {
 
     #[test]
     fn object_relation_normalization_orders_object_ids() {
-        let normalized =
-            normalize_object_relation_create(StorageObjectRelationCreate::new(9, 3, 2)).unwrap();
+        let normalized = normalize_object_relation_create(StorageObjectRelationCreate::new(
+            ObjectId::new(9).unwrap(),
+            ObjectId::new(3).unwrap(),
+            ClassRelationId::new(2).unwrap(),
+        ))
+        .unwrap();
 
-        assert_eq!(normalized.from_object_id(), 3);
-        assert_eq!(normalized.to_object_id(), 9);
-        assert_eq!(normalized.class_relation_id(), 2);
+        assert_eq!(normalized.from_object_id(), ObjectId::new(3).unwrap());
+        assert_eq!(normalized.to_object_id(), ObjectId::new(9).unwrap());
+        assert_eq!(
+            normalized.class_relation_id(),
+            ClassRelationId::new(2).unwrap()
+        );
     }
 
     #[test]
-    fn relation_commands_reject_non_positive_identifiers_and_limits() {
-        assert!(
-            normalize_object_relation_create(StorageObjectRelationCreate::new(0, 2, 3)).is_err()
-        );
+    fn relation_commands_reject_non_positive_limits() {
         assert!(
             normalize_class_relation_create(
-                StorageClassRelationCreate::builder(1, 2)
-                    .relation_limits(Some(0), None)
-                    .build(),
+                StorageClassRelationCreate::builder(
+                    ClassId::new(1).unwrap(),
+                    ClassId::new(2).unwrap(),
+                )
+                .relation_limits(Some(0), None)
+                .build(),
             )
             .is_err()
         );

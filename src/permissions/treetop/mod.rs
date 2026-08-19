@@ -443,7 +443,7 @@ impl PermissionBackend for TreetopPermissionBackend {
         // collection. Treetop returns decisions in input order, so we know
         // which group/permission each maps to.
         let perms = Permissions::all();
-        let mut effective_filter = page.filters.permissions()?;
+        let mut effective_filter = page.filters().permissions()?;
         effective_filter.ensure_contains(permissions_filter);
         let check_count = all_groups.len().checked_mul(perms.len()).ok_or_else(|| {
             ApiError::InternalServerError("too many group permission checks".into())

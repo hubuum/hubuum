@@ -521,6 +521,11 @@ jobs:
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Build (${{ matrix.feature.name }})
         run: cargo build ${{ matrix.feature.args }} --locked --release
+      - name: Test PostgreSQL adapter-native contracts
+        if: matrix.feature.name == 'default'
+        run: >-
+          cargo test -p hubuum-storage-postgres
+          -F integration-test-support --locked --release
       - name: Test (${{ matrix.feature.name }})
         run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 

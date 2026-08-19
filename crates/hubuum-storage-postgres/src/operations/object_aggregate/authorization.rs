@@ -1,5 +1,6 @@
 use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 
 use super::ObjectAggregateRouteTarget;
 use super::candidate::ObjectAggregateCandidate;
@@ -45,9 +46,9 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
                 ))
             })?;
         let target = StorageObjectAggregateAuthorizationTarget::new(
-            target.class_id,
+            ClassId::new(target.class_id)?,
             target.class_name.clone(),
-            target.collection_id,
+            CollectionId::new(target.collection_id)?,
             collection_name,
         );
         Ok(self
@@ -66,14 +67,14 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
         let authorization_candidates = candidates
             .iter()
             .map(|candidate| {
-                StorageObjectAggregateAuthorizationCandidate::new(
-                    candidate.id,
+                Ok(StorageObjectAggregateAuthorizationCandidate::new(
+                    ObjectId::new(candidate.id)?,
                     candidate.name.clone(),
-                    candidate.collection_id,
-                    candidate.hubuum_class_id,
-                )
+                    CollectionId::new(candidate.collection_id)?,
+                    ClassId::new(candidate.hubuum_class_id)?,
+                ))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, PostgresStorageError>>()?;
         let decisions = self
             .authorizer
             .authorize_objects(authorization_candidates, self.required_permissions.clone())

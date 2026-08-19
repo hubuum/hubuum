@@ -1,6 +1,6 @@
-# `hubuum-query` Rust API Policy
+# `hubuum-query` Future Rust API Design
 
-Status: experimental public API.
+Status: workspace-internal; candidate for a later publication review.
 
 ## Purpose and Callers
 
@@ -10,9 +10,9 @@ It does not construct SQL or authorize a query.
 
 ## Compatibility
 
-The crate follows SemVer from its first crates.io release. During the `0.x`
-experimental period, incompatible public API changes require a minor-version
-bump and migration guidance. The MSRV is Rust 1.88. There are no feature flags.
+There is no current third-party SemVer promise or crates.io release. A separate
+promotion change must define the initial supported surface and compatibility
+policy. The workspace MSRV is Rust 1.88. There are no feature flags.
 
 Parser behavior, accepted operators, and public validation errors are part of
 the supported API. Rust values are not a separate serialized wire contract.
@@ -35,7 +35,6 @@ of this crate's API.
 
 ## Ownership and Verification
 
-Hubuum maintainers own releases. CI builds rustdoc with warnings denied, tests a
-clean package, and checks SemVer compatibility. `hubuum-storage-core` and the
-root application are pinned downstream consumers; parser benchmarks guard
-important construction paths.
+Hubuum maintainers own the workspace crate. `hubuum-storage-core`, the root
+application, and parser benchmarks verify it today. A later promotion must
+enable rustdoc, package, and crates.io compatibility gates.

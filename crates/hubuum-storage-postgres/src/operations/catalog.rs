@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::CollectionId;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
     AuthorizationPermission, CatalogListQuery, CatalogPage, StorageClass, StorageCollection,
@@ -34,13 +35,15 @@ struct CollectionCatalogRow {
 }
 
 impl CollectionCatalogRow {
-    fn into_storage(self) -> StorageCollection {
-        StorageCollection::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
+    fn into_storage(self) -> Result<StorageCollection, PostgresStorageError> {
+        Ok(StorageCollection::new(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             self.description,
-            self.parent_collection_id,
-        )
+            self.parent_collection_id
+                .map(CollectionId::new)
+                .transpose()?,
+        ))
     }
 }
 
@@ -60,7 +63,7 @@ pub async fn list_collections(
 
     let (options, visibility) = query.into_parts();
     validate_permission_filters(options.filters())?;
-    let principal_id = visibility.principal_id();
+    let principal_id = visibility.principal_id().id();
     let is_admin = visibility.is_admin();
     let resource_scope = visibility.resources().cloned();
 
@@ -84,7 +87,7 @@ pub async fn list_collections(
                 .await?
                 .into_iter()
                 .map(CollectionCatalogRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
 
             Ok::<_, PostgresStorageError>(CatalogPage::new(rows, total))
         })
@@ -200,7 +203,7 @@ pub async fn list_objects(
                 .await?
                 .into_iter()
                 .map(ObjectRow::into_storage)
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
 
             Ok::<_, PostgresStorageError>(CatalogPage::new(rows, total))
         })
@@ -236,9 +239,27 @@ pub(crate) fn object_query<'query>(
     if let Some(scope) = resource_scope {
         query = query.filter(
             hubuumobject::collection_id
-                .eq_any(scope.collection_ids())
-                .or(hubuumobject::hubuum_class_id.eq_any(scope.class_ids()))
-                .or(hubuumobject::id.eq_any(scope.object_ids())),
+                .eq_any(
+                    scope
+                        .collection_ids()
+                        .iter()
+                        .map(|id| id.id())
+                        .collect::<Vec<_>>(),
+                )
+                .or(hubuumobject::hubuum_class_id.eq_any(
+                    scope
+                        .class_ids()
+                        .iter()
+                        .map(|id| id.id())
+                        .collect::<Vec<_>>(),
+                ))
+                .or(hubuumobject::id.eq_any(
+                    scope
+                        .object_ids()
+                        .iter()
+                        .map(|id| id.id())
+                        .collect::<Vec<_>>(),
+                )),
         );
     }
     query
@@ -374,8 +395,20 @@ fn class_query<'query>(
     if let Some(scope) = resource_scope {
         query = query.filter(
             hubuumclass::collection_id
-                .eq_any(scope.collection_ids())
-                .or(hubuumclass::id.eq_any(scope.class_ids())),
+                .eq_any(
+                    scope
+                        .collection_ids()
+                        .iter()
+                        .map(|id| id.id())
+                        .collect::<Vec<_>>(),
+                )
+                .or(hubuumclass::id.eq_any(
+                    scope
+                        .class_ids()
+                        .iter()
+                        .map(|id| id.id())
+                        .collect::<Vec<_>>(),
+                )),
         );
     }
     query
@@ -495,17 +528,17 @@ async fn load_collection_map_for_classes(
     if collection_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    Ok(collections::table
+    collections::table
         .filter(collections::id.eq_any(collection_ids))
         .select(CollectionCatalogRow::as_select())
         .load::<CollectionCatalogRow>(connection)
         .await?
         .into_iter()
         .map(|row| {
-            let collection = row.into_storage();
-            (collection.id(), collection)
+            let collection = row.into_storage()?;
+            Ok((collection.id().id(), collection))
         })
-        .collect())
+        .collect::<Result<_, PostgresStorageError>>()
 }
 
 fn class_to_storage(
@@ -522,7 +555,7 @@ fn class_to_storage(
             ))
         })?;
     Ok(StorageClass::builder(
-        record_metadata(row.id, row.created_at, row.updated_at, row.revision),
+        record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
         row.name,
         collection,
         row.description,
@@ -559,7 +592,15 @@ fn collection_query<'query>(
         query = query.filter(collections::id.eq_any(visible_collections));
     }
     if let Some(scope) = resource_scope {
-        query = query.filter(collections::id.eq_any(scope.collection_ids()));
+        query = query.filter(
+            collections::id.eq_any(
+                scope
+                    .collection_ids()
+                    .iter()
+                    .map(|id| id.id())
+                    .collect::<Vec<_>>(),
+            ),
+        );
     }
     query
 }

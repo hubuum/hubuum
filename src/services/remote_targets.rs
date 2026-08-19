@@ -8,6 +8,9 @@ use crate::models::{
     validate_target_parts,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::services::storage_boundary::{
+    class_id_to_storage, collection_id_to_storage, resource_id_to_storage,
+};
 use crate::storage::{
     RemoteTargetStorage, StorageContext, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
@@ -19,7 +22,12 @@ pub(crate) async fn get_remote_target(
     backend: &impl StorageContext,
     target_id: i32,
 ) -> Result<RemoteTarget, ApiError> {
-    let target = storage_handle(backend).get_remote_target(target_id).await?;
+    let target = storage_handle(backend)
+        .get_remote_target(
+            hubuum_domain::RemoteTargetId::new(target_id)
+                .expect("validated remote target id must be positive"),
+        )
+        .await?;
     target_from_storage(target)
 }
 
@@ -30,7 +38,10 @@ pub(crate) async fn list_remote_targets(
 ) -> Result<(Vec<RemoteTarget>, i64), ApiError> {
     let page = storage_handle(backend)
         .list_remote_targets(StorageRemoteTargetListQuery::new(
-            allowed_collection_ids,
+            allowed_collection_ids
+                .into_iter()
+                .map(collection_id_to_storage)
+                .collect(),
             options,
         ))
         .await?;
@@ -69,20 +80,22 @@ pub(crate) async fn create_remote_target(
             input.timeout_ms,
         ),
         StorageRemoteTargetPolicy::new(
-            input.class_id.map(|class_id| class_id.id()),
+            input
+                .class_id
+                .map(|class_id| class_id_to_storage(class_id.id())),
             subject_types_to_storage(input.allowed_subject_types),
             input.enabled,
         ),
     );
     let target = storage_handle(backend)
         .create_remote_target(StorageRemoteTargetCreate::new(
-            input.collection_id.id(),
+            collection_id_to_storage(input.collection_id.id()),
             input.name,
             definition,
             event_context,
         ))
         .await?;
-    target_from_storage(target)
+    target_from_storage(target.into_value())
 }
 
 pub(crate) async fn update_remote_target(
@@ -125,11 +138,15 @@ pub(crate) async fn update_remote_target(
     )?;
 
     let patch = StorageRemoteTargetPatch::new()
-        .with_collection_id(update.collection_id.map(|collection_id| collection_id.id()))
+        .with_collection_id(
+            update
+                .collection_id
+                .map(|collection_id| collection_id_to_storage(collection_id.id())),
+        )
         .with_class_id(
             update
                 .class_id
-                .map(|class_id| class_id.map(|class_id| class_id.id())),
+                .map(|class_id| class_id.map(|class_id| class_id_to_storage(class_id.id()))),
         )
         .with_name(update.name)
         .with_description(update.description)
@@ -143,12 +160,13 @@ pub(crate) async fn update_remote_target(
         .with_enabled(update.enabled);
     let target = storage_handle(backend)
         .update_remote_target(StorageRemoteTargetUpdate::new(
-            target_id,
+            hubuum_domain::RemoteTargetId::new(target_id)
+                .expect("validated remote target id must be positive"),
             patch,
             event_context,
         ))
         .await?;
-    target_from_storage(target)
+    target_from_storage(target.into_value())
 }
 
 pub(crate) async fn delete_remote_target(
@@ -157,8 +175,13 @@ pub(crate) async fn delete_remote_target(
     event_context: EventContext,
 ) -> Result<(), ApiError> {
     storage_handle(backend)
-        .delete_remote_target(StorageRemoteTargetDelete::new(target_id, event_context))
-        .await?;
+        .delete_remote_target(StorageRemoteTargetDelete::new(
+            hubuum_domain::RemoteTargetId::new(target_id)
+                .expect("validated remote target id must be positive"),
+            event_context,
+        ))
+        .await?
+        .into_value();
     Ok(())
 }
 
@@ -172,13 +195,15 @@ pub(crate) async fn record_remote_target_invocation(
 ) -> Result<(), ApiError> {
     storage_handle(backend)
         .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
-            target_id,
-            task_id,
+            hubuum_domain::RemoteTargetId::new(target_id)
+                .expect("validated remote target id must be positive"),
+            hubuum_domain::TaskId::new(task_id).expect("validated task id must be positive"),
             subject_type.as_str(),
-            subject_id,
+            resource_id_to_storage(subject_id),
             event_context,
         ))
-        .await?;
+        .await?
+        .into_value();
     Ok(())
 }
 
@@ -197,8 +222,8 @@ fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiE
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     Ok(RemoteTarget {
         id: metadata.id().id(),
-        collection_id,
-        class_id,
+        collection_id: collection_id.id(),
+        class_id: class_id.map(|id| id.id()),
         name,
         description,
         method: RemoteHttpMethod::from_str(&method)?,

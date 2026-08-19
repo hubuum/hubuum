@@ -2,8 +2,8 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
     use crate::errors::ApiError;
@@ -14,9 +14,9 @@ mod tests {
         ObjectRelationLimit, Permissions, RelatedClassGraph, RelatedObjectGraph,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
-    use crate::storage::postgres::{PostgresPool, with_transaction};
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
+    use hubuum_storage_postgres::{PostgresPool, with_transaction};
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::{
@@ -1019,28 +1019,31 @@ mod tests {
         let insert_pool = context.pool.clone();
 
         let held_insert = actix_web::rt::spawn(async move {
-            with_transaction(&insert_pool, async move |conn| -> Result<(), ApiError> {
-                use crate::schema::hubuumobject_relation::dsl::{
-                    class_relation_id, from_hubuum_object_id, hubuumobject_relation,
-                    to_hubuum_object_id,
-                };
+            with_transaction(
+                &insert_pool,
+                async move |conn| -> Result<(), diesel::result::Error> {
+                    use crate::schema::hubuumobject_relation::dsl::{
+                        class_relation_id, from_hubuum_object_id, hubuumobject_relation,
+                        to_hubuum_object_id,
+                    };
 
-                diesel::insert_into(hubuumobject_relation)
-                    .values((
-                        from_hubuum_object_id.eq(held_relation.from_hubuum_object_id),
-                        to_hubuum_object_id.eq(held_relation.to_hubuum_object_id),
-                        class_relation_id.eq(held_relation.class_relation_id),
-                    ))
-                    .execute(conn)
-                    .await?;
-                inserted_tx
-                    .send(())
-                    .expect("held insert should still be running");
-                release_rx
-                    .await
-                    .expect("test should release the held insert");
-                Ok(())
-            })
+                    diesel::insert_into(hubuumobject_relation)
+                        .values((
+                            from_hubuum_object_id.eq(held_relation.from_hubuum_object_id),
+                            to_hubuum_object_id.eq(held_relation.to_hubuum_object_id),
+                            class_relation_id.eq(held_relation.class_relation_id),
+                        ))
+                        .execute(conn)
+                        .await?;
+                    inserted_tx
+                        .send(())
+                        .expect("held insert should still be running");
+                    release_rx
+                        .await
+                        .expect("test should release the held insert");
+                    Ok(())
+                },
+            )
             .await
         });
 

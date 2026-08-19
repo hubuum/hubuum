@@ -4,6 +4,7 @@ use diesel::sql_query;
 use diesel::sql_types::{Array, BigInt, Bool, Integer, Text};
 use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId};
 use hubuum_storage_core::{
     AuthorizationPermission, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
     UnifiedSearchQuery, UnifiedSearchResourceScope,
@@ -126,14 +127,18 @@ struct CollectionRow {
     revision: PostgresRevision,
 }
 
-impl From<CollectionRow> for UnifiedSearchCollection {
-    fn from(row: CollectionRow) -> Self {
-        Self::new(
-            record_metadata(row.id, row.created_at, row.updated_at, row.revision),
+impl TryFrom<CollectionRow> for UnifiedSearchCollection {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: CollectionRow) -> Result<Self, Self::Error> {
+        Ok(Self::new(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
             row.description,
-            row.parent_collection_id,
-        )
+            row.parent_collection_id
+                .map(CollectionId::new)
+                .transpose()?,
+        ))
     }
 }
 
@@ -166,7 +171,7 @@ impl ClassRow {
                 ))
             })?;
         Ok(UnifiedSearchClass::builder(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             collection,
             self.description,
@@ -191,16 +196,18 @@ struct ObjectRow {
     revision: PostgresRevision,
 }
 
-impl From<ObjectRow> for UnifiedSearchObject {
-    fn from(row: ObjectRow) -> Self {
-        Self::new(
-            record_metadata(row.id, row.created_at, row.updated_at, row.revision),
+impl TryFrom<ObjectRow> for UnifiedSearchObject {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: ObjectRow) -> Result<Self, Self::Error> {
+        Ok(Self::new(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
-            row.collection_id,
-            row.hubuum_class_id,
+            CollectionId::new(row.collection_id)?,
+            ClassId::new(row.hubuum_class_id)?,
             row.data,
             row.description,
-        )
+        ))
     }
 }
 
@@ -218,7 +225,7 @@ impl CursorBinds {
                 absent: false,
                 rank: cursor.rank(),
                 name: cursor.normalized_name().to_string(),
-                id: cursor.id(),
+                id: cursor.id().id(),
             },
             None => Self {
                 absent: true,
@@ -244,15 +251,21 @@ impl ResourceBinds {
             collection_ids: scope
                 .map(UnifiedSearchResourceScope::collection_ids)
                 .unwrap_or_default()
-                .to_vec(),
+                .iter()
+                .map(|id| id.id())
+                .collect(),
             class_ids: scope
                 .map(UnifiedSearchResourceScope::class_ids)
                 .unwrap_or_default()
-                .to_vec(),
+                .iter()
+                .map(|id| id.id())
+                .collect(),
             object_ids: scope
                 .map(UnifiedSearchResourceScope::object_ids)
                 .unwrap_or_default()
-                .to_vec(),
+                .iter()
+                .map(|id| id.id())
+                .collect(),
         }
     }
 }
@@ -279,10 +292,10 @@ pub async fn search_collections(
     let search_term = query.search_term().to_string();
     runtime
         .with_connection(async move |connection| {
-            sql_query(COLLECTION_SEARCH_SQL)
+            let rows = sql_query(COLLECTION_SEARCH_SQL)
                 .bind::<Text, _>(search_term)
                 .bind::<Bool, _>(is_admin)
-                .bind::<Integer, _>(principal_id)
+                .bind::<Integer, _>(principal_id.id())
                 .bind::<Bool, _>(resources.unrestricted)
                 .bind::<Array<Integer>, _>(resources.collection_ids)
                 .bind::<Bool, _>(cursor.absent)
@@ -291,8 +304,8 @@ pub async fn search_collections(
                 .bind::<Integer, _>(cursor.id)
                 .bind::<BigInt, _>(limit)
                 .load::<CollectionRow>(connection)
-                .await
-                .map(|rows| rows.into_iter().map(Into::into).collect())
+                .await?;
+            rows.into_iter().map(TryInto::try_into).collect()
         })
         .await
 }
@@ -320,7 +333,7 @@ pub async fn search_classes(
                 .bind::<Text, _>(search_term)
                 .bind::<Bool, _>(search_extended_document)
                 .bind::<Bool, _>(is_admin)
-                .bind::<Integer, _>(principal_id)
+                .bind::<Integer, _>(principal_id.id())
                 .bind::<Bool, _>(resources.unrestricted)
                 .bind::<Array<Integer>, _>(resources.collection_ids)
                 .bind::<Array<Integer>, _>(resources.class_ids)
@@ -343,8 +356,11 @@ pub async fn search_classes(
                     .load::<CollectionRow>(connection)
                     .await?
                     .into_iter()
-                    .map(|row| (row.id, UnifiedSearchCollection::from(row)))
-                    .collect::<HashMap<_, _>>()
+                    .map(|row| {
+                        let row_id = row.id;
+                        Ok((row_id, UnifiedSearchCollection::try_from(row)?))
+                    })
+                    .collect::<Result<HashMap<_, _>, PostgresStorageError>>()?
             };
             rows.into_iter()
                 .map(|row| row.into_storage(&collections))
@@ -372,11 +388,11 @@ pub async fn search_objects(
     let search_term = query.search_term().to_string();
     runtime
         .with_connection(async move |connection| {
-            sql_query(OBJECT_SEARCH_SQL)
+            let rows = sql_query(OBJECT_SEARCH_SQL)
                 .bind::<Text, _>(search_term)
                 .bind::<Bool, _>(search_extended_document)
                 .bind::<Bool, _>(is_admin)
-                .bind::<Integer, _>(principal_id)
+                .bind::<Integer, _>(principal_id.id())
                 .bind::<Bool, _>(resources.unrestricted)
                 .bind::<Array<Integer>, _>(resources.collection_ids)
                 .bind::<Array<Integer>, _>(resources.class_ids)
@@ -387,8 +403,8 @@ pub async fn search_objects(
                 .bind::<Integer, _>(cursor.id)
                 .bind::<BigInt, _>(limit)
                 .load::<ObjectRow>(connection)
-                .await
-                .map(|rows| rows.into_iter().map(Into::into).collect())
+                .await?;
+            rows.into_iter().map(TryInto::try_into).collect()
         })
         .await
 }

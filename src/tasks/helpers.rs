@@ -70,7 +70,9 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
 
     match err {
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),
-        ApiError::PreconditionFailed(msg, _) => format!("Stale resource: {msg}"),
+        ApiError::PreconditionFailed(msg, _) | ApiError::RevisionConflict(msg, _) => {
+            format!("Stale resource: {msg}")
+        }
         ApiError::Forbidden(msg) => format!("Permission denied: {}", msg),
         ApiError::NotFound(msg) => format!("Not found: {}", msg),
         ApiError::Gone(msg) => format!("Gone: {}", msg),
@@ -113,7 +115,9 @@ pub(super) fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMo
 
 pub(super) fn import_failure_outcome(error: &ApiError) -> &'static str {
     match error {
-        ApiError::PreconditionFailed(message, _) if message.starts_with("stale_revision") => {
+        ApiError::PreconditionFailed(message, _) | ApiError::RevisionConflict(message, _)
+            if message.starts_with("stale_revision") =>
+        {
             "stale_revision"
         }
         _ => "failed",
@@ -161,10 +165,10 @@ pub(super) fn storage_collection_to_resolution(
 ) -> CollectionResolution {
     let (id, name, description, _, _, parent_collection_id, _) = collection.into_parts();
     CollectionResolution {
-        id,
+        id: id.id(),
         name,
         description,
-        parent_collection_id,
+        parent_collection_id: parent_collection_id.map(hubuum_domain::CollectionId::id),
         exists_in_db: true,
     }
 }
@@ -200,10 +204,10 @@ pub(super) fn storage_object_to_resolution(
 ) -> ObjectResolution {
     let (id, name, collection_id, class_id, _, _, _, _, _) = object.into_parts();
     ObjectResolution {
-        id,
+        id: id.id(),
         name,
-        collection_id,
-        class_id,
+        collection_id: collection_id.id(),
+        class_id: class_id.id(),
         exists_in_db: true,
     }
 }

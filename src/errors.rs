@@ -8,7 +8,7 @@ use std::num::ParseIntError;
 
 use tracing::error;
 
-use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevisionError};
+use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevision, ResourceRevisionError};
 use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 
 use crate::models::TokenPolicyError;
@@ -74,6 +74,7 @@ pub enum ApiError {
     DatabaseError(String),
     Conflict(String),
     PreconditionFailed(String, Option<String>),
+    RevisionConflict(String, ResourceRevision),
     TooManyRequests(String),
     ServiceUnavailable(String),
     NotFound(String),
@@ -98,6 +99,7 @@ impl ApiError {
             ApiError::DatabaseError(_) => "database_error",
             ApiError::Conflict(_) => "conflict",
             ApiError::PreconditionFailed(_, _) => "precondition_failed",
+            ApiError::RevisionConflict(_, _) => "revision_conflict",
             ApiError::TooManyRequests(_) => "too_many_requests",
             ApiError::ServiceUnavailable(_) => "service_unavailable",
             ApiError::NotImplemented(_) => "not_implemented",
@@ -150,6 +152,7 @@ impl ApiError {
             | ApiError::PayloadTooLarge(message)
             | ApiError::Conflict(message)
             | ApiError::PreconditionFailed(message, _)
+            | ApiError::RevisionConflict(message, _)
             | ApiError::TooManyRequests(message)
             | ApiError::NotFound(message)
             | ApiError::Gone(message)
@@ -164,20 +167,23 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, _current_revision) = error.into_parts();
+        let (kind, message, current_revision) = error.into_parts();
         match kind {
             StorageErrorKind::AuthorizationUnavailable => {
                 Self::PermissionBackendUnavailable(message)
             }
             StorageErrorKind::InvalidInput => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
-            StorageErrorKind::Database => Self::DatabaseError(message),
+            StorageErrorKind::Backend => Self::DatabaseError(message),
             StorageErrorKind::PermissionDenied => Self::Forbidden(message),
             StorageErrorKind::Internal => Self::InternalServerError(message),
             StorageErrorKind::NotFound => Self::NotFound(message),
             StorageErrorKind::Unsupported => Self::NotAcceptable(message),
             StorageErrorKind::InputTooLarge => Self::PayloadTooLarge(message),
-            StorageErrorKind::RevisionConflict => Self::PreconditionFailed(message, None),
+            StorageErrorKind::RevisionConflict => match current_revision {
+                Some(current_revision) => Self::RevisionConflict(message, current_revision),
+                None => Self::PreconditionFailed(message, None),
+            },
             StorageErrorKind::RateLimited => Self::TooManyRequests(message),
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
             StorageErrorKind::AuthenticationRequired => Self::Unauthorized(message),
@@ -242,6 +248,7 @@ impl fmt::Display for ApiError {
             ApiError::Gone(message) => write!(f, "{message}"),
             ApiError::Conflict(message) => write!(f, "{message}"),
             ApiError::PreconditionFailed(message, _) => write!(f, "{message}"),
+            ApiError::RevisionConflict(message, _) => write!(f, "{message}"),
             ApiError::TooManyRequests(message) => write!(f, "{message}"),
             ApiError::ServiceUnavailable(message) => write!(f, "{message}"),
             ApiError::NotImplemented(message) => write!(f, "{message}"),
@@ -280,6 +287,16 @@ impl ResponseError for ApiError {
                     "reason": "stale_resource",
                     "message": message,
                     "guidance": "Refetch the canonical resource and retry with its current ETag"
+                }))
+            }
+            ApiError::RevisionConflict(message, current_revision) => {
+                metrics::revision_condition("stale");
+                HttpResponse::PreconditionFailed().json(json!({
+                    "error": "Precondition Failed",
+                    "reason": "stale_resource",
+                    "message": message,
+                    "guidance": "Refetch the canonical resource and retry with its current ETag",
+                    "current_revision": current_revision.get()
                 }))
             }
             ApiError::TooManyRequests(message) => HttpResponse::TooManyRequests()
@@ -333,6 +350,7 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,
+            ApiError::RevisionConflict(_, _) => StatusCode::PRECONDITION_FAILED,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
@@ -484,7 +502,7 @@ mod tests {
                     "stale collection",
                     Some(hubuum_domain::ResourceRevision::new(2).unwrap()),
                 ),
-                "precondition_failed",
+                "revision_conflict",
             ),
             (
                 StorageError::new(StorageErrorKind::RateLimited, "task capacity reached", None),
@@ -501,6 +519,24 @@ mod tests {
         ] {
             assert_eq!(ApiError::from(error).class(), expected_class);
         }
+    }
+
+    #[actix_web::test]
+    async fn revision_conflicts_preserve_the_authoritative_revision() {
+        use actix_web::body::to_bytes;
+
+        let error = StorageError::new(
+            StorageErrorKind::RevisionConflict,
+            "stale collection",
+            Some(ResourceRevision::new(7).unwrap()),
+        );
+        let response = ApiError::from(error).error_response();
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["reason"], "stale_resource");
+        assert_eq!(body["current_revision"], 7);
     }
 
     #[test]

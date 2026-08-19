@@ -178,9 +178,24 @@ fn build_related_object_filter_sql(
     let graph_collections_sql = sql_integer_array(graph_collection_ids, &mut bind_variables);
     let class_collections_sql = sql_integer_array(class_collection_ids, &mut bind_variables);
     let valid_scope_objects_sql = if let Some(scope) = visibility.resources() {
-        let collection_scope_sql = sql_integer_array(scope.collection_ids(), &mut bind_variables);
-        let class_scope_sql = sql_integer_array(scope.class_ids(), &mut bind_variables);
-        let object_scope_sql = sql_integer_array(scope.object_ids(), &mut bind_variables);
+        let collection_ids = scope
+            .collection_ids()
+            .iter()
+            .map(|id| id.id())
+            .collect::<Vec<_>>();
+        let class_ids = scope
+            .class_ids()
+            .iter()
+            .map(|id| id.id())
+            .collect::<Vec<_>>();
+        let object_ids = scope
+            .object_ids()
+            .iter()
+            .map(|id| id.id())
+            .collect::<Vec<_>>();
+        let collection_scope_sql = sql_integer_array(&collection_ids, &mut bind_variables);
+        let class_scope_sql = sql_integer_array(&class_ids, &mut bind_variables);
+        let object_scope_sql = sql_integer_array(&object_ids, &mut bind_variables);
         format!(
             "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_scope_sql}) OR hubuum_class_id = ANY({class_scope_sql}) OR id = ANY({object_scope_sql})"
         )
@@ -188,8 +203,18 @@ fn build_related_object_filter_sql(
         "SELECT id AS object_id FROM hubuumobject".to_string()
     };
     let valid_scope_classes_sql = if let Some(scope) = visibility.resources() {
-        let collection_scope_sql = sql_integer_array(scope.collection_ids(), &mut bind_variables);
-        let class_scope_sql = sql_integer_array(scope.class_ids(), &mut bind_variables);
+        let collection_ids = scope
+            .collection_ids()
+            .iter()
+            .map(|id| id.id())
+            .collect::<Vec<_>>();
+        let class_ids = scope
+            .class_ids()
+            .iter()
+            .map(|id| id.id())
+            .collect::<Vec<_>>();
+        let collection_scope_sql = sql_integer_array(&collection_ids, &mut bind_variables);
+        let class_scope_sql = sql_integer_array(&class_ids, &mut bind_variables);
         format!(
             "SELECT id AS class_id FROM hubuumclass WHERE collection_id = ANY({collection_scope_sql}) OR id = ANY({class_scope_sql})"
         )
@@ -669,6 +694,7 @@ fn sql_datetime_array(
 
 #[cfg(test)]
 mod tests {
+    use hubuum_domain::{ObjectId, PrincipalId};
     use hubuum_query::parse_query_parameter_with_computed_and_related_filters_and_passthrough;
     use hubuum_storage_core::UnifiedSearchResourceScope;
 
@@ -685,10 +711,14 @@ mod tests {
         let options = query_options("related.room.class.id=7&related.room.object.name=foo");
         let groups = related_filter_groups(options.filters()).unwrap();
         let visibility = StorageVisibility::new(
-            11,
+            PrincipalId::new(11).unwrap(),
             false,
             None::<Vec<AuthorizationPermission>>,
-            Some(UnifiedSearchResourceScope::new([], [], [11])),
+            Some(UnifiedSearchResourceScope::new(
+                [],
+                [],
+                [ObjectId::new(11).unwrap()],
+            )),
         );
 
         let component = build_related_object_filter_sql(&groups, &[2], &[2], &visibility).unwrap();
@@ -711,8 +741,12 @@ mod tests {
             "related.room.class.id=7&related.room.object.name=foo&related.site.class.name=site",
         );
         let groups = related_filter_groups(options.filters()).unwrap();
-        let visibility =
-            StorageVisibility::new(11, true, None::<Vec<AuthorizationPermission>>, None);
+        let visibility = StorageVisibility::new(
+            PrincipalId::new(11).unwrap(),
+            true,
+            None::<Vec<AuthorizationPermission>>,
+            None,
+        );
 
         let component = build_related_object_filter_sql(&groups, &[2], &[2], &visibility).unwrap();
 

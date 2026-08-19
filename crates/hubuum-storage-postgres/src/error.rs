@@ -65,7 +65,7 @@ impl PostgresStorageError {
 
     #[must_use]
     pub fn database(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::Database, message, None)
+        Self::new(StorageErrorKind::Backend, message, None)
     }
 
     #[must_use]

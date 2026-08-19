@@ -28,8 +28,8 @@ compiler to a production request.
 
 Partiality is therefore structural:
 
-- a collection-only model implements `StorageIdentity` and `CollectionStore`;
-- a service accepts `Arc<dyn CollectionStore>`, not a complete backend; and
+- a collection-only model implements `StorageBackendIdentity` and `CollectionStorage`;
+- a service accepts `Arc<dyn CollectionStorage>`, not a complete backend; and
 - application composition accepts only `StorageBackend`, whose supertraits
   require every family.
 
@@ -40,6 +40,9 @@ narrow operation itself; it is not a blanket escape hatch for an incomplete
 backend.
 
 ## Implementation Order
+
+The grouped imports under `hubuum_storage_core::capabilities` provide the
+canonical discovery map while the crate-root exports remain available.
 
 The following order minimizes rework:
 
@@ -54,7 +57,7 @@ The following order minimizes rework:
 7. Implement event and operational families.
 8. Add exhaustive dispatch, common observation, administrator projection, and
    the explicit `StorageBackend` implementation.
-9. Implement a `BackendAuditFixture` and pass the reusable five-part audit
+9. Implement a `BackendAuditFixture` and pass the reusable six-part audit
    conformance verifier.
 10. Add the adapter to the sealed application certification registry, then run
     shared compatibility and backend-native verification tests.
@@ -66,8 +69,11 @@ helpers that share native transactions and queries.
 ## Boundary Values
 
 Use the request and result DTOs owned by `hubuum-storage-core` and the validated
-values owned by its publishable dependency crates. Root application models may
-be converted into those DTOs, but they are not part of the adapter contract.
+values owned by its backend-neutral workspace dependencies. They are designed
+for later publication but remain unpublished in this change. Root application
+models may be converted into those DTOs, but they are not part of the adapter
+contract.
+
 Boundary values describe application intent and observable results, not the
 adapter's schema.
 
@@ -165,7 +171,7 @@ ExampleStorageError -> StorageError -> ApiError
 
 Map expected outcomes to the narrowest `StorageErrorKind`, including not found,
 conflict, validation, and stale precondition. Map connectivity and native
-execution failures to database or unavailable classifications as appropriate.
+execution failures to backend or unavailable classifications as appropriate.
 Retain diagnostic detail for logs while keeping public responses safe.
 
 Backend-neutral storage crates must not import `ApiError`. Application code
@@ -223,15 +229,18 @@ construction.
 
 ## Execution Context
 
-Implement `StorageExecution` using the backend's native context mechanism. It
-must evaluate each wrapped future exactly once and preserve:
+Implement both `StorageExecution::run_in_scope` and `run_in_scope_send` using
+the backend's native context mechanism. They must evaluate each wrapped future
+exactly once and preserve every override in `StorageExecutionScope`:
 
 - a bounded `StorageCallSite`;
 - typed mutation provenance; and
-- a validated revision precondition.
+- a validated revision precondition;
+- an optional non-zero query budget.
 
 Context must not leak between requests, worker tasks, reused connections, or
-transactions. Both local and `Send` call-site forms are required.
+transactions. An absent field inherits its surrounding scope; a present `None`
+explicitly clears it. The local and `Send` forms must have identical semantics.
 
 ## Configuration and Composition
 
@@ -258,18 +267,33 @@ workflows.
 
 ## Registration
 
-Adding an adapter requires explicit edits; there is deliberately no dynamic
-fallback:
+Registration is deliberately static and explicit. There is no dynamic loader,
+string fallback, or partially supported backend. Adding an adapter requires
+these edits:
 
-1. Add its stable variant to `StorageBackendKind` and `StorageBackendKind::ALL`.
-2. Implement every trait aggregated by `StorageBackend`.
-3. Explicitly implement `StorageBackend` beside the complete adapter implementation.
-4. Add the adapter as a static application dependency and add one exhaustive `StorageHandle` composition and dispatch variant.
-5. Add factory construction and redacted settings projection.
-6. Add its fixture to the reusable five-part conformance runner.
-7. Add it to the sealed `CertifiedStorageBackend` registry only after that
-   behavior passes.
-8. Add it to the `available_backends()` test factory.
+1. Add the adapter crate as a static application dependency.
+2. Add its stable `StorageBackendKind` variant and include it in the test-only
+   `StorageBackendKind::ALL` registry. Clap and Serde then accept that exact
+   value through `HUBUUM_STORAGE_BACKEND`; empty selects the default, while
+   other unknown values remain errors.
+3. Implement every trait aggregated by `StorageBackend`, then explicitly
+   implement `StorageBackend` beside the complete adapter type.
+4. Add the adapter type to the sealed `CertifiedStorageBackend` registry only
+   after its shared and native behavioral evidence passes.
+5. Add one `BackendImplementation` variant and one arm to the exhaustive
+   dispatch macro. Compose it through the generic certified-handle constructor,
+   which fixes its descriptor and common observed resource ports once.
+6. Add one application-local adapter factory in `src/storage/factory.rs`. It
+   owns settings translation, safe diagnostics, native telemetry wiring,
+   initialization errors, operational resources, and migrations.
+7. Add one `BackendTestEnvironment` variant. Keep its native client or pool
+   inside that variant while provisioning the reusable audit, service, and
+   HTTP fixtures.
+8. Run the reusable six-part audit verifier and every shared compatibility
+   scenario. When the adapter owns event retention, also run the retention
+   retry verifier.
+9. Add native consistency, failure, concurrency, recovery, migration, and
+   performance coverage appropriate to the adapter.
 
 Compilation should fail when any trait or exhaustive match arm is missing.
 
@@ -280,8 +304,9 @@ A new backend must pass four distinct kinds of checks.
 ### Shared behavior
 
 Run every test in `src/tests/storage_contract.rs` through the backend returned
-by `available_backends()`. Do not copy and edit the tests for the new adapter.
-The point of the registry is identical observable behavior.
+by `available_backend_environments()`. Do not copy and edit the tests for the
+new adapter. The point of the registry is identical observable behavior while
+adapter-native fixture resources remain contained in one exhaustive enum.
 
 Extend the backend application fixture in the same exhaustive match. It must
 provision an administrator and bearer token using the backend being certified.
@@ -344,8 +369,9 @@ A backend is selectable only when all of the following are true:
       telemetry; explicit no-op telemetry remains an opt-out.
 - [ ] Native diagnostics contain no sensitive data.
 - [ ] Administrator settings are useful and redacted.
-- [ ] Shared compatibility tests pass through `available_backends()`.
-- [ ] The five-part conformance verifier passes and the sealed certification
+- [ ] Shared compatibility tests pass through
+      `available_backend_environments()`.
+- [ ] The six-part conformance verifier passes and the sealed certification
       registry includes the adapter only afterward.
 - [ ] The service and HTTP smoke contract passes through the backend fixture registry.
 - [ ] `semantic-coverage.toml` exactly inventories methods, variants, and evidence.

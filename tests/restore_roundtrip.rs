@@ -8,7 +8,7 @@ use hubuum::events::{
 use hubuum::models::{
     BackupRequest, NewHubuumClass, NewHubuumClassRelation, ObjectRelationLimit,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobID,
-    RestoreJobStatus, RestoreStageRequest, TaskKind, TaskStatus,
+    RestoreJobStatus, RestoreStageRequest, TaskStatus,
 };
 use hubuum::restores::{
     RestoreSettings, confirm_restore, maintenance_state, reconcile_interrupted_restore,
@@ -18,14 +18,11 @@ use hubuum::schema::{
     collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
     restore_jobs, system_maintenance, tasks,
 };
-use hubuum::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
-use hubuum::storage::postgres::prelude::*;
-use hubuum::storage::postgres::{
-    init_postgres_pool_with_statement_timeout, with_connection, with_transaction,
-};
 use hubuum::storage::with_mutation_provenance;
-use hubuum::test_support::create_audit_event;
+use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
 use hubuum::traits::CanSave;
+use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::{with_connection, with_transaction};
 
 fn database_url() -> String {
     std::env::var("HUBUUM_DATABASE_URL")
@@ -34,11 +31,7 @@ fn database_url() -> String {
 
 #[tokio::test]
 async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
-    let pool = init_postgres_pool_with_statement_timeout(
-        &database_url(),
-        2,
-        DEFAULT_DB_STATEMENT_TIMEOUT_MS,
-    );
+    let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
     let root_collection_id = with_connection(&pool, async |conn| {
         collections::table
             .filter(collections::parent_collection_id.is_null())
@@ -88,36 +81,20 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .save_without_events(&pool)
     .await
     .expect("class relation");
-    let historical_task_id = with_connection(&pool, async |conn| {
-        diesel::insert_into(tasks::table)
-            .values((
-                NewTaskRecord {
-                    kind: TaskKind::Reindex.as_str().to_string(),
-                    status: TaskStatus::Succeeded.as_str().to_string(),
-                    submitted_by: None,
-                    idempotency_key: Some("pre-backup-history".to_string()),
-                    request_hash: None,
-                    request_payload: None,
-                    summary: Some("completed before backup".to_string()),
-                    total_items: 1,
-                    processed_items: 1,
-                    success_items: 1,
-                    failed_items: 0,
-                    submitted_token_id: None,
-                    submitted_token_scoped: false,
-                    submitted_token_scopes: serde_json::json!([]),
-                    request_redacted_at: None,
-                    started_at: Some(chrono::Utc::now().naive_utc()),
-                    finished_at: Some(chrono::Utc::now().naive_utc()),
-                },
-                tasks::initiator_user_id.eq(Some(provenance_initiator_id)),
-            ))
-            .returning(tasks::id)
-            .get_result::<i32>(conn)
-            .await
-    })
+    let historical_task_id = hubuum::test_support::create_persisted_test_task(
+        &pool,
+        hubuum::test_support::persisted_internal_reindex_task_request(TaskStatus::Succeeded)
+            .idempotency_key(Some("pre-backup-history".to_string()))
+            .request_payload(None)
+            .summary(Some("completed before backup".to_string()))
+            .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 1, 0))
+            .initiator_principal_id(Some(
+                PrincipalId::new(provenance_initiator_id).expect("test initiator id must be valid"),
+            )),
+    )
     .await
-    .expect("historical task");
+    .expect("historical task")
+    .id;
     let historical_task_event = NewEvent::new(
         EntityType::Task,
         Action::Succeeded,
@@ -150,33 +127,14 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let staged = stage_restore(&pool, &settings, request)
         .await
         .expect("stage restore");
-    let marker_task_id = with_connection(&pool, async |conn| {
-        diesel::insert_into(tasks::table)
-            .values(NewTaskRecord {
-                kind: TaskKind::Reindex.as_str().to_string(),
-                status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: None,
-                idempotency_key: None,
-                request_hash: None,
-                request_payload: None,
-                summary: Some("created after backup".to_string()),
-                total_items: 0,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                request_redacted_at: None,
-                started_at: None,
-                finished_at: None,
-            })
-            .returning(tasks::id)
-            .get_result::<i32>(conn)
-            .await
-    })
+    let marker_task_id = hubuum::test_support::create_persisted_test_task(
+        &pool,
+        hubuum::test_support::persisted_internal_reindex_task_request(TaskStatus::Queued)
+            .summary(Some("created after backup".to_string())),
+    )
     .await
-    .expect("post-backup marker task");
+    .expect("post-backup marker task")
+    .id;
 
     with_transaction(&pool, async |conn| {
         let interrupted_at = chrono::Utc::now().naive_utc() - chrono::Duration::seconds(61);

@@ -112,7 +112,7 @@ async fn read_related_objects(
 
     debug!(
         message = "Getting objects connected to object",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = object.hubuum_class_id,
         object_id = object.id(),
         query = query_string,
@@ -214,7 +214,7 @@ async fn read_related_object_relations(
 
     debug!(
         message = "Getting direct relations touching object",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = object.hubuum_class_id,
         object_id = object.id(),
         query = req.query_string(),
@@ -243,7 +243,7 @@ async fn read_related_object_relations(
         candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_object_relations_touching(
             &context,
-            relation_queries::RelationAccess::new(user.id(), true, None),
+            relation_queries::RelationAccess::new(user.id().id(), true, None),
             object.id,
             candidate_options,
         )
@@ -362,7 +362,7 @@ async fn read_related_object_graph(
 
     debug!(
         message = "Getting related object graph",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = object.hubuum_class_id,
         object_id = object.id(),
         query = req.query_string(),
@@ -416,7 +416,7 @@ async fn get_object_relation_from_class_and_objects(
 
     debug!(
         message = "Getting object relation from class and objects",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = from_class.id(),
         from_object_id = from_object.id(),
         to_object_id = to_object.id()
@@ -479,7 +479,7 @@ async fn delete_object_relation(
 
     debug!(
         message = "Deleting object relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         from_class_id = from_class.id(),
         from_object_id = from_object.id(),
         to_class_id = to_class.id(),
@@ -514,7 +514,7 @@ async fn delete_object_relation(
 
     debug!(
         message = "Relation ID found",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = from_class.id(),
         object_id = from_object.id(),
         relation_id = relation.id(),
@@ -566,7 +566,7 @@ async fn create_object_relation(
 
     debug!(
         message = "Creating object relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         from_class = from_class.id(),
         from_object = from_object.id(),
         to_class = to_class.id(),

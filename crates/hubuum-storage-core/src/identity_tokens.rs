@@ -2,15 +2,17 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    AuthenticationTokenScope, StorageError, StorageTokenMetadata, StorageTokenObservation,
+    AuthenticationTokenScope, MutationOutcome, StorageError, StorageTokenMetadata,
+    StorageTokenObservation,
 };
 
 /// Owned fields returned when token creation input enters an adapter.
 pub type StorageTokenCreateParts = (
-    i32,
+    PrincipalId,
     String,
     Option<String>,
     Option<String>,
@@ -47,7 +49,7 @@ impl StorageTokenIssuancePolicy {
 /// boundary; only its application-generated HMAC is persisted.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenCreate {
-    principal_id: i32,
+    principal_id: PrincipalId,
     token_hash: String,
     name: Option<String>,
     description: Option<String>,
@@ -60,7 +62,7 @@ pub struct StorageTokenCreate {
 impl StorageTokenCreate {
     #[must_use]
     pub fn new(
-        principal_id: i32,
+        principal_id: PrincipalId,
         token_hash: impl Into<String>,
         policy: StorageTokenIssuancePolicy,
         event_context: EventContext,
@@ -135,8 +137,8 @@ impl fmt::Debug for StorageTokenCreate {
 /// a row carrying the supplied application-generated HMAC.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenRenew {
-    source_token_id: i32,
-    principal_id: i32,
+    source_token_id: TokenId,
+    principal_id: PrincipalId,
     token_hash: String,
     expires_at: Option<NaiveDateTime>,
     policy: StorageTokenIssuancePolicy,
@@ -146,8 +148,8 @@ pub struct StorageTokenRenew {
 impl StorageTokenRenew {
     #[must_use]
     pub fn new(
-        source_token_id: i32,
-        principal_id: i32,
+        source_token_id: TokenId,
+        principal_id: PrincipalId,
         token_hash: impl Into<String>,
         expires_at: Option<NaiveDateTime>,
         policy: StorageTokenIssuancePolicy,
@@ -167,8 +169,8 @@ impl StorageTokenRenew {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
-        i32,
+        TokenId,
+        PrincipalId,
         String,
         Option<NaiveDateTime>,
         StorageTokenIssuancePolicy,
@@ -201,14 +203,18 @@ impl fmt::Debug for StorageTokenRenew {
 /// Principal-scoped token revocation.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenRevoke {
-    token_id: i32,
-    principal_id: i32,
+    token_id: TokenId,
+    principal_id: PrincipalId,
     event_context: EventContext,
 }
 
 impl StorageTokenRevoke {
     #[must_use]
-    pub const fn new(token_id: i32, principal_id: i32, event_context: EventContext) -> Self {
+    pub const fn new(
+        token_id: TokenId,
+        principal_id: PrincipalId,
+        event_context: EventContext,
+    ) -> Self {
         Self {
             token_id,
             principal_id,
@@ -217,7 +223,7 @@ impl StorageTokenRevoke {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, i32, EventContext) {
+    pub fn into_parts(self) -> (TokenId, PrincipalId, EventContext) {
         (self.token_id, self.principal_id, self.event_context)
     }
 }
@@ -236,7 +242,7 @@ impl fmt::Debug for StorageTokenRevoke {
 /// HMAC-keyed revocation, optionally constrained to one principal.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenHashRevoke {
-    principal_id: Option<i32>,
+    principal_id: Option<PrincipalId>,
     token_hash: String,
     event_context: EventContext,
 }
@@ -244,7 +250,7 @@ pub struct StorageTokenHashRevoke {
 impl StorageTokenHashRevoke {
     #[must_use]
     pub fn new(
-        principal_id: Option<i32>,
+        principal_id: Option<PrincipalId>,
         token_hash: impl Into<String>,
         event_context: EventContext,
     ) -> Self {
@@ -256,7 +262,7 @@ impl StorageTokenHashRevoke {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<i32>, String, EventContext) {
+    pub fn into_parts(self) -> (Option<PrincipalId>, String, EventContext) {
         (self.principal_id, self.token_hash, self.event_context)
     }
 }
@@ -275,13 +281,13 @@ impl fmt::Debug for StorageTokenHashRevoke {
 /// Revoke every active token for one principal with audit attribution.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StoragePrincipalTokensRevoke {
-    principal_id: i32,
+    principal_id: PrincipalId,
     event_context: EventContext,
 }
 
 impl StoragePrincipalTokensRevoke {
     #[must_use]
-    pub const fn new(principal_id: i32, event_context: EventContext) -> Self {
+    pub const fn new(principal_id: PrincipalId, event_context: EventContext) -> Self {
         Self {
             principal_id,
             event_context,
@@ -289,7 +295,7 @@ impl StoragePrincipalTokensRevoke {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, EventContext) {
+    pub fn into_parts(self) -> (PrincipalId, EventContext) {
         (self.principal_id, self.event_context)
     }
 }
@@ -310,38 +316,41 @@ pub trait TokenStorage: Send + Sync {
     async fn create_token(
         &self,
         request: StorageTokenCreate,
-    ) -> Result<StorageTokenMetadata, StorageError>;
+    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError>;
 
     async fn renew_token(
         &self,
         request: StorageTokenRenew,
-    ) -> Result<StorageTokenMetadata, StorageError>;
+    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError>;
 
     async fn load_token_metadata(
         &self,
-        principal_id: i32,
-        token_id: i32,
+        principal_id: PrincipalId,
+        token_id: TokenId,
         observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError>;
 
     /// Load metadata for token IDs in the same order, including duplicates.
     async fn load_token_metadata_batch(
         &self,
-        token_ids: Vec<i32>,
+        token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError>;
 
-    async fn revoke_token(&self, request: StorageTokenRevoke) -> Result<usize, StorageError>;
+    async fn revoke_token(
+        &self,
+        request: StorageTokenRevoke,
+    ) -> Result<MutationOutcome<usize>, StorageError>;
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<usize, StorageError>;
+    ) -> Result<MutationOutcome<usize>, StorageError>;
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<usize, StorageError>;
+    ) -> Result<MutationOutcome<usize>, StorageError>;
 }
 
 #[cfg(test)]
@@ -351,7 +360,7 @@ mod tests {
     #[test]
     fn token_request_debug_output_redacts_hashes_and_ids() {
         let request = StorageTokenCreate::new(
-            42,
+            PrincipalId::new(42).unwrap(),
             "sensitive-token-hash",
             StorageTokenIssuancePolicy::new(24, 48),
             EventContext::system(),

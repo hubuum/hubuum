@@ -3,6 +3,7 @@ use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::sql_types::{Bool, Nullable};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{IdentityScopeId, PrincipalId, UserId};
 use hubuum_storage_core::{
     AuthenticatedToken, AuthenticationAttempt, AuthenticationHuman, AuthenticationIdentity,
     AuthenticationPrincipal, AuthenticationPrincipalKind, AuthenticationTokenScope,
@@ -125,16 +126,19 @@ pub async fn authenticate_bearer_token(
         }
     }
 
-    Ok(
-        AuthenticatedToken::builder(id, principal_id_value, token_issued, token_revision.get())
-            .name(token_name)
-            .description(token_description)
-            .expires_at(token_expires_at)
-            .last_used_at(observed_last_used)
-            .permission_scoped(is_permission_scoped)
-            .resource_scoped(is_resource_scoped)
-            .build(),
+    Ok(AuthenticatedToken::builder(
+        hubuum_domain::TokenId::new(id)?,
+        hubuum_domain::PrincipalId::new(principal_id_value)?,
+        token_issued,
+        token_revision.into_domain(),
     )
+    .name(token_name)
+    .description(token_description)
+    .expires_at(token_expires_at)
+    .last_used_at(observed_last_used)
+    .permission_scoped(is_permission_scoped)
+    .resource_scoped(is_resource_scoped)
+    .build())
 }
 
 type AuthenticationIdentityRow = (
@@ -205,7 +209,12 @@ fn authentication_identity_from_row(
             )));
         }
     };
-    let principal = AuthenticationPrincipal::new(principal_id, kind, name, identity_scope_id);
+    let principal = AuthenticationPrincipal::new(
+        PrincipalId::new(principal_id)?,
+        kind,
+        name,
+        IdentityScopeId::new(identity_scope_id)?,
+    );
     let human = human_id
         .map(|human_id| {
             if kind != AuthenticationPrincipalKind::Human || human_id != principal_id {
@@ -224,7 +233,7 @@ fn authentication_identity_from_row(
                 ))
             })?;
             Ok(AuthenticationHuman::new(
-                human_id,
+                UserId::new(human_id)?,
                 proper_name,
                 email,
                 created_at,

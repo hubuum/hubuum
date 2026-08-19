@@ -8,12 +8,13 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::Timestamp;
 use diesel::{BoolExpressionMethods, Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::TokenIssuancePolicy;
+use hubuum_domain::{ClassId, CollectionId, ObjectId, TokenId, TokenIssuancePolicy};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    AuthenticationResourceScope, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
-    StorageIdentityPage, StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenHashRevoke,
+    AuditReceipt, AuditReceipts, AuthenticationResourceScope, AuthenticationTokenScope,
+    AuthenticationTokenScopeQuery, MutationOutcome, StorageIdentityPage,
+    StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
     StorageTokenRenew, StorageTokenRevoke,
 };
@@ -67,10 +68,10 @@ impl TokenRow {
                 expiry <= observed_at
             });
         Ok(StorageTokenMetadata::builder(
-            self.id,
-            self.principal_id,
+            hubuum_domain::TokenId::new(self.id)?,
+            hubuum_domain::PrincipalId::new(self.principal_id)?,
             self.issued,
-            self.revision.get(),
+            self.revision.into_domain(),
         )
         .name(self.name)
         .description(self.description)
@@ -175,6 +176,7 @@ pub async fn list_retained_tokens(
     query: StorageTokenListQuery,
 ) -> Result<StorageIdentityPage<StorageTokenMetadata>, PostgresStorageError> {
     let (principal_id, options, state, observation) = query.into_parts();
+    let principal_id = principal_id.id();
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_read_only_snapshot(async move |connection| {
@@ -206,13 +208,15 @@ pub async fn list_retained_tokens(
 pub async fn create_token(
     runtime: &PostgresRuntime,
     request: StorageTokenCreate,
-) -> Result<StorageTokenMetadata, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
     let (principal_id, token_hash, name, description, expires_at, scope, policy, event_context) =
         request.into_parts();
+    let principal_id = principal_id.id();
     validate_positive_id(principal_id, "principal id")?;
     runtime
-        .with_transaction(async move |connection| {
-            let token = create_token_row(
+        .with_transaction(
+            async move |connection| -> Result<MutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
+            let (token, audit) = create_token_row(
                 connection,
                 TokenCreateParts {
                     principal_id,
@@ -228,21 +232,28 @@ pub async fn create_token(
                 },
             )
             .await?;
-            created_metadata(token, scope)
-        })
+            Ok(MutationOutcome::committed(
+                created_metadata(token, scope)?,
+                audit,
+            ))
+            },
+        )
         .await
 }
 
 pub async fn renew_token(
     runtime: &PostgresRuntime,
     request: StorageTokenRenew,
-) -> Result<StorageTokenMetadata, PostgresStorageError> {
+) -> Result<MutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
     let (source_token_id, principal_id, token_hash, expires_at, policy, event_context) =
         request.into_parts();
+    let source_token_id = source_token_id.id();
+    let principal_id = principal_id.id();
     validate_positive_id(source_token_id, "source token id")?;
     validate_positive_id(principal_id, "principal id")?;
     runtime
-        .with_transaction(async move |connection| {
+        .with_transaction(
+            async move |connection| -> Result<MutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
             // Disable takes the same service-account row lock before revoking
             // tokens. Preserve that lock order so renewal cannot race disable.
             ensure_principal_can_mint(connection, principal_id).await?;
@@ -261,13 +272,13 @@ pub async fn renew_token(
             let scope = load_token_scope(
                 connection,
                 AuthenticationTokenScopeQuery::new(
-                    source.id,
+                    TokenId::new(source.id)?,
                     source.permission_scoped,
                     source.resource_scoped,
                 ),
             )
             .await?;
-            let token = create_token_row(
+            let (token, audit) = create_token_row(
                 connection,
                 TokenCreateParts {
                     principal_id,
@@ -283,8 +294,12 @@ pub async fn renew_token(
                 },
             )
             .await?;
-            created_metadata(token, scope)
-        })
+            Ok(MutationOutcome::committed(
+                created_metadata(token, scope)?,
+                audit,
+            ))
+            },
+        )
         .await
 }
 
@@ -349,13 +364,15 @@ pub async fn load_token_metadata_batch(
 pub async fn revoke_token(
     runtime: &PostgresRuntime,
     request: StorageTokenRevoke,
-) -> Result<usize, PostgresStorageError> {
+) -> Result<MutationOutcome<usize>, PostgresStorageError> {
     let (token_id, principal_id, event_context) = request.into_parts();
+    let token_id = token_id.id();
+    let principal_id = principal_id.id();
     validate_positive_id(token_id, "token id")?;
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(
-            async move |connection| -> Result<usize, PostgresStorageError> {
+            async move |connection| -> Result<MutationOutcome<usize>, PostgresStorageError> {
                 let before = crate::schema::tokens::table
                     .filter(crate::schema::tokens::id.eq(token_id))
                     .filter(crate::schema::tokens::principal_id.eq(principal_id))
@@ -365,7 +382,7 @@ pub async fn revoke_token(
                     .await
                     .optional()?;
                 let Some(before) = before else {
-                    return Ok(0);
+                    return Ok(MutationOutcome::unchanged(0));
                 };
                 assert_locked_revision_precondition(
                     connection,
@@ -374,12 +391,12 @@ pub async fn revoke_token(
                 )
                 .await?;
                 if before.revoked_at.is_some() {
-                    return Ok(1);
+                    return Ok(MutationOutcome::unchanged(1));
                 }
                 let scope = load_token_scope(
                     connection,
                     AuthenticationTokenScopeQuery::new(
-                        before.id,
+                        TokenId::new(before.id)?,
                         before.permission_scoped,
                         before.resource_scoped,
                     ),
@@ -397,7 +414,7 @@ pub async fn revoke_token(
                 .await
                 .optional()?;
                 let Some(after) = after else {
-                    return Ok(0);
+                    return Ok(MutationOutcome::unchanged(0));
                 };
                 let event = token_event(
                     &after,
@@ -411,8 +428,10 @@ pub async fn revoke_token(
                 )?
                 .with_before(before.snapshot(scope.as_ref()))
                 .with_after(after.snapshot(scope.as_ref()));
-                append_event(connection, &event).await?;
-                Ok(1)
+                let audit = append_event(connection, &event)
+                    .await?
+                    .into_audit_receipt()?;
+                Ok(MutationOutcome::committed(1, audit))
             },
         )
         .await
@@ -421,8 +440,9 @@ pub async fn revoke_token(
 pub async fn revoke_token_by_hash(
     runtime: &PostgresRuntime,
     request: StorageTokenHashRevoke,
-) -> Result<usize, PostgresStorageError> {
+) -> Result<MutationOutcome<usize>, PostgresStorageError> {
     let (principal_id, token_hash, event_context) = request.into_parts();
+    let principal_id = principal_id.map(|principal_id| principal_id.id());
     if let Some(principal_id) = principal_id {
         validate_positive_id(principal_id, "principal id")?;
     }
@@ -437,15 +457,15 @@ pub async fn revoke_token_by_hash(
                 .await
                 .optional()?;
             let Some(before) = before else {
-                return Ok(0);
+                return Ok(MutationOutcome::unchanged(0));
             };
             if principal_id.is_some_and(|principal_id| principal_id != before.principal_id) {
-                return Ok(0);
+                return Ok(MutationOutcome::unchanged(0));
             }
             let scope = load_token_scope(
                 connection,
                 AuthenticationTokenScopeQuery::new(
-                    before.id,
+                    TokenId::new(before.id)?,
                     before.permission_scoped,
                     before.resource_scoped,
                 ),
@@ -470,8 +490,10 @@ pub async fn revoke_token_by_hash(
             )?
             .with_before(before.snapshot(scope.as_ref()))
             .with_after(after.snapshot(scope.as_ref()));
-            append_event(connection, &event).await?;
-            Ok::<_, PostgresStorageError>(1)
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed(1, audit))
         })
         .await
 }
@@ -479,8 +501,9 @@ pub async fn revoke_token_by_hash(
 pub async fn revoke_all_principal_tokens(
     runtime: &PostgresRuntime,
     request: StoragePrincipalTokensRevoke,
-) -> Result<usize, PostgresStorageError> {
+) -> Result<MutationOutcome<usize>, PostgresStorageError> {
     let (principal_id, event_context) = request.into_parts();
+    let principal_id = principal_id.id();
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(async move |connection| {
@@ -492,14 +515,14 @@ pub async fn revoke_all_principal_tokens(
                 .load::<TokenRow>(connection)
                 .await?;
             if before.is_empty() {
-                return Ok(0);
+                return Ok(MutationOutcome::unchanged(0));
             }
             let mut scopes = HashMap::with_capacity(before.len());
             for token in &before {
                 let scope = load_token_scope(
                     connection,
                     AuthenticationTokenScopeQuery::new(
-                        token.id,
+                        TokenId::new(token.id)?,
                         token.permission_scoped,
                         token.resource_scoped,
                     ),
@@ -508,17 +531,19 @@ pub async fn revoke_all_principal_tokens(
                 scopes.insert(token.id, scope);
             }
             let token_ids = before.iter().map(|token| token.id).collect::<Vec<_>>();
-            let after = diesel::update(
+            let mut after = diesel::update(
                 crate::schema::tokens::table.filter(crate::schema::tokens::id.eq_any(token_ids)),
             )
             .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
             .returning(TokenRow::as_returning())
             .get_results::<TokenRow>(connection)
             .await?;
+            after.sort_unstable_by_key(|token| token.id);
             let before_by_id = before
                 .into_iter()
                 .map(|token| (token.id, token))
                 .collect::<HashMap<_, _>>();
+            let mut audits = Vec::with_capacity(after.len());
             for token in &after {
                 let before = before_by_id.get(&token.id).ok_or_else(|| {
                     PostgresStorageError::database("bulk token revocation lost its locked row")
@@ -536,9 +561,16 @@ pub async fn revoke_all_principal_tokens(
                 )?
                 .with_before(before.snapshot(scope))
                 .with_after(token.snapshot(scope));
-                append_event(connection, &event).await?;
+                audits.push(
+                    append_event(connection, &event)
+                        .await?
+                        .into_audit_receipt()?,
+                );
             }
-            Ok::<_, PostgresStorageError>(after.len())
+            Ok::<_, PostgresStorageError>(MutationOutcome::committed_with_audits(
+                after.len(),
+                AuditReceipts::try_from_vec(audits)?,
+            ))
         })
         .await
 }
@@ -565,10 +597,11 @@ pub(crate) async fn load_token_scope(
     if !query.is_scoped() {
         return Ok(None);
     }
+    let token_id = query.token_id().id();
     let permissions = if query.is_permission_scoped() {
         Some(
             crate::schema::token_scopes::table
-                .filter(crate::schema::token_scopes::token_id.eq(query.token_id()))
+                .filter(crate::schema::token_scopes::token_id.eq(token_id))
                 .order_by(crate::schema::token_scopes::permission.asc())
                 .select(crate::schema::token_scopes::permission)
                 .load::<String>(connection)
@@ -579,27 +612,36 @@ pub(crate) async fn load_token_scope(
     };
     let resources = if query.is_resource_scoped() {
         let collection_ids = crate::schema::token_collection_scopes::table
-            .filter(crate::schema::token_collection_scopes::token_id.eq(query.token_id()))
+            .filter(crate::schema::token_collection_scopes::token_id.eq(token_id))
             .order_by(crate::schema::token_collection_scopes::collection_id.asc())
             .select(crate::schema::token_collection_scopes::collection_id)
             .load::<i32>(connection)
             .await?;
         let class_ids = crate::schema::token_class_scopes::table
-            .filter(crate::schema::token_class_scopes::token_id.eq(query.token_id()))
+            .filter(crate::schema::token_class_scopes::token_id.eq(token_id))
             .order_by(crate::schema::token_class_scopes::class_id.asc())
             .select(crate::schema::token_class_scopes::class_id)
             .load::<i32>(connection)
             .await?;
         let object_ids = crate::schema::token_object_scopes::table
-            .filter(crate::schema::token_object_scopes::token_id.eq(query.token_id()))
+            .filter(crate::schema::token_object_scopes::token_id.eq(token_id))
             .order_by(crate::schema::token_object_scopes::object_id.asc())
             .select(crate::schema::token_object_scopes::object_id)
             .load::<i32>(connection)
             .await?;
         Some(AuthenticationResourceScope::new(
-            collection_ids,
-            class_ids,
-            object_ids,
+            collection_ids
+                .into_iter()
+                .map(hubuum_domain::CollectionId::new)
+                .collect::<Result<Vec<_>, _>>()?,
+            class_ids
+                .into_iter()
+                .map(hubuum_domain::ClassId::new)
+                .collect::<Result<Vec<_>, _>>()?,
+            object_ids
+                .into_iter()
+                .map(hubuum_domain::ObjectId::new)
+                .collect::<Result<Vec<_>, _>>()?,
         ))
     } else {
         None
@@ -623,7 +665,7 @@ struct TokenCreateParts {
 async fn create_token_row(
     connection: &mut PostgresConnection,
     parts: TokenCreateParts,
-) -> Result<TokenRow, PostgresStorageError> {
+) -> Result<(TokenRow, AuditReceipt), PostgresStorageError> {
     let TokenCreateParts {
         principal_id,
         token_hash,
@@ -645,6 +687,12 @@ async fn create_token_row(
     let (collection_ids, class_ids, object_ids) = resources
         .map(AuthenticationResourceScope::into_parts)
         .unwrap_or_default();
+    let collection_ids = collection_ids
+        .into_iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
+    let class_ids = class_ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
+    let object_ids = object_ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     let issued_at = diesel::select(diesel::dsl::sql::<Timestamp>(
         "statement_timestamp() AT TIME ZONE 'UTC'",
     ))
@@ -697,8 +745,10 @@ async fn create_token_row(
         renewed_from_token_id,
     )?
     .with_after(token.snapshot(scope.as_ref()));
-    append_event(connection, &event).await?;
-    Ok(token)
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok((token, audit))
 }
 
 async fn ensure_principal_can_mint(
@@ -985,9 +1035,21 @@ async fn load_token_scopes_for_rows(
             let resources = row
                 .resource_scoped
                 .then_some(AuthenticationResourceScope::new(
-                    scope.collection_ids,
-                    scope.class_ids,
-                    scope.object_ids,
+                    scope
+                        .collection_ids
+                        .into_iter()
+                        .map(CollectionId::new)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    scope
+                        .class_ids
+                        .into_iter()
+                        .map(ClassId::new)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    scope
+                        .object_ids
+                        .into_iter()
+                        .map(ObjectId::new)
+                        .collect::<Result<Vec<_>, _>>()?,
                 ));
             Ok(Some(AuthenticationTokenScope::new(permissions, resources)))
         })

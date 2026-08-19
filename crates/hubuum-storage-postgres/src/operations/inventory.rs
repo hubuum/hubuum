@@ -1,7 +1,7 @@
 use diesel::QueryableByName;
-use diesel::result::Error as DieselError;
 use diesel::sql_types::{BigInt, Integer, Nullable};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::ClassId;
 use hubuum_storage_core::{StorageInventoryCounts, StorageObjectsByClassCount};
 
 use crate::{PostgresRuntime, PostgresStorageError};
@@ -48,14 +48,16 @@ pub async fn load_inventory_counts(
                 .expect("inventory totals query always returns at least one row");
             let objects_by_class = rows
                 .iter()
-                .filter_map(|row| {
-                    row.class_id
-                        .zip(row.count)
-                        .map(|(class_id, count)| StorageObjectsByClassCount::new(class_id, count))
+                .filter_map(|row| row.class_id.zip(row.count))
+                .map(|(class_id, count)| {
+                    Ok(StorageObjectsByClassCount::new(
+                        ClassId::new(class_id)?,
+                        count,
+                    ))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, PostgresStorageError>>()?;
 
-            Ok::<_, DieselError>(StorageInventoryCounts::new(
+            Ok::<_, PostgresStorageError>(StorageInventoryCounts::new(
                 first.total_objects,
                 first.total_classes,
                 first.total_collections,

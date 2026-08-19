@@ -10,6 +10,7 @@ use crate::models::{
     Permissions, Principal, PrincipalID, ServiceAccount, ServiceAccountID, TokenScope, User, UserID,
 };
 use crate::permissions::ResourceRef;
+use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
 use crate::storage::{
     AuthenticationPrincipal, AuthorizationCollectionsAccessQuery,
     AuthorizationGroupMembershipQuery, AuthorizationStorage, StorageContext, storage_handle,
@@ -36,7 +37,7 @@ impl PrincipalIdAccessor for Principal {
 
 impl PrincipalIdAccessor for AuthenticationPrincipal {
     fn principal_id(&self) -> i32 {
-        self.id()
+        self.id().id()
     }
 }
 
@@ -93,7 +94,7 @@ pub trait AuthzSubject: PrincipalIdAccessor {
         backend: &impl StorageContext,
     ) -> Result<bool, ApiError> {
         let query = AuthorizationGroupMembershipQuery::new(
-            self.principal_id(),
+            principal_id_to_storage(self.principal_id()),
             group_name,
             self.admin_identity_scope().await?,
         );
@@ -173,8 +174,8 @@ pub trait UserPermissions: AuthzSubject {
         let collection_count = collection_ids.len();
         let collection_id = (collection_count == 1).then(|| collection_ids[0]);
         let query = AuthorizationCollectionsAccessQuery::new(
-            principal_id,
-            collection_ids,
+            principal_id_to_storage(principal_id),
+            collection_ids.iter().copied().map(collection_id_to_storage),
             requested
                 .iter()
                 .copied()

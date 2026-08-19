@@ -2,6 +2,10 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{
+    ClassId, ClassRelationId, CollectionId, ObjectId, ObjectRelationId, ResourceId,
+    ResourceRevision,
+};
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
@@ -10,8 +14,8 @@ use crate::{StorageError, StorageRecordMetadata, StorageVisibility};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageClassRelation {
     metadata: StorageRecordMetadata,
-    from_class_id: i32,
-    to_class_id: i32,
+    from_class_id: ClassId,
+    to_class_id: ClassId,
     forward_template_alias: Option<String>,
     reverse_template_alias: Option<String>,
     from_max_relations: Option<i32>,
@@ -20,7 +24,11 @@ pub struct StorageClassRelation {
 
 impl StorageClassRelation {
     #[must_use]
-    pub fn new(metadata: StorageRecordMetadata, from_class_id: i32, to_class_id: i32) -> Self {
+    pub fn new(
+        metadata: StorageRecordMetadata,
+        from_class_id: ClassId,
+        to_class_id: ClassId,
+    ) -> Self {
         Self {
             metadata,
             from_class_id,
@@ -56,12 +64,12 @@ impl StorageClassRelation {
     }
 
     #[must_use]
-    pub const fn from_class_id(&self) -> i32 {
+    pub const fn from_class_id(&self) -> ClassId {
         self.from_class_id
     }
 
     #[must_use]
-    pub const fn to_class_id(&self) -> i32 {
+    pub const fn to_class_id(&self) -> ClassId {
         self.to_class_id
     }
 
@@ -90,20 +98,20 @@ impl StorageClassRelation {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
-        i32,
-        i32,
+        ClassRelationId,
+        ClassId,
+        ClassId,
         Option<String>,
         Option<String>,
         NaiveDateTime,
         NaiveDateTime,
         Option<i32>,
         Option<i32>,
-        i64,
+        ResourceRevision,
     ) {
         let (id, created_at, updated_at, revision) = self.metadata.into_parts();
         (
-            id.id(),
+            ClassRelationId::from(id),
             self.from_class_id,
             self.to_class_id,
             self.forward_template_alias,
@@ -112,7 +120,7 @@ impl StorageClassRelation {
             updated_at,
             self.from_max_relations,
             self.to_max_relations,
-            revision.get(),
+            revision,
         )
     }
 }
@@ -120,18 +128,18 @@ impl StorageClassRelation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageObjectRelation {
     metadata: StorageRecordMetadata,
-    from_object_id: i32,
-    to_object_id: i32,
-    class_relation_id: i32,
+    from_object_id: ObjectId,
+    to_object_id: ObjectId,
+    class_relation_id: ClassRelationId,
 }
 
 impl StorageObjectRelation {
     #[must_use]
     pub const fn new(
         metadata: StorageRecordMetadata,
-        from_object_id: i32,
-        to_object_id: i32,
-        class_relation_id: i32,
+        from_object_id: ObjectId,
+        to_object_id: ObjectId,
+        class_relation_id: ClassRelationId,
     ) -> Self {
         Self {
             metadata,
@@ -147,31 +155,41 @@ impl StorageObjectRelation {
     }
 
     #[must_use]
-    pub const fn from_object_id(&self) -> i32 {
+    pub const fn from_object_id(&self) -> ObjectId {
         self.from_object_id
     }
 
     #[must_use]
-    pub const fn to_object_id(&self) -> i32 {
+    pub const fn to_object_id(&self) -> ObjectId {
         self.to_object_id
     }
 
     #[must_use]
-    pub const fn class_relation_id(&self) -> i32 {
+    pub const fn class_relation_id(&self) -> ClassRelationId {
         self.class_relation_id
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (i32, i32, i32, i32, NaiveDateTime, NaiveDateTime, i64) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        ObjectRelationId,
+        ObjectId,
+        ObjectId,
+        ClassRelationId,
+        NaiveDateTime,
+        NaiveDateTime,
+        ResourceRevision,
+    ) {
         let (id, created_at, updated_at, revision) = self.metadata.into_parts();
         (
-            id.id(),
+            ObjectRelationId::from(id),
             self.from_object_id,
             self.to_object_id,
             self.class_relation_id,
             created_at,
             updated_at,
-            revision.get(),
+            revision,
         )
     }
 }
@@ -180,7 +198,7 @@ impl StorageObjectRelation {
 pub struct StorageGraphResource {
     metadata: StorageRecordMetadata,
     name: String,
-    collection_id: i32,
+    collection_id: CollectionId,
     description: String,
 }
 
@@ -189,7 +207,7 @@ impl StorageGraphResource {
     pub fn new(
         metadata: StorageRecordMetadata,
         name: String,
-        collection_id: i32,
+        collection_id: CollectionId,
         description: String,
     ) -> Self {
         Self {
@@ -201,7 +219,7 @@ impl StorageGraphResource {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageRecordMetadata, String, i32, String) {
+    pub fn into_parts(self) -> (StorageRecordMetadata, String, CollectionId, String) {
         (
             self.metadata,
             self.name,
@@ -237,20 +255,20 @@ impl StorageGraphClass {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        ClassId,
         String,
-        i32,
+        CollectionId,
         Option<Value>,
         bool,
         String,
         NaiveDateTime,
         NaiveDateTime,
-        i64,
+        ResourceRevision,
     ) {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
         let (id, created_at, updated_at, revision) = metadata.into_parts();
         (
-            id.into(),
+            ClassId::from(id),
             name,
             collection_id,
             self.json_schema,
@@ -258,7 +276,7 @@ impl StorageGraphClass {
             description,
             created_at,
             updated_at,
-            revision.into(),
+            revision,
         )
     }
 }
@@ -266,13 +284,13 @@ impl StorageGraphClass {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageGraphObject {
     resource: StorageGraphResource,
-    class_id: i32,
+    class_id: ClassId,
     data: Value,
 }
 
 impl StorageGraphObject {
     #[must_use]
-    pub fn new(resource: StorageGraphResource, class_id: i32, data: Value) -> Self {
+    pub fn new(resource: StorageGraphResource, class_id: ClassId, data: Value) -> Self {
         Self {
             resource,
             class_id,
@@ -285,20 +303,20 @@ impl StorageGraphObject {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        ObjectId,
         String,
-        i32,
-        i32,
+        CollectionId,
+        ClassId,
         String,
         Value,
         NaiveDateTime,
         NaiveDateTime,
-        i64,
+        ResourceRevision,
     ) {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
         let (id, created_at, updated_at, revision) = metadata.into_parts();
         (
-            id.into(),
+            ObjectId::from(id),
             name,
             collection_id,
             self.class_id,
@@ -306,7 +324,7 @@ impl StorageGraphObject {
             self.data,
             created_at,
             updated_at,
-            revision.into(),
+            revision,
         )
     }
 }
@@ -316,7 +334,7 @@ pub struct StorageClassGraphRow {
     ancestor: StorageGraphClass,
     descendant: StorageGraphClass,
     depth: i32,
-    path: Vec<i32>,
+    path: Vec<ClassId>,
 }
 
 impl StorageClassGraphRow {
@@ -325,7 +343,7 @@ impl StorageClassGraphRow {
         ancestor: StorageGraphClass,
         descendant: StorageGraphClass,
         depth: i32,
-        path: Vec<i32>,
+        path: Vec<ClassId>,
     ) -> Self {
         Self {
             ancestor,
@@ -336,7 +354,7 @@ impl StorageClassGraphRow {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageGraphClass, StorageGraphClass, i32, Vec<i32>) {
+    pub fn into_parts(self) -> (StorageGraphClass, StorageGraphClass, i32, Vec<ClassId>) {
         (self.ancestor, self.descendant, self.depth, self.path)
     }
 }
@@ -346,7 +364,7 @@ pub struct StorageObjectGraphRow {
     ancestor: StorageGraphObject,
     descendant: StorageGraphObject,
     depth: i32,
-    path: Vec<i32>,
+    path: Vec<ObjectId>,
 }
 
 impl StorageObjectGraphRow {
@@ -355,7 +373,7 @@ impl StorageObjectGraphRow {
         ancestor: StorageGraphObject,
         descendant: StorageGraphObject,
         depth: i32,
-        path: Vec<i32>,
+        path: Vec<ObjectId>,
     ) -> Self {
         Self {
             ancestor,
@@ -366,20 +384,20 @@ impl StorageObjectGraphRow {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageGraphObject, StorageGraphObject, i32, Vec<i32>) {
+    pub fn into_parts(self) -> (StorageGraphObject, StorageGraphObject, i32, Vec<ObjectId>) {
         (self.ancestor, self.descendant, self.depth, self.path)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageRelatedObjectIncludeRow {
-    root_object_id: i32,
+    root_object_id: ObjectId,
     row: StorageObjectGraphRow,
 }
 
 impl StorageRelatedObjectIncludeRow {
     #[must_use]
-    pub const fn new(root_object_id: i32, row: StorageObjectGraphRow) -> Self {
+    pub const fn new(root_object_id: ObjectId, row: StorageObjectGraphRow) -> Self {
         Self {
             root_object_id,
             row,
@@ -387,26 +405,26 @@ impl StorageRelatedObjectIncludeRow {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, StorageObjectGraphRow) {
+    pub fn into_parts(self) -> (ObjectId, StorageObjectGraphRow) {
         (self.root_object_id, self.row)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageRelatedObjectForRootRow {
-    root_object_id: i32,
+    root_object_id: ObjectId,
     descendant: StorageGraphObject,
     depth: i32,
-    path: Vec<i32>,
+    path: Vec<ObjectId>,
 }
 
 impl StorageRelatedObjectForRootRow {
     #[must_use]
     pub fn new(
-        root_object_id: i32,
+        root_object_id: ObjectId,
         descendant: StorageGraphObject,
         depth: i32,
-        path: Vec<i32>,
+        path: Vec<ObjectId>,
     ) -> Self {
         Self {
             root_object_id,
@@ -417,28 +435,13 @@ impl StorageRelatedObjectForRootRow {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, StorageGraphObject, i32, Vec<i32>) {
+    pub fn into_parts(self) -> (ObjectId, StorageGraphObject, i32, Vec<ObjectId>) {
         (self.root_object_id, self.descendant, self.depth, self.path)
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct RelationPage<T> {
-    rows: Vec<T>,
-    total: Option<i64>,
-}
-
-impl<T> RelationPage<T> {
-    #[must_use]
-    pub const fn new(rows: Vec<T>, total: Option<i64>) -> Self {
-        Self { rows, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<T>, Option<i64>) {
-        (self.rows, self.total)
-    }
-}
+/// Relation-query page retained as a domain-specific API name.
+pub type RelationPage<T> = crate::StoragePage<T>;
 
 #[derive(Clone, PartialEq)]
 pub struct RelationListQuery {
@@ -479,14 +482,18 @@ impl fmt::Debug for RelationListQuery {
 
 #[derive(Clone, PartialEq)]
 pub struct RelationTouchingQuery {
-    anchor_id: i32,
+    anchor_id: ResourceId,
     options: QueryOptions,
     visibility: StorageVisibility,
 }
 
 impl RelationTouchingQuery {
     #[must_use]
-    pub const fn new(anchor_id: i32, options: QueryOptions, visibility: StorageVisibility) -> Self {
+    pub const fn new(
+        anchor_id: ResourceId,
+        options: QueryOptions,
+        visibility: StorageVisibility,
+    ) -> Self {
         Self {
             anchor_id,
             options,
@@ -500,7 +507,7 @@ impl RelationTouchingQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, QueryOptions, StorageVisibility) {
+    pub fn into_parts(self) -> (ResourceId, QueryOptions, StorageVisibility) {
         (self.anchor_id, self.options, self.visibility)
     }
 }
@@ -518,13 +525,13 @@ impl fmt::Debug for RelationTouchingQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct RelationIdsQuery {
-    ids: Vec<i32>,
+    ids: Vec<ResourceId>,
     visibility: StorageVisibility,
 }
 
 impl RelationIdsQuery {
     #[must_use]
-    pub fn new(ids: impl IntoIterator<Item = i32>, visibility: StorageVisibility) -> Self {
+    pub fn new(ids: impl IntoIterator<Item = ResourceId>, visibility: StorageVisibility) -> Self {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         ids.sort_unstable();
         ids.dedup();
@@ -532,7 +539,7 @@ impl RelationIdsQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<i32>, StorageVisibility) {
+    pub fn into_parts(self) -> (Vec<ResourceId>, StorageVisibility) {
         (self.ids, self.visibility)
     }
 }
@@ -549,8 +556,8 @@ impl fmt::Debug for RelationIdsQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ObjectRelationsTouchingIdsQuery {
-    object_ids: Vec<i32>,
-    excluded_relation_ids: Vec<i32>,
+    object_ids: Vec<ObjectId>,
+    excluded_relation_ids: Vec<ObjectRelationId>,
     max_results: usize,
     visibility: StorageVisibility,
 }
@@ -558,7 +565,7 @@ pub struct ObjectRelationsTouchingIdsQuery {
 impl ObjectRelationsTouchingIdsQuery {
     #[must_use]
     pub fn new(
-        object_ids: impl IntoIterator<Item = i32>,
+        object_ids: impl IntoIterator<Item = ObjectId>,
         max_results: usize,
         visibility: StorageVisibility,
     ) -> Self {
@@ -574,7 +581,10 @@ impl ObjectRelationsTouchingIdsQuery {
     }
 
     #[must_use]
-    pub fn excluding_relation_ids(mut self, relation_ids: impl IntoIterator<Item = i32>) -> Self {
+    pub fn excluding_relation_ids(
+        mut self,
+        relation_ids: impl IntoIterator<Item = ObjectRelationId>,
+    ) -> Self {
         self.excluded_relation_ids = relation_ids.into_iter().collect();
         self.excluded_relation_ids.sort_unstable();
         self.excluded_relation_ids.dedup();
@@ -582,7 +592,14 @@ impl ObjectRelationsTouchingIdsQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<i32>, Vec<i32>, usize, StorageVisibility) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<ObjectId>,
+        Vec<ObjectRelationId>,
+        usize,
+        StorageVisibility,
+    ) {
         (
             self.object_ids,
             self.excluded_relation_ids,
@@ -609,14 +626,18 @@ impl fmt::Debug for ObjectRelationsTouchingIdsQuery {
 
 #[derive(Clone, PartialEq)]
 pub struct RelationGraphQuery {
-    root_id: i32,
+    root_id: ResourceId,
     options: QueryOptions,
     visibility: StorageVisibility,
 }
 
 impl RelationGraphQuery {
     #[must_use]
-    pub const fn new(root_id: i32, options: QueryOptions, visibility: StorageVisibility) -> Self {
+    pub const fn new(
+        root_id: ResourceId,
+        options: QueryOptions,
+        visibility: StorageVisibility,
+    ) -> Self {
         Self {
             root_id,
             options,
@@ -630,7 +651,7 @@ impl RelationGraphQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, QueryOptions, StorageVisibility) {
+    pub fn into_parts(self) -> (ResourceId, QueryOptions, StorageVisibility) {
         (self.root_id, self.options, self.visibility)
     }
 }
@@ -662,9 +683,9 @@ pub enum StorageRelatedSort {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct RelatedObjectsForRootsQuery {
-    root_object_ids: Vec<i32>,
-    class_id: i32,
-    class_relation_id: Option<i32>,
+    root_object_ids: Vec<ObjectId>,
+    class_id: ClassId,
+    class_relation_id: Option<ClassRelationId>,
     direction: StorageRelatedDirection,
     sort: StorageRelatedSort,
     max_depth: i32,
@@ -676,8 +697,8 @@ pub struct RelatedObjectsForRootsQuery {
 impl RelatedObjectsForRootsQuery {
     #[must_use]
     pub fn new(
-        root_object_ids: impl IntoIterator<Item = i32>,
-        class_id: i32,
+        root_object_ids: impl IntoIterator<Item = ObjectId>,
+        class_id: ClassId,
         visibility: StorageVisibility,
     ) -> Self {
         Self {
@@ -694,7 +715,7 @@ impl RelatedObjectsForRootsQuery {
     }
 
     #[must_use]
-    pub const fn class_relation_id(mut self, class_relation_id: Option<i32>) -> Self {
+    pub const fn class_relation_id(mut self, class_relation_id: Option<ClassRelationId>) -> Self {
         self.class_relation_id = class_relation_id;
         self
     }
@@ -734,9 +755,9 @@ impl RelatedObjectsForRootsQuery {
     pub fn into_parts(
         self,
     ) -> (
-        Vec<i32>,
-        i32,
-        Option<i32>,
+        Vec<ObjectId>,
+        ClassId,
+        Option<ClassRelationId>,
         StorageRelatedDirection,
         StorageRelatedSort,
         i32,
@@ -778,7 +799,7 @@ impl fmt::Debug for RelatedObjectsForRootsQuery {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct BidirectionalRelatedObjectsQuery {
-    root_object_ids: Vec<i32>,
+    root_object_ids: Vec<ObjectId>,
     max_depth: i32,
     per_root_cap: i32,
     preserve_alternative_paths: bool,
@@ -788,7 +809,7 @@ pub struct BidirectionalRelatedObjectsQuery {
 impl BidirectionalRelatedObjectsQuery {
     #[must_use]
     pub fn new(
-        root_object_ids: impl IntoIterator<Item = i32>,
+        root_object_ids: impl IntoIterator<Item = ObjectId>,
         max_depth: i32,
         per_root_cap: i32,
         preserve_alternative_paths: bool,
@@ -804,7 +825,7 @@ impl BidirectionalRelatedObjectsQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<i32>, i32, i32, bool, StorageVisibility) {
+    pub fn into_parts(self) -> (Vec<ObjectId>, i32, i32, bool, StorageVisibility) {
         (
             self.root_object_ids,
             self.max_depth,
@@ -930,9 +951,16 @@ mod tests {
             true,
         )
         .unwrap();
-        let visibility =
-            StorageVisibility::new(42, true, None::<[crate::AuthorizationPermission; 0]>, None);
-        let debug = format!("{:?}", RelationTouchingQuery::new(73, options, visibility));
+        let visibility = StorageVisibility::new(
+            hubuum_domain::PrincipalId::new(42).unwrap(),
+            true,
+            None::<[crate::AuthorizationPermission; 0]>,
+            None,
+        );
+        let debug = format!(
+            "{:?}",
+            RelationTouchingQuery::new(ResourceId::new(73).unwrap(), options, visibility)
+        );
 
         assert!(debug.contains("filter_count: 1"));
         assert!(debug.contains("has_cursor: true"));
@@ -944,10 +972,15 @@ mod tests {
 
     #[test]
     fn touching_ids_debug_redacts_endpoint_and_exclusion_ids() {
-        let visibility =
-            StorageVisibility::new(42, true, None::<[crate::AuthorizationPermission; 0]>, None);
+        let visibility = StorageVisibility::new(
+            hubuum_domain::PrincipalId::new(42).unwrap(),
+            true,
+            None::<[crate::AuthorizationPermission; 0]>,
+            None,
+        );
         let query =
-            ObjectRelationsTouchingIdsQuery::new([73], 20, visibility).excluding_relation_ids([99]);
+            ObjectRelationsTouchingIdsQuery::new([ObjectId::new(73).unwrap()], 20, visibility)
+                .excluding_relation_ids([ObjectRelationId::new(99).unwrap()]);
 
         let debug = format!("{query:?}");
 

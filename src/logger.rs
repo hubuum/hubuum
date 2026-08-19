@@ -1,4 +1,6 @@
-use std::{cell::RefCell, fmt, future::Future};
+#[cfg(test)]
+use std::future::Future;
+use std::{cell::RefCell, fmt};
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
@@ -90,7 +92,8 @@ pub fn log_operation_mutation(
     }
 }
 
-pub(crate) async fn defer_operation_mutation_logs_until_commit<F, R, E>(future: F) -> Result<R, E>
+#[cfg(test)]
+async fn defer_operation_mutation_logs_until_commit<F, R, E>(future: F) -> Result<R, E>
 where
     F: Future<Output = Result<R, E>>,
 {

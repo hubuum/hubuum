@@ -1,5 +1,9 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_domain::{
+    ClassId, CollectionId, IdentityScopeId, ObjectId, PrincipalId, ResourceRevision, TokenId,
+    UserId,
+};
 
 use crate::StorageError;
 
@@ -101,8 +105,8 @@ impl std::error::Error for AuthenticationAttemptError {}
 /// authenticated-principal and current-token APIs.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthenticatedToken {
-    id: i32,
-    principal_id: i32,
+    id: TokenId,
+    principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
     issued: NaiveDateTime,
@@ -110,7 +114,7 @@ pub struct AuthenticatedToken {
     last_used_at: Option<NaiveDateTime>,
     permission_scoped: bool,
     resource_scoped: bool,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl std::fmt::Debug for AuthenticatedToken {
@@ -143,10 +147,10 @@ impl std::fmt::Debug for AuthenticatedToken {
 impl AuthenticatedToken {
     #[must_use]
     pub const fn builder(
-        id: i32,
-        principal_id: i32,
+        id: TokenId,
+        principal_id: PrincipalId,
         issued: NaiveDateTime,
-        revision: i64,
+        revision: ResourceRevision,
     ) -> AuthenticatedTokenBuilder {
         AuthenticatedTokenBuilder {
             id,
@@ -163,12 +167,12 @@ impl AuthenticatedToken {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> TokenId {
         self.id
     }
 
     #[must_use]
-    pub const fn principal_id(&self) -> i32 {
+    pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
     }
 
@@ -213,7 +217,7 @@ impl AuthenticatedToken {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> i64 {
+    pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
 }
@@ -221,8 +225,8 @@ impl AuthenticatedToken {
 /// Builder for the hash-free token projection returned after successful
 /// authentication.
 pub struct AuthenticatedTokenBuilder {
-    id: i32,
-    principal_id: i32,
+    id: TokenId,
+    principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
     issued: NaiveDateTime,
@@ -230,7 +234,7 @@ pub struct AuthenticatedTokenBuilder {
     last_used_at: Option<NaiveDateTime>,
     permission_scoped: bool,
     resource_scoped: bool,
-    revision: i64,
+    revision: ResourceRevision,
 }
 
 impl AuthenticatedTokenBuilder {
@@ -324,10 +328,10 @@ impl AuthenticationPrincipalKind {
 /// state deliberately stay behind the storage boundary.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthenticationPrincipal {
-    id: i32,
+    id: PrincipalId,
     kind: AuthenticationPrincipalKind,
     name: String,
-    identity_scope_id: i32,
+    identity_scope_id: IdentityScopeId,
 }
 
 impl std::fmt::Debug for AuthenticationPrincipal {
@@ -345,10 +349,10 @@ impl std::fmt::Debug for AuthenticationPrincipal {
 impl AuthenticationPrincipal {
     #[must_use]
     pub fn new(
-        id: i32,
+        id: PrincipalId,
         kind: AuthenticationPrincipalKind,
         name: impl Into<String>,
-        identity_scope_id: i32,
+        identity_scope_id: IdentityScopeId,
     ) -> Self {
         Self {
             id,
@@ -359,7 +363,7 @@ impl AuthenticationPrincipal {
     }
 
     #[must_use]
-    pub const fn id(&self) -> i32 {
+    pub const fn id(&self) -> PrincipalId {
         self.id
     }
 
@@ -374,7 +378,7 @@ impl AuthenticationPrincipal {
     }
 
     #[must_use]
-    pub const fn identity_scope_id(&self) -> i32 {
+    pub const fn identity_scope_id(&self) -> IdentityScopeId {
         self.identity_scope_id
     }
 
@@ -396,7 +400,7 @@ impl AuthenticationPrincipal {
 /// diagnostics.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthenticationHuman {
-    id: i32,
+    id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
     created_at: NaiveDateTime,
@@ -427,7 +431,7 @@ impl std::fmt::Debug for AuthenticationHuman {
 impl AuthenticationHuman {
     #[must_use]
     pub const fn new(
-        id: i32,
+        id: UserId,
         proper_name: Option<String>,
         email: Option<String>,
         created_at: NaiveDateTime,
@@ -448,7 +452,7 @@ impl AuthenticationHuman {
     pub fn into_parts(
         self,
     ) -> (
-        i32,
+        UserId,
         Option<String>,
         Option<String>,
         NaiveDateTime,
@@ -492,7 +496,7 @@ impl AuthenticationIdentity {
 /// Complete information needed to load the narrowing dimensions of one token.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AuthenticationTokenScopeQuery {
-    token_id: i32,
+    token_id: TokenId,
     permission_scoped: bool,
     resource_scoped: bool,
 }
@@ -510,7 +514,7 @@ impl std::fmt::Debug for AuthenticationTokenScopeQuery {
 
 impl AuthenticationTokenScopeQuery {
     #[must_use]
-    pub const fn new(token_id: i32, permission_scoped: bool, resource_scoped: bool) -> Self {
+    pub const fn new(token_id: TokenId, permission_scoped: bool, resource_scoped: bool) -> Self {
         Self {
             token_id,
             permission_scoped,
@@ -519,7 +523,7 @@ impl AuthenticationTokenScopeQuery {
     }
 
     #[must_use]
-    pub const fn token_id(self) -> i32 {
+    pub const fn token_id(self) -> TokenId {
         self.token_id
     }
 
@@ -542,9 +546,9 @@ impl AuthenticationTokenScopeQuery {
 /// Resource ids in one token's enabled resource-scope dimension.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct AuthenticationResourceScope {
-    collection_ids: Vec<i32>,
-    class_ids: Vec<i32>,
-    object_ids: Vec<i32>,
+    collection_ids: Vec<CollectionId>,
+    class_ids: Vec<ClassId>,
+    object_ids: Vec<ObjectId>,
 }
 
 impl std::fmt::Debug for AuthenticationResourceScope {
@@ -560,7 +564,11 @@ impl std::fmt::Debug for AuthenticationResourceScope {
 
 impl AuthenticationResourceScope {
     #[must_use]
-    pub const fn new(collection_ids: Vec<i32>, class_ids: Vec<i32>, object_ids: Vec<i32>) -> Self {
+    pub const fn new(
+        collection_ids: Vec<CollectionId>,
+        class_ids: Vec<ClassId>,
+        object_ids: Vec<ObjectId>,
+    ) -> Self {
         Self {
             collection_ids,
             class_ids,
@@ -569,7 +577,7 @@ impl AuthenticationResourceScope {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
+    pub fn into_parts(self) -> (Vec<CollectionId>, Vec<ClassId>, Vec<ObjectId>) {
         (self.collection_ids, self.class_ids, self.object_ids)
     }
 }
@@ -631,7 +639,7 @@ pub trait AuthenticationStorage: Send + Sync {
 
     async fn load_authentication_identity(
         &self,
-        principal_id: i32,
+        principal_id: PrincipalId,
     ) -> Result<AuthenticationIdentity, StorageError>;
 
     async fn load_authentication_token_scope(
@@ -661,7 +669,7 @@ mod tests {
 
     #[test]
     fn unscoped_query_has_no_enabled_dimensions() {
-        let query = AuthenticationTokenScopeQuery::new(7, false, false);
+        let query = AuthenticationTokenScopeQuery::new(TokenId::new(7).unwrap(), false, false);
 
         assert!(!query.is_scoped());
         assert!(!query.is_permission_scoped());
@@ -686,10 +694,10 @@ mod tests {
     #[test]
     fn authentication_dto_debug_output_redacts_identity_values() {
         let principal = AuthenticationPrincipal::new(
-            42,
+            PrincipalId::new(42).unwrap(),
             AuthenticationPrincipalKind::Human,
             "sensitive-name",
-            17,
+            IdentityScopeId::new(17).unwrap(),
         );
 
         let debug = format!("{principal:?}");
@@ -701,10 +709,15 @@ mod tests {
     #[test]
     fn authentication_credentials_and_results_redact_identifiers() {
         let credential = AuthenticationCredential::new("sensitive-lookup-value");
-        let token = AuthenticatedToken::builder(42, 17, NaiveDateTime::default(), 3)
-            .name(Some("sensitive-name".to_string()))
-            .permission_scoped(true)
-            .build();
+        let token = AuthenticatedToken::builder(
+            TokenId::new(42).unwrap(),
+            PrincipalId::new(17).unwrap(),
+            NaiveDateTime::default(),
+            ResourceRevision::new(3).unwrap(),
+        )
+        .name(Some("sensitive-name".to_string()))
+        .permission_scoped(true)
+        .build();
 
         let credential_debug = format!("{credential:?}");
         assert!(!credential_debug.contains("sensitive-lookup-value"));

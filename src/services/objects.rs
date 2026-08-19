@@ -11,16 +11,16 @@ use crate::services::storage_boundary::{
     object_selector_to_storage, object_update_to_storage, resolved_class_to_storage,
     resolved_object_from_storage, resolved_object_to_storage,
 };
-use crate::storage::ObjectStore;
+use crate::storage::ObjectStorage;
 
 /// Application-facing object resolution and lifecycle use cases.
 #[derive(Clone)]
 pub struct ObjectService {
-    storage: Arc<dyn ObjectStore>,
+    storage: Arc<dyn ObjectStorage>,
 }
 
 impl ObjectService {
-    pub(crate) fn new(storage: Arc<dyn ObjectStore>) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ObjectStorage>) -> Self {
         Self { storage }
     }
 
@@ -107,13 +107,14 @@ mod tests {
         ObjectDataPatchDocument, ObjectSelector, UpdateHubuumObject,
     };
     use crate::services::{ClassService, Services};
-    use crate::storage::{MemoryStorageModel, PostgresStorage};
+    use crate::storage::MemoryStorageModel;
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
         postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
     };
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::PostgresStorage;
 
     use super::ObjectService;
 

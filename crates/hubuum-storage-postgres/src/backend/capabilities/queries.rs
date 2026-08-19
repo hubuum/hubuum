@@ -4,7 +4,7 @@ use super::super::*;
 impl HistoryStorage for PostgresStorage {
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<i32>,
+        principal_ids: Vec<PrincipalId>,
     ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
         crate::operations::history::resolve_principal_names(self.runtime(), principal_ids)
             .await

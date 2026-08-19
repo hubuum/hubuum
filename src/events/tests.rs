@@ -1,224 +1,65 @@
-//! Tests for the events table + emit_event helper (#71).
-//!
-//! The load-bearing property is "recorded iff committed": an event emitted
-//! inside a transaction that commits is persisted, and one emitted inside a
-//! transaction that rolls back is not. These tests exercise that directly
-//! against a real Postgres pool.
+//! Application-level event catalog and lifecycle compatibility tests.
 
 #![cfg(test)]
 
-use crate::storage::postgres::prelude::*;
-use rstest::rstest;
 use uuid::Uuid;
 
-use super::delivery::process_event_delivery_work_item;
-use crate::errors::ApiError;
-use crate::events::retention::process_event_retention_batch;
 use crate::events::{
-    Action, ActorKind, CollectionId, EntityType, Event, EventContext, EventDeliverySettings,
-    EventEntityId, EventFanoutSettings, EventRetentionSettings, NewEvent, PrincipalId,
-    RequestProvenance, TaskId,
+    Action, ActorKind, CollectionId, EntityType, Event, EventContext, EventEntityId, NewEvent,
+    PrincipalId, RequestProvenance, TaskId,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
-use crate::models::search::{QueryOptions, parse_query_parameter};
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
-    CollectionID, EventDeliveryStatus, EventSinkKind, ExportContentType, ExportTemplateID,
-    ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
-    ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
-    PrincipalTokenCreateRequest, Token, TokenID, TokenScope, UpdateExportTemplate, UpdateUser,
-    UserID,
+    CollectionID, ExportContentType, ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID,
+    HubuumClassRelationID, HubuumObjectID, NewExportTemplate, NewHubuumClassRelation,
+    NewHubuumObjectRelation, NewUser, ObjectRelationLimit, Permissions, PermissionsList,
+    PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, Token, TokenID, TokenScope,
+    UpdateExportTemplate, UpdateUser, UserID,
 };
-use crate::schema::events::dsl::events;
-use crate::storage::postgres::PostgresStorage;
-use crate::storage::postgres::operations::event_delivery::EventDeliveryRow;
-use crate::storage::postgres::operations::event_fanout::{
-    claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
-};
-use crate::storage::postgres::operations::event_record::EventRow;
-use crate::storage::postgres::operations::event_record::emit_event;
-use crate::storage::postgres::operations::event_retention::{
-    purge_event_retention_without_archive, try_acquire_event_retention_lock,
-};
-use crate::storage::postgres::operations::events::{
-    EventListFilters, list_events_with_total_count,
-};
-use crate::storage::postgres::operations::token::PrincipalTokenRow;
-use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
-use crate::storage::storage_handle;
 use crate::storage::{
-    EventArchive, EventDeliveryAdministrationStorage, EventDeliveryClaim, EventDeliverySink,
-    EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem, EventRetentionStorage,
-    RemoteTargetStorage, RetainedEvent, StorageError, StorageErrorKind, StorageEventSinkCreate,
-    StorageEventSubscriptionCreate, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    RemoteTargetStorage, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
     StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetPatch,
     StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
 };
-use crate::tests::{
-    TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
-};
+use crate::tests::{TestScope, create_test_user, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate, GroupIdApplicationExt, PermissionController};
-use hubuum_storage_postgres::PostgresRuntime;
-
-static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
-static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
+use hubuum_storage_postgres::PostgresStorage;
 
 fn principal_id(id: i32) -> PrincipalId {
     PrincipalId::new(id).expect("test principal id must be positive")
 }
 
-async fn process_claimed_event_delivery(
-    pool: &crate::storage::postgres::PostgresPool,
-    settings: EventDeliverySettings,
-    resolver: &dyn crate::events::SinkResolver,
-    work_item: EventDeliveryWorkItem,
-) -> Result<(), ApiError> {
-    process_event_delivery_work_item(&storage_handle(pool), settings, resolver, work_item).await
-}
-
-async fn claim_event_delivery_by_id(
-    pool: &crate::storage::postgres::PostgresPool,
-    delivery_id: i64,
-    settings: EventDeliverySettings,
-) -> EventDeliveryWorkItem {
-    hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
-        &PostgresRuntime::unobserved(pool.clone()),
-        delivery_id,
-        settings,
-    )
-    .await
-    .unwrap()
-}
-
-async fn claim_event_delivery_ids(
-    pool: &crate::storage::postgres::PostgresPool,
-    settings: EventDeliverySettings,
-) -> Vec<i64> {
-    let (deliveries, _) = storage_handle(pool)
-        .claim_event_delivery_batch(settings)
-        .await
-        .unwrap()
-        .into_parts();
-    deliveries
-        .into_iter()
-        .map(|delivery| delivery.into_parts().0.delivery_id())
-        .collect()
-}
-
-#[rstest]
-#[tokio::test]
-#[case("before_revision", true)]
-#[case("after_revision", false)]
-async fn audit_revision_is_null_filters_nullable_revisions(
-    #[case] field: &str,
-    #[case] before: bool,
-) {
-    let scope = test_scope();
-    let entity_id = (Uuid::new_v4().as_u128() as i32 & (i32::MAX - 1)) + 1;
-    let event = NewEvent::new(
-        EntityType::Collection,
-        Action::Created,
-        ActorKind::System,
-        "legacy revision-null event",
-    )
-    .unwrap()
-    .with_entity_id(EventEntityId::new(entity_id).unwrap());
-    with_transaction(&scope.pool, async |conn| emit_event(conn, &event).await)
-        .await
-        .unwrap();
-
-    let query_options =
-        parse_query_parameter(&format!("{field}__is_null=true&include_total=false")).unwrap();
-    let filters = EventListFilters {
-        entity_type: Some(EntityType::Collection),
-        entity_id: Some(entity_id),
-        ..EventListFilters::default()
-    };
-    let (event_rows, _) =
-        list_events_with_total_count(&scope.pool, &[], true, &filters, &query_options)
-            .await
-            .unwrap();
-
-    assert_eq!(event_rows.len(), 1);
-    if before {
-        assert!(event_rows[0].before_revision.is_none());
-    } else {
-        assert!(event_rows[0].after_revision.is_none());
-    }
-}
-
-/// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
-async fn count_events_for(
-    conn: &mut crate::storage::postgres::PostgresConnection,
-    target: Uuid,
-) -> i64 {
-    use crate::schema::events::dsl::event_id;
-    events
-        .filter(event_id.eq(target))
-        .count()
-        .get_result(conn)
-        .await
-        .expect("count query")
-}
-
-#[rstest]
-#[tokio::test]
-#[case::commit_persists(false)]
-#[case::rollback_discards(true)]
-async fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
-    let scope = test_scope();
-    let pool = scope.pool.clone();
-
-    let new_event = NewEvent::new(
-        EntityType::Collection,
-        Action::Created,
-        ActorKind::System,
-        "test event",
-    )
-    .unwrap()
-    .with_collection_id(CollectionId::new(1).unwrap())
-    .with_entity_id(EventEntityId::new(1).unwrap())
-    .with_entity_name("collection_fixture-test")
-    .with_request_id(Uuid::new_v4())
-    .with_correlation_id("client-provided-correlation-id")
-    .with_metadata(serde_json::json!({"k": "v"}));
-    let event_uuid = new_event.event_id().as_uuid();
-
-    let result: Result<Event, ApiError> = with_transaction(&pool, async |conn| {
-        let event = emit_event(conn, &new_event).await?;
-        // The row is visible inside the same transaction.
-        assert_eq!(count_events_for(conn, event_uuid).await, 1);
-        if rollback {
-            // Simulate a later mutation step failing, aborting the whole tx.
-            return Err(ApiError::InternalServerError("simulated failure".into()));
-        }
-        Ok(event)
-    })
-    .await;
-
-    if rollback {
-        assert!(result.is_err(), "expected rollback error");
-    } else {
-        assert!(result.is_ok(), "expected commit, got {result:?}");
-    }
-
-    // After the transaction settles, the row persists iff it committed.
-    let persisted = with_connection(&pool, async |conn| {
-        Ok::<_, diesel::result::Error>(count_events_for(conn, event_uuid).await)
-    })
-    .await
-    .unwrap();
-    if rollback {
-        assert_eq!(
-            persisted, 0,
-            "event must not survive a rolled-back transaction"
-        );
-    } else {
-        assert_eq!(persisted, 1, "event must survive a committed transaction");
+fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Event {
+    let (event, before_revision, after_revision) = event.into_parts();
+    Event {
+        id: event.id.get(),
+        event_id: event.event_id,
+        occurred_at: event.occurred_at,
+        entity_type: event.entity_type,
+        entity_id: event.entity_id.map(EventEntityId::get),
+        entity_name: event.entity_name,
+        collection_id: event.collection_id.map(CollectionId::id),
+        action: event.action,
+        actor_user_id: event.actor_user_id.map(PrincipalId::id),
+        actor_kind: event.actor_kind,
+        request_id: event.request_id,
+        correlation_id: event.correlation_id,
+        summary: event.summary,
+        before: event.before,
+        after: event.after,
+        metadata: event.metadata,
+        schema_version: event.schema_version,
+        initiator_user_id: event
+            .provenance
+            .initiator
+            .map(|principal| principal.principal_id.id()),
+        task_id: event.provenance.task_id.map(TaskId::id),
+        before_revision,
+        after_revision,
     }
 }
 
@@ -274,1030 +115,6 @@ fn new_event_applies_event_context() {
     assert_eq!(ev.actor_user_id().map(PrincipalId::id), Some(42));
     assert_eq!(ev.request_id(), Some(request_id));
     assert_eq!(ev.correlation_id(), Some("client-correlation"));
-}
-
-#[tokio::test]
-async fn fanout_backlog_index_exists() {
-    // The partial fan-out backlog index must be present before #76 (#71 done-when).
-    let scope = test_scope();
-    with_connection(&scope.pool, async |conn| {
-        let exists: bool = diesel::sql_query(
-            "SELECT EXISTS (
-                SELECT 1 FROM pg_indexes
-                WHERE schemaname = 'public'
-                  AND tablename = 'events'
-                  AND indexname = 'events_fanout_backlog_idx'
-                  AND indexdef LIKE '%WHERE (dispatched_at IS NULL)%'
-            )",
-        )
-        .get_result::<IndexExistsRow>(conn)
-        .await
-        .map(|r| r.exists)?;
-        assert!(exists, "events_fanout_backlog_idx partial index is missing");
-        Ok::<_, diesel::result::Error>(())
-    })
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-async fn event_delivery_terminal_retention_index_exists() {
-    let scope = test_scope();
-    with_connection(&scope.pool, async |conn| {
-        let exists: bool = diesel::sql_query(
-            "SELECT EXISTS (
-                SELECT 1 FROM pg_indexes
-                WHERE schemaname = 'public'
-                  AND tablename = 'event_deliveries'
-                  AND indexname = 'idx_event_deliveries_terminal_retention'
-                  AND indexdef LIKE '%(updated_at, id)%'
-                  AND indexdef LIKE '%succeeded%'
-                  AND indexdef LIKE '%dead%'
-            )",
-        )
-        .get_result::<IndexExistsRow>(conn)
-        .await
-        .map(|row| row.exists)?;
-        assert!(exists, "terminal event-delivery retention index is missing");
-        Ok::<_, diesel::result::Error>(())
-    })
-    .await
-    .unwrap();
-}
-
-async fn create_collection_event_subscription(
-    scope: &TestScope,
-    collection_id: i32,
-    label: &str,
-    enabled: bool,
-) -> i32 {
-    create_collection_event_subscription_with_filter(
-        scope,
-        collection_id,
-        label,
-        enabled,
-        hubuum_events_core::EventSubscriptionFilter::default(),
-    )
-    .await
-}
-
-async fn create_collection_event_subscription_with_filter(
-    scope: &TestScope,
-    collection_id: i32,
-    label: &str,
-    enabled: bool,
-    filter: hubuum_events_core::EventSubscriptionFilter,
-) -> i32 {
-    let runtime = PostgresRuntime::unobserved(scope.pool.get_ref().clone());
-    let sink = hubuum_storage_postgres::operations::event_subscription::create_event_sink(
-        &runtime,
-        StorageEventSinkCreate::builder(
-            scope.scoped_name(&format!("{label}_sink")),
-            EventSinkKind::Webhook.as_str(),
-            EventContext::system(),
-        )
-        .configuration(serde_json::json!({}))
-        .enabled(true)
-        .build(),
-    )
-    .await
-    .unwrap();
-
-    hubuum_storage_postgres::operations::event_subscription::create_event_subscription(
-        &runtime,
-        StorageEventSubscriptionCreate::builder(
-            collection_id,
-            sink.id(),
-            scope.scoped_name(&format!("{label}_subscription")),
-            EventContext::system(),
-        )
-        .entity_types(vec![EntityType::Collection.as_str().to_string()])
-        .actions(vec![Action::Created.as_str().to_string()])
-        .filter(filter)
-        .routing(serde_json::json!({}))
-        .enabled(enabled)
-        .build(),
-    )
-    .await
-    .unwrap()
-    .id()
-}
-
-async fn emit_collection_created_event(scope: &TestScope, collection_id: i32) -> Event {
-    let event = NewEvent::new(
-        EntityType::Collection,
-        Action::Created,
-        ActorKind::System,
-        "collection fanout test",
-    )
-    .unwrap()
-    .with_collection_id(CollectionId::new(collection_id).unwrap())
-    .with_entity_id(EventEntityId::new(collection_id).unwrap())
-    .with_entity_name(scope.scoped_name("fanout_collection"));
-
-    with_connection(&scope.pool, async |conn| emit_event(conn, &event).await)
-        .await
-        .unwrap()
-}
-
-#[actix_web::test]
-async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queries() {
-    let scope = test_scope();
-    let initiator = create_test_user(&scope.pool).await;
-    let initiator_name = initiator.name(&scope.pool).await.unwrap();
-    let task_id = (Uuid::new_v4().as_u128() as i32 & (i32::MAX - 1)) + 1;
-    let queued = NewEvent::new(
-        EntityType::Task,
-        Action::Queued,
-        ActorKind::User,
-        "legacy task queued",
-    )
-    .unwrap()
-    .with_entity_id(EventEntityId::new(task_id).unwrap())
-    .with_actor_user_id(principal_id(initiator.id));
-    let running = NewEvent::new(
-        EntityType::Task,
-        Action::Running,
-        ActorKind::Worker,
-        "legacy task running",
-    )
-    .unwrap()
-    .with_entity_id(EventEntityId::new(task_id).unwrap());
-    with_transaction(&scope.pool, async |conn| {
-        emit_event(conn, &queued).await?;
-        emit_event(conn, &running).await?;
-        Ok::<_, ApiError>(())
-    })
-    .await
-    .unwrap();
-
-    let filters = EventListFilters {
-        initiator_user_id: Some(initiator.id),
-        ..EventListFilters::default()
-    };
-    let query_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
-        .expect("test query must be valid");
-    let (result, queries) = capture_queries(list_events_with_total_count(
-        &scope.pool,
-        &[],
-        true,
-        &filters,
-        &query_options,
-    ))
-    .await;
-    let (event_responses, _) = result.unwrap();
-
-    assert_eq!(event_responses.len(), 2);
-    for event in event_responses {
-        assert_eq!(event.provenance.task_id.map(TaskId::id), Some(task_id));
-        assert_eq!(
-            event
-                .provenance
-                .initiator
-                .as_ref()
-                .map(|principal| principal.principal_id.id()),
-            Some(initiator.id)
-        );
-        assert_eq!(
-            event
-                .provenance
-                .initiator
-                .as_ref()
-                .and_then(|principal| principal.name.as_deref()),
-            Some(initiator_name.as_str())
-        );
-    }
-    assert_eq!(
-        queries.queries_matching("FROM \"events\""),
-        2,
-        "one page query and one queued-event fallback query"
-    );
-    assert_eq!(
-        queries.queries_matching("FROM \"principals\""),
-        1,
-        "actor and initiator names share one batch lookup"
-    );
-}
-
-async fn insert_collection_created_event_at(
-    scope: &TestScope,
-    collection_id: i32,
-    occurred_at_value: chrono::NaiveDateTime,
-) -> Event {
-    use crate::schema::events::dsl::{
-        action, actor_kind, collection_id as event_collection_id, entity_id, entity_name,
-        entity_type, event_id, events, metadata, occurred_at, summary,
-    };
-
-    with_connection(&scope.pool, async |conn| {
-        diesel::insert_into(events)
-            .values((
-                event_id.eq(Uuid::new_v4()),
-                occurred_at.eq(occurred_at_value),
-                entity_type.eq(EntityType::Collection.as_str()),
-                entity_id.eq(Some(collection_id)),
-                entity_name.eq(Some(scope.scoped_name("retention_collection"))),
-                event_collection_id.eq(Some(collection_id)),
-                action.eq(Action::Created.as_str()),
-                actor_kind.eq(ActorKind::System.as_str()),
-                summary.eq("collection retention test"),
-                metadata.eq(serde_json::json!({})),
-            ))
-            .get_result::<EventRow>(conn)
-            .await
-            .map(Event::from)
-    })
-    .await
-    .unwrap()
-}
-
-async fn mark_event_dispatched(scope: &TestScope, event_id_value: i64) {
-    use crate::schema::events::dsl::{dispatched_at, events, id};
-
-    with_connection(&scope.pool, async |conn| {
-        diesel::update(events.filter(id.eq(event_id_value)))
-            .set(dispatched_at.eq(Some(chrono::Utc::now().naive_utc())))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-}
-
-async fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDeliveryRow {
-    use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
-
-    with_connection(&scope.pool, async |conn| {
-        event_deliveries
-            .filter(event_id.eq(event_id_value))
-            .first::<EventDeliveryRow>(conn)
-            .await
-    })
-    .await
-    .unwrap()
-}
-
-async fn expire_delivery_claim(scope: &TestScope, delivery_id: i64) {
-    use crate::schema::event_deliveries::dsl::{event_deliveries, id, locked_until};
-
-    with_connection(&scope.pool, async |conn| {
-        diesel::update(event_deliveries.filter(id.eq(delivery_id)))
-            .set(locked_until.eq(Some(
-                chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1),
-            )))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-}
-
-fn make_delivery_settings(max_attempts: i32) -> EventDeliverySettings {
-    EventDeliverySettings::builder()
-        .batch_size(100_000)
-        .lock_timeout_ms(30_000)
-        .transport_timeout_ms(25_000)
-        .retry_backoff_base_ms(1_000)
-        .retry_backoff_max_ms(10_000)
-        .max_attempts(max_attempts)
-        .build()
-        .unwrap()
-}
-
-fn make_retention_settings() -> EventRetentionSettings {
-    EventRetentionSettings::new(365, 30, 100).unwrap()
-}
-
-struct StaticSinkResolver<'a> {
-    sink: &'a dyn crate::events::Sink,
-}
-
-impl crate::events::SinkResolver for StaticSinkResolver<'_> {
-    fn resolve(&self, kind: &str) -> Option<&dyn crate::events::Sink> {
-        (kind == EventSinkKind::Webhook.as_str()).then_some(self.sink)
-    }
-}
-
-struct SuccessfulSink;
-
-impl crate::events::Sink for SuccessfulSink {
-    fn deliver<'a>(
-        &'a self,
-        envelope: &'a crate::events::EventEnvelope,
-        subscription: &'a EventDeliverySubscription,
-        sink: &'a EventDeliverySink,
-    ) -> futures::future::BoxFuture<'a, Result<(), crate::events::SinkError>> {
-        use futures::FutureExt;
-
-        async move {
-            assert_eq!(envelope.entity_type, EntityType::Collection.as_str());
-            assert!(!subscription.name().is_empty());
-            assert_eq!(sink.kind(), EventSinkKind::Webhook.as_str());
-            Ok(())
-        }
-        .boxed()
-    }
-}
-
-struct FailingSink;
-
-impl crate::events::Sink for FailingSink {
-    fn deliver<'a>(
-        &'a self,
-        _envelope: &'a crate::events::EventEnvelope,
-        _subscription: &'a EventDeliverySubscription,
-        _sink: &'a EventDeliverySink,
-    ) -> futures::future::BoxFuture<'a, Result<(), crate::events::SinkError>> {
-        use futures::FutureExt;
-
-        async { Err(crate::events::SinkError::new("delivery failed")) }.boxed()
-    }
-}
-
-#[actix_web::test]
-async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "fanout_one", true).await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "fanout_two", true).await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-
-    let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
-    assert_eq!(inserted, 2);
-    assert_eq!(
-        count_event_deliveries_for_event(&scope.pool, event.id)
-            .await
-            .unwrap(),
-        2
-    );
-
-    let inserted_again = fanout_event(&scope.pool, event.id).await.unwrap();
-    assert_eq!(inserted_again, 0);
-    assert_eq!(
-        count_event_deliveries_for_event(&scope.pool, event.id)
-            .await
-            .unwrap(),
-        2
-    );
-}
-
-#[actix_web::test]
-async fn event_fanout_query_growth_is_bounded_to_one_insert_per_event() {
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(
-        &scope,
-        fixture.collection.id,
-        "fanout_query_budget",
-        true,
-    )
-    .await;
-    let small_event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    let mut large_events = Vec::new();
-    for _ in 0..10 {
-        large_events.push(emit_collection_created_event(&scope, fixture.collection.id).await);
-    }
-
-    let (small_result, small_queries) =
-        capture_queries(fanout_events(&scope.pool, &[small_event.id])).await;
-    assert_eq!(small_result.expect("small fanout should succeed"), 1);
-
-    let large_event_ids = large_events
-        .iter()
-        .map(|event| event.id)
-        .collect::<Vec<_>>();
-    let (large_result, large_queries) =
-        capture_queries(fanout_events(&scope.pool, &large_event_ids)).await;
-    assert_eq!(large_result.expect("large fanout should succeed"), 10);
-
-    assert_eq!(
-        small_queries.total_queries(),
-        7,
-        "{:#?}",
-        small_queries.query_counts()
-    );
-    assert_eq!(small_queries.domain_queries(), 5);
-    assert_eq!(small_queries.control_queries(), 2);
-    assert_eq!(small_queries.connection_checkouts(), 1);
-    assert_eq!(
-        large_queries.total_queries(),
-        16,
-        "{:#?}",
-        large_queries.query_counts()
-    );
-    assert_eq!(large_queries.domain_queries(), 14);
-    assert_eq!(large_queries.control_queries(), 2);
-    assert_eq!(large_queries.connection_checkouts(), 1);
-    assert_eq!(
-        large_queries
-            .total_queries()
-            .saturating_sub(small_queries.total_queries()),
-        large_events.len().saturating_sub(1)
-    );
-    assert_eq!(
-        large_queries.queries_matching("INSERT INTO \"event_deliveries\""),
-        large_events.len()
-    );
-
-    fixture.cleanup().await.expect("fanout fixture cleanup");
-}
-
-#[actix_web::test]
-async fn event_fanout_skips_disabled_subscriptions() {
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "fanout_disabled", false)
-        .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-
-    let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
-
-    assert_eq!(inserted, 0);
-    assert_eq!(
-        count_event_deliveries_for_event(&scope.pool, event.id)
-            .await
-            .unwrap(),
-        0
-    );
-}
-
-#[actix_web::test]
-async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription_with_filter(
-        &scope,
-        fixture.collection.id,
-        "fanout_filter_match",
-        true,
-        hubuum_events_core::EventSubscriptionFilter {
-            entity_ids: vec![EventEntityId::new(fixture.collection.id).unwrap()],
-            ..hubuum_events_core::EventSubscriptionFilter::default()
-        },
-    )
-    .await;
-    create_collection_event_subscription_with_filter(
-        &scope,
-        fixture.collection.id,
-        "fanout_filter_miss",
-        true,
-        hubuum_events_core::EventSubscriptionFilter {
-            entity_ids: vec![EventEntityId::new(fixture.collection.id + 10_000).unwrap()],
-            ..hubuum_events_core::EventSubscriptionFilter::default()
-        },
-    )
-    .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-
-    let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
-
-    assert_eq!(inserted, 1);
-    assert_eq!(
-        count_event_deliveries_for_event(&scope.pool, event.id)
-            .await
-            .unwrap(),
-        1
-    );
-}
-
-#[actix_web::test]
-async fn event_fanout_reclaims_expired_claims() {
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    let settings = EventFanoutSettings::new(100_000, 30_000).unwrap();
-
-    let claimed = claim_events_for_fanout(&scope.pool, settings)
-        .await
-        .unwrap();
-    assert!(claimed.contains(&event.id));
-
-    let blocked = claim_events_for_fanout(&scope.pool, settings)
-        .await
-        .unwrap();
-    assert!(!blocked.contains(&event.id));
-
-    with_connection(&scope.pool, async |conn| {
-        use crate::schema::events::dsl::{events, fanout_locked_until, id};
-
-        diesel::update(events.filter(id.eq(event.id)))
-            .set(fanout_locked_until.eq(Some(
-                chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1),
-            )))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    let reclaimed = claim_events_for_fanout(&scope.pool, settings)
-        .await
-        .unwrap();
-    assert!(reclaimed.contains(&event.id));
-}
-
-#[actix_web::test]
-async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
-    let scope = test_scope();
-    let event = emit_collection_created_event(&scope, 1).await;
-
-    let error = with_connection(&scope.pool, async |conn| {
-        diesel::delete(events.filter(crate::schema::events::dsl::id.eq(event.id)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("events table is append-only: DELETE is not permitted"),
-        "unexpected delete error: {error}"
-    );
-}
-
-#[actix_web::test]
-async fn event_retention_skips_a_batch_while_another_replica_holds_the_coordinator_lock() {
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let old_event = insert_collection_created_event_at(
-        &scope,
-        1,
-        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    )
-    .await;
-    mark_event_dispatched(&scope, old_event.id).await;
-
-    with_transaction(&scope.pool, async |conn| -> Result<(), ApiError> {
-        assert!(try_acquire_event_retention_lock(conn).await?);
-
-        let skipped =
-            process_event_retention_batch(&scope.pool, make_retention_settings(), None).await?;
-
-        assert_eq!(skipped, Default::default());
-        Ok(())
-    })
-    .await
-    .unwrap();
-
-    let remaining = with_connection(&scope.pool, async |conn| {
-        events
-            .filter(crate::schema::events::dsl::id.eq(old_event.id))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(remaining, 1);
-
-    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
-        .await
-        .expect("coordinator-lock fixture should be removed after the assertion");
-}
-
-#[actix_web::test]
-async fn event_retention_purge_deletes_old_events_through_guarded_path() {
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let old_event = insert_collection_created_event_at(
-        &scope,
-        1,
-        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    )
-    .await;
-    mark_event_dispatched(&scope, old_event.id).await;
-
-    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
-        .await
-        .unwrap();
-
-    let remaining = with_connection(&scope.pool, async |conn| {
-        events
-            .filter(crate::schema::events::dsl::id.eq(old_event.id))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(remaining, 0);
-}
-
-#[actix_web::test]
-async fn event_retention_archive_failure_rolls_back_the_purge() {
-    struct FailingArchive;
-
-    impl EventArchive for FailingArchive {
-        fn archive(&self, _events: &[RetainedEvent]) -> Result<(), StorageError> {
-            Err(StorageError::internal("archive rejected the batch"))
-        }
-    }
-
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let old_event = insert_collection_created_event_at(
-        &scope,
-        1,
-        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    )
-    .await;
-    mark_event_dispatched(&scope, old_event.id).await;
-
-    let error = storage_handle(&scope.pool)
-        .process_event_retention_batch(make_retention_settings(), &FailingArchive)
-        .await
-        .expect_err("archive failure must reject the retention transaction");
-
-    assert_eq!(error.kind(), crate::storage::StorageErrorKind::Internal);
-    let remaining = with_connection(&scope.pool, async |connection| {
-        events
-            .filter(crate::schema::events::dsl::id.eq(old_event.id))
-            .count()
-            .get_result::<i64>(connection)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(remaining, 1);
-
-    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
-        .await
-        .expect("rollback fixture should be removed after the assertion");
-}
-
-#[actix_web::test]
-async fn event_retention_archives_the_complete_postgres_event_record() {
-    #[derive(Default)]
-    struct CapturingArchive(std::sync::Mutex<Vec<String>>);
-
-    impl EventArchive for CapturingArchive {
-        fn archive(&self, retained: &[RetainedEvent]) -> Result<(), StorageError> {
-            self.0
-                .lock()
-                .expect("capture mutex should not be poisoned")
-                .extend(retained.iter().map(|event| event.json().to_string()));
-            Ok(())
-        }
-    }
-
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let old_event = insert_collection_created_event_at(
-        &scope,
-        1,
-        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    )
-    .await;
-    mark_event_dispatched(&scope, old_event.id).await;
-    let archive = CapturingArchive::default();
-
-    let summary = storage_handle(&scope.pool)
-        .process_event_retention_batch(make_retention_settings(), &archive)
-        .await
-        .expect("retention should archive and purge the eligible event");
-
-    assert!(summary.purged_events() >= 1);
-    let captured = archive
-        .0
-        .lock()
-        .expect("capture mutex should not be poisoned");
-    let records = captured
-        .iter()
-        .map(|json| {
-            serde_json::from_str::<serde_json::Value>(json)
-                .expect("archive should contain valid event JSON")
-        })
-        .collect::<Vec<_>>();
-    let record = records
-        .iter()
-        .find(|record| record["id"] == old_event.id)
-        .expect("archive should contain the test event");
-    assert_eq!(record["id"], old_event.id);
-    assert_eq!(record["entity_type"], EntityType::Collection.as_str());
-    assert!(record.get("fanout_claim_token").is_some());
-    assert!(record.get("before_revision").is_some());
-    assert!(record.get("after_revision").is_some());
-}
-
-#[actix_web::test]
-async fn event_retention_purge_keeps_events_pending_fanout() {
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let old_event = insert_collection_created_event_at(
-        &scope,
-        1,
-        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    )
-    .await;
-
-    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
-        .await
-        .unwrap();
-
-    let remaining = with_connection(&scope.pool, async |conn| {
-        events
-            .filter(crate::schema::events::dsl::id.eq(old_event.id))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(remaining, 1);
-}
-
-#[actix_web::test]
-async fn event_retention_purge_keeps_events_with_active_deliveries() {
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "retention_active", true)
-        .await;
-    let old_event = insert_collection_created_event_at(
-        &scope,
-        fixture.collection.id,
-        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    )
-    .await;
-    fanout_event(&scope.pool, old_event.id).await.unwrap();
-
-    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
-        .await
-        .unwrap();
-
-    let remaining = with_connection(&scope.pool, async |conn| {
-        events
-            .filter(crate::schema::events::dsl::id.eq(old_event.id))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(remaining, 1);
-}
-
-#[actix_web::test]
-async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_event() {
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    let subscription_id = create_collection_event_subscription(
-        &scope,
-        fixture.collection.id,
-        "retention_terminal",
-        true,
-    )
-    .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    let old_timestamp = chrono::Utc::now().naive_utc() - chrono::Duration::days(40);
-    use crate::schema::event_deliveries::dsl::{
-        created_at, event_deliveries, event_id, status,
-        subscription_id as delivery_subscription_id, updated_at,
-    };
-    with_connection(&scope.pool, async |conn| {
-        diesel::insert_into(event_deliveries)
-            .values((
-                event_id.eq(event.id),
-                delivery_subscription_id.eq(subscription_id),
-                status.eq(EventDeliveryStatus::Succeeded.as_str()),
-                created_at.eq(old_timestamp),
-                updated_at.eq(old_timestamp),
-            ))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
-        .await
-        .unwrap();
-
-    assert_eq!(summary.purged_events(), 0);
-    assert_eq!(summary.purged_terminal_deliveries(), 1);
-    assert_eq!(
-        count_event_deliveries_for_event(&scope.pool, event.id)
-            .await
-            .unwrap(),
-        0
-    );
-    let remaining_events = with_connection(&scope.pool, async |conn| {
-        events
-            .filter(crate::schema::events::dsl::id.eq(event.id))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
-    .await
-    .unwrap();
-    assert_eq!(remaining_events, 1);
-}
-
-#[actix_web::test]
-async fn event_retention_bounds_terminal_delivery_deletes_to_the_batch_size() {
-    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    let subscription_id = create_collection_event_subscription(
-        &scope,
-        fixture.collection.id,
-        "retention_bounded_terminal",
-        true,
-    )
-    .await;
-    let mut event_ids = Vec::new();
-    for _ in 0..3 {
-        event_ids.push(
-            emit_collection_created_event(&scope, fixture.collection.id)
-                .await
-                .id,
-        );
-    }
-    let old_timestamp = chrono::Utc::now().naive_utc() - chrono::Duration::days(40);
-    use crate::schema::event_deliveries::dsl::{
-        created_at, event_deliveries, event_id, status,
-        subscription_id as delivery_subscription_id, updated_at,
-    };
-    with_connection(
-        &scope.pool,
-        async |conn| -> Result<(), diesel::result::Error> {
-            for event_id_value in &event_ids {
-                diesel::insert_into(event_deliveries)
-                    .values((
-                        event_id.eq(event_id_value),
-                        delivery_subscription_id.eq(subscription_id),
-                        status.eq(EventDeliveryStatus::Succeeded.as_str()),
-                        created_at.eq(old_timestamp),
-                        updated_at.eq(old_timestamp),
-                    ))
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            Ok(())
-        },
-    )
-    .await
-    .unwrap();
-    let settings = EventRetentionSettings::new(365, 30, 2).unwrap();
-
-    let first = purge_event_retention_without_archive(&scope.pool, settings)
-        .await
-        .unwrap();
-
-    assert_eq!(first.purged_terminal_deliveries(), 2);
-    assert_eq!(
-        count_event_deliveries_for_event(&scope.pool, event_ids[2])
-            .await
-            .unwrap(),
-        1
-    );
-
-    let second = purge_event_retention_without_archive(&scope.pool, settings)
-        .await
-        .unwrap();
-    assert_eq!(second.purged_terminal_deliveries(), 1);
-}
-
-#[actix_web::test]
-async fn event_delivery_worker_marks_successful_delivery_succeeded() {
-    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "delivery_success", true)
-        .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    fanout_event(&scope.pool, event.id).await.unwrap();
-    let sink = SuccessfulSink;
-    let resolver = StaticSinkResolver { sink: &sink };
-
-    let delivery = delivery_for_event(&scope, event.id).await;
-    let settings = make_delivery_settings(3);
-    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings).await;
-    process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
-        .await
-        .unwrap();
-
-    let delivery = delivery_for_event(&scope, event.id).await;
-    assert_eq!(delivery.status, EventDeliveryStatus::Succeeded.as_str());
-    assert_eq!(delivery.attempts, 0);
-    assert!(delivery.claim_token.is_none());
-    assert!(delivery.locked_until.is_none());
-    assert!(delivery.last_error.is_none());
-}
-
-#[actix_web::test]
-async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
-    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "delivery_retry", true)
-        .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    fanout_event(&scope.pool, event.id).await.unwrap();
-    let sink = FailingSink;
-    let resolver = StaticSinkResolver { sink: &sink };
-    let settings = make_delivery_settings(2);
-
-    let delivery = delivery_for_event(&scope, event.id).await;
-    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings).await;
-    let failure_started_at = chrono::Utc::now().naive_utc();
-    process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
-        .await
-        .unwrap();
-    let first_failure = delivery_for_event(&scope, event.id).await;
-    assert_eq!(first_failure.status, EventDeliveryStatus::Failed.as_str());
-    assert_eq!(first_failure.attempts, 1);
-    assert_eq!(first_failure.last_error.as_deref(), Some("delivery failed"));
-    assert!(first_failure.next_attempt_at > failure_started_at);
-    let wakeup =
-        hubuum_storage_postgres::operations::event_delivery::next_event_delivery_wakeup_in(
-            &PostgresRuntime::unobserved(scope.pool.get_ref().clone()),
-        )
-        .await
-        .unwrap();
-    assert!(wakeup.is_none_or(|wait| wait <= std::time::Duration::from_millis(1_000)));
-
-    with_connection(&scope.pool, async |conn| {
-        use crate::schema::event_deliveries::dsl::{event_deliveries, id, next_attempt_at};
-
-        diesel::update(event_deliveries.filter(id.eq(first_failure.id)))
-            .set(next_attempt_at.eq(chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    let claimed = claim_event_delivery_by_id(&scope.pool, first_failure.id, settings).await;
-    process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
-        .await
-        .unwrap();
-    let dead = delivery_for_event(&scope, event.id).await;
-    assert_eq!(dead.status, EventDeliveryStatus::Dead.as_str());
-    assert_eq!(dead.attempts, 2);
-    assert!(dead.claim_token.is_none());
-    assert!(dead.locked_until.is_none());
-}
-
-#[actix_web::test]
-async fn event_delivery_claims_expired_in_flight_rows_again() {
-    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(&scope, fixture.collection.id, "delivery_reclaim", true)
-        .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    fanout_event(&scope.pool, event.id).await.unwrap();
-    let settings = make_delivery_settings(3);
-
-    let delivery = delivery_for_event(&scope, event.id).await;
-    let claimed = claim_event_delivery_ids(&scope.pool, settings).await;
-    assert!(claimed.contains(&delivery.id));
-    let delivery_id = delivery.id;
-
-    let blocked = claim_event_delivery_ids(&scope.pool, settings).await;
-    assert!(!blocked.contains(&delivery_id));
-
-    expire_delivery_claim(&scope, delivery_id).await;
-
-    let reclaimed = claim_event_delivery_ids(&scope.pool, settings).await;
-    assert!(reclaimed.contains(&delivery_id));
-}
-
-#[actix_web::test]
-async fn event_delivery_failed_mark_respects_claim_token() {
-    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
-    let scope = test_scope();
-    let fixture = scope.with_collection().await;
-    create_collection_event_subscription(
-        &scope,
-        fixture.collection.id,
-        "delivery_claim_token",
-        true,
-    )
-    .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    fanout_event(&scope.pool, event.id).await.unwrap();
-    let settings = make_delivery_settings(3);
-    let delivery = delivery_for_event(&scope, event.id).await;
-    let work_item = claim_event_delivery_by_id(&scope.pool, delivery.id, settings).await;
-    let (claim, _, _, _) = work_item.into_parts();
-    let wrong_claim =
-        EventDeliveryClaim::new(claim.delivery_id(), claim.attempts(), Uuid::new_v4());
-
-    let error = storage_handle(&scope.pool)
-        .mark_event_delivery_failed(&wrong_claim, settings, "wrong claim")
-        .await
-        .unwrap_err();
-
-    assert_eq!(error.kind(), StorageErrorKind::NotFound);
-    storage_handle(&scope.pool)
-        .mark_event_delivery_dead(claim.delivery_id())
-        .await
-        .unwrap();
 }
 
 #[actix_web::test]
@@ -2378,7 +1195,8 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
 
     let created = backend
         .create_remote_target(StorageRemoteTargetCreate::new(
-            fixture.collection.id,
+            hubuum_domain::CollectionId::new(fixture.collection.id)
+                .expect("validated collection id must be positive"),
             scope.scoped_name("event_remote_target"),
             StorageRemoteTargetDefinition::new(
                 "before",
@@ -2399,8 +1217,9 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             context.clone(),
         ))
         .await
-        .unwrap();
-    let target_id = created.metadata().id().id();
+        .unwrap()
+        .into_value();
+    let target_id = hubuum_domain::RemoteTargetId::from(created.metadata().id());
 
     let updated = backend
         .update_remote_target(StorageRemoteTargetUpdate::new(
@@ -2409,7 +1228,8 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             context.clone(),
         ))
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     let (updated_metadata, collection_id, name, definition) = updated.clone().into_parts();
     let (description, transport, policy) = definition.into_parts();
     let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
@@ -2434,7 +1254,8 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             context.clone(),
         ))
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     assert_eq!(
         unchanged.metadata().updated_at(),
         updated_metadata.updated_at()
@@ -2442,20 +1263,22 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     backend
         .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
             target_id,
-            12345,
+            hubuum_domain::TaskId::new(12345).unwrap(),
             "collection",
-            fixture.collection.id,
+            hubuum_domain::ResourceId::new(fixture.collection.id).unwrap(),
             context.clone(),
         ))
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
 
     backend
         .delete_remote_target(StorageRemoteTargetDelete::new(target_id, context))
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
 
-    let rows = events_for(&scope, "remote_target", target_id).await;
+    let rows = events_for(&scope, "remote_target", target_id.id()).await;
     assert_eq!(rows.len(), 4);
 
     assert_eq!(rows[0].action, "created");
@@ -2504,52 +1327,31 @@ async fn events_for(
     event_entity_type: &str,
     event_entity_id: i32,
 ) -> Vec<Event> {
-    use crate::schema::events::dsl::{entity_id, entity_type, id};
-
-    with_connection(&scope.pool, async |conn| {
-        events
-            .filter(entity_type.eq(event_entity_type))
-            .filter(entity_id.eq(event_entity_id))
-            .order(id.asc())
-            .load::<EventRow>(conn)
-            .await
-            .map(|rows| rows.into_iter().map(Event::from).collect())
-    })
+    hubuum_storage_postgres::test_support::list_events(
+        scope.pool.get_ref(),
+        EntityType::parse(event_entity_type).expect("test entity type must be valid"),
+        EventEntityId::new(event_entity_id).expect("test entity id must be valid"),
+        None,
+    )
     .await
-    .unwrap()
+    .expect("test events should load")
+    .into_iter()
+    .map(event_from_storage)
+    .collect()
 }
 
 async fn token_by_raw_value(scope: &TestScope, raw: &Token) -> PrincipalToken {
-    use crate::schema::tokens::dsl::{token, tokens};
-
-    with_connection(&scope.pool, async |conn| {
-        tokens
-            .filter(token.eq(raw.storage_hash()))
-            .first::<PrincipalTokenRow>(conn)
-            .await
-            .map(Into::into)
-    })
-    .await
-    .unwrap()
+    crate::tests::persisted_test_token(scope.pool.get_ref(), &raw.get_token()).await
 }
 
 async fn events_for_type(scope: &TestScope, event_entity_type: &str) -> Vec<Event> {
-    use crate::schema::events::dsl::{entity_type, id};
-
-    with_connection(&scope.pool, async |conn| {
-        events
-            .filter(entity_type.eq(event_entity_type))
-            .order(id.asc())
-            .load::<EventRow>(conn)
-            .await
-            .map(|rows| rows.into_iter().map(Event::from).collect())
-    })
+    hubuum_storage_postgres::test_support::list_events_by_type(
+        scope.pool.get_ref(),
+        EntityType::parse(event_entity_type).expect("test entity type must be valid"),
+    )
     .await
-    .unwrap()
-}
-
-#[derive(diesel::QueryableByName)]
-struct IndexExistsRow {
-    #[diesel(sql_type = diesel::sql_types::Bool)]
-    exists: bool,
+    .expect("test events should load")
+    .into_iter()
+    .map(event_from_storage)
+    .collect()
 }

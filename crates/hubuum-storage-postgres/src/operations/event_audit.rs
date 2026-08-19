@@ -20,13 +20,18 @@ pub async fn list_audit_events(
     query: StorageAuditEventListQuery,
 ) -> Result<StorageEventPage<StorageAuditEvent>, PostgresStorageError> {
     let include_total = query.options().include_total();
+    let accessible_collection_ids = query
+        .accessible_collection_ids()
+        .iter()
+        .map(|id| id.id())
+        .collect::<Vec<_>>();
     runtime
         .with_read_only_snapshot(
             async |connection| -> Result<StorageEventPage<StorageAuditEvent>, PostgresStorageError> {
                 let total = if include_total {
                     Some(
                         build_audit_event_query(
-                            query.accessible_collection_ids(),
+                            &accessible_collection_ids,
                             query.include_collection_less(),
                             query.filters(),
                             query.options(),
@@ -40,7 +45,7 @@ pub async fn list_audit_events(
                 };
 
                 let mut records = build_audit_event_query(
-                    query.accessible_collection_ids(),
+                    &accessible_collection_ids,
                     query.include_collection_less(),
                     query.filters(),
                     query.options(),
@@ -57,8 +62,7 @@ pub async fn list_audit_events(
                     .load::<StoredEventProjection>(connection)
                     .await?;
                 let principal_names = enrich_stored_events(connection, &mut event_rows).await?;
-                let accessible_collection_ids = query
-                    .accessible_collection_ids()
+                let accessible_collection_ids = accessible_collection_ids
                     .iter()
                     .copied()
                     .collect::<HashSet<_>>();
@@ -121,7 +125,7 @@ fn build_audit_event_query(
         query = query.filter(entity_type.eq(value.as_str()));
     }
     if let Some(value) = filters.entity_id_value() {
-        query = query.filter(entity_id.eq(Some(value)));
+        query = query.filter(entity_id.eq(Some(value.get())));
     }
     if let Some(value) = filters.action_value() {
         query = query.filter(action.eq(value.as_str()));
@@ -130,10 +134,11 @@ fn build_audit_event_query(
         query = query.filter(actor_kind.eq(value.as_str()));
     }
     if let Some(value) = filters.actor_user_id_value() {
-        query = query.filter(actor_user_id.eq(Some(value)));
+        query = query.filter(actor_user_id.eq(Some(value.id())));
     }
     if let Some(value) = filters.initiator_user_id_value() {
         let queued_events = diesel::alias!(crate::schema::events as queued_events);
+        let value = value.id();
         let queued_initiator = queued_events
             .field(crate::schema::events::initiator_user_id)
             .eq(Some(value))
@@ -166,7 +171,7 @@ fn build_audit_event_query(
         );
     }
     if let Some(value) = filters.collection_id_value() {
-        query = query.filter(collection_id.eq(Some(value)));
+        query = query.filter(collection_id.eq(Some(value.id())));
     }
     if let Some(value) = filters.occurred_after_value() {
         query = query.filter(occurred_at.ge(value));

@@ -9,6 +9,7 @@ use super::resolution::{
 };
 use super::types::{CollectionResolution, PlanningState};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
+use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
 use crate::storage::{ImportStorage, storage_handle};
 
 fn collect_request_class_keys(request: &ImportRequest) -> Vec<ClassKey> {
@@ -156,7 +157,7 @@ pub(super) async fn preload_existing_classes(
     for (collection_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
         let classes = storage_handle(pool)
-            .import_classes_by_names(collection_id, &names)
+            .import_classes_by_names(collection_id_to_storage(collection_id), &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
@@ -239,7 +240,7 @@ pub(super) async fn preload_existing_objects(
     for (class_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
         let objects = storage_handle(pool)
-            .import_objects_by_names(class_id, &names)
+            .import_objects_by_names(class_id_to_storage(class_id), &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = objects

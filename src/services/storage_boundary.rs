@@ -8,9 +8,8 @@ use crate::models::{
     ObjectRelationSelector, ObjectRelationSelectorKind, ObjectSelector, ObjectSelectorKind,
     PreparedClassRelation, PreparedObjectRelation, Principal, PrincipalGroup, PrincipalSettings,
     PrincipalSettingsPatch, PrincipalSettingsResponse, ResolvedClassRelationTarget,
-    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision,
-    TokenResourceScope, TokenScope, UpdateCollection, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject,
+    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, TokenResourceScope,
+    TokenScope, UpdateCollection, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::permissions::permission_to_storage;
 use crate::storage::{
@@ -40,6 +39,26 @@ pub(crate) fn object_id_to_storage(id: i32) -> hubuum_domain::ObjectId {
     hubuum_domain::ObjectId::new(id).expect("validated object id must be positive")
 }
 
+pub(crate) fn resource_id_to_storage(id: i32) -> hubuum_domain::ResourceId {
+    hubuum_domain::ResourceId::new(id).expect("validated resource id must be positive")
+}
+
+pub(crate) fn principal_id_to_storage(id: i32) -> hubuum_domain::PrincipalId {
+    hubuum_domain::PrincipalId::new(id).expect("validated principal id must be positive")
+}
+
+pub(crate) fn group_id_to_storage(id: i32) -> hubuum_domain::GroupId {
+    hubuum_domain::GroupId::new(id).expect("validated group id must be positive")
+}
+
+pub(crate) fn class_relation_id_to_storage(id: i32) -> hubuum_domain::ClassRelationId {
+    hubuum_domain::ClassRelationId::new(id).expect("validated class relation id must be positive")
+}
+
+pub(crate) fn object_relation_id_to_storage(id: i32) -> hubuum_domain::ObjectRelationId {
+    hubuum_domain::ObjectRelationId::new(id).expect("validated object relation id must be positive")
+}
+
 pub(super) fn visibility(
     principal_id: i32,
     is_admin: bool,
@@ -54,7 +73,7 @@ pub(super) fn visibility(
     });
     let resources = scope.map(resource_scope).transpose()?.flatten();
     Ok(StorageVisibility::new(
-        principal_id,
+        principal_id_to_storage(principal_id),
         is_admin,
         permissions,
         resources,
@@ -70,9 +89,11 @@ fn resource_scope(scope: &TokenScope) -> Result<Option<StorageResourceScope>, Ap
     let mut object_ids = Vec::new();
     for resource in resources {
         match resource {
-            TokenResourceScope::Collection(id) => collection_ids.push(id.id()),
-            TokenResourceScope::Class(id) => class_ids.push(id.id()),
-            TokenResourceScope::Object(id) => object_ids.push(id.id()),
+            TokenResourceScope::Collection(id) => {
+                collection_ids.push(collection_id_to_storage(id.id()));
+            }
+            TokenResourceScope::Class(id) => class_ids.push(class_id_to_storage(id.id())),
+            TokenResourceScope::Object(id) => object_ids.push(object_id_to_storage(id.id())),
         }
     }
     Ok(Some(StorageResourceScope::new(
@@ -86,29 +107,29 @@ pub(crate) fn collection_from_storage(row: StorageCollection) -> Result<Collecti
     let (id, name, description, created_at, updated_at, parent_collection_id, revision) =
         row.into_parts();
     Ok(Collection {
-        id,
+        id: id.id(),
         name,
         description,
         created_at,
         updated_at,
-        parent_collection_id,
-        revision: ResourceRevision::new(revision)?,
+        parent_collection_id: parent_collection_id.map(hubuum_domain::CollectionId::id),
+        revision,
     })
 }
 
 pub(crate) fn group_from_storage(row: StorageIdentityGroup) -> Result<Group, ApiError> {
     Ok(Group {
-        id: row.id(),
+        id: row.id().id(),
         groupname: row.name().to_string(),
         description: row.description().to_string(),
         created_at: row.created_at(),
         updated_at: row.updated_at(),
-        identity_scope_id: row.identity_scope_id(),
+        identity_scope_id: row.identity_scope_id().id(),
         managed_by: row.managed_by().to_string(),
         external_key: row.external_key().map(ToString::to_string),
         last_sync_attempted_at: row.last_sync_attempted_at(),
         last_sync_success_at: row.last_sync_success_at(),
-        revision: ResourceRevision::new(row.revision())?,
+        revision: row.revision(),
     })
 }
 
@@ -137,7 +158,7 @@ pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal,
         external_subject: row.external_subject().map(ToOwned::to_owned),
         last_sync_attempted_at: row.last_sync_attempted_at(),
         last_sync_success_at: row.last_sync_success_at(),
-        revision: ResourceRevision::new(row.revision().get())?,
+        revision: row.revision(),
     })
 }
 
@@ -145,11 +166,11 @@ pub(crate) fn principal_group_from_storage(
     row: StoragePrincipalGroup,
 ) -> Result<PrincipalGroup, ApiError> {
     Ok(PrincipalGroup {
-        principal_id: row.principal_id(),
-        group_id: row.group_id(),
+        principal_id: row.principal_id().id(),
+        group_id: row.group_id().id(),
         created_at: row.created_at(),
         updated_at: row.updated_at(),
-        revision: ResourceRevision::new(row.revision())?,
+        revision: row.revision(),
     })
 }
 
@@ -158,8 +179,8 @@ pub(crate) fn principal_settings_from_storage(
 ) -> Result<PrincipalSettingsResponse, ApiError> {
     let (principal_id, revision, document) = row.into_parts();
     Ok(PrincipalSettingsResponse::new(
-        principal_id,
-        ResourceRevision::new(revision)?,
+        principal_id.id(),
+        revision,
         PrincipalSettings::new(document)?,
     ))
 }
@@ -189,7 +210,10 @@ pub(crate) fn collection_to_storage(collection: Collection) -> StorageCollection
         ),
         collection.name,
         collection.description,
-        collection.parent_collection_id,
+        collection.parent_collection_id.map(|id| {
+            hubuum_domain::CollectionId::new(id)
+                .expect("stored parent collection id must be positive")
+        }),
     )
 }
 
@@ -225,7 +249,7 @@ pub(super) fn class_from_storage(row: StorageClass) -> Result<HubuumClassExpande
         revision,
     ) = row.into_parts();
     Ok(HubuumClassExpanded {
-        id,
+        id: id.id(),
         name,
         collection: collection_from_storage(collection)?,
         json_schema,
@@ -233,7 +257,7 @@ pub(super) fn class_from_storage(row: StorageClass) -> Result<HubuumClassExpande
         description,
         created_at,
         updated_at,
-        revision: ResourceRevision::new(revision)?,
+        revision,
     })
 }
 
@@ -352,15 +376,15 @@ pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, Ap
         revision,
     ) = row.into_parts();
     Ok(HubuumObject {
-        id,
+        id: id.id(),
         name,
-        collection_id,
-        hubuum_class_id,
+        collection_id: collection_id.id(),
+        hubuum_class_id: hubuum_class_id.id(),
         data,
         description,
         created_at,
         updated_at,
-        revision: ResourceRevision::new(revision)?,
+        revision,
     })
 }
 
@@ -373,8 +397,10 @@ pub(crate) fn object_to_storage(object: HubuumObject) -> StorageObject {
             object.revision,
         ),
         object.name,
-        object.collection_id,
-        object.hubuum_class_id,
+        hubuum_domain::CollectionId::new(object.collection_id)
+            .expect("stored object collection id must be positive"),
+        hubuum_domain::ClassId::new(object.hubuum_class_id)
+            .expect("stored object class id must be positive"),
         object.data,
         object.description,
     )
@@ -479,8 +505,8 @@ pub(crate) fn class_relation_to_storage(relation: HubuumClassRelation) -> Storag
             relation.updated_at,
             relation.revision,
         ),
-        relation.from_hubuum_class_id,
-        relation.to_hubuum_class_id,
+        class_id_to_storage(relation.from_hubuum_class_id),
+        class_id_to_storage(relation.to_hubuum_class_id),
     )
     .with_template_aliases(
         relation.forward_template_alias,
@@ -508,9 +534,9 @@ pub(crate) fn class_relation_from_storage(
         revision,
     ) = relation.into_parts();
     Ok(HubuumClassRelation {
-        id,
-        from_hubuum_class_id,
-        to_hubuum_class_id,
+        id: id.id(),
+        from_hubuum_class_id: from_hubuum_class_id.id(),
+        to_hubuum_class_id: to_hubuum_class_id.id(),
         forward_template_alias,
         reverse_template_alias,
         created_at,
@@ -519,31 +545,34 @@ pub(crate) fn class_relation_from_storage(
             .map(ObjectRelationLimit::new)
             .transpose()?,
         to_max_relations: to_max_relations.map(ObjectRelationLimit::new).transpose()?,
-        revision: ResourceRevision::new(revision)?,
+        revision,
     })
 }
 
 pub(crate) fn class_relation_create_to_storage(
     command: NewHubuumClassRelation,
 ) -> StorageClassRelationCreate {
-    StorageClassRelationCreate::builder(command.from_hubuum_class_id, command.to_hubuum_class_id)
-        .template_aliases(
-            command.forward_template_alias,
-            command.reverse_template_alias,
-        )
-        .relation_limits(
-            command.from_max_relations.map(ObjectRelationLimit::value),
-            command.to_max_relations.map(ObjectRelationLimit::value),
-        )
-        .build()
+    StorageClassRelationCreate::builder(
+        class_id_to_storage(command.from_hubuum_class_id),
+        class_id_to_storage(command.to_hubuum_class_id),
+    )
+    .template_aliases(
+        command.forward_template_alias,
+        command.reverse_template_alias,
+    )
+    .relation_limits(
+        command.from_max_relations.map(ObjectRelationLimit::value),
+        command.to_max_relations.map(ObjectRelationLimit::value),
+    )
+    .build()
 }
 
 pub(crate) fn class_relation_create_from_storage(
     command: &StorageClassRelationCreate,
 ) -> Result<NewHubuumClassRelation, ApiError> {
     Ok(NewHubuumClassRelation {
-        from_hubuum_class_id: command.from_class_id(),
-        to_hubuum_class_id: command.to_class_id(),
+        from_hubuum_class_id: command.from_class_id().id(),
+        to_hubuum_class_id: command.to_class_id().id(),
         forward_template_alias: command.forward_template_alias().map(str::to_string),
         reverse_template_alias: command.reverse_template_alias().map(str::to_string),
         from_max_relations: command
@@ -608,9 +637,9 @@ pub(crate) fn object_relation_to_storage(relation: HubuumObjectRelation) -> Stor
             relation.updated_at,
             relation.revision,
         ),
-        relation.from_hubuum_object_id,
-        relation.to_hubuum_object_id,
-        relation.class_relation_id,
+        object_id_to_storage(relation.from_hubuum_object_id),
+        object_id_to_storage(relation.to_hubuum_object_id),
+        class_relation_id_to_storage(relation.class_relation_id),
     )
 }
 
@@ -627,18 +656,21 @@ pub(crate) fn object_relation_from_storage(
         revision,
     ) = relation.into_parts();
     Ok(HubuumObjectRelation {
-        id,
-        from_hubuum_object_id,
-        to_hubuum_object_id,
-        class_relation_id,
+        id: id.id(),
+        from_hubuum_object_id: from_hubuum_object_id.id(),
+        to_hubuum_object_id: to_hubuum_object_id.id(),
+        class_relation_id: class_relation_id.id(),
         created_at,
         updated_at,
-        revision: ResourceRevision::new(revision)?,
+        revision,
     })
 }
 
 fn relation_endpoint_to_storage(endpoint: ObjectRelationEndpoint) -> StorageObjectRelationEndpoint {
-    StorageObjectRelationEndpoint::new(endpoint.class_id().id(), endpoint.object_id().id())
+    StorageObjectRelationEndpoint::new(
+        class_id_to_storage(endpoint.class_id().id()),
+        object_id_to_storage(endpoint.object_id().id()),
+    )
 }
 
 #[cfg(test)]
@@ -646,8 +678,8 @@ fn relation_endpoint_from_storage(
     endpoint: StorageObjectRelationEndpoint,
 ) -> Result<ObjectRelationEndpoint, ApiError> {
     Ok(ObjectRelationEndpoint::new(
-        HubuumClassID::new(endpoint.class_id())?,
-        HubuumObjectID::new(endpoint.object_id())?,
+        HubuumClassID::new(endpoint.class_id().id())?,
+        HubuumObjectID::new(endpoint.object_id().id())?,
     ))
 }
 
@@ -655,9 +687,9 @@ pub(crate) fn object_relation_create_to_storage(
     command: NewHubuumObjectRelation,
 ) -> StorageObjectRelationCreate {
     StorageObjectRelationCreate::new(
-        command.from_hubuum_object_id,
-        command.to_hubuum_object_id,
-        command.class_relation_id,
+        object_id_to_storage(command.from_hubuum_object_id),
+        object_id_to_storage(command.to_hubuum_object_id),
+        class_relation_id_to_storage(command.class_relation_id),
     )
 }
 
@@ -665,9 +697,9 @@ pub(crate) fn object_relation_create_from_storage(
     command: StorageObjectRelationCreate,
 ) -> NewHubuumObjectRelation {
     NewHubuumObjectRelation {
-        from_hubuum_object_id: command.from_object_id(),
-        to_hubuum_object_id: command.to_object_id(),
-        class_relation_id: command.class_relation_id(),
+        from_hubuum_object_id: command.from_object_id().id(),
+        to_hubuum_object_id: command.to_object_id().id(),
+        class_relation_id: command.class_relation_id().id(),
     }
 }
 
@@ -710,7 +742,9 @@ pub(crate) fn object_relation_selector_to_storage(
     selector: ObjectRelationSelector,
 ) -> StorageObjectRelationSelector {
     match selector.kind() {
-        ObjectRelationSelectorKind::ById(id) => StorageObjectRelationSelector::Id(id.id()),
+        ObjectRelationSelectorKind::ById(id) => {
+            StorageObjectRelationSelector::Id(object_relation_id_to_storage(id.id()))
+        }
         ObjectRelationSelectorKind::Between { from, to } => {
             StorageObjectRelationSelector::Between {
                 from: relation_endpoint_to_storage(*from),
@@ -726,7 +760,7 @@ pub(crate) fn object_relation_selector_from_storage(
 ) -> Result<ObjectRelationSelector, ApiError> {
     Ok(match selector {
         StorageObjectRelationSelector::Id(id) => {
-            ObjectRelationSelector::by_id(crate::models::HubuumObjectRelationID::new(id)?)
+            ObjectRelationSelector::by_id(crate::models::HubuumObjectRelationID::new(id.id())?)
         }
         StorageObjectRelationSelector::Between { from, to } => ObjectRelationSelector::between(
             relation_endpoint_from_storage(from)?,
@@ -804,8 +838,8 @@ mod tests {
             crate::storage::AuthorizationPermission::ReadClass,
         ]));
         let resources = visibility.resources().unwrap();
-        assert_eq!(resources.collection_ids(), &[7]);
-        assert_eq!(resources.class_ids(), &[9]);
+        assert_eq!(resources.collection_ids()[0].id(), 7);
+        assert_eq!(resources.class_ids()[0].id(), 9);
         assert!(resources.object_ids().is_empty());
     }
 }

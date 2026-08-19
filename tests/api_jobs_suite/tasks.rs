@@ -1,15 +1,10 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
-    use chrono::Utc;
-    use diesel::{ExpressionMethods, QueryDsl};
-    use diesel_async::RunQueryDsl;
     use rstest::rstest;
-    use uuid::Uuid;
 
     use crate::models::{TaskKind, TaskResponse, TaskStatus};
     use crate::pagination::NEXT_CURSOR_HEADER;
-    use crate::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{
         assert_paginated_collection_total_count, assert_response_status, header_value,
@@ -25,56 +20,14 @@ mod tests {
         status: TaskStatus,
         label: &str,
     ) -> i32 {
-        // A running row with no lease is intentionally recoverable. Insert it
-        // as terminal first, then expose the running state together with a
-        // live lease so concurrent worker-recovery tests cannot claim this
-        // list-only fixture between two writes.
-        let inserted_status = if status == TaskStatus::Running {
-            TaskStatus::Succeeded
-        } else {
-            status
-        };
-        let task = NewTaskRecord {
-            kind: kind.as_str().to_string(),
-            status: inserted_status.as_str().to_string(),
-            submitted_by: Some(submitted_by),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: None,
-            request_hash: None,
-            request_payload: None,
-            summary: Some(context.scoped_name(label)),
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: Some(Utc::now().naive_utc()),
-            started_at: Some(Utc::now().naive_utc()),
-            finished_at: Some(Utc::now().naive_utc()),
-        }
-        .create(&context.pool)
+        let task = crate::test_support::create_persisted_test_task(
+            context.pool.get_ref(),
+            crate::test_support::persisted_test_task_request(kind, status, submitted_by)
+                .expect("test task request must be valid")
+                .summary(Some(context.scoped_name(label))),
+        )
         .await
-        .unwrap();
-
-        if status == TaskStatus::Running {
-            crate::storage::postgres::with_connection(&context.pool, async |connection| {
-                diesel::update(
-                    crate::schema::tasks::table.filter(crate::schema::tasks::id.eq(task.id)),
-                )
-                .set((
-                    crate::schema::tasks::status.eq(TaskStatus::Running.as_str()),
-                    crate::schema::tasks::finished_at.eq::<Option<chrono::NaiveDateTime>>(None),
-                    crate::schema::tasks::lease_token.eq(Some(Uuid::new_v4())),
-                    crate::schema::tasks::lease_expires_at
-                        .eq(Some((Utc::now() + chrono::Duration::hours(1)).naive_utc())),
-                ))
-                .execute(connection)
-                .await
-            })
-            .await
-            .expect("running list fixture should receive a live lease");
-        }
+        .expect("synthetic task should be persisted");
 
         task.id
     }

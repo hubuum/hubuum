@@ -2,17 +2,17 @@
 mod tests {
     use crate::middlewares::ProxyTrust;
     use crate::models::user::{LoginUser, MAX_LOGIN_NAME_CHARACTERS};
-    use crate::storage::postgres::operations::ActiveTokens;
-    use crate::storage::postgres::prelude::*;
-    use crate::storage::postgres::{init_postgres_pool, with_connection};
+    use crate::test_support::TestActiveTokens;
     use crate::test_support::{
-        LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
+        LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config, postgres_test_pool,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
     use crate::tests::{TestMutexGuard, create_test_admin, create_test_user, lock_test_mutex};
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v0/auth/providers";
@@ -52,7 +52,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
 
@@ -180,7 +180,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
                 .wrap(actix_web::middleware::from_fn(
@@ -218,7 +218,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
 
         let app = test::init_service(
             App::new()
@@ -282,7 +282,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
                 .wrap(actix_web::middleware::from_fn(
@@ -313,7 +313,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
 
@@ -384,7 +384,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
         let admin_user = create_test_admin(&pool).await;
@@ -472,7 +472,7 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
         let admin_user = create_test_admin(&pool).await;
@@ -562,7 +562,7 @@ mod tests {
             config.trusted_proxy_hops,
         );
         let max_attempts = config.login_rate_limit_max_attempts;
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
                 .wrap(actix_web::middleware::from_fn(
@@ -626,7 +626,7 @@ mod tests {
             config.trusted_proxy_hops,
         );
         let max_attempts = config.login_rate_limit_max_attempts;
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
                 .wrap(actix_web::middleware::from_fn(
@@ -688,7 +688,7 @@ mod tests {
             config.trusted_proxy_hops,
         );
         let per_ip = config.login_rate_limit_max_attempts_per_ip;
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
                 .wrap(actix_web::middleware::from_fn(
@@ -744,7 +744,7 @@ mod tests {
         reset_login_rate_limit_for_tests().await;
         let config = integration_test_config().unwrap();
         let max_attempts = config.login_rate_limit_max_attempts;
-        let pool = init_postgres_pool(&config.database_url, config.db_pool_size);
+        let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
                 .wrap(actix_web::middleware::from_fn(

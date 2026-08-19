@@ -5,6 +5,7 @@ use diesel::{Queryable, Selectable};
 use hubuum_computed_fields::{
     Definition, EvaluationLimits, EvaluationResult, FieldKey, Operation, ResultType, evaluate,
 };
+use hubuum_domain::{ClassId, PrincipalId};
 use hubuum_query::ComputedQueryValueType;
 use hubuum_storage_core::{
     StorageComputedFieldDefinition, StorageComputedFieldDefinitionContent,
@@ -144,9 +145,9 @@ impl ComputedDefinitionRow {
     ) -> Result<StorageComputedFieldDefinition, PostgresStorageError> {
         let visibility = match (self.visibility.as_str(), self.owner_user_id) {
             (SHARED_VISIBILITY, None) => StorageComputedFieldVisibility::Shared,
-            (PERSONAL_VISIBILITY, Some(owner_id)) => {
-                StorageComputedFieldVisibility::Personal { owner_id }
-            }
+            (PERSONAL_VISIBILITY, Some(owner_id)) => StorageComputedFieldVisibility::Personal {
+                owner_id: PrincipalId::new(owner_id)?,
+            },
             (visibility, owner_id) => {
                 return Err(PostgresStorageError::database(format!(
                     "Computed-field definition {} has invalid visibility '{visibility}' and owner {owner_id:?}",
@@ -155,8 +156,8 @@ impl ComputedDefinitionRow {
             }
         };
         Ok(StorageComputedFieldDefinition::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
-            self.class_id,
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+            ClassId::new(self.class_id)?,
             visibility,
             StorageComputedFieldDefinitionContent::new(
                 StorageComputedFieldDefinitionInput::new(
@@ -169,7 +170,10 @@ impl ComputedDefinitionRow {
                 .with_enabled(self.enabled),
                 self.semantics_version,
             ),
-            StorageComputedFieldProvenance::new(self.created_by, self.updated_by),
+            StorageComputedFieldProvenance::new(
+                self.created_by.map(PrincipalId::new).transpose()?,
+                self.updated_by.map(PrincipalId::new).transpose()?,
+            ),
         ))
     }
 

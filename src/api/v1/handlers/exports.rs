@@ -69,7 +69,7 @@ pub async fn run_export(
     let export = export.into_inner();
     let submission = ExportTaskSubmission::for_token(
         export,
-        TokenID::new(requestor.token_meta.id())?,
+        TokenID::new(requestor.token_meta.id().id())?,
         requestor.scopes(),
     )
     .idempotency_key(idempotency_key_from_headers(req.headers())?);

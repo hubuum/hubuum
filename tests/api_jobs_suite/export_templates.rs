@@ -17,7 +17,7 @@ mod tests {
     const TEMPLATES_ENDPOINT: &str = "/api/v1/export-templates";
 
     async fn create_collection(
-        pool: &crate::storage::postgres::PostgresPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         suffix: &str,
     ) -> Collection {
         let admin_group = ensure_admin_group(pool).await;

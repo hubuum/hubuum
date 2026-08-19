@@ -35,7 +35,8 @@ def registry_baseline_exists(
         response = opener(request, timeout=30)
     except HTTPError as error:
         status = error.code
-        error.close()
+        if error.fp is not None:
+            error.close()
         if status == 404:
             return False
         raise BaselineLookupError(

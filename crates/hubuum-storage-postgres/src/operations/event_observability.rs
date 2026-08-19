@@ -1,6 +1,7 @@
 use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{CollectionId, EventSinkId, EventSubscriptionId};
 use hubuum_storage_core::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventMetricsSnapshot, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
@@ -278,17 +279,21 @@ async fn load_sink_health(
     .load::<SinkHealthRow>(conn)
     .await?;
 
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| {
             let counts = status_counts(&row);
-            EventSinkHealthSnapshot::new(
-                EventSinkSnapshot::new(row.sink_id, row.sink_name, row.sink_kind, row.sink_enabled),
+            Ok(EventSinkHealthSnapshot::new(
+                EventSinkSnapshot::new(
+                    EventSinkId::new(row.sink_id)?,
+                    row.sink_name,
+                    row.sink_kind,
+                    row.sink_enabled,
+                ),
                 row.subscription_count,
                 EventQueueSnapshot::new(counts, row.stale_claims, row.oldest_due_age_seconds),
-            )
+            ))
         })
-        .collect())
+        .collect()
 }
 
 async fn load_subscription_health(
@@ -344,20 +349,24 @@ async fn load_subscription_health(
     .load::<SubscriptionHealthRow>(conn)
     .await?;
 
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| {
             let counts = status_counts(&row);
-            EventSubscriptionHealthSnapshot::new(
-                row.subscription_id,
+            Ok(EventSubscriptionHealthSnapshot::new(
+                EventSubscriptionId::new(row.subscription_id)?,
                 row.subscription_name,
-                row.collection_id,
+                CollectionId::new(row.collection_id)?,
                 row.subscription_enabled,
-                EventSinkSnapshot::new(row.sink_id, row.sink_name, row.sink_kind, row.sink_enabled),
+                EventSinkSnapshot::new(
+                    EventSinkId::new(row.sink_id)?,
+                    row.sink_name,
+                    row.sink_kind,
+                    row.sink_enabled,
+                ),
                 EventQueueSnapshot::new(counts, row.stale_claims, row.oldest_due_age_seconds),
-            )
+            ))
         })
-        .collect())
+        .collect()
 }
 
 fn status_counts(row: &impl HasDeliveryCounts) -> EventDeliveryStatusSnapshot {

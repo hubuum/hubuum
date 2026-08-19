@@ -36,7 +36,7 @@ impl From<StorageImportResult> for NewImportResultRow {
         let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
             result.into_parts();
         Self {
-            task_id,
+            task_id: task_id.id(),
             item_ref,
             entity_kind,
             action,
@@ -69,8 +69,9 @@ pub async fn collection_by_id(
                 .await
                 .optional()
         })
-        .await
-        .map(|row| row.map(CollectionRow::into_storage))
+        .await?
+        .map(CollectionRow::into_storage)
+        .transpose()
 }
 
 pub async fn collection_by_key(
@@ -139,7 +140,7 @@ pub async fn classes_by_names(
         return Ok(Vec::new());
     }
     let names = names.to_vec();
-    runtime
+    let rows = runtime
         .with_connection(async move |connection| {
             crate::schema::hubuumclass::table
                 .filter(crate::schema::hubuumclass::collection_id.eq(collection_id))
@@ -148,8 +149,8 @@ pub async fn classes_by_names(
                 .load::<ClassRow>(connection)
                 .await
         })
-        .await
-        .map(|rows| rows.into_iter().map(ClassRow::into_storage).collect())
+        .await?;
+    rows.into_iter().map(ClassRow::into_storage).collect()
 }
 
 pub async fn object_by_name(
@@ -188,7 +189,7 @@ pub async fn objects_by_names(
                 .await
         })
         .await
-        .map(|rows| rows.into_iter().map(ObjectRow::into_storage).collect())
+        .and_then(|rows| rows.into_iter().map(ObjectRow::into_storage).collect())
 }
 
 pub async fn class_relation_exists(
@@ -290,9 +291,8 @@ pub(crate) async fn root_collection_on_connection(
     crate::schema::collections::table
         .filter(crate::schema::collections::parent_collection_id.is_null())
         .first::<CollectionRow>(connection)
-        .await
-        .map(CollectionRow::into_storage)
-        .map_err(PostgresStorageError::from)
+        .await?
+        .into_storage()
 }
 
 pub(crate) async fn collection_by_key_on_connection(
@@ -310,7 +310,7 @@ pub(crate) async fn collection_by_key_on_connection(
     let mut parent = root_collection_on_connection(connection).await?;
     for segment in path {
         let Some(child) =
-            collection_child_by_name_on_connection(connection, parent.id(), &segment).await?
+            collection_child_by_name_on_connection(connection, parent.id().id(), &segment).await?
         else {
             return Ok(None);
         };
@@ -330,8 +330,9 @@ pub(crate) async fn class_by_name_on_connection(
         .first::<ClassRow>(connection)
         .await
         .optional()
-        .map(|row| row.map(ClassRow::into_storage))
-        .map_err(PostgresStorageError::from)
+        .map_err(PostgresStorageError::from)?
+        .map(ClassRow::into_storage)
+        .transpose()
 }
 
 pub(crate) async fn object_by_name_on_connection(
@@ -345,8 +346,9 @@ pub(crate) async fn object_by_name_on_connection(
         .first::<ObjectRow>(connection)
         .await
         .optional()
-        .map(|row| row.map(ObjectRow::into_storage))
-        .map_err(PostgresStorageError::from)
+        .map_err(PostgresStorageError::from)?
+        .map(ObjectRow::into_storage)
+        .transpose()
 }
 
 async fn unique_collection_by_name_on_connection(
@@ -371,9 +373,10 @@ async fn collections_by_name_on_connection(
         .filter(crate::schema::collections::name.eq(name))
         .order(crate::schema::collections::id.asc())
         .load::<CollectionRow>(connection)
-        .await
-        .map(|rows| rows.into_iter().map(CollectionRow::into_storage).collect())
-        .map_err(PostgresStorageError::from)
+        .await?
+        .into_iter()
+        .map(CollectionRow::into_storage)
+        .collect()
 }
 
 async fn collection_child_by_name_on_connection(
@@ -386,9 +389,9 @@ async fn collection_child_by_name_on_connection(
         .filter(crate::schema::collections::name.eq(name))
         .first::<CollectionRow>(connection)
         .await
-        .optional()
-        .map(|row| row.map(CollectionRow::into_storage))
-        .map_err(PostgresStorageError::from)
+        .optional()?
+        .map(CollectionRow::into_storage)
+        .transpose()
 }
 
 fn normalized_pair(left: i32, right: i32, label: &str) -> Result<(i32, i32), PostgresStorageError> {

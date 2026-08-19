@@ -114,7 +114,7 @@ pub async fn get_tasks(
     let submitted_by_filter = if is_admin {
         filters.submitted_by
     } else if backend.supports_storage_visibility_filtering() {
-        Some(requestor.principal.id())
+        Some(requestor.principal.id().id())
     } else {
         None
     };

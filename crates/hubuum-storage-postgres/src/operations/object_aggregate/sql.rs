@@ -92,9 +92,27 @@ macro_rules! visible_filtered_object_query {
         if let Some(scope) = $resource_scope {
             query = query.filter(
                 object_collection_id
-                    .eq_any(scope.collection_ids())
-                    .or(hubuum_class_id.eq_any(scope.class_ids()))
-                    .or(object_id.eq_any(scope.object_ids())),
+                    .eq_any(
+                        scope
+                            .collection_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )
+                    .or(hubuum_class_id.eq_any(
+                        scope
+                            .class_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    ))
+                    .or(object_id.eq_any(
+                        scope
+                            .object_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )),
             );
         }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
@@ -122,9 +140,27 @@ macro_rules! visible_filtered_aggregate_query {
         if let Some(scope) = $resource_scope {
             query = query.filter(
                 object_collection_id
-                    .eq_any(scope.collection_ids())
-                    .or(hubuum_class_id.eq_any(scope.class_ids()))
-                    .or(object_id.eq_any(scope.object_ids())),
+                    .eq_any(
+                        scope
+                            .collection_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )
+                    .or(hubuum_class_id.eq_any(
+                        scope
+                            .class_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    ))
+                    .or(object_id.eq_any(
+                        scope
+                            .object_ids()
+                            .iter()
+                            .map(|id| id.id())
+                            .collect::<Vec<_>>(),
+                    )),
             );
         }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);

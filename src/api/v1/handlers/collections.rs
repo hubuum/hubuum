@@ -84,7 +84,7 @@ pub async fn get_collections(
         let search_params = prepare_db_pagination::<Collection>(&params)?;
         let (result, total_count) = catalog_service::list_collections(
             &context,
-            user.id(),
+            user.id().id(),
             is_admin,
             requestor.scopes(),
             search_params,
@@ -98,9 +98,14 @@ pub async fn get_collections(
         }
         let mut candidate_options = count_query_options(&params);
         candidate_options.set_include_total(false);
-        let (candidates, _) =
-            catalog_service::list_collections(&context, user.id(), true, None, candidate_options)
-                .await?;
+        let (candidates, _) = catalog_service::list_collections(
+            &context,
+            user.id().id(),
+            true,
+            None,
+            candidate_options,
+        )
+        .await?;
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<Collection>(&params)?;
         let page = authorize_cursor_page(
@@ -654,7 +659,7 @@ pub async fn grant_collection_group_permissions(
 
     info!(
         message = "Collection group permissions grant requested",
-        requestor = requestor.principal.id(),
+        requestor = requestor.principal.id().id(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions
@@ -725,7 +730,7 @@ pub async fn replace_collection_group_permissions(
 
     info!(
         message = "Collection group permissions replace requested",
-        requestor = requestor.principal.id(),
+        requestor = requestor.principal.id().id(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions

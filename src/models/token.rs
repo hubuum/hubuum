@@ -262,10 +262,10 @@ impl CurrentTokenMetadata {
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         Ok(Self {
-            id: TokenID::new(value.id()).map_err(|_| {
+            id: TokenID::new(value.id().id()).map_err(|_| {
                 ApiError::InternalServerError(format!(
                     "Authenticated token has invalid identifier {}",
-                    value.id()
+                    value.id().id()
                 ))
             })?,
             name: value.name().map(str::to_string),
@@ -273,13 +273,8 @@ impl CurrentTokenMetadata {
             issued: value.issued(),
             expires_at: value.expires_at(),
             last_used_at: value.last_used_at(),
-            scope: token_scope_details(value.id(), value.is_scoped(), scope)?,
-            revision: ResourceRevision::new(value.revision()).map_err(|_| {
-                ApiError::InternalServerError(format!(
-                    "Authenticated token {} has invalid revision",
-                    value.id()
-                ))
-            })?,
+            scope: token_scope_details(value.id().id(), value.is_scoped(), scope)?,
+            revision: value.revision(),
         })
     }
 }

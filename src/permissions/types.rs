@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::Permissions;
+use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{AuthorizationStorage, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 
@@ -32,9 +33,12 @@ impl PrincipalRef {
     {
         let user_id = subject.principal_id();
         let principal = storage_handle(pool)
-            .load_authorization_principal(user_id)
+            .load_authorization_principal(principal_id_to_storage(user_id))
             .await?;
-        Ok(Self::new(user_id, principal.into_group_ids()))
+        Ok(Self::new(
+            user_id,
+            principal.into_group_ids().into_iter().map(|id| id.id()),
+        ))
     }
 }
 

@@ -1,6 +1,7 @@
 use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Integer, Nullable, Text, Timestamp};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{CollectionId, ExportTemplateId};
 use hubuum_storage_core::{
     OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth,
     OperationalStorageSnapshot, OperationalTaskActiveCounts, OperationalTaskKindCounts,
@@ -226,16 +227,16 @@ pub async fn load_export_templates_for_audit(
                 .await
         })
         .await
-        .map(|rows| {
+        .and_then(|rows| {
             rows.into_iter()
                 .map(|row| {
-                    OperationalExportTemplateAuditEntry::new(
-                        row.id,
-                        row.collection_id,
+                    Ok(OperationalExportTemplateAuditEntry::new(
+                        ExportTemplateId::new(row.id)?,
+                        CollectionId::new(row.collection_id)?,
                         row.name,
                         row.template,
                         row.content_type,
-                    )
+                    ))
                 })
                 .collect()
         })

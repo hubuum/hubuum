@@ -6,21 +6,13 @@ use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 #[cfg(feature = "embedded-migrations")]
 use hubuum::errors::EXIT_CODE_DATABASE_ERROR;
+use hubuum::models::NewUser;
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
-use hubuum::models::{NewUser, TaskKind, TaskStatus};
-use hubuum::schema::{
-    collections, export_task_outputs, export_templates, identity_scopes, principals, tasks, users,
-};
-use hubuum::storage::postgres::operations::identity::ensure_identity_scope;
-use hubuum::storage::postgres::operations::task_rows::{
-    NewExportTaskOutputRow as NewExportTaskOutputRecord, NewTaskRow as NewTaskRecord,
-};
-use hubuum::storage::postgres::operations::user::CreateUserRecord;
-use hubuum::storage::postgres::prelude::*;
-use hubuum::storage::postgres::{
-    PostgresPool, init_postgres_pool_with_statement_timeout, with_connection, with_transaction,
-};
+use hubuum::schema::{collections, export_templates, identity_scopes, principals, users};
+use hubuum::test_support::postgres_test_pool_with_timeout;
 use hubuum::utilities::auth::verify_password;
+use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::{PostgresPool, with_connection};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -34,7 +26,7 @@ fn database_url() -> String {
 }
 
 fn database_pool(database_url: &str) -> PostgresPool {
-    init_postgres_pool_with_statement_timeout(database_url, 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS)
+    postgres_test_pool_with_timeout(database_url, 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS)
 }
 
 fn admin_command(database_url: &str) -> Command {
@@ -176,23 +168,27 @@ fn reset_password_does_not_parse_server_config_arguments() {
 async fn reset_password_replaces_the_stored_credential() {
     let database_url = database_url();
     let pool = database_pool(&database_url);
-    ensure_identity_scope(&pool, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND)
-        .await
-        .expect("local identity scope");
+    hubuum::services::identity::ensure_identity_scope(
+        &pool,
+        LOCAL_IDENTITY_SCOPE,
+        LOCAL_PROVIDER_KIND,
+    )
+    .await
+    .expect("local identity scope");
 
     let username = unique_name("admin_cli_reset");
     let old_password = unique_name("old_password");
-    NewUser {
-        identity_scope: None,
-        name: username.clone(),
-        password: old_password.clone(),
-        proper_name: None,
-        email: None,
-    }
-    .hash_password()
-    .await
-    .expect("test user password hash")
-    .create_user_record_without_events(&pool)
+    hubuum::services::identity::create_user(
+        &pool,
+        NewUser {
+            identity_scope: None,
+            name: username.clone(),
+            password: old_password.clone(),
+            proper_name: None,
+            email: None,
+        },
+        &hubuum::events::EventContext::system(),
+    )
     .await
     .expect("test user");
 
@@ -279,57 +275,35 @@ async fn export_template_health_reports_persisted_output_statistics() {
     let database_url = database_url();
     let pool = database_pool(&database_url);
     let template_name = unique_name("admin_cli_health_template");
-    let stored_template_name = template_name.clone();
-
-    with_transaction(
+    let now = Utc::now().naive_utc();
+    let task = hubuum::test_support::create_persisted_test_task(
         &pool,
-        async move |conn| -> Result<(), diesel::result::Error> {
-            let now = Utc::now().naive_utc();
-            let task_id = insert_into(tasks::table)
-                .values(NewTaskRecord {
-                    kind: TaskKind::Export.as_str().to_string(),
-                    status: TaskStatus::Succeeded.as_str().to_string(),
-                    submitted_by: None,
-                    idempotency_key: None,
-                    request_hash: None,
-                    request_payload: None,
-                    summary: None,
-                    total_items: 1,
-                    processed_items: 1,
-                    success_items: 1,
-                    failed_items: 0,
-                    submitted_token_id: None,
-                    submitted_token_scoped: false,
-                    submitted_token_scopes: serde_json::json!([]),
-                    request_redacted_at: None,
-                    started_at: Some(now),
-                    finished_at: Some(now),
-                })
-                .returning(tasks::id)
-                .get_result::<i32>(conn)
-                .await?;
-
-            insert_into(export_task_outputs::table)
-                .values(NewExportTaskOutputRecord {
-                    task_id,
-                    template_name: Some(stored_template_name),
-                    content_type: "application/json".to_string(),
-                    json_output: Some(serde_json::json!({ "ok": true })),
-                    text_output: None,
-                    meta_json: serde_json::json!({}),
-                    warnings_json: serde_json::json!(["first", "second"]),
-                    warning_count: 2,
-                    truncated: false,
-                    output_expires_at: now + Duration::hours(1),
-                    total_duration_ms: 125,
-                    query_duration_ms: 20,
-                    hydration_duration_ms: 30,
-                    render_duration_ms: 75,
-                })
-                .execute(conn)
-                .await?;
-            Ok(())
-        },
+        hubuum_storage_postgres::test_support::TestTaskCreate::internal_completed(
+            hubuum_storage_core::StorageTaskKind::Export,
+            hubuum_storage_core::StorageTaskStatus::Succeeded,
+        )
+        .expect("terminal export fixture must be valid")
+        .request_payload(None)
+        .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 1, 0)),
+    )
+    .await
+    .expect("stored export task");
+    hubuum_storage_postgres::test_support::store_export_output(
+        &pool,
+        hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive"),
+        hubuum_storage_core::StorageExportTaskArtifact::builder(
+            "application/json",
+            serde_json::json!({}),
+            serde_json::json!(["first", "second"]),
+            now + Duration::hours(1),
+        )
+        .template_name(Some(template_name.clone()))
+        .output(Some(serde_json::json!({ "ok": true })), None)
+        .warning_state(2, false)
+        .durations(hubuum_storage_core::StorageTaskDurations::new(
+            125, 20, 30, 75,
+        ))
+        .build(),
     )
     .await
     .expect("stored export output");

@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use actix_web::{App, HttpResponse, http::StatusCode, test, web};
 use chrono::{NaiveDate, NaiveDateTime};
-use diesel::{ExpressionMethods, QueryDsl};
-use diesel_async::RunQueryDsl;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::bb8::Pool;
 use rstest::rstest;
@@ -14,11 +12,9 @@ use crate::config::RuntimeRole;
 use crate::middlewares::TracingMiddleware;
 use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
 use crate::observability::metrics;
-use crate::schema::tasks;
-use crate::storage::postgres::operations::task_rows::NewTaskRow as NewTaskRecord;
-use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
 use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
+use hubuum_storage_postgres::{PostgresConnection, PostgresPool};
 
 static METRICS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -304,19 +300,10 @@ async fn task_terminal_gauge_exports_latest_finished_timestamp(
         .unwrap()
         .and_hms_opt(0, 0, 0)
         .unwrap();
-    let records = [
-        terminal_task_record(&context, "older", older),
-        terminal_task_record(&context, "latest", latest),
+    let task_ids = vec![
+        terminal_task_record(&context, "older", older).await,
+        terminal_task_record(&context, "latest", latest).await,
     ];
-    let task_ids = with_connection(&context.pool, async |conn| {
-        diesel::insert_into(tasks::table)
-            .values(&records)
-            .returning(tasks::id)
-            .get_results::<i32>(conn)
-            .await
-    })
-    .await
-    .unwrap();
 
     let app = test::init_service(
         App::new()
@@ -330,13 +317,14 @@ async fn task_terminal_gauge_exports_latest_finished_timestamp(
     assert_eq!(response.status(), StatusCode::OK);
     let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
 
-    with_connection(&context.pool, async |conn| {
-        diesel::delete(tasks::table.filter(tasks::id.eq_any(task_ids)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
+    for task_id in task_ids {
+        hubuum_storage_postgres::test_support::delete_task(
+            context.pool.get_ref(),
+            hubuum_domain::TaskId::new(task_id).expect("persisted task id must be positive"),
+        )
+        .await
+        .expect("terminal metric task should be deleted");
+    }
     clear_metrics_scrape_cache();
 
     let metric = body
@@ -400,30 +388,30 @@ async fn tracing_metrics_keep_stable_route_templates() {
     assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
 }
 
-fn terminal_task_record(
+async fn terminal_task_record(
     context: &TestContext,
     label: &str,
     finished_at: NaiveDateTime,
-) -> NewTaskRecord {
-    NewTaskRecord {
-        kind: TaskKind::Backup.as_str().to_string(),
-        status: TaskStatus::Failed.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        idempotency_key: Some(context.scoped_name(&format!("terminal-metric-{label}"))),
-        request_hash: None,
-        request_payload: None,
-        summary: Some("terminal metric fixture".to_string()),
-        total_items: 1,
-        processed_items: 1,
-        success_items: 0,
-        failed_items: 1,
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        request_redacted_at: Some(finished_at),
-        started_at: Some(finished_at),
-        finished_at: Some(finished_at),
-    }
+) -> i32 {
+    crate::test_support::create_persisted_test_task(
+        context.pool.get_ref(),
+        crate::test_support::persisted_test_task_request(
+            TaskKind::Backup,
+            TaskStatus::Failed,
+            context.admin_user.id,
+        )
+        .expect("terminal metric task request must be valid")
+        .idempotency_key(Some(
+            context.scoped_name(&format!("terminal-metric-{label}")),
+        ))
+        .summary(Some("terminal metric fixture".to_string()))
+        .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 0, 1))
+        .request_payload(None)
+        .terminal_at(finished_at),
+    )
+    .await
+    .expect("terminal metric task should be created")
+    .id
 }
 
 fn unreachable_pool() -> PostgresPool {

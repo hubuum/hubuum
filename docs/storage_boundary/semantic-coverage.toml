@@ -5,35 +5,35 @@
 # contract scenarios. `native_scenarios` identify adapter-only evidence for
 # mechanics that should not leak into the logical contract.
 
-[traits.StorageIdentity]
+[traits.StorageBackendIdentity]
 source = "crates/hubuum-storage-core/src/lib.rs"
 methods = ["storage_name"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http"]
 
-[traits.CollectionStore]
+[traits.CollectionStorage]
 source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
 methods = ["get_collection", "create_collection", "update_collection", "delete_collection", "collection_children", "collection_ancestors", "move_collection"]
 shared_scenarios = ["src/services/collections.rs::collection_contract_create_is_visible_to_point_reads", "src/services/collections.rs::collection_contract_move_reparents_the_subtree"]
 native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_a_compound_collection_create_at_an_injected_failure"]
 
-[traits.ClassStore]
+[traits.ClassStorage]
 source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
 methods = ["resolve_class", "create_class", "update_class", "delete_class", "class_names"]
 shared_scenarios = ["src/services/classes.rs::class_contract_resolves_explicit_addresses", "src/services/classes.rs::class_contract_delete_removes_the_resolved_class"]
 
-[traits.ObjectStore]
+[traits.ObjectStorage]
 source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
 methods = ["get_object", "resolve_object", "create_object", "update_object", "patch_object_data", "delete_object", "validate_object", "validate_object_create", "validate_object_update"]
 shared_scenarios = ["src/services/objects.rs::object_contract_resolves_explicit_addresses", "src/services/objects.rs::object_contract_delete_removes_the_resolved_object"]
 
-[traits.ClassRelationStore]
+[traits.ClassRelationStorage]
 source = "crates/hubuum-storage-core/src/relation_lifecycle.rs"
-methods = ["prepare_class_relation", "resolve_class_relation", "create_class_relation", "delete_class_relation", "create_class_relation_from_command", "delete_class_relation_by_id"]
+methods = ["prepare_class_relation", "resolve_class_relation", "create_class_relation", "delete_class_relation"]
 shared_scenarios = ["src/services/class_relations.rs::class_relation_contract_creates_and_resolves_the_endpoint_aggregate", "src/services/class_relations.rs::class_relation_contract_deletes_the_resolved_relation"]
 
-[traits.ObjectRelationStore]
+[traits.ObjectRelationStorage]
 source = "crates/hubuum-storage-core/src/relation_lifecycle.rs"
-methods = ["prepare_object_relation", "resolve_object_relation", "create_object_relation", "delete_object_relation", "create_object_relation_from_command", "delete_object_relation_by_id"]
+methods = ["prepare_object_relation", "resolve_object_relation", "create_object_relation", "delete_object_relation"]
 shared_scenarios = ["src/services/object_relations.rs::object_relation_contract_prepares_a_normalized_endpoint_aggregate", "src/services/object_relations.rs::object_relation_contract_deletes_the_resolved_relation"]
 
 [traits.AuthenticationStorage]
@@ -104,7 +104,8 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 [traits.EventDeliveryStorage]
 source = "crates/hubuum-storage-core/src/events.rs"
 methods = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"]
-native_scenarios = ["src/events/tests.rs::event_delivery_worker_marks_successful_delivery_succeeded", "src/events/tests.rs::event_delivery_worker_retries_with_backoff_then_marks_dead", "src/events/tests.rs::event_delivery_failed_mark_respects_claim_token"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http"]
+native_scenarios = ["src/tests/storage_contract.rs::postgres_delivery_faults_preserve_claim_acknowledgement_and_retry_recovery"]
 
 [traits.EventFanoutStorage]
 source = "crates/hubuum-storage-core/src/events.rs"
@@ -118,7 +119,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.EventRetentionStorage]
 source = "crates/hubuum-storage-core/src/events.rs"
-methods = ["process_event_retention_batch"]
+methods = ["claim_event_retention_batch", "complete_event_retention_batch", "process_event_retention_batch"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_processes_event_retention"]
 
 [traits.HistoryStorage]
@@ -198,11 +199,6 @@ source = "crates/hubuum-storage-core/src/import_workflow.rs"
 methods = ["import_root_collection", "import_collection_by_id", "import_collection_by_key", "import_collections_by_name", "import_collection_child_by_name", "import_class_by_name", "import_classes_by_names", "import_object_by_name", "import_objects_by_names", "import_class_relation_exists", "import_object_relation_exists", "import_group_exists", "preflight_import", "apply_import_strict", "apply_import_best_effort", "record_import_results"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract"]
 
-[traits.ExportQueryStorage]
-source = "crates/hubuum-storage-core/src/export_query.rs"
-methods = ["run_export_queries"]
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
-
 [traits.ExportTemplateStorage]
 source = "crates/hubuum-storage-core/src/export_template_lifecycle.rs"
 methods = ["get_export_template", "list_export_templates", "list_export_templates_in_collection", "export_template_class_collection_id", "create_export_template", "replace_export_template", "delete_export_template"]
@@ -211,12 +207,12 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 [traits.WorkerNotificationStorage]
 source = "crates/hubuum-storage-core/src/worker_notifications.rs"
 methods = ["worker_notification_listener"]
-native_scenarios = ["src/storage/postgres/notifications.rs::fanout_trigger_notifies_only_after_commit", "src/storage/postgres/notifications.rs::task_queue_notification_is_delivered_only_after_commit", "src/storage/postgres/notifications.rs::shutdown_releases_postgres_notification_listener"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/notifications.rs::fanout_trigger_notifies_only_after_commit", "crates/hubuum-storage-postgres/tests/notifications.rs::task_queue_notification_is_delivered_only_after_commit", "crates/hubuum-storage-postgres/tests/notifications.rs::shutdown_releases_postgres_notification_listener"]
 
 [traits.StorageExecution]
 source = "crates/hubuum-storage-core/src/execution.rs"
-methods = ["run_with_call_site", "run_with_call_site_send", "run_with_mutation_provenance", "run_with_revision_precondition"]
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context"]
+methods = ["run_in_scope", "run_in_scope_send"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
 
 [traits.TransactionalStorage]
 source = "crates/hubuum-storage-core/src/transaction.rs"
@@ -274,7 +270,7 @@ scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_sup
 [enums.StorageNotification]
 source = "crates/hubuum-storage-core/src/worker_notifications.rs"
 variants = ["EventFanout", "EventDelivery", "TaskQueue"]
-scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notification_topics_have_stable_bounded_names", "src/storage/postgres/notifications.rs::fanout_trigger_notifies_only_after_commit", "src/storage/postgres/notifications.rs::task_queue_notification_is_delivered_only_after_commit"]
+scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notification_topics_have_stable_bounded_names", "crates/hubuum-storage-postgres/tests/notifications.rs::fanout_trigger_notifies_only_after_commit", "crates/hubuum-storage-postgres/tests/notifications.rs::task_queue_notification_is_delivered_only_after_commit"]
 
 [enums.StorageTaskKind]
 source = "crates/hubuum-storage-core/src/task_queue.rs"

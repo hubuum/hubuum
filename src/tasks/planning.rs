@@ -29,6 +29,9 @@ use crate::models::{
     Permissions, RestoreTimestamps,
 };
 use crate::permissions::AuthorizationContext;
+use crate::services::storage_boundary::{
+    class_id_to_storage, collection_id_to_storage, object_id_to_storage,
+};
 use crate::storage::{ImportStorage, StorageImportPlanItem, storage_handle};
 use crate::traits::UserPermissions;
 
@@ -143,7 +146,9 @@ fn plan_system_item(
 fn preflight_failure_kind(error: &ApiError) -> FailureKind {
     match error {
         ApiError::Forbidden(_) | ApiError::Unauthorized(_) => FailureKind::Permission,
-        ApiError::Conflict(_) | ApiError::PreconditionFailed(_, _) => FailureKind::Collision,
+        ApiError::Conflict(_)
+        | ApiError::PreconditionFailed(_, _)
+        | ApiError::RevisionConflict(_, _) => FailureKind::Collision,
         ApiError::NotFound(_) | ApiError::Gone(_) => FailureKind::Resolution,
         ApiError::BadRequest(_)
         | ApiError::ValidationError(_)
@@ -208,11 +213,7 @@ async fn preflight_dry_run(
             }
             continue;
         };
-        item.result.set_observed_revision(
-            revision
-                .map(crate::models::ResourceRevision::new)
-                .transpose()?,
-        );
+        item.result.set_observed_revision(revision);
         if let Some(error) = error {
             let error = ApiError::from(error);
             failures.push(PlanningFailure {
@@ -319,7 +320,7 @@ async fn class_relation_exists_cached(
     }
 
     let exists = storage_handle(pool)
-        .import_class_relation_exists(pair.0, pair.1)
+        .import_class_relation_exists(class_id_to_storage(pair.0), class_id_to_storage(pair.1))
         .await
         .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.class_relation_exists_cache.insert(pair, exists);
@@ -346,7 +347,7 @@ async fn object_relation_exists_cached(
     }
 
     let exists = storage_handle(pool)
-        .import_object_relation_exists(pair.0, pair.1)
+        .import_object_relation_exists(object_id_to_storage(pair.0), object_id_to_storage(pair.1))
         .await
         .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.object_relation_exists_cache.insert(pair, exists);
@@ -983,7 +984,7 @@ where
             })
         } else {
             storage_handle(pool)
-                .import_collection_child_by_name(parent.id, &input.name)
+                .import_collection_child_by_name(collection_id_to_storage(parent.id), &input.name)
                 .await
                 .map_err(|message| PlanningFailure {
                     kind: FailureKind::Runtime,
@@ -1212,7 +1213,7 @@ where
         None
     } else {
         storage_handle(pool)
-            .import_class_by_name(collection.id, &input.name)
+            .import_class_by_name(collection_id_to_storage(collection.id), &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1440,7 +1441,7 @@ where
         None
     } else {
         storage_handle(pool)
-            .import_object_by_name(class.id, &input.name)
+            .import_object_by_name(class_id_to_storage(class.id), &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,

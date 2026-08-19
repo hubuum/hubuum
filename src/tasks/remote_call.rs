@@ -22,6 +22,7 @@ use crate::models::{
 };
 use crate::observability::metrics;
 use crate::permissions::AuthorizationContext;
+use crate::services::storage_boundary::resource_id_to_storage;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update_task_state};
 use crate::storage::{
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
@@ -97,7 +98,7 @@ where
                         StorageRemoteCallArtifactTarget::new(
                             None,
                             request.subject.subject_type().as_str(),
-                            request.subject.subject_id(),
+                            resource_id_to_storage(request.subject.subject_id()),
                             "unknown",
                             "",
                         ),
@@ -228,9 +229,12 @@ where
                 })),
                 artifact: StorageRemoteCallTaskArtifact::new(
                     StorageRemoteCallArtifactTarget::new(
-                        Some(target.id),
+                        Some(
+                            hubuum_domain::RemoteTargetId::new(target.id)
+                                .expect("validated remote target id must be positive"),
+                        ),
                         resolved.subject_type.as_str(),
-                        resolved.subject_id,
+                        resource_id_to_storage(resolved.subject_id),
                         target.method.as_str(),
                         response.url(),
                     ),
@@ -290,9 +294,12 @@ fn remote_call_failure(
         event_data: Some(serde_json::json!({ "duration_ms": duration_ms })),
         artifact: StorageRemoteCallTaskArtifact::new(
             StorageRemoteCallArtifactTarget::new(
-                Some(context.target_id),
+                Some(
+                    hubuum_domain::RemoteTargetId::new(context.target_id)
+                        .expect("validated remote target id must be positive"),
+                ),
                 context.subject_type,
-                context.subject_id,
+                resource_id_to_storage(context.subject_id),
                 context.method,
                 rendered_url,
             ),

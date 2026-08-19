@@ -1,11 +1,11 @@
 use crate::models::{HubuumClassID, NewHubuumClass, UpdateHubuumClass};
-use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::with_connection;
 use crate::tests::TestScope;
 use crate::traits::{CanSave, CanUpdate, UserIdApplicationExt};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 use hubuum_domain::{PrincipalId, TaskId};
+use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::with_connection;
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL with only the
 /// legacy actor GUC set must produce I/U/D history rows carrying compatible
@@ -458,8 +458,8 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 async fn worker_mutation_scope_records_root_task_provenance() {
     use crate::events::{EventContext, MutationProvenance};
     use crate::models::NewHubuumClass;
-    use crate::storage::postgres::with_connection;
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::with_connection;
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
@@ -528,9 +528,9 @@ async fn worker_mutation_scope_records_root_task_provenance() {
 #[actix_rt::test]
 async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     use crate::models::{NewHubuumClass, NewUser, UserID};
-    use crate::storage::postgres::prelude::*;
-    use crate::storage::postgres::with_connection;
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();

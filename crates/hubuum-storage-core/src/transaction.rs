@@ -2,24 +2,23 @@ use std::future::Future;
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    ClassRelationStore, ClassStore, CollectionStore, MutationOutcome, ObjectRelationStore,
-    ObjectStore, StorageClassCreate, StorageClassRecord, StorageClassRelation,
-    StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageObject,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelation,
-    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
-    StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClass,
-    StorageResolvedClassRelation, StorageResolvedObject, StorageResolvedObjectRelation,
+    ClassRelationStorage, ClassStorage, CollectionStorage, MutationOutcome, ObjectRelationStorage,
+    ObjectStorage, StorageClassCreate, StorageClassRecord, StorageClassRelationCreate,
+    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
+    StorageObjectDataPatch, StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
+    StorageObjectSelector, StorageObjectUpdate, StoragePreparedClassRelation,
+    StoragePreparedObjectRelation, StorageResolvedClass, StorageResolvedClassRelation,
+    StorageResolvedObject, StorageResolvedObjectRelation,
 };
 
 /// Discoverable collection operations bound to one audited transaction.
 pub struct TransactionalCollections<'transaction> {
-    storage: &'transaction dyn CollectionStore,
+    storage: &'transaction dyn CollectionStorage,
     event_context: &'transaction EventContext,
 }
 
@@ -32,7 +31,7 @@ impl<'transaction> TransactionalCollections<'transaction> {
     /// [`StorageTransaction::collections`].
     #[must_use]
     pub const fn new(
-        storage: &'transaction dyn CollectionStore,
+        storage: &'transaction dyn CollectionStorage,
         event_context: &'transaction EventContext,
     ) -> Self {
         Self {
@@ -103,7 +102,7 @@ impl<'transaction> TransactionalCollections<'transaction> {
 
 /// Discoverable class operations bound to one audited transaction.
 pub struct TransactionalClasses<'transaction> {
-    storage: &'transaction dyn ClassStore,
+    storage: &'transaction dyn ClassStorage,
     event_context: &'transaction EventContext,
 }
 
@@ -116,7 +115,7 @@ impl<'transaction> TransactionalClasses<'transaction> {
     /// [`StorageTransaction::classes`].
     #[must_use]
     pub const fn new(
-        storage: &'transaction dyn ClassStore,
+        storage: &'transaction dyn ClassStorage,
         event_context: &'transaction EventContext,
     ) -> Self {
         Self {
@@ -166,7 +165,7 @@ impl<'transaction> TransactionalClasses<'transaction> {
 
 /// Discoverable class-relation operations bound to one audited transaction.
 pub struct TransactionalClassRelations<'transaction> {
-    storage: &'transaction dyn ClassRelationStore,
+    storage: &'transaction dyn ClassRelationStorage,
     event_context: &'transaction EventContext,
 }
 
@@ -179,7 +178,7 @@ impl<'transaction> TransactionalClassRelations<'transaction> {
     /// [`StorageTransaction::class_relations`].
     #[must_use]
     pub const fn new(
-        storage: &'transaction dyn ClassRelationStore,
+        storage: &'transaction dyn ClassRelationStorage,
         event_context: &'transaction EventContext,
     ) -> Self {
         Self {
@@ -197,7 +196,7 @@ impl<'transaction> TransactionalClassRelations<'transaction> {
 
     pub async fn resolve(
         &self,
-        relation_id: i32,
+        relation_id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
         self.storage.resolve_class_relation(relation_id).await
     }
@@ -219,24 +218,6 @@ impl<'transaction> TransactionalClassRelations<'transaction> {
             .delete_class_relation(target, self.event_context)
             .await
     }
-
-    pub async fn create_from_command(
-        &self,
-        command: StorageClassRelationCreate,
-    ) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
-        self.storage
-            .create_class_relation_from_command(command, self.event_context)
-            .await
-    }
-
-    pub async fn delete_by_id(
-        &self,
-        relation_id: i32,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        self.storage
-            .delete_class_relation_by_id(relation_id, self.event_context)
-            .await
-    }
 }
 
 /// Discoverable object operations bound to one audited transaction.
@@ -244,7 +225,7 @@ impl<'transaction> TransactionalClassRelations<'transaction> {
 /// Mutating methods always forward the transaction's [`EventContext`] and
 /// return the backend's durable [`MutationOutcome`].
 pub struct TransactionalObjects<'transaction> {
-    storage: &'transaction dyn ObjectStore,
+    storage: &'transaction dyn ObjectStorage,
     event_context: &'transaction EventContext,
 }
 
@@ -257,7 +238,7 @@ impl<'transaction> TransactionalObjects<'transaction> {
     /// [`StorageTransaction::objects`].
     #[must_use]
     pub const fn new(
-        storage: &'transaction dyn ObjectStore,
+        storage: &'transaction dyn ObjectStorage,
         event_context: &'transaction EventContext,
     ) -> Self {
         Self {
@@ -335,7 +316,7 @@ impl<'transaction> TransactionalObjects<'transaction> {
 
 /// Discoverable object-relation operations bound to one audited transaction.
 pub struct TransactionalObjectRelations<'transaction> {
-    storage: &'transaction dyn ObjectRelationStore,
+    storage: &'transaction dyn ObjectRelationStorage,
     event_context: &'transaction EventContext,
 }
 
@@ -348,7 +329,7 @@ impl<'transaction> TransactionalObjectRelations<'transaction> {
     /// [`StorageTransaction::object_relations`].
     #[must_use]
     pub const fn new(
-        storage: &'transaction dyn ObjectRelationStore,
+        storage: &'transaction dyn ObjectRelationStorage,
         event_context: &'transaction EventContext,
     ) -> Self {
         Self {
@@ -386,24 +367,6 @@ impl<'transaction> TransactionalObjectRelations<'transaction> {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.storage
             .delete_object_relation(target, self.event_context)
-            .await
-    }
-
-    pub async fn create_from_command(
-        &self,
-        command: StorageObjectRelationCreate,
-    ) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
-        self.storage
-            .create_object_relation_from_command(command, self.event_context)
-            .await
-    }
-
-    pub async fn delete_by_id(
-        &self,
-        relation_id: i32,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        self.storage
-            .delete_object_relation_by_id(relation_id, self.event_context)
             .await
     }
 }

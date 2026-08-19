@@ -14,6 +14,7 @@ use crate::models::{
 };
 use crate::pagination::{CursorPaginated, CursorValue};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
 use crate::storage::{
     ExportTemplateStorage, StorageContext, StorageExportTemplate, StorageExportTemplateCreate,
     StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
@@ -198,7 +199,7 @@ fn export_template_from_storage(
     ) = definition.into_parts();
     Ok(ExportTemplate {
         id: id.id(),
-        collection_id,
+        collection_id: collection_id.id(),
         name,
         description,
         content_type: ExportContentType::from_mime(&content_type)?,
@@ -208,7 +209,7 @@ fn export_template_from_storage(
             .as_deref()
             .map(ExportScopeKind::from_str)
             .transpose()?,
-        class_id,
+        class_id: class_id.map(|id| id.id()),
         default_query,
         include: from_optional_json(include)?,
         relation_context: from_optional_json(relation_context)?,
@@ -234,7 +235,7 @@ fn storage_definition(
     )
     .with_scope(
         template.scope_kind.map(|scope| scope.as_str().to_string()),
-        template.class_id,
+        template.class_id.map(class_id_to_storage),
     )
     .with_default_query(template.default_query.clone())
     .with_include(to_optional_json(template.include.clone())?)
@@ -356,7 +357,11 @@ impl ExportTemplate {
 
         let page = storage_handle(pool)
             .list_export_templates(StorageExportTemplateListQuery::within_collections(
-                allowed_collection_ids.to_vec(),
+                allowed_collection_ids
+                    .iter()
+                    .copied()
+                    .map(collection_id_to_storage)
+                    .collect(),
                 query_options.clone(),
             ))
             .await?;
@@ -410,9 +415,15 @@ pub trait CollectionExportTemplates: CollectionAccessors {
     where
         C: StorageContext,
     {
-        let collection_id = self.collection_id(backend).await?.id();
+        let collection_id = self.collection_id(backend).await?;
         let rows = storage_handle(backend)
-            .list_export_templates_in_collection(collection_id, exclude_template_id)
+            .list_export_templates_in_collection(
+                collection_id,
+                exclude_template_id.map(|id| {
+                    ExportTemplateID::new(id)
+                        .expect("validated export template id must be positive")
+                }),
+            )
             .await?;
 
         rows.into_iter().map(export_template_from_storage).collect()
@@ -452,7 +463,7 @@ impl NewExportTemplate {
         )
         .with_scope(
             self.scope_kind.map(|scope| scope.as_str().to_string()),
-            self.class_id,
+            self.class_id.map(class_id_to_storage),
         )
         .with_default_query(self.default_query.clone())
         .with_include(to_optional_json(self.include.clone())?)
@@ -503,14 +514,14 @@ impl NewExportTemplate {
         )?;
         let stored = storage_handle(pool)
             .create_export_template(StorageExportTemplateCreate::new(
-                self.collection_id,
+                collection_id_to_storage(self.collection_id),
                 self.name.clone(),
                 definition,
                 context.clone(),
             ))
             .await?;
 
-        export_template_from_storage(stored)
+        export_template_from_storage(stored.into_value())
     }
 }
 
@@ -545,7 +556,10 @@ async fn apply_export_template_update(
 ) -> Result<ExportTemplate, ApiError> {
     let current = export_template_from_storage(
         storage_handle(pool)
-            .get_export_template(template_id)
+            .get_export_template(
+                ExportTemplateID::new(template_id)
+                    .expect("validated export template id must be positive"),
+            )
             .await?,
     )?;
 
@@ -633,15 +647,16 @@ async fn apply_export_template_update(
     };
     let stored = storage_handle(pool)
         .replace_export_template(StorageExportTemplateReplace::new(
-            template_id,
-            replacement.collection_id,
+            ExportTemplateID::new(template_id)
+                .expect("validated export template id must be positive"),
+            collection_id_to_storage(replacement.collection_id),
             replacement.name.clone(),
             storage_definition(&replacement)?,
             context.clone(),
         ))
         .await?;
 
-    export_template_from_storage(stored)
+    export_template_from_storage(stored.into_value())
 }
 
 /// The export-execution metadata resolved for an update, after applying the patch over the current
@@ -726,10 +741,11 @@ impl DeleteAdapter for ExportTemplateID {
     ) -> Result<(), ApiError> {
         storage_handle(pool)
             .delete_export_template(StorageExportTemplateDelete::new(
-                self.id(),
+                *self,
                 EventContext::system(),
             ))
-            .await?;
+            .await?
+            .into_value();
         Ok(())
     }
 
@@ -739,8 +755,9 @@ impl DeleteAdapter for ExportTemplateID {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         storage_handle(pool)
-            .delete_export_template(StorageExportTemplateDelete::new(self.id(), context.clone()))
-            .await?;
+            .delete_export_template(StorageExportTemplateDelete::new(*self, context.clone()))
+            .await?
+            .into_value();
         Ok(())
     }
 }
@@ -930,11 +947,11 @@ async fn ensure_template_class_in_collection(
     target_class_id: i32,
 ) -> Result<(), ApiError> {
     let class_collection_id = storage_handle(pool)
-        .export_template_class_collection_id(target_class_id)
+        .export_template_class_collection_id(class_id_to_storage(target_class_id))
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
 
-    if class_collection_id != target_collection_id {
+    if class_collection_id.id() != target_collection_id {
         return Err(ApiError::BadRequest(format!(
             "Export template class {target_class_id} belongs to collection {class_collection_id}, not template collection {target_collection_id}"
         )));
@@ -1037,7 +1054,7 @@ impl InstanceAdapter<ExportTemplate> for ExportTemplateID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ExportTemplate, ApiError> {
-        let stored = storage_handle(pool).get_export_template(self.id()).await?;
+        let stored = storage_handle(pool).get_export_template(*self).await?;
         export_template_from_storage(stored)
     }
 }
@@ -1077,10 +1094,11 @@ impl CollectionAdapter for ExportTemplateID {
     ) -> Result<CollectionID, ApiError> {
         Ok(CollectionID::new(
             storage_handle(pool)
-                .get_export_template(self.id())
+                .get_export_template(*self)
                 .await?
                 .into_parts()
-                .1,
+                .1
+                .id(),
         )?)
     }
 }

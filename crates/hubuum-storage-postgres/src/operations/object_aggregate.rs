@@ -101,22 +101,9 @@ pub async fn aggregate_objects(
     authorizer: Option<&dyn ObjectAggregateAuthorizer>,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
     let target = query.target();
-    let class_id = target.class_id();
+    let class_id = target.class_id().id();
     let class_name = target.class_name().to_string();
-    let collection_id = target.collection_id();
-    if class_id <= 0 || collection_id <= 0 || query.visibility().principal_id() <= 0 {
-        return Err(PostgresStorageError::bad_request(
-            "Object aggregate class, collection, and principal ids must be positive",
-        ));
-    }
-    if query
-        .personal_owner_id()
-        .is_some_and(|owner_id| owner_id <= 0)
-    {
-        return Err(PostgresStorageError::bad_request(
-            "Object aggregate personal owner id must be positive",
-        ));
-    }
+    let collection_id = target.collection_id().id();
     reject_unsupported_filters(query.options())?;
 
     let spec = query.spec().clone();
@@ -154,7 +141,7 @@ pub async fn aggregate_objects(
             cursor_max_encoded_bytes,
             computed_filter_snapshot: None,
         },
-        personal_owner_id: query.personal_owner_id(),
+        personal_owner_id: query.personal_owner_id().map(|id| id.id()),
         required_permissions,
         visibility: query.visibility().clone(),
     };

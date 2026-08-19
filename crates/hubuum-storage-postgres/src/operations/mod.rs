@@ -47,7 +47,7 @@ pub mod restore_lifecycle;
 pub mod service_account;
 pub mod task_execution;
 pub mod task_queue;
-mod task_rows;
+pub(crate) mod task_rows;
 pub mod token;
 pub mod token_retention;
 pub mod unified_search;

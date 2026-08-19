@@ -28,6 +28,8 @@ pub async fn list_computed_objects(
 ) -> Result<ComputedObjectPage, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
+    let class_id = class_id.id();
+    let personal_owner_id = personal_owner_id.map(|id| id.id());
     let (mut request_options, mut options) = options.into_parts();
     // The execution copy includes pagination tie-breakers. Enforce the public
     // limit against only the sort fields supplied by the caller.
@@ -128,7 +130,7 @@ pub async fn list_computed_objects(
                 .await?
                 .into_iter()
                 .map(ObjectRow::into_storage)
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()?;
             let projected = projected_objects(&objects, projection);
             let computed = enrichment::enrich_with_query_snapshot(
                 &snapshot_runtime,
@@ -171,11 +173,6 @@ fn query_visibility(
                     AuthorizationPermission::ReadObject,
                 ],
             )?;
-            if visibility.principal_id() <= 0 {
-                return Err(PostgresStorageError::bad_request(
-                    "computed object principal id must be greater than zero",
-                ));
-            }
             if !visibility.allows_permissions(&permissions) {
                 return Ok((None, None));
             }
@@ -184,22 +181,20 @@ fn query_visibility(
         ComputedObjectVisibility::AuthorizedObjectIds {
             principal_id,
             object_ids,
-        } => {
-            if principal_id <= 0 || object_ids.iter().any(|object_id| *object_id <= 0) {
-                return Err(PostgresStorageError::bad_request(
-                    "computed object principal and object ids must be greater than zero",
-                ));
-            }
-            Ok((
-                Some(StorageVisibility::new(
-                    principal_id,
-                    true,
-                    None::<[AuthorizationPermission; 0]>,
-                    None,
-                )),
-                Some(object_ids),
-            ))
-        }
+        } => Ok((
+            Some(StorageVisibility::new(
+                principal_id,
+                true,
+                None::<[AuthorizationPermission; 0]>,
+                None,
+            )),
+            Some(
+                object_ids
+                    .into_iter()
+                    .map(|object_id| object_id.id())
+                    .collect(),
+            ),
+        )),
     }
 }
 
@@ -252,6 +247,7 @@ fn projected_objects(
 mod tests {
     use crate::revision::record_metadata_from_raw_revision;
     use chrono::NaiveDateTime;
+    use hubuum_domain::{ClassId, CollectionId, ObjectId};
 
     use super::*;
 
@@ -262,10 +258,11 @@ mod tests {
                 NaiveDateTime::default(),
                 NaiveDateTime::default(),
                 1,
-            ),
+            )
+            .unwrap(),
             format!("object-{id}"),
-            1,
-            1,
+            CollectionId::new(1).unwrap(),
+            ClassId::new(1).unwrap(),
             serde_json::json!({}),
             String::new(),
         )
@@ -279,7 +276,7 @@ mod tests {
         );
 
         assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].id(), 2);
+        assert_eq!(projected[0].id(), ObjectId::new(2).unwrap());
     }
 
     #[test]

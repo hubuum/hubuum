@@ -70,10 +70,10 @@ Once the tag is pushed, the CI workflow will:
 
 ## Rust package compatibility
 
-The root server package and implementation-specific workspace crates are
-internal and set `publish = false`. Backend-neutral crates explicitly marked
-experimental public are eligible for crates.io publication. The authoritative
-classification, package list, and promotion process are documented in
+All current workspace packages, including backend-neutral crates, are internal
+and set `publish = false`. A crate becomes eligible for crates.io publication
+only through a separate promotion to experimental or stable public status. The
+authoritative classification, package list, and promotion process are documented in
 [Rust API Boundary](rust_api_boundary.md).
 
 CI rejects missing classifications and any internal package that enables Cargo

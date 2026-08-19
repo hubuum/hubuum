@@ -190,7 +190,7 @@ impl EventDeliveryHealthResponse {
                     let sink = snapshot.sink();
                     let queue = snapshot.queue();
                     EventSinkDeliveryHealth {
-                        sink_id: sink.id(),
+                        sink_id: sink.id().id(),
                         sink_name: sink.name().to_string(),
                         sink_kind: sink.kind().to_string(),
                         sink_enabled: sink.enabled(),
@@ -208,10 +208,10 @@ impl EventDeliveryHealthResponse {
                     let sink = snapshot.sink();
                     let queue = snapshot.queue();
                     EventSubscriptionDeliveryHealth {
-                        subscription_id: snapshot.id(),
+                        subscription_id: snapshot.id().id(),
                         subscription_name: snapshot.name().to_string(),
-                        collection_id: snapshot.collection_id(),
-                        sink_id: sink.id(),
+                        collection_id: snapshot.collection_id().id(),
+                        sink_id: sink.id().id(),
                         sink_name: sink.name().to_string(),
                         sink_kind: sink.kind().to_string(),
                         subscription_enabled: snapshot.enabled(),
@@ -253,15 +253,20 @@ mod tests {
     fn storage_health_snapshot_projects_into_the_existing_api_shape() {
         let counts = EventDeliveryStatusSnapshot::new(28, 2, 3, 5, 7, 11, 13);
         let queue = EventQueueSnapshot::new(counts, 17, Some(19));
-        let sink = EventSinkSnapshot::new(23, "primary".to_string(), "webhook".to_string(), true);
+        let sink = EventSinkSnapshot::new(
+            hubuum_domain::EventSinkId::new(23).unwrap(),
+            "primary".to_string(),
+            "webhook".to_string(),
+            true,
+        );
         let snapshot = EventDeliveryHealthSnapshot::new(
             EventFanoutSnapshot::new(29, 31, 37, Some(41)),
             queue,
             vec![EventSinkHealthSnapshot::new(sink.clone(), 43, queue)],
             vec![EventSubscriptionHealthSnapshot::new(
-                47,
+                hubuum_domain::EventSubscriptionId::new(47).unwrap(),
                 "changes".to_string(),
-                53,
+                hubuum_domain::CollectionId::new(53).unwrap(),
                 false,
                 sink,
                 queue,

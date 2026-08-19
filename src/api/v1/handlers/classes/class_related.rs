@@ -119,7 +119,7 @@ async fn create_class_relation(
 
     debug!(
         message = "Creating class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         from_class = class_id.id(),
         to_class = partial_relation.to_hubuum_class_id,
     );
@@ -222,7 +222,7 @@ async fn delete_class_relation(
 
     debug!(
         message = "Deleting class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         relation_id = relation_id.id()
     );
@@ -260,7 +260,7 @@ async fn delete_class_relation(
     } else {
         info!(
             message = "Relation membership mismatch when deleting relation: class does not match either endpoint",
-            user_id = user.id(),
+            user_id = user.id().id(),
             class_id = class_id.id(),
             relation_id = relation_id.id(),
             relation_from_class = relation.from_hubuum_class_id,
@@ -352,7 +352,7 @@ async fn read_related_class_relations(
 
     debug!(
         message = "Getting direct relations touching class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class.id
     );
 
@@ -379,7 +379,7 @@ async fn read_related_class_relations(
         candidate_options.set_include_total(false);
         let (candidates, _) = relation_queries::list_class_relations_touching(
             &context,
-            relation_queries::RelationAccess::new(user.id(), true, None),
+            relation_queries::RelationAccess::new(user.id().id(), true, None),
             class.id,
             candidate_options,
         )

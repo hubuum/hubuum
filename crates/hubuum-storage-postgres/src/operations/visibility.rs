@@ -32,7 +32,7 @@ pub(crate) async fn authorized_collection_ids(
             .map_err(PostgresStorageError::from);
     }
     let group_ids = group_memberships::table
-        .filter(group_memberships::principal_id.eq(visibility.principal_id()))
+        .filter(group_memberships::principal_id.eq(visibility.principal_id().id()))
         .select(group_memberships::group_id);
     let mut records = grants::table
         .filter(grants::group_id.eq_any(group_ids))

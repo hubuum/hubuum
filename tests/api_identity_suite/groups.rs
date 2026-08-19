@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::api::etag::{IfMatchCondition, RevisionedResource};
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::SubsecRound;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
     use crate::models::group::{Group, GroupID, GroupResponse, NewGroup, UpdateGroup};
@@ -13,8 +13,7 @@ mod tests {
         PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
-    use crate::storage::postgres::operations::identity::ensure_identity_scope;
-    use crate::storage::postgres::with_connection;
+    use crate::services::identity::ensure_identity_scope;
     use crate::storage::with_revision_precondition;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -22,6 +21,7 @@ mod tests {
         TestContext, create_test_admin, create_test_group, create_test_user, test_context,
     };
     use crate::traits::{GroupIdApplicationExt, PrincipalIdApplicationExt};
+    use hubuum_storage_postgres::with_connection;
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
@@ -568,13 +568,10 @@ mod tests {
             .add_member_without_events(&context.pool, &user)
             .await
             .unwrap();
-        let membership = crate::storage::postgres::operations::group::principal_group_by_ids(
-            &context.pool,
-            user.id,
-            group.id,
-        )
-        .await
-        .unwrap();
+        let membership =
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
         let tag = membership.entity_tag().unwrap();
         let precondition = IfMatchCondition::Tags(vec![tag.clone()])
             .database_precondition(&tag)
@@ -597,12 +594,7 @@ mod tests {
             crate::errors::ApiError::PreconditionFailed(_, _)
         ));
         assert!(matches!(
-            crate::storage::postgres::operations::group::principal_group_by_ids(
-                &context.pool,
-                user.id,
-                group.id
-            )
-            .await,
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id).await,
             Err(crate::errors::ApiError::NotFound(_))
         ));
     }
@@ -627,13 +619,10 @@ mod tests {
         })
         .await
         .unwrap();
-        let initial = crate::storage::postgres::operations::group::principal_group_by_ids(
-            &context.pool,
-            user.id,
-            group.id,
-        )
-        .await
-        .unwrap();
+        let initial =
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
 
         let response = post_request(
             &context.pool,
@@ -651,13 +640,10 @@ mod tests {
             .unwrap()
             .to_string();
         let returned: PrincipalMemberResponse = test::read_body_json(response).await;
-        let persisted = crate::storage::postgres::operations::group::principal_group_by_ids(
-            &context.pool,
-            user.id,
-            group.id,
-        )
-        .await
-        .unwrap();
+        let persisted =
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
 
         assert!(persisted.revision > initial.revision);
         assert_eq!(returned.revision, persisted.revision);
@@ -684,9 +670,10 @@ mod tests {
         .await;
         assert_response_status(response, StatusCode::CREATED).await;
 
-        let scope = crate::storage::postgres::operations::identity::identity_scope_by_name(
+        let scope = ensure_identity_scope(
             &context.pool,
             crate::models::LOCAL_IDENTITY_SCOPE,
+            crate::models::LOCAL_PROVIDER_KIND,
         )
         .await
         .unwrap();
@@ -705,25 +692,19 @@ mod tests {
         })
         .await
         .unwrap();
-        let before = crate::storage::postgres::operations::group::principal_group_by_ids(
-            &context.pool,
-            user.id,
-            group.id,
-        )
-        .await
-        .unwrap();
+        let before =
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
 
         let response = delete_request(&context.pool, &context.admin_token, &endpoint).await;
         let response = assert_response_status(response, StatusCode::NO_CONTENT).await;
         let response_etag = header_value(&response, actix_web::http::header::ETAG.as_str())
             .expect("surviving membership ETag");
-        let surviving = crate::storage::postgres::operations::group::principal_group_by_ids(
-            &context.pool,
-            user.id,
-            group.id,
-        )
-        .await
-        .unwrap();
+        let surviving =
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
 
         assert!(surviving.revision > before.revision);
         assert_eq!(response_etag, surviving.entity_tag().unwrap().to_string());
@@ -742,9 +723,10 @@ mod tests {
             .add_member_without_events(&context.pool, &user)
             .await
             .unwrap();
-        let scope = crate::storage::postgres::operations::identity::identity_scope_by_name(
+        let scope = ensure_identity_scope(
             &context.pool,
             crate::models::LOCAL_IDENTITY_SCOPE,
+            crate::models::LOCAL_PROVIDER_KIND,
         )
         .await
         .unwrap();
@@ -763,13 +745,10 @@ mod tests {
         })
         .await
         .unwrap();
-        let before = crate::storage::postgres::operations::group::principal_group_by_ids(
-            &context.pool,
-            user.id,
-            group.id,
-        )
-        .await
-        .unwrap();
+        let before =
+            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
         let stale_tag = before.entity_tag().unwrap();
         let precondition = IfMatchCondition::Tags(vec![stale_tag.clone()])
             .database_precondition(&stale_tag)
@@ -789,7 +768,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            crate::errors::ApiError::PreconditionFailed(_, _)
+            crate::errors::ApiError::RevisionConflict(_, revision) if revision.get() == 3
         ));
     }
 

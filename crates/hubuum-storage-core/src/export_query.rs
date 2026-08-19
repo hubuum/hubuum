@@ -1,6 +1,3 @@
-use std::future::Future;
-use std::pin::Pin;
-
 /// A non-zero per-operation budget for storage reads performed by an export.
 ///
 /// The application describes the limit without selecting a database mechanism.
@@ -24,23 +21,6 @@ impl StorageQueryBudget {
     pub const fn as_millis(self) -> u64 {
         self.milliseconds
     }
-}
-
-/// Mandatory backend scope for bounded export reads.
-///
-/// The supplied future is evaluated exactly once. Every storage read it makes
-/// through the same configured backend must honor `budget`; `None` explicitly
-/// disables the export-specific limit. Adapters may use native cancellation,
-/// per-operation deadlines, or an equivalent backend mechanism.
-pub trait ExportQueryStorage: Send + Sync {
-    fn run_export_queries<'a, F, R>(
-        &'a self,
-        budget: Option<StorageQueryBudget>,
-        future: F,
-    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
-    where
-        F: Future<Output = R> + 'a,
-        R: 'a;
 }
 
 #[cfg(test)]

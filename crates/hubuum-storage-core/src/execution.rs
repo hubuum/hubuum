@@ -9,6 +9,8 @@ use hubuum_domain::{
 };
 use hubuum_events_core::MutationProvenance;
 
+use crate::StorageQueryBudget;
+
 /// Bounded attribution for storage work initiated by one application
 /// subsystem.
 ///
@@ -107,6 +109,77 @@ pub struct StorageRevisionPrecondition {
     revisions: Vec<ResourceRevision>,
 }
 
+/// A composable override applied while one unit of application work runs.
+///
+/// An absent field inherits the surrounding scope. A present optional value
+/// explicitly replaces that field, including clearing an inherited value with
+/// `None`. This distinction makes independently supplied scope layers compose
+/// without accidentally resetting each other.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StorageExecutionScope {
+    call_site: Option<StorageCallSite>,
+    mutation_provenance: Option<Option<MutationProvenance>>,
+    revision_precondition: Option<Option<StorageRevisionPrecondition>>,
+    query_budget: Option<Option<StorageQueryBudget>>,
+}
+
+impl StorageExecutionScope {
+    #[must_use]
+    pub const fn with_call_site(mut self, call_site: StorageCallSite) -> Self {
+        self.call_site = Some(call_site);
+        self
+    }
+
+    #[must_use]
+    pub fn with_mutation_provenance(mut self, provenance: Option<MutationProvenance>) -> Self {
+        self.mutation_provenance = Some(provenance);
+        self
+    }
+
+    #[must_use]
+    pub fn with_revision_precondition(
+        mut self,
+        precondition: Option<StorageRevisionPrecondition>,
+    ) -> Self {
+        self.revision_precondition = Some(precondition);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_query_budget(mut self, budget: Option<StorageQueryBudget>) -> Self {
+        self.query_budget = Some(budget);
+        self
+    }
+
+    /// Return the call-site override, or `None` when the surrounding scope is
+    /// inherited.
+    #[must_use]
+    pub const fn call_site_override(&self) -> Option<StorageCallSite> {
+        self.call_site
+    }
+
+    /// Return the provenance override. The outer option distinguishes
+    /// inheritance from an explicit clear.
+    #[must_use]
+    pub fn mutation_provenance_override(&self) -> Option<&Option<MutationProvenance>> {
+        self.mutation_provenance.as_ref()
+    }
+
+    /// Return the revision-precondition override. The outer option
+    /// distinguishes inheritance from an explicit clear.
+    #[must_use]
+    pub fn revision_precondition_override(&self) -> Option<&Option<StorageRevisionPrecondition>> {
+        self.revision_precondition.as_ref()
+    }
+
+    /// Return the query-budget override. The outer option distinguishes
+    /// inheritance from an explicit clear.
+    #[must_use]
+    pub const fn query_budget_override(&self) -> Option<Option<StorageQueryBudget>> {
+        self.query_budget
+    }
+}
+
 impl fmt::Debug for StorageRevisionPrecondition {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -140,9 +213,10 @@ impl StorageRevisionPrecondition {
 /// and optimistic-concurrency assertions without exposing task locals,
 /// transaction settings, connections, or database-specific session state.
 pub trait StorageExecution: Send + Sync {
-    fn run_with_call_site<'a, F, R>(
+    /// Run task-local work under the supplied composable scope overrides.
+    fn run_in_scope<'a, F, R>(
         &'a self,
-        call_site: StorageCallSite,
+        scope: StorageExecutionScope,
         future: F,
     ) -> Pin<Box<dyn Future<Output = R> + 'a>>
     where
@@ -150,32 +224,14 @@ pub trait StorageExecution: Send + Sync {
         R: 'a;
 
     /// Send-capable form used by work that crosses a task or thread boundary.
-    fn run_with_call_site_send<'a, F, R>(
+    fn run_in_scope_send<'a, F, R>(
         &'a self,
-        call_site: StorageCallSite,
+        scope: StorageExecutionScope,
         future: F,
     ) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>
     where
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a;
-
-    fn run_with_mutation_provenance<'a, F, R>(
-        &'a self,
-        provenance: Option<MutationProvenance>,
-        future: F,
-    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
-    where
-        F: Future<Output = R> + 'a,
-        R: 'a;
-
-    fn run_with_revision_precondition<'a, F, R>(
-        &'a self,
-        precondition: Option<StorageRevisionPrecondition>,
-        future: F,
-    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
-    where
-        F: Future<Output = R> + 'a,
-        R: 'a;
 }
 
 #[cfg(test)]
@@ -235,5 +291,14 @@ mod tests {
 
         assert_eq!(precondition.target(), target);
         assert_eq!(precondition.revisions(), &[revision]);
+    }
+
+    #[test]
+    fn execution_scope_distinguishes_inheritance_from_explicit_clear() {
+        let inherited = StorageExecutionScope::default();
+        let cleared = StorageExecutionScope::default().with_revision_precondition(None);
+
+        assert_eq!(inherited.revision_precondition_override(), None);
+        assert_eq!(cleared.revision_precondition_override(), Some(&None));
     }
 }

@@ -1,76 +1,28 @@
 use super::*;
 
-impl ExportQueryStorage for StorageHandle {
-    fn run_export_queries<'a, F, R>(
-        &'a self,
-        budget: Option<StorageQueryBudget>,
-        future: F,
-    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
-    where
-        F: Future<Output = R> + 'a,
-        R: 'a,
-    {
-        dispatch_backend!(self, |backend| {
-            backend.run_export_queries(budget, future)
-        })
-    }
-}
-
 impl StorageExecution for StorageHandle {
-    fn run_with_call_site<'a, F, R>(
+    fn run_in_scope<'a, F, R>(
         &'a self,
-        call_site: StorageCallSite,
+        scope: StorageExecutionScope,
         future: F,
     ) -> Pin<Box<dyn Future<Output = R> + 'a>>
     where
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        dispatch_backend!(self, |backend| {
-            backend.run_with_call_site(call_site, future)
-        })
+        dispatch_backend!(self, |backend| backend.run_in_scope(scope, future))
     }
 
-    fn run_with_call_site_send<'a, F, R>(
+    fn run_in_scope_send<'a, F, R>(
         &'a self,
-        call_site: StorageCallSite,
+        scope: StorageExecutionScope,
         future: F,
     ) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>
     where
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        dispatch_backend!(self, |backend| {
-            backend.run_with_call_site_send(call_site, future)
-        })
-    }
-
-    fn run_with_mutation_provenance<'a, F, R>(
-        &'a self,
-        provenance: Option<MutationProvenance>,
-        future: F,
-    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
-    where
-        F: Future<Output = R> + 'a,
-        R: 'a,
-    {
-        dispatch_backend!(self, |backend| {
-            backend.run_with_mutation_provenance(provenance, future)
-        })
-    }
-
-    fn run_with_revision_precondition<'a, F, R>(
-        &'a self,
-        precondition: Option<StorageRevisionPrecondition>,
-        future: F,
-    ) -> Pin<Box<dyn Future<Output = R> + 'a>>
-    where
-        F: Future<Output = R> + 'a,
-        R: 'a,
-    {
-        dispatch_backend!(self, |backend| {
-            backend.run_with_revision_precondition(precondition, future)
-        })
+        dispatch_backend!(self, |backend| backend.run_in_scope_send(scope, future))
     }
 }
 

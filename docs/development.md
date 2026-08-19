@@ -72,8 +72,9 @@ for package classifications, publishing policy, and promotion requirements.
   and backend-specific initialization errors only at the application
   composition edge.
 - `crates/hubuum-storage-conformance`:
-  The workspace-internal five-part behavioral verifier for audited mutation
-  receipts, no-ops, rollback, event delivery, and telemetry. It is a
+  The workspace-internal six-part behavioral verifier for audited mutation
+  receipts, no-ops, rollback, event delivery, telemetry, and exact revision
+  conflicts. Retention retry safety has its own protocol verifier. It is a
   development dependency and is not linked into production binaries.
 - `src/models/*`:
   Application domain models and high-level operations.
@@ -85,11 +86,9 @@ for package classifications, publishing policy, and promotion requirements.
   Normalization returns the context's existing `StorageHandle`; it never
   rebuilds a backend from a database pool. It deliberately has no authorization
   methods; policy-aware workflows accept the stronger `AuthorizationContext`.
-- `src/storage/postgres/operations/*`:
-  Legacy test-only PostgreSQL helpers retained for root unit and explicitly
-  feature-gated integration tests. Production queries and transactions belong
-  in `crates/hubuum-storage-postgres/src/operations`; do not add new production
-  behavior to the root legacy tree.
+- `crates/hubuum-storage-postgres/src/test_support.rs`:
+  Feature-gated, typed PostgreSQL fixtures for application integration tests.
+  Root tests must not recreate adapter rows or SQL helpers.
 
 Server, administration, and bootstrap entry points build validated
 `StorageSettings` and receive an opaque `StorageHandle`. They must not import

@@ -101,12 +101,13 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
-    let storage_settings = StorageSettings::builder(config.database_url.clone())
-        .max_connections(config.db_pool_size)
-        .statement_timeout_ms(config.db_statement_timeout_ms)
-        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-        .build()
-        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+    let storage_settings =
+        StorageSettings::builder(config.storage_backend, config.database_url.clone())
+            .max_connections(config.db_pool_size)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     let storage = initialize_storage(&storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     let readiness = storage.readiness_snapshot().await.unwrap_or_else(|error| {
@@ -504,9 +505,7 @@ mod tests {
 
     use crate::permissions::LocalPermissionBackend;
     use crate::storage::StorageHandle;
-    use crate::storage::postgres::{
-        PostgresPool, PostgresPoolSettings, init_postgres_pool_with_settings,
-    };
+    use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};
 
     use super::*;
 
@@ -519,7 +518,7 @@ mod tests {
         .acquire_timeout_ms(5)
         .build()
         .expect("unreachable test pool settings should be valid");
-        init_postgres_pool_with_settings(&settings)
+        build_postgres_pool(&settings).expect("unreachable test pool must be constructible")
     }
 
     fn unreachable_context() -> AppContext {

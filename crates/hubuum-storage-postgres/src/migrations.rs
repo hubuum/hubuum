@@ -10,7 +10,7 @@ const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 pub fn run_embedded_migrations(connection_url: &str) -> Result<usize, StorageError> {
     let mut connection = PgConnection::establish(connection_url).map_err(|error| {
         StorageError::from(PostgresStorageError::new(
-            StorageErrorKind::Database,
+            StorageErrorKind::Backend,
             format!("failed to connect for storage migrations: {error}"),
             None,
         ))
@@ -19,7 +19,7 @@ pub fn run_embedded_migrations(connection_url: &str) -> Result<usize, StorageErr
         .run_pending_migrations(MIGRATIONS)
         .map_err(|error| {
             StorageError::from(PostgresStorageError::new(
-                StorageErrorKind::Database,
+                StorageErrorKind::Backend,
                 format!("failed to run storage migrations: {error}"),
                 None,
             ))

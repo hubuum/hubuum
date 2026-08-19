@@ -28,9 +28,15 @@ pub mod tasks;
 pub(crate) mod unified_search;
 
 pub use class_relations::ClassRelationService;
+pub(crate) use class_relations::{
+    prepare_and_create_class_relation, resolve_and_delete_class_relation,
+};
 pub use classes::ClassService;
 pub use collections::CollectionService;
 pub use object_relations::ObjectRelationService;
+pub(crate) use object_relations::{
+    prepare_and_create_object_relation, resolve_and_delete_object_relation,
+};
 pub use objects::ObjectService;
 
 #[cfg(test)]
@@ -41,8 +47,8 @@ use crate::storage::ApplicationStorageTelemetry;
 use crate::storage::StorageHandle;
 #[cfg(test)]
 use crate::storage::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
-    ObservedStorage, StorageIdentity,
+    ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
+    ObservedStorage, StorageBackendIdentity,
 };
 
 /// Application use-case facade.
@@ -69,12 +75,12 @@ impl Services {
     #[cfg(test)]
     pub(crate) fn from_resource_storage<S>(storage: S) -> Self
     where
-        S: StorageIdentity
-            + CollectionStore
-            + ClassStore
-            + ObjectStore
-            + ClassRelationStore
-            + ObjectRelationStore
+        S: StorageBackendIdentity
+            + CollectionStorage
+            + ClassStorage
+            + ObjectStorage
+            + ClassRelationStorage
+            + ObjectRelationStorage
             + 'static,
     {
         let storage = Arc::new(ObservedStorage::new(

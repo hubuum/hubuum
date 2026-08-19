@@ -1,17 +1,20 @@
-use std::num::NonZeroI64;
-
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, CollectionId, HistoryRecordId, PrincipalId, TaskId};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
+    StorageClassRecord, StorageCollection, StorageExportTemplate, StorageExportTemplateDefinition,
+    StorageObject, StorageRemoteTarget, StorageRemoteTargetDefinition, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport,
 };
 use serde_json::Value;
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
+use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 const SKIPPED_TOTAL_COUNT: i64 = -1;
@@ -142,127 +145,153 @@ struct RemoteTargetHistoryRow {
 macro_rules! metadata {
     ($row:expr) => {{
         let row = &$row;
-        HistoryMetadata::new(
-            row.op.clone(),
-            row.valid_from,
-            row.valid_to,
-            row.history_id,
-            NonZeroI64::new(row.revision.get())
-                .expect("PostgresRevision always contains a positive value"),
+        Ok::<_, PostgresStorageError>(
+            HistoryMetadata::new(
+                row.op.clone(),
+                row.valid_from,
+                row.valid_to,
+                HistoryRecordId::new(row.history_id)?,
+                row.revision.into_domain(),
+            )
+            .actor(
+                row.actor_id.map(PrincipalId::new).transpose()?,
+                row.actor_kind.clone(),
+            )
+            .initiator_principal_id(row.initiator_user_id.map(PrincipalId::new).transpose()?)
+            .task_id(row.task_id.map(TaskId::new).transpose()?),
         )
-        .actor(row.actor_id, row.actor_kind.clone())
-        .initiator_principal_id(row.initiator_user_id)
-        .task_id(row.task_id)
     }};
 }
 
-impl From<CollectionHistoryRow> for CollectionHistoryRecord {
-    fn from(row: CollectionHistoryRow) -> Self {
-        let metadata = metadata!(row);
-        Self::new(
-            row.id,
+impl TryFrom<CollectionHistoryRow> for CollectionHistoryRecord {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: CollectionHistoryRow) -> Result<Self, Self::Error> {
+        let metadata = metadata!(row)?;
+        let record = StorageCollection::new(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
             row.description,
-            row.created_at,
-            row.updated_at,
-            row.parent_collection_id,
-            metadata,
-        )
+            row.parent_collection_id
+                .map(CollectionId::new)
+                .transpose()?,
+        );
+        Ok(Self::new(record, metadata))
     }
 }
 
-impl From<ClassHistoryRow> for ClassHistoryRecord {
-    fn from(row: ClassHistoryRow) -> Self {
-        let metadata = metadata!(row);
-        Self::new(
-            row.id,
+impl TryFrom<ClassHistoryRow> for ClassHistoryRecord {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: ClassHistoryRow) -> Result<Self, Self::Error> {
+        let metadata = metadata!(row)?;
+        let record = StorageClassRecord::builder(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
-            row.collection_id,
-            row.json_schema,
-            row.validate_schema,
+            CollectionId::new(row.collection_id)?,
             row.description,
-            row.created_at,
-            row.updated_at,
-            metadata,
         )
+        .json_schema(row.json_schema)
+        .validate_schema(row.validate_schema)
+        .build();
+        Ok(Self::new(record, metadata))
     }
 }
 
-impl From<ObjectHistoryRow> for ObjectHistoryRecord {
-    fn from(row: ObjectHistoryRow) -> Self {
-        let metadata = metadata!(row);
-        Self::new(
-            row.id,
+impl TryFrom<ObjectHistoryRow> for ObjectHistoryRecord {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: ObjectHistoryRow) -> Result<Self, Self::Error> {
+        let metadata = metadata!(row)?;
+        let record = StorageObject::new(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
-            row.collection_id,
-            row.hubuum_class_id,
+            CollectionId::new(row.collection_id)?,
+            ClassId::new(row.hubuum_class_id)?,
             row.data,
             row.description,
-            row.created_at,
-            row.updated_at,
-            metadata,
-        )
+        );
+        Ok(Self::new(record, metadata))
     }
 }
 
-impl From<ExportTemplateHistoryRow> for ExportTemplateHistoryRecord {
-    fn from(row: ExportTemplateHistoryRow) -> Self {
-        let metadata = metadata!(row);
-        Self::new(
-            row.id,
-            row.collection_id,
-            row.name,
+impl TryFrom<ExportTemplateHistoryRow> for ExportTemplateHistoryRecord {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: ExportTemplateHistoryRow) -> Result<Self, Self::Error> {
+        let metadata = metadata!(row)?;
+        let definition = StorageExportTemplateDefinition::new(
             row.description,
             row.content_type,
             row.template,
             row.kind,
-            row.scope_kind,
-            row.class_id,
-            row.default_query,
-            row.include,
-            row.relation_context,
-            row.default_missing_data_policy,
-            row.default_limits,
-            row.created_at,
-            row.updated_at,
-            metadata,
         )
+        .with_scope(row.scope_kind, row.class_id.map(ClassId::new).transpose()?)
+        .with_default_query(row.default_query)
+        .with_include(row.include)
+        .with_relation_context(row.relation_context)
+        .with_default_missing_data_policy(row.default_missing_data_policy)
+        .with_default_limits(row.default_limits);
+        let record = StorageExportTemplate::new(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
+            CollectionId::new(row.collection_id)?,
+            row.name,
+            definition,
+        );
+        Ok(Self::new(record, metadata))
     }
 }
 
-impl From<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
-    fn from(row: RemoteTargetHistoryRow) -> Self {
-        let metadata = metadata!(row);
-        Self::new(
-            row.id,
-            row.collection_id,
-            row.class_id,
-            row.name,
+impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: RemoteTargetHistoryRow) -> Result<Self, Self::Error> {
+        let metadata = metadata!(row)?;
+        let allowed_subject_types =
+            serde_json::from_value::<Vec<String>>(row.allowed_subject_types).map_err(|error| {
+                PostgresStorageError::database(format!(
+                    "Invalid persisted remote-target subject policy: {error}"
+                ))
+            })?;
+        let definition = StorageRemoteTargetDefinition::new(
             row.description,
-            row.method,
-            row.url_template,
-            row.headers_template,
-            row.body_template,
-            row.auth_config,
-            row.allowed_subject_types,
-            row.timeout_ms,
-            row.enabled,
-            row.created_at,
-            row.updated_at,
-            metadata,
-        )
+            StorageRemoteTargetTransport::new(
+                row.method,
+                row.url_template,
+                row.headers_template,
+                row.body_template,
+                row.auth_config,
+                row.timeout_ms,
+            ),
+            StorageRemoteTargetPolicy::new(
+                row.class_id.map(ClassId::new).transpose()?,
+                allowed_subject_types,
+                row.enabled,
+            ),
+        );
+        let record = StorageRemoteTarget::new(
+            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
+            CollectionId::new(row.collection_id)?,
+            row.name,
+            definition,
+        );
+        Ok(Self::new(record, metadata))
     }
 }
 
 pub async fn resolve_principal_names(
     runtime: &PostgresRuntime,
-    mut principal_ids: Vec<i32>,
+    mut principal_ids: Vec<PrincipalId>,
 ) -> Result<Vec<HistoryPrincipalName>, PostgresStorageError> {
     principal_ids.sort_unstable();
     principal_ids.dedup();
     if principal_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let principal_ids = principal_ids
+        .into_iter()
+        .map(PrincipalId::id)
+        .collect::<Vec<_>>();
     runtime
         .with_connection(async |connection| {
             use crate::schema::principals::dsl::{id, name as principal_name, principals};
@@ -272,11 +301,15 @@ pub async fn resolve_principal_names(
                 .select((id, principal_name))
                 .load::<(i32, String)>(connection)
                 .await
-                .map(|rows| {
-                    rows.into_iter()
-                        .map(|(principal_id, name)| HistoryPrincipalName::new(principal_id, name))
-                        .collect()
+                .map_err(PostgresStorageError::from)?
+                .into_iter()
+                .map(|(principal_id, name)| {
+                    Ok::<_, PostgresStorageError>(HistoryPrincipalName::new(
+                        PrincipalId::new(principal_id)?,
+                        name,
+                    ))
                 })
+                .collect()
         })
         .await
 }
@@ -319,6 +352,15 @@ fn validate_history_filters(options: &QueryOptions) -> Result<(), PostgresStorag
     Ok(())
 }
 
+fn visible_collection_ids(scope: &HistoryCollectionScope) -> Option<Vec<i32>> {
+    match scope {
+        HistoryCollectionScope::All => None,
+        HistoryCollectionScope::Visible(ids) => {
+            Some(ids.iter().copied().map(CollectionId::id).collect())
+        }
+    }
+}
+
 macro_rules! history_operations {
     (
         $list_fn:ident,
@@ -334,6 +376,7 @@ macro_rules! history_operations {
             query: HistoryListQuery,
         ) -> Result<HistoryPage<$record>, PostgresStorageError> {
             let (entity_id, options, scope) = query.into_parts();
+            let visible_collection_ids = visible_collection_ids(&scope);
             validate_history_filters(&options)?;
             let fields = history_cursor_fields(&options, $table_name)?;
             runtime
@@ -342,8 +385,8 @@ macro_rules! history_operations {
 
                     let mut count_query = crate::schema::$table::table
                         .into_boxed()
-                        .filter(id.eq(entity_id));
-                    if let HistoryCollectionScope::Visible(collection_ids) = &scope {
+                        .filter(id.eq(entity_id.id()));
+                    if let Some(collection_ids) = &visible_collection_ids {
                         count_query = count_query.filter($visibility_column.eq_any(collection_ids));
                     }
                     for parameter in options.filters() {
@@ -357,8 +400,8 @@ macro_rules! history_operations {
 
                     let mut records = crate::schema::$table::table
                         .into_boxed()
-                        .filter(id.eq(entity_id));
-                    if let HistoryCollectionScope::Visible(collection_ids) = &scope {
+                        .filter(id.eq(entity_id.id()));
+                    if let Some(collection_ids) = &visible_collection_ids {
                         records = records.filter($visibility_column.eq_any(collection_ids));
                     }
                     for parameter in options.filters() {
@@ -369,8 +412,8 @@ macro_rules! history_operations {
                         .load::<$row>(connection)
                         .await?
                         .into_iter()
-                        .map(<$record>::from)
-                        .collect();
+                        .map(<$record>::try_from)
+                        .collect::<Result<Vec<_>, _>>()?;
                     Ok::<_, PostgresStorageError>(HistoryPage::new(rows, total))
                 })
                 .await
@@ -386,14 +429,16 @@ macro_rules! history_operations {
                     use crate::schema::$table::dsl::*;
 
                     crate::schema::$table::table
-                        .filter(id.eq(entity_id))
+                        .filter(id.eq(entity_id.id()))
                         .filter(valid_from.le(at))
                         .filter(valid_to.is_null().or(valid_to.gt(at)))
                         .order(history_id.desc())
                         .first::<$row>(connection)
                         .await
                         .optional()
-                        .map(|row| row.map(<$record>::from))
+                        .map_err(PostgresStorageError::from)?
+                        .map(<$record>::try_from)
+                        .transpose()
                 })
                 .await
         }
@@ -445,6 +490,7 @@ pub async fn list_object_history(
     query: ObjectHistoryListQuery,
 ) -> Result<HistoryPage<ObjectHistoryRecord>, PostgresStorageError> {
     let (object_id, class_id, options, scope) = query.into_parts();
+    let visible_collection_ids = visible_collection_ids(&scope);
     validate_history_filters(&options)?;
     let fields = history_cursor_fields(&options, "hubuumobject_history")?;
     runtime
@@ -453,9 +499,9 @@ pub async fn list_object_history(
 
             let mut count_query = history::hubuumobject_history
                 .into_boxed()
-                .filter(history::id.eq(object_id))
-                .filter(history::hubuum_class_id.eq(class_id));
-            if let HistoryCollectionScope::Visible(collection_ids) = &scope {
+                .filter(history::id.eq(object_id.id()))
+                .filter(history::hubuum_class_id.eq(class_id.id()));
+            if let Some(collection_ids) = &visible_collection_ids {
                 count_query = count_query.filter(history::collection_id.eq_any(collection_ids));
             }
             for parameter in options.filters() {
@@ -469,9 +515,9 @@ pub async fn list_object_history(
 
             let mut records = history::hubuumobject_history
                 .into_boxed()
-                .filter(history::id.eq(object_id))
-                .filter(history::hubuum_class_id.eq(class_id));
-            if let HistoryCollectionScope::Visible(collection_ids) = &scope {
+                .filter(history::id.eq(object_id.id()))
+                .filter(history::hubuum_class_id.eq(class_id.id()));
+            if let Some(collection_ids) = &visible_collection_ids {
                 records = records.filter(history::collection_id.eq_any(collection_ids));
             }
             for parameter in options.filters() {
@@ -482,8 +528,8 @@ pub async fn list_object_history(
                 .load::<ObjectHistoryRow>(connection)
                 .await?
                 .into_iter()
-                .map(ObjectHistoryRecord::from)
-                .collect();
+                .map(ObjectHistoryRecord::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PostgresStorageError>(HistoryPage::new(rows, total))
         })
         .await
@@ -499,15 +545,17 @@ pub async fn object_history_as_of(
             use crate::schema::hubuumobject_history::dsl as history;
 
             history::hubuumobject_history
-                .filter(history::id.eq(object_id))
-                .filter(history::hubuum_class_id.eq(class_id))
+                .filter(history::id.eq(object_id.id()))
+                .filter(history::hubuum_class_id.eq(class_id.id()))
                 .filter(history::valid_from.le(at))
                 .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
                 .order(history::history_id.desc())
                 .first::<ObjectHistoryRow>(connection)
                 .await
                 .optional()
-                .map(|row| row.map(ObjectHistoryRecord::from))
+                .map_err(PostgresStorageError::from)?
+                .map(ObjectHistoryRecord::try_from)
+                .transpose()
         })
         .await
 }

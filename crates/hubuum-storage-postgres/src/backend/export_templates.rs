@@ -1,9 +1,10 @@
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId, ExportTemplateId};
 
 use hubuum_storage_core::{
-    ExportTemplateStorage, StorageError, StorageExportTemplate, StorageExportTemplateCreate,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplatePage,
-    StorageExportTemplateReplace,
+    ExportTemplateStorage, MutationOutcome, StorageError, StorageExportTemplate,
+    StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplatePage, StorageExportTemplateReplace,
 };
 
 use super::PostgresStorage;
@@ -12,9 +13,9 @@ use super::PostgresStorage;
 impl ExportTemplateStorage for PostgresStorage {
     async fn get_export_template(
         &self,
-        template_id: i32,
+        template_id: ExportTemplateId,
     ) -> Result<StorageExportTemplate, StorageError> {
-        crate::operations::export_template::get_export_template(self.runtime(), template_id)
+        crate::operations::export_template::get_export_template(self.runtime(), template_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -30,13 +31,13 @@ impl ExportTemplateStorage for PostgresStorage {
 
     async fn list_export_templates_in_collection(
         &self,
-        collection_id: i32,
-        exclude_template_id: Option<i32>,
+        collection_id: CollectionId,
+        exclude_template_id: Option<ExportTemplateId>,
     ) -> Result<Vec<StorageExportTemplate>, StorageError> {
         crate::operations::export_template::list_export_templates_in_collection(
             self.runtime(),
-            collection_id,
-            exclude_template_id,
+            collection_id.id(),
+            exclude_template_id.map(ExportTemplateId::id),
         )
         .await
         .map_err(StorageError::from)
@@ -44,20 +45,22 @@ impl ExportTemplateStorage for PostgresStorage {
 
     async fn export_template_class_collection_id(
         &self,
-        class_id: i32,
-    ) -> Result<Option<i32>, StorageError> {
+        class_id: ClassId,
+    ) -> Result<Option<CollectionId>, StorageError> {
         crate::operations::export_template::export_template_class_collection_id(
             self.runtime(),
-            class_id,
+            class_id.id(),
         )
-        .await
-        .map_err(StorageError::from)
+        .await?
+        .map(CollectionId::new)
+        .transpose()
+        .map_err(|error| StorageError::internal(error.to_string()))
     }
 
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<StorageExportTemplate, StorageError> {
+    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
         crate::operations::export_template::create_export_template(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -66,7 +69,7 @@ impl ExportTemplateStorage for PostgresStorage {
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<StorageExportTemplate, StorageError> {
+    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
         crate::operations::export_template::replace_export_template(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -75,7 +78,7 @@ impl ExportTemplateStorage for PostgresStorage {
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         crate::operations::export_template::delete_export_template(self.runtime(), request)
             .await
             .map_err(StorageError::from)

@@ -1,20 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::NaiveDateTime;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
-    use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
     use crate::models::{Permissions, PrincipalID, PrincipalSettingsResponse};
-    use crate::storage::postgres::{PostgresPool, with_connection};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, put_request};
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,
         scoped_token, service_account_token,
     };
     use crate::traits::PrincipalIdApplicationExt;
+    use hubuum_storage_postgres::{PostgresPool, with_connection};
 
     const ME_SETTINGS: &str = "/api/v1/iam/me/settings";
     const PRINCIPALS: &str = "/api/v1/iam/principals";
@@ -38,7 +37,7 @@ mod tests {
     ) -> (NaiveDateTime, i64) {
         use crate::schema::principals;
 
-        let updated_at = with_connection(pool, async |conn| -> Result<_, ApiError> {
+        let updated_at = with_connection(pool, async |conn| -> Result<_, diesel::result::Error> {
             let updated_at = principals::table
                 .filter(principals::id.eq(principal_id))
                 .select(principals::updated_at)
@@ -104,10 +103,12 @@ mod tests {
         })
         .await;
 
-        assert!(matches!(
-            result,
-            Err(crate::errors::ApiError::BadRequest(_))
-        ));
+        assert_eq!(
+            result
+                .expect_err("non-object settings must be rejected")
+                .kind(),
+            hubuum_storage_core::StorageErrorKind::InvalidInput,
+        );
     }
 
     #[rstest]

@@ -117,6 +117,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    event_retention_batches (claim_id) {
+        claim_id -> Uuid,
+        event_ids -> Array<Nullable<Int8>>,
+        event_documents -> Jsonb,
+        delivery_cutoff -> Timestamp,
+        delivery_batch_size -> Int8,
+        created_at -> Timestamp,
+        completed_at -> Nullable<Timestamp>,
+        pending_claim_slot -> Nullable<Bool>,
+        purged_events -> Nullable<Int8>,
+        purged_terminal_deliveries -> Nullable<Int8>,
+    }
+}
+
+diesel::table! {
     event_sinks (id) {
         id -> Int4,
         name -> Varchar,
@@ -808,6 +823,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     computed_field_definitions,
     event_deliveries,
     event_related_collections,
+    event_retention_batches,
     event_sinks,
     event_subscriptions,
     events,

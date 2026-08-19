@@ -9,9 +9,9 @@ mod test {
     use crate::models::{
         Collection, HubuumClass, HubuumClassRelation, NewCollection, NewHubuumClassRelation,
     };
-    use crate::storage::postgres::PostgresPool;
     use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
+    use hubuum_storage_postgres::PostgresPool;
 
     async fn create_data(
         pool: &PostgresPool,

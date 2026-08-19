@@ -7,20 +7,49 @@ use crate::models::{
     ResolvedClassRelationTarget,
 };
 use crate::services::storage_boundary::{
-    class_relation_create_to_storage, prepared_class_relation_from_storage,
-    prepared_class_relation_to_storage, resolved_class_relation_from_storage,
-    resolved_class_relation_to_storage,
+    class_relation_create_to_storage, class_relation_id_to_storage,
+    prepared_class_relation_from_storage, prepared_class_relation_to_storage,
+    resolved_class_relation_from_storage, resolved_class_relation_to_storage,
 };
-use crate::storage::ClassRelationStore;
+use crate::storage::{
+    ClassRelationStorage, MutationOutcome, StorageClassRelation, StorageClassRelationCreate,
+    StorageError,
+};
+
+/// Compose the canonical prepare/create relation lifecycle for callers that
+/// begin with a command rather than an authorized aggregate.
+pub(crate) async fn prepare_and_create_class_relation(
+    storage: &dyn ClassRelationStorage,
+    command: StorageClassRelationCreate,
+    context: &EventContext,
+) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
+    let prepared = storage.prepare_class_relation(command).await?;
+    Ok(storage
+        .create_class_relation(&prepared, context)
+        .await?
+        .map(|resolved| resolved.into_parts().0))
+}
+
+/// Compose the canonical resolve/delete relation lifecycle for an identifier.
+pub(crate) async fn resolve_and_delete_class_relation(
+    storage: &dyn ClassRelationStorage,
+    relation_id: i32,
+    context: &EventContext,
+) -> Result<MutationOutcome<()>, StorageError> {
+    let target = storage
+        .resolve_class_relation(class_relation_id_to_storage(relation_id))
+        .await?;
+    storage.delete_class_relation(&target, context).await
+}
 
 /// Application-facing class-relation lifecycle use cases.
 #[derive(Clone)]
 pub struct ClassRelationService {
-    storage: Arc<dyn ClassRelationStore>,
+    storage: Arc<dyn ClassRelationStorage>,
 }
 
 impl ClassRelationService {
-    pub(crate) fn new(storage: Arc<dyn ClassRelationStore>) -> Self {
+    pub(crate) fn new(storage: Arc<dyn ClassRelationStorage>) -> Self {
         Self { storage }
     }
 
@@ -40,7 +69,7 @@ impl ClassRelationService {
         id: HubuumClassRelationID,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
         self.storage
-            .resolve_class_relation(id.id())
+            .resolve_class_relation(class_relation_id_to_storage(id.id()))
             .await
             .map_err(ApiError::from)
             .and_then(resolved_class_relation_from_storage)
@@ -78,6 +107,8 @@ impl ClassRelationService {
 mod tests {
     use rstest::rstest;
 
+    use super::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
+
     use crate::errors::ApiError;
     use crate::events::{Action, EventContext};
     use crate::models::{
@@ -86,13 +117,14 @@ mod tests {
         ObjectRelationLimit, ResourceRevision, UpdateHubuumClass,
     };
     use crate::services::Services;
-    use crate::storage::{MemoryStorageModel, PostgresStorage};
+    use crate::storage::MemoryStorageModel;
     use crate::tests::CollectionFixture;
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
         postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
     };
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::PostgresStorage;
 
     struct ContractHarness {
         services: Services,
@@ -306,37 +338,45 @@ mod tests {
     #[case::postgres(ContractImplementation::PostgresAdapter)]
     #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_relation_contract_audits_compatibility_writes_as_system(
+    async fn class_relation_contract_audits_composed_lifecycle_writes_as_system(
         #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "event_suppressed").await;
         let from_class = harness.create_class("from").await;
         let to_class = harness.create_class("to").await;
         let lifecycle = &harness.services.class_relations().storage;
-        let created = lifecycle
-            .create_class_relation_from_command(
-                crate::services::storage_boundary::class_relation_create_to_storage(
-                    harness.command(&from_class, &to_class),
-                ),
-                &EventContext::system(),
-            )
-            .await
-            .expect("event-suppressed relation should create");
+        let created = prepare_and_create_class_relation(
+            lifecycle.as_ref(),
+            crate::services::storage_boundary::class_relation_create_to_storage(
+                harness.command(&from_class, &to_class),
+            ),
+            &EventContext::system(),
+        )
+        .await
+        .expect("event-suppressed relation should create");
         let relation_id =
             crate::services::storage_boundary::class_relation_from_storage(created.into_value())
                 .expect("valid stored class relation")
                 .id;
         lifecycle
-            .resolve_class_relation(relation_id)
+            .resolve_class_relation(
+                crate::services::storage_boundary::class_relation_id_to_storage(relation_id),
+            )
             .await
             .expect("event-suppressed relation should resolve");
-        lifecycle
-            .delete_class_relation_by_id(relation_id, &EventContext::system())
+        resolve_and_delete_class_relation(lifecycle.as_ref(), relation_id, &EventContext::system())
             .await
             .expect("event-suppressed relation should delete")
             .into_value();
 
-        assert!(lifecycle.resolve_class_relation(relation_id).await.is_err());
+        assert!(
+            lifecycle
+                .resolve_class_relation(
+                    crate::services::storage_boundary::class_relation_id_to_storage(relation_id),
+                )
+                .await
+                .is_err()
+        );
         if let Some(storage) = harness.storage.as_ref() {
             assert_eq!(storage.class_relation_events().await.len(), 2);
         }

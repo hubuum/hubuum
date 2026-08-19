@@ -86,9 +86,9 @@ fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJob
     let (byte_size, sha256) = artifact.into_parts();
     let (expires_at, confirmed_at, finished_at, created_at, updated_at) = timestamps.into_parts();
     RestoreJobSummaryData {
-        id,
+        id: id.id(),
         status: restore_status_from_storage(status),
-        requested_by,
+        requested_by: requested_by.map(|id| id.id()),
         requested_by_identity_scope,
         requested_by_name,
         byte_size,
@@ -100,6 +100,10 @@ fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJob
         created_at,
         updated_at,
     }
+}
+
+fn restore_job_id_to_storage(id: i64) -> RestoreJobID {
+    RestoreJobID::new(id).expect("validated restore job id must be positive")
 }
 
 fn restore_job_from_storage(job: StorageRestoreJob) -> RestoreJobData {
@@ -731,7 +735,10 @@ pub async fn stage_restore(
     let job = storage_handle(pool)
         .stage_restore(StorageRestoreStageCreate::new(
             StorageRestoreInitiator::new(
-                requested_by,
+                requested_by.map(|id| {
+                    hubuum_domain::PrincipalId::new(id)
+                        .expect("validated restore initiator id must be positive")
+                }),
                 requested_by_identity_scope,
                 requested_by_name,
             ),
@@ -770,7 +777,7 @@ async fn load_restore_job(
     job_id: RestoreJobID,
 ) -> Result<RestoreJobData, ApiError> {
     storage_handle(pool)
-        .get_restore_job(job_id.id())
+        .get_restore_job(job_id)
         .await
         .map(restore_job_from_storage)
         .map_err(Into::into)
@@ -781,7 +788,7 @@ pub async fn restore_status(
     job_id: RestoreJobID,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let job = match storage_handle(pool).get_restore_status(job_id.id()).await {
+    let job = match storage_handle(pool).get_restore_status(job_id).await {
         Ok(job) => Some(restore_status_data_from_storage(job)),
         Err(error) if error.kind() == crate::storage::StorageErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
@@ -831,7 +838,7 @@ pub async fn restore_status(
 
 async fn apply_restore(
     pool: &impl crate::storage::StorageContext,
-    job_id: i64,
+    job_id: RestoreJobID,
     document: BackupDocument,
 ) -> Result<StorageRestoreCompletion, ApiError> {
     let document = StorageRestoreDocument::new(
@@ -853,10 +860,10 @@ async fn apply_restore(
 
 async fn fail_restore_and_resume(
     pool: &impl crate::storage::StorageContext,
-    job_id: i64,
+    job_id: RestoreJobID,
     error: &ApiError,
 ) -> Result<(), ApiError> {
-    tracing::error!(message = "Restore failed", restore_job_id = job_id, error = %error);
+    tracing::error!(message = "Restore failed", restore_job_id = job_id.id(), error = %error);
     let stored_error = restore_error_for_storage(error);
     storage_handle(pool)
         .fail_restore_and_resume(StorageRestoreFailure::new(job_id, stored_error))
@@ -920,7 +927,9 @@ pub async fn confirm_restore(
         )));
     }
     if job.expires_at <= Utc::now().naive_utc() {
-        let changed = storage_handle(pool).expire_restore_stage(job.id).await?;
+        let changed = storage_handle(pool)
+            .expire_restore_stage(restore_job_id_to_storage(job.id))
+            .await?;
         if !changed {
             return Err(ApiError::Conflict(
                 "Restore stage changed status concurrently".to_string(),
@@ -936,17 +945,18 @@ pub async fn confirm_restore(
     // allowing every instance to reject new work. ACCESS EXCLUSIVE table locks
     // in `apply_restore` are the final drain barrier for requests already in
     // flight. A failed restore rolls the data transaction back intact.
-    let confirmed_at = storage_handle(pool).start_restore_draining(job.id).await?;
+    let job_id = restore_job_id_to_storage(job.id);
+    let confirmed_at = storage_handle(pool).start_restore_draining(job_id).await?;
 
     if let Err(error) = wait_for_instances_drained(pool).await {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
 
-    let completion = match apply_restore(pool, job.id, document).await {
+    let completion = match apply_restore(pool, job_id, document).await {
         Ok(completion) => completion,
         Err(error) => {
-            fail_restore_and_resume(pool, job.id, &error).await?;
+            fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
@@ -1050,20 +1060,20 @@ async fn reconcile_interrupted_restore_from_snapshot(
             let error = ApiError::InternalServerError(format!(
                 "Staged restore document became invalid: {parse_error}"
             ));
-            fail_restore_and_resume(pool, job.id, &error).await?;
+            fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
     if let Err(error) = validation_summary(&document) {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
     if let Err(error) = wait_for_instances_drained(pool).await {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    if let Err(error) = apply_restore(pool, job.id, document).await {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+    if let Err(error) = apply_restore(pool, job_id, document).await {
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
     Ok(())

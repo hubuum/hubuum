@@ -101,8 +101,8 @@ impl StoredEventProjection {
         principal_names: &HashMap<i32, String>,
         redact_payloads: bool,
     ) -> Result<StorageAuditEvent, PostgresStorageError> {
-        let before_revision = self.before_revision.map(PostgresRevision::get);
-        let after_revision = self.after_revision.map(PostgresRevision::get);
+        let before_revision = self.before_revision.map(PostgresRevision::into_domain);
+        let after_revision = self.after_revision.map(PostgresRevision::into_domain);
         let mut envelope = self.into_envelope(principal_names)?;
         if redact_payloads {
             envelope.before = None;

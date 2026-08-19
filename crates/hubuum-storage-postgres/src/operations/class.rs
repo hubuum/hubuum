@@ -32,17 +32,16 @@ pub(crate) struct ClassRow {
 }
 
 impl ClassRow {
-    pub(crate) fn into_storage(self) -> StorageClassRecord {
-        StorageClassRecord::builder(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision),
+    pub(crate) fn into_storage(self) -> Result<StorageClassRecord, PostgresStorageError> {
+        Ok(StorageClassRecord::builder(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
-            CollectionId::new(self.collection_id)
-                .expect("persisted class collection id must be positive"),
+            CollectionId::new(self.collection_id)?,
             self.description,
         )
         .json_schema(self.json_schema)
         .validate_schema(self.validate_schema)
-        .build()
+        .build())
     }
 
     fn snapshot(&self) -> serde_json::Value {
@@ -116,7 +115,7 @@ pub(crate) async fn resolve_class_on(
 ) -> Result<StorageResolvedClass, PostgresStorageError> {
     validate_class_selector(&selector)?;
     let class = load_class_by_selector(connection, &selector).await?;
-    Ok(StorageResolvedClass::new(selector, class.into_storage()))
+    Ok(StorageResolvedClass::new(selector, class.into_storage()?))
 }
 
 pub async fn create_class(
@@ -148,8 +147,10 @@ pub(crate) async fn create_class_on(
         format!("Class '{}' created", class.name),
     )?
     .with_after(class.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(class.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(class.into_storage()?, audit))
 }
 
 pub async fn update_class(
@@ -177,7 +178,7 @@ pub(crate) async fn update_class_on(
     validate_class_update(&changes, &before)?;
     let update = UpdateClassRow::from(&changes);
     if !update.changes(&before) {
-        return Ok(MutationOutcome::unchanged(before.into_storage()));
+        return Ok(MutationOutcome::unchanged(before.into_storage()?));
     }
     let updated = diesel::update(
         crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
@@ -193,8 +194,10 @@ pub(crate) async fn update_class_on(
     )?
     .with_before(before.snapshot())
     .with_after(updated.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
-    Ok(MutationOutcome::committed(updated.into_storage(), audit))
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(updated.into_storage()?, audit))
 }
 
 pub async fn delete_class(
@@ -230,7 +233,9 @@ pub(crate) async fn delete_class_on(
         format!("Class '{}' deleted", before.name),
     )?
     .with_before(before.snapshot());
-    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
     Ok(MutationOutcome::committed((), audit))
 }
 

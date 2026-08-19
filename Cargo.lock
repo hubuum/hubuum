@@ -2302,6 +2302,7 @@ name = "hubuum-storage-conformance"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "hubuum-domain",
  "hubuum-storage-core",
 ]
 

@@ -242,8 +242,18 @@ mod tests {
             metadata: serde_json::json!({}),
             schema_version: 1,
         };
-        let subscription = EventDeliverySubscription::new(1, "subscription", serde_json::json!({}));
-        let sink = EventDeliverySink::new(1, "sink", "webhook", serde_json::json!({}), None);
+        let subscription = EventDeliverySubscription::new(
+            hubuum_domain::EventSubscriptionId::new(1).unwrap(),
+            "subscription",
+            serde_json::json!({}),
+        );
+        let sink = EventDeliverySink::new(
+            hubuum_domain::EventSinkId::new(1).unwrap(),
+            "sink",
+            "webhook",
+            serde_json::json!({}),
+            None,
+        );
 
         RecordingSink
             .deliver(&envelope, &subscription, &sink)

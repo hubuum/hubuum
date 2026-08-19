@@ -11,17 +11,14 @@ use crate::models::{
     HubuumClassID, HubuumObject, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES, NewHubuumClass,
     NewHubuumObject, ObjectDataPatchDocument, ObjectSelector,
 };
-use crate::storage::postgres::operations::computed_field_rows::{
-    NewObjectComputedDataRow as NewObjectComputedData, ObjectComputedDataRow as ObjectComputedData,
-};
-use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{with_connection, with_transaction};
 use crate::tests::api_operations::{
     patch_request, patch_request_with_content_type, patch_request_with_raw_body, post_request,
 };
 use crate::tests::asserts::assert_response_status;
 use crate::tests::{TestContext, create_test_classes, test_context};
 use crate::traits::{CanSave, SelfAccessors};
+use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::{with_connection, with_transaction};
 
 const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
 
