@@ -209,7 +209,10 @@ impl StorageHandle {
     ) -> Self {
         let task_lease_pool = build_postgres_pool(&settings)
             .expect("validated task-lease pool settings must remain constructible");
-        let notification_listener_pool = build_postgres_pool(&settings)
+        let notification_listener_pool_settings =
+            super::factory::notification_listener_pool_settings(&settings)
+                .expect("validated notification-listener settings must remain constructible");
+        let notification_listener_pool = build_postgres_pool(&notification_listener_pool_settings)
             .expect("validated notification-listener pool settings must remain constructible");
         Self::from_postgres_backend(
             super::factory::compose_postgres(pool)

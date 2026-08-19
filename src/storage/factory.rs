@@ -9,7 +9,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hubuum_storage_core::StorageCallSite;
+use hubuum_storage_core::{StorageCallSite, StorageNotification};
 use hubuum_storage_postgres::{
     PostgresPool, PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage, PostgresTelemetry,
     build_postgres_pool,
@@ -205,17 +205,14 @@ impl PostgresAdapterFactory {
             statement_timeout_ms = settings.statement_timeout_ms(),
         );
         let pool = build_postgres_pool(settings).map_err(Self::initialization_error)?;
-        let operational_pool_settings =
-            PostgresPoolSettings::builder(settings.connection_url().to_string())
-                .max_size(1)
-                .statement_timeout_ms(settings.statement_timeout_ms())
-                .acquire_timeout_ms(settings.acquire_timeout_ms())
-                .build()
-                .map_err(Self::initialization_error)?;
+        let task_lease_pool_settings =
+            operational_pool_settings(settings, 1).map_err(Self::initialization_error)?;
         let task_lease_pool =
-            build_postgres_pool(&operational_pool_settings).map_err(Self::initialization_error)?;
-        let notification_listener_pool =
-            build_postgres_pool(&operational_pool_settings).map_err(Self::initialization_error)?;
+            build_postgres_pool(&task_lease_pool_settings).map_err(Self::initialization_error)?;
+        let notification_listener_pool_settings =
+            notification_listener_pool_settings(settings).map_err(Self::initialization_error)?;
+        let notification_listener_pool = build_postgres_pool(&notification_listener_pool_settings)
+            .map_err(Self::initialization_error)?;
         let backend = compose_postgres(pool)
             .with_task_lease_pool(task_lease_pool)
             .with_notification_listener_pool(notification_listener_pool);
@@ -237,6 +234,25 @@ impl PostgresAdapterFactory {
     fn run_migrations(settings: &PostgresPoolSettings) -> Result<usize, StorageError> {
         hubuum_storage_postgres::run_embedded_migrations(settings.connection_url())
     }
+}
+
+fn operational_pool_settings(
+    settings: &PostgresPoolSettings,
+    max_size: u32,
+) -> Result<PostgresPoolSettings, PostgresPoolBuildError> {
+    PostgresPoolSettings::builder(settings.connection_url().to_string())
+        .max_size(max_size)
+        .statement_timeout_ms(settings.statement_timeout_ms())
+        .acquire_timeout_ms(settings.acquire_timeout_ms())
+        .build()
+}
+
+pub(in crate::storage) fn notification_listener_pool_settings(
+    settings: &PostgresPoolSettings,
+) -> Result<PostgresPoolSettings, PostgresPoolBuildError> {
+    let listener_count = u32::try_from(StorageNotification::ALL.len())
+        .expect("the bounded storage notification topic count must fit in u32");
+    operational_pool_settings(settings, listener_count)
 }
 
 pub(crate) fn initialize_storage(
@@ -290,5 +306,24 @@ mod tests {
         .expect_err("missing connection limits should fail");
 
         assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn postgres_listener_pool_reserves_one_connection_per_topic() {
+        let settings = PostgresPoolSettings::builder("postgres://localhost/hubuum")
+            .max_size(1)
+            .statement_timeout_ms(500)
+            .acquire_timeout_ms(1_000)
+            .build()
+            .expect("settings should be valid");
+
+        let listener_settings = notification_listener_pool_settings(&settings)
+            .expect("listener settings should be valid");
+
+        assert_eq!(
+            usize::try_from(listener_settings.max_size())
+                .expect("the listener pool size should fit in usize"),
+            StorageNotification::ALL.len()
+        );
     }
 }

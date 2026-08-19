@@ -13,6 +13,9 @@ pub enum StorageNotification {
 }
 
 impl StorageNotification {
+    /// Every notification topic a complete backend must support.
+    pub const ALL: [Self; 3] = [Self::EventFanout, Self::EventDelivery, Self::TaskQueue];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -50,6 +53,14 @@ mod tests {
 
     #[test]
     fn notification_topics_have_stable_bounded_names() {
+        assert_eq!(
+            StorageNotification::ALL,
+            [
+                StorageNotification::EventFanout,
+                StorageNotification::EventDelivery,
+                StorageNotification::TaskQueue,
+            ]
+        );
         assert_eq!(StorageNotification::EventFanout.as_str(), "event_fanout");
         assert_eq!(
             StorageNotification::EventDelivery.as_str(),
