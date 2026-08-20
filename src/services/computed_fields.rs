@@ -28,7 +28,7 @@ pub async fn class_computation_state_for(
     class_id: i32,
 ) -> Result<ClassComputationState, ApiError> {
     let state = storage_handle(backend)
-        .computed_field_state(class_id_to_storage(class_id))
+        .get_computed_field_state(class_id_to_storage(class_id))
         .await?;
     Ok(state_from_storage(state))
 }

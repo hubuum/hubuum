@@ -23,13 +23,13 @@ use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, Postgres
 pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260818000001";
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
-/// Adapter-level telemetry supplied by the application composition root.
+/// Adapter-level observation hook supplied by the application composition root.
 ///
 /// The PostgreSQL adapter owns the timing points because it knows when pool
 /// acquisition and database operations actually begin and end. Applications
 /// decide how to export those measurements without coupling this crate to a
 /// metrics implementation or global registry.
-pub trait PostgresTelemetry: Send + Sync {
+pub trait PostgresObserver: Send + Sync {
     fn connection_acquired(&self, _call_site: StorageCallSite, _duration: Duration) {}
 
     fn connection_acquisition_failed(&self, _call_site: StorageCallSite, _duration: Duration) {}
@@ -67,12 +67,12 @@ pub trait PostgresTelemetry: Send + Sync {
 /// Explicit telemetry opt-out for tests, benchmarks, and one-shot maintenance
 /// tools that intentionally do not export adapter observations.
 ///
-/// Normal application composition should pass its own [`PostgresTelemetry`]
+/// Normal application composition should pass its own [`PostgresObserver`]
 /// implementation to [`PostgresRuntime::new`].
 #[derive(Debug, Default)]
-pub struct NoopPostgresTelemetry;
+pub struct NoopPostgresObserver;
 
-impl PostgresTelemetry for NoopPostgresTelemetry {}
+impl PostgresObserver for NoopPostgresObserver {}
 
 /// Runtime dependencies shared by PostgreSQL operations.
 #[derive(Clone)]
@@ -80,7 +80,7 @@ pub struct PostgresRuntime {
     pool: PostgresPool,
     task_lease_pool: PostgresPool,
     computed_reindex_batch_size: NonZeroUsize,
-    telemetry: Arc<dyn PostgresTelemetry>,
+    observer: Arc<dyn PostgresObserver>,
 }
 
 impl fmt::Debug for PostgresRuntime {
@@ -93,28 +93,29 @@ impl fmt::Debug for PostgresRuntime {
                 "computed_reindex_batch_size",
                 &self.computed_reindex_batch_size,
             )
-            .field("telemetry", &"<postgresql telemetry>")
+            .field("observer", &"<postgresql observer>")
             .finish()
     }
 }
 
 impl PostgresRuntime {
     #[must_use]
-    pub fn new(pool: PostgresPool, telemetry: Arc<dyn PostgresTelemetry>) -> Self {
+    pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
             task_lease_pool: pool.clone(),
             computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
             pool,
-            telemetry,
+            observer,
         }
     }
 
     /// Construct a runtime with an explicit telemetry opt-out.
     ///
     /// This is intended for tests, benchmarks, and one-shot maintenance tools.
+    #[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
     #[must_use]
     pub fn unobserved(pool: PostgresPool) -> Self {
-        Self::new(pool, Arc::new(NoopPostgresTelemetry))
+        Self::new(pool, Arc::new(NoopPostgresObserver))
     }
 
     /// Use a small isolated pool for lease heartbeats.
@@ -136,19 +137,8 @@ impl PostgresRuntime {
     }
 
     #[must_use]
-    pub fn with_telemetry(mut self, telemetry: Arc<dyn PostgresTelemetry>) -> Self {
-        self.telemetry = telemetry;
-        self
-    }
-
-    #[must_use]
     pub fn pool(&self) -> &PostgresPool {
         &self.pool
-    }
-
-    #[doc(hidden)]
-    pub fn task_lease_pool(&self) -> &PostgresPool {
-        &self.task_lease_pool
     }
 
     pub(crate) fn computed_reindex_batch_size(&self) -> usize {
@@ -168,7 +158,7 @@ impl PostgresRuntime {
                 #[cfg(feature = "query-capture")]
                 crate::configure_connection(&mut connection);
                 let duration = started_at.elapsed();
-                self.telemetry.connection_acquired(call_site, duration);
+                self.observer.connection_acquired(call_site, duration);
                 debug!(
                     message = "storage backend connection acquired",
                     backend = "postgresql",
@@ -179,7 +169,7 @@ impl PostgresRuntime {
             }
             Err(error) => {
                 let duration = started_at.elapsed();
-                self.telemetry
+                self.observer
                     .connection_acquisition_failed(call_site, duration);
                 warn!(
                     message = "storage backend connection acquisition failed",
@@ -350,7 +340,7 @@ impl PostgresRuntime {
     ) {
         let duration = started_at.elapsed();
         let call_site = ambient_storage_call_site();
-        self.telemetry.operation_finished(
+        self.observer.operation_finished(
             call_site,
             operation,
             duration,
@@ -364,19 +354,19 @@ impl PostgresRuntime {
         scope: &'static str,
         error_codes: &[&'static str],
     ) {
-        self.telemetry.computed_evaluation(scope, error_codes);
+        self.observer.computed_evaluation(scope, error_codes);
     }
 
     pub(crate) fn record_computed_live_fallback(&self) {
-        self.telemetry.computed_live_fallback();
+        self.observer.computed_live_fallback();
     }
 
     pub(crate) fn record_computed_read_repair(&self, outcome: &'static str) {
-        self.telemetry.computed_read_repair(outcome);
+        self.observer.computed_read_repair(outcome);
     }
 
     pub(crate) fn record_revision_condition(&self, outcome: &'static str) {
-        self.telemetry.revision_condition(outcome);
+        self.observer.revision_condition(outcome);
     }
 
     pub(crate) fn record_task_completed(
@@ -385,7 +375,7 @@ impl PostgresRuntime {
         status: &'static str,
         duration: Option<Duration>,
     ) {
-        self.telemetry.task_completed(kind, status, duration);
+        self.observer.task_completed(kind, status, duration);
     }
 
     pub(crate) fn record_computed_rebuild_finished(
@@ -393,11 +383,11 @@ impl PostgresRuntime {
         outcome: &'static str,
         duration: Duration,
     ) {
-        self.telemetry.computed_rebuild_finished(outcome, duration);
+        self.observer.computed_rebuild_finished(outcome, duration);
     }
 
     pub(crate) fn record_computed_rebuild_batch(&self, object_count: usize) {
-        self.telemetry.computed_rebuild_batch(object_count);
+        self.observer.computed_rebuild_batch(object_count);
     }
 }
 
@@ -480,7 +470,7 @@ pub(crate) async fn assert_locked_revision_precondition(
         {
             Err(PostgresStorageError::revision_conflict(
                 "The resource changed since the supplied validator was issued",
-                Some(revision.into_domain()),
+                revision.into_domain(),
             ))
         }
         Err(error) => Err(PostgresStorageError::from(error)),
@@ -632,6 +622,7 @@ pub(crate) async fn postgres_schema_is_ready(
 }
 
 /// Verify that the latest schema required by this adapter is installed.
+#[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 pub async fn schema_is_ready(pool: &PostgresPool) -> Result<bool, PostgresStorageError> {
     with_connection(pool, postgres_schema_is_ready).await
 }
@@ -655,6 +646,7 @@ where
 
 /// Execute one read, one write, or other non-atomic operation on a pooled
 /// PostgreSQL connection.
+#[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 pub async fn with_connection<F, R, E>(
     pool: &PostgresPool,
     operation: F,
@@ -673,6 +665,7 @@ where
 }
 
 /// Execute an atomic multi-step operation in a PostgreSQL transaction.
+#[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 pub async fn with_transaction<F, R, E>(
     pool: &PostgresPool,
     operation: F,

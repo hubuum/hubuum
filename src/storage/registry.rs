@@ -14,21 +14,21 @@
     PartialEq,
     Eq,
 )]
-#[serde(rename_all = "lowercase")]
 pub enum StorageBackendKind {
     #[default]
-    #[value(alias = "")]
-    Postgresql,
+    #[serde(rename = "postgresql")]
+    #[value(name = "postgresql", alias = "")]
+    Postgres,
 }
 
 impl StorageBackendKind {
     /// Every backend kind selectable by this application build.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 1] = [Self::Postgresql];
+    pub(crate) const ALL: [Self; 1] = [Self::Postgres];
 
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Postgresql => "postgresql",
+            Self::Postgres => "postgresql",
         }
     }
 }
@@ -55,8 +55,8 @@ mod tests {
 
     #[test]
     fn descriptor_reports_the_selected_backend() {
-        let descriptor = StorageBackendDescriptor::new(StorageBackendKind::Postgresql);
+        let descriptor = StorageBackendDescriptor::new(StorageBackendKind::Postgres);
 
-        assert_eq!(descriptor.kind(), StorageBackendKind::Postgresql);
+        assert_eq!(descriptor.kind(), StorageBackendKind::Postgres);
     }
 }

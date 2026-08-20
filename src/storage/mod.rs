@@ -1,5 +1,6 @@
 mod context;
 mod contract;
+mod database_diagnostics;
 mod execution;
 mod factory;
 mod imports;
@@ -15,8 +16,10 @@ pub use context::StorageContext;
 #[doc(hidden)]
 pub use context::StorageHandle as BenchmarkStorageContext;
 pub(crate) use context::{StorageHandle, storage_handle};
-pub(crate) use contract::{
-    CertifiedStorageBackend, StorageBackendDescriptor, StorageBackendIdentity,
+pub(crate) use contract::{CertifiedStorageBackend, StorageBackendDescriptor};
+pub(crate) use database_diagnostics::{
+    DatabaseDiagnosticsProvider, DatabasePoolAcquisitions, DatabasePoolCapacity,
+    DatabasePoolConnections, DatabasePoolState, DatabaseStorageSnapshot,
 };
 pub use execution::{
     with_mutation_provenance, with_revision_precondition, with_storage_call_site,
@@ -43,41 +46,40 @@ pub(crate) use hubuum_storage_core::{
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
     AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
     AuthorizationResourceIds, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogPage, CatalogStorage, ClassRelationStorage, ClassStorage,
+    BootstrapStorage, CatalogListQuery, CatalogStorage, ClassRelationStorage, ClassStorage,
     CollectionAuthorizationStorage, CollectionStorage, ComputedFieldLifecycleStorage,
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
     ComputedObjectProjection, ComputedObjectQueryOptions, ComputedObjectStorage,
-    ComputedObjectVisibility, EventArchive, EventDeliveryAdministrationStorage, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription,
-    EventDeliveryWorkItem, EventFanoutStorage, EventRetentionBatch, EventRetentionBatchId,
-    EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
-    ExportTemplateHistoryRecord, ExportTemplateStorage, GroupStorage, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
-    HistoryStorage, IdentityStorage, InventoryStorage, MutationOutcome,
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationStorage, ObjectRelationsTouchingIdsQuery, ObjectStorage,
-    PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage, RetainedEvent,
-    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageClass,
-    StorageClassComputationState, StorageClassCreate, StorageClassGraphRow, StorageClassRecord,
-    StorageClassRelation, StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate,
-    StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
-    StorageComputedFieldDefinition, StorageComputedFieldDefinitionInput,
+    ComputedObjectVisibility, EventArchiveSink, EventDeliveryAdministrationStorage,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
+    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionBatch,
+    EventRetentionBatchId, EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage,
+    ExportTemplateHistoryRecord, ExportTemplateStorage, ExternalIdentityStorage, GroupStorage,
+    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage,
+    HistoryPrincipalName, HistoryStorage, IdentityMembershipStorage, IdentityScopeStorage,
+    InventoryStorage, MutationOutcome, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStorage,
+    ObjectRelationsTouchingIdsQuery, ObjectStorage, PrincipalStorage, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
+    RetainedEvent, ServiceAccountStorage, StorageAuditEvent, StorageAuditEventFilters,
+    StorageAuditEventListQuery, StorageClass, StorageClassComputationState, StorageClassCreate,
+    StorageClassGraphRow, StorageClassRecord, StorageClassRelation, StorageClassRelationCreate,
+    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageComputedFieldDefinition, StorageComputedFieldDefinitionInput,
     StorageComputedFieldDefinitionPatch, StorageComputedFieldError, StorageComputedFieldMutation,
-    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedFieldSelector,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldSelector,
     StorageComputedFieldVisibility, StorageComputedObject, StorageComputedScope,
     StorageDefaultAdminBootstrap, StorageEventDelivery, StorageEventDeliveryListQuery,
-    StorageEventPage, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
-    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExportTemplate,
-    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
-    StorageExportTemplateListQuery, StorageExportTemplatePage, StorageExportTemplateReplace,
-    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageGraphClass, StorageGraphObject, StorageGroupCreate, StorageGroupListQuery,
-    StorageGroupUpdate, StorageIdentityGroup, StorageIdentityPage, StorageIdentityScope,
+    StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
+    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExportTemplate, StorageExportTemplateCreate,
+    StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplateReplace, StorageExternalGroup, StorageExternalPrincipalState,
+    StorageExternalUserSync, StorageGraphClass, StorageGraphObject, StorageGroupCreate,
+    StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageInventoryCounts, StorageLocalPasswordReset,
     StorageNotification, StorageNotificationListener, StorageNotificationShutdown, StorageObject,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
@@ -88,8 +90,8 @@ pub(crate) use hubuum_storage_core::{
     StorageObjectAggregateTarget, StorageObjectCreate, StorageObjectDataPatch,
     StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationCreate,
     StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
-    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
-    StorageOperationObservation, StoragePersonalComputedFieldCreate,
+    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate, StorageObservation,
+    StorageObserver, StoragePage, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StoragePreparedClassRelation,
     StoragePreparedObjectRelation, StoragePrincipal, StoragePrincipalGroup,
@@ -99,18 +101,17 @@ pub(crate) use hubuum_storage_core::{
     StorageRelatedSort, StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTarget,
     StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
-    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPage,
-    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
-    StorageRemoteTargetUpdate, StorageResolvedClass, StorageResolvedClassRelation,
-    StorageResolvedObject, StorageResolvedObjectRelation, StorageResourceScope,
-    StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDocument, StorageRestoreDocumentMetadata,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJob,
-    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
-    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
+    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
+    StorageResolvedObjectRelation, StorageResourceScope, StorageRestoreApply,
+    StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDocument, StorageRestoreDocumentMetadata, StorageRestoreDrainState,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJob, StorageRestoreJobStatus,
+    StorageRestoreJobSummary, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
     StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
     StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskDurations,
@@ -118,21 +119,20 @@ pub(crate) use hubuum_storage_core::{
     StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
     StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery,
     StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageTelemetry, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy,
-    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
-    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
-    TokenStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
+    StorageTokenListState, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
+    StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
+    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenStorage,
+    UnifiedSearchCursor, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
     WorkerNotificationStorage,
 };
 pub use hubuum_storage_core::{
-    AuthenticatedToken, StorageCallSite, StorageExecution, StorageExecutionScope,
+    AuthenticatedToken, ExecutionStorage, StorageCallSite, StorageExecutionScope,
     StorageRevisionPrecondition, StorageRevisionTarget, StorageTransaction,
-    StorageTransactionFuture, TransactionalClassRelations, TransactionalClasses,
-    TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
-    TransactionalStorage,
+    StorageTransactionFuture, TransactionStorage, TransactionalClassRelations,
+    TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,
+    TransactionalObjects, execute_event_retention_batch,
 };
 pub(crate) use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot,
@@ -141,8 +141,7 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{
-    EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage, StoragePoolState,
-    TaskGaugeSnapshot,
+    EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage, TaskGaugeSnapshot,
 };
 pub(crate) use hubuum_storage_core::{
     ImportStorage, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
@@ -153,11 +152,10 @@ pub(crate) use imports::ApplicationImportOperation;
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
 pub(crate) use notifications::spawn_storage_notification_listener;
-pub(crate) use observed::{ApplicationStorageTelemetry, ObservedStorage};
+pub(crate) use observed::{ApplicationStorageObserver, ObservedStorage};
 pub(crate) use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventHealthStorage,
     OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
-    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, ReadinessSnapshot,
-    TokenRetentionStorage,
+    OperationalTaskQueueSnapshot, ReadinessSnapshot, TokenRetentionStorage,
 };
 pub use registry::StorageBackendKind;

@@ -988,7 +988,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         .collection_fixture("database_timestamp_parent")
         .await;
     let imported_collection_name = context.scoped_name("database_timestamp_collection");
-    let class_names = [
+    let resolve_class_names = [
         context.scoped_name("database_timestamp_class_one"),
         context.scoped_name("database_timestamp_class_two"),
     ];
@@ -1011,7 +1011,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     };
     let class_inputs = [0, 1].map(|index| ImportClassInput {
         ref_: Some(format!("class:{index}")),
-        name: class_names[index].clone(),
+        name: resolve_class_names[index].clone(),
         description: format!("Database timestamp class {index}"),
         json_schema: None,
         validate_schema: Some(false),
@@ -1075,12 +1075,12 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         .expect("imported collection should exist");
     let classes = [
         backend
-            .import_class_by_name(collection.id(), &class_names[0])
+            .import_class_by_name(collection.id(), &resolve_class_names[0])
             .await
             .unwrap()
             .expect("first imported class should exist"),
         backend
-            .import_class_by_name(collection.id(), &class_names[1])
+            .import_class_by_name(collection.id(), &resolve_class_names[1])
             .await
             .unwrap()
             .expect("second imported class should exist"),

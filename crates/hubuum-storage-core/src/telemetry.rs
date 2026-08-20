@@ -2,7 +2,7 @@ use std::time::Duration;
 
 /// One completed logical storage operation observed at the application edge.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StorageOperationObservation {
+pub struct StorageObservation {
     backend: &'static str,
     capability: &'static str,
     operation: &'static str,
@@ -10,7 +10,7 @@ pub struct StorageOperationObservation {
     duration: Duration,
 }
 
-impl StorageOperationObservation {
+impl StorageObservation {
     #[must_use]
     pub const fn new(
         backend: &'static str,
@@ -58,6 +58,6 @@ impl StorageOperationObservation {
 ///
 /// Storage adapters and wrappers report observations through this trait. They
 /// do not select a metrics registry, exporter, or global telemetry provider.
-pub trait StorageTelemetry: Send + Sync {
-    fn operation_finished(&self, observation: &StorageOperationObservation);
+pub trait StorageObserver: Send + Sync {
+    fn operation_finished(&self, observation: &StorageObservation);
 }

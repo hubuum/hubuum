@@ -27,7 +27,7 @@ use crate::models::{
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
 use crate::services::identity::{
-    is_human_owner_group_member, list_retained_tokens, load_service_account, principal_is_disabled,
+    get_service_account, is_human_owner_group_member, list_retained_tokens, principal_is_disabled,
 };
 use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
@@ -144,7 +144,7 @@ async fn ensure_can_manage_principal(
     let permitted = match principal.principal_kind()? {
         PrincipalKind::Human => requestor.user.id == principal.id,
         PrincipalKind::ServiceAccount => {
-            let sa = load_service_account(context, principal.id).await?;
+            let sa = get_service_account(context, principal.id).await?;
             is_human_owner_group_member(context, requestor.user.id, sa.owner_group_id).await?
         }
     };

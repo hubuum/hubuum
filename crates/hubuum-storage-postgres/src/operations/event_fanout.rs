@@ -211,6 +211,7 @@ pub async fn claim_event_ids(
 
 /// Fan out one event. Intended for adapter integration tests and test support.
 #[doc(hidden)]
+#[cfg(feature = "integration-test-support")]
 pub async fn fanout_event(
     runtime: &PostgresRuntime,
     event_id: i64,
@@ -380,24 +381,5 @@ async fn notify_event_delivery(connection: &mut PostgresConnection) -> QueryResu
         .bind::<diesel::sql_types::Text, _>("hubuum_event_delivery")
         .bind::<diesel::sql_types::Text, _>("")
         .execute(connection)
-        .await
-}
-
-/// Count delivery rows for one event. Intended for adapter integration tests.
-#[doc(hidden)]
-pub async fn count_event_deliveries_for_event(
-    runtime: &PostgresRuntime,
-    event_id_value: i64,
-) -> Result<i64, PostgresStorageError> {
-    use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
-
-    runtime
-        .with_connection(async |connection| {
-            event_deliveries
-                .filter(event_id.eq(event_id_value))
-                .count()
-                .get_result::<i64>(connection)
-                .await
-        })
         .await
 }

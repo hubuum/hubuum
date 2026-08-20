@@ -15,8 +15,8 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::services::event_administration::{
-    list_event_deliveries, load_event_delivery, mark_event_delivery_dead,
-    release_event_delivery_for_retry,
+    get_event_delivery as get_event_delivery_service, list_event_deliveries,
+    mark_event_delivery_dead, release_event_delivery_for_retry,
 };
 use crate::storage::EventHealthStorage;
 
@@ -98,7 +98,7 @@ pub async fn get_event_delivery(
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
     Ok(ApiResponse::new(
-        load_event_delivery(&context, delivery_id.into_inner().id()).await?,
+        get_event_delivery_service(&context, delivery_id.into_inner().id()).await?,
         StatusCode::OK,
     ))
 }

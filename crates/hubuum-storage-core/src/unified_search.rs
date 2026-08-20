@@ -9,13 +9,13 @@ use crate::{AuthorizationPermission, StorageError, StorageRecordMetadata};
 
 /// Normalized collection, class, and object boundary for a scoped search.
 #[derive(Clone, PartialEq, Eq)]
-pub struct UnifiedSearchResourceScope {
+pub struct StorageResourceScope {
     collection_ids: Vec<CollectionId>,
     class_ids: Vec<ClassId>,
     object_ids: Vec<ObjectId>,
 }
 
-impl UnifiedSearchResourceScope {
+impl StorageResourceScope {
     #[must_use]
     pub fn new(
         collection_ids: impl IntoIterator<Item = CollectionId>,
@@ -45,10 +45,10 @@ impl UnifiedSearchResourceScope {
     }
 }
 
-impl fmt::Debug for UnifiedSearchResourceScope {
+impl fmt::Debug for StorageResourceScope {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchResourceScope")
+            .debug_struct("StorageResourceScope")
             .field("collection_count", &self.collection_ids.len())
             .field("class_count", &self.class_ids.len())
             .field("object_count", &self.object_ids.len())
@@ -69,20 +69,20 @@ fn normalized_ids<T: Ord>(ids: impl IntoIterator<Item = T>) -> Vec<T> {
 /// empty permission dimension denies every permission and therefore fails
 /// closed for all search kinds.
 #[derive(Clone, PartialEq, Eq)]
-pub struct UnifiedSearchVisibility {
+pub struct StorageVisibility {
     principal_id: PrincipalId,
     is_admin: bool,
     permissions: Option<Vec<AuthorizationPermission>>,
-    resources: Option<UnifiedSearchResourceScope>,
+    resources: Option<StorageResourceScope>,
 }
 
-impl UnifiedSearchVisibility {
+impl StorageVisibility {
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
         is_admin: bool,
         permissions: Option<impl IntoIterator<Item = AuthorizationPermission>>,
-        resources: Option<UnifiedSearchResourceScope>,
+        resources: Option<StorageResourceScope>,
     ) -> Self {
         let permissions = permissions.map(|permissions| {
             let mut permissions = permissions.into_iter().collect::<Vec<_>>();
@@ -114,7 +114,7 @@ impl UnifiedSearchVisibility {
     }
 
     #[must_use]
-    pub const fn resources(&self) -> Option<&UnifiedSearchResourceScope> {
+    pub const fn resources(&self) -> Option<&StorageResourceScope> {
         self.resources.as_ref()
     }
 
@@ -128,10 +128,10 @@ impl UnifiedSearchVisibility {
     }
 }
 
-impl fmt::Debug for UnifiedSearchVisibility {
+impl fmt::Debug for StorageVisibility {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchVisibility")
+            .debug_struct("StorageVisibility")
             .field("principal_id", &"[redacted]")
             .field("is_admin", &self.is_admin)
             .field("permission_count", &self.permissions.as_ref().map(Vec::len))
@@ -192,7 +192,7 @@ pub struct UnifiedSearchQuery {
     limit: usize,
     search_extended_document: bool,
     cursor: Option<UnifiedSearchCursor>,
-    visibility: UnifiedSearchVisibility,
+    visibility: StorageVisibility,
 }
 
 impl UnifiedSearchQuery {
@@ -200,7 +200,7 @@ impl UnifiedSearchQuery {
     pub fn new(
         search_term: impl Into<String>,
         limit: usize,
-        visibility: UnifiedSearchVisibility,
+        visibility: StorageVisibility,
     ) -> Self {
         Self {
             search_term: search_term.into(),
@@ -244,7 +244,7 @@ impl UnifiedSearchQuery {
     }
 
     #[must_use]
-    pub const fn visibility(&self) -> &UnifiedSearchVisibility {
+    pub const fn visibility(&self) -> &StorageVisibility {
         &self.visibility
     }
 }
@@ -264,7 +264,7 @@ impl fmt::Debug for UnifiedSearchQuery {
 
 /// Collection projection returned by unified search.
 #[derive(Clone, PartialEq, Eq)]
-pub struct UnifiedSearchCollection {
+pub struct StorageCollection {
     id: CollectionId,
     name: String,
     description: String,
@@ -274,10 +274,10 @@ pub struct UnifiedSearchCollection {
     revision: ResourceRevision,
 }
 
-impl fmt::Debug for UnifiedSearchCollection {
+impl fmt::Debug for StorageCollection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchCollection")
+            .debug_struct("StorageCollection")
             .field("id", &self.id)
             .field("name", &"[redacted]")
             .field("description", &"[redacted]")
@@ -289,7 +289,7 @@ impl fmt::Debug for UnifiedSearchCollection {
     }
 }
 
-impl UnifiedSearchCollection {
+impl StorageCollection {
     #[must_use]
     pub fn new(
         metadata: StorageRecordMetadata,
@@ -369,10 +369,10 @@ impl UnifiedSearchCollection {
 
 /// Class projection returned by unified search, including its collection.
 #[derive(Clone, PartialEq)]
-pub struct UnifiedSearchClass {
+pub struct StorageClass {
     id: ClassId,
     name: String,
-    collection: UnifiedSearchCollection,
+    collection: StorageCollection,
     json_schema: Option<Value>,
     validate_schema: bool,
     description: String,
@@ -381,10 +381,10 @@ pub struct UnifiedSearchClass {
     revision: ResourceRevision,
 }
 
-impl fmt::Debug for UnifiedSearchClass {
+impl fmt::Debug for StorageClass {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchClass")
+            .debug_struct("StorageClass")
             .field("id", &self.id)
             .field("name", &"[redacted]")
             .field("collection", &self.collection)
@@ -398,15 +398,15 @@ impl fmt::Debug for UnifiedSearchClass {
     }
 }
 
-impl UnifiedSearchClass {
+impl StorageClass {
     #[must_use]
     pub fn builder(
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
-        collection: UnifiedSearchCollection,
+        collection: StorageCollection,
         description: impl Into<String>,
-    ) -> UnifiedSearchClassBuilder {
-        UnifiedSearchClassBuilder {
+    ) -> StorageClassBuilder {
+        StorageClassBuilder {
             metadata,
             name: name.into(),
             collection,
@@ -423,7 +423,7 @@ impl UnifiedSearchClass {
     ) -> (
         ClassId,
         String,
-        UnifiedSearchCollection,
+        StorageCollection,
         Option<Value>,
         bool,
         String,
@@ -455,21 +455,21 @@ impl UnifiedSearchClass {
     }
 
     #[must_use]
-    pub const fn collection(&self) -> &UnifiedSearchCollection {
+    pub const fn collection(&self) -> &StorageCollection {
         &self.collection
     }
 }
 
-pub struct UnifiedSearchClassBuilder {
+pub struct StorageClassBuilder {
     metadata: StorageRecordMetadata,
     name: String,
-    collection: UnifiedSearchCollection,
+    collection: StorageCollection,
     description: String,
     json_schema: Option<Value>,
     validate_schema: bool,
 }
 
-impl UnifiedSearchClassBuilder {
+impl StorageClassBuilder {
     #[must_use]
     pub fn json_schema(mut self, value: Option<Value>) -> Self {
         self.json_schema = value;
@@ -483,8 +483,8 @@ impl UnifiedSearchClassBuilder {
     }
 
     #[must_use]
-    pub fn build(self) -> UnifiedSearchClass {
-        UnifiedSearchClass {
+    pub fn build(self) -> StorageClass {
+        StorageClass {
             id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection: self.collection,
@@ -500,7 +500,7 @@ impl UnifiedSearchClassBuilder {
 
 /// Object projection returned by unified search.
 #[derive(Clone, PartialEq)]
-pub struct UnifiedSearchObject {
+pub struct StorageObject {
     id: ObjectId,
     name: String,
     collection_id: CollectionId,
@@ -512,10 +512,10 @@ pub struct UnifiedSearchObject {
     revision: ResourceRevision,
 }
 
-impl fmt::Debug for UnifiedSearchObject {
+impl fmt::Debug for StorageObject {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchObject")
+            .debug_struct("StorageObject")
             .field("id", &self.id)
             .field("name", &"[redacted]")
             .field("collection_id", &self.collection_id)
@@ -529,7 +529,7 @@ impl fmt::Debug for UnifiedSearchObject {
     }
 }
 
-impl UnifiedSearchObject {
+impl StorageObject {
     #[must_use]
     pub fn new(
         metadata: StorageRecordMetadata,
@@ -629,20 +629,20 @@ impl UnifiedSearchObject {
 /// Mandatory backend contract for the three ranked unified-search projections.
 #[async_trait]
 pub trait UnifiedSearchStorage: Send + Sync {
-    async fn search_unified_collections(
+    async fn search_collections(
         &self,
         query: UnifiedSearchQuery,
-    ) -> Result<Vec<UnifiedSearchCollection>, StorageError>;
+    ) -> Result<Vec<StorageCollection>, StorageError>;
 
-    async fn search_unified_classes(
+    async fn search_classes(
         &self,
         query: UnifiedSearchQuery,
-    ) -> Result<Vec<UnifiedSearchClass>, StorageError>;
+    ) -> Result<Vec<StorageClass>, StorageError>;
 
-    async fn search_unified_objects(
+    async fn search_objects(
         &self,
         query: UnifiedSearchQuery,
-    ) -> Result<Vec<UnifiedSearchObject>, StorageError>;
+    ) -> Result<Vec<StorageObject>, StorageError>;
 }
 
 #[cfg(test)]
@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn scoped_permissions_fail_closed() {
-        let visibility = UnifiedSearchVisibility::new(
+        let visibility = StorageVisibility::new(
             PrincipalId::new(42).unwrap(),
             true,
             Some([AuthorizationPermission::ReadCollection]),
@@ -667,7 +667,7 @@ mod tests {
 
     #[test]
     fn resource_scope_normalizes_identifiers() {
-        let scope = UnifiedSearchResourceScope::new(
+        let scope = StorageResourceScope::new(
             [3, 1, 3].map(|id| CollectionId::new(id).unwrap()),
             [8, 4, 8].map(|id| ClassId::new(id).unwrap()),
             [7, 2, 7].map(|id| ObjectId::new(id).unwrap()),
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn debug_output_redacts_search_and_principal_values() {
-        let visibility = UnifiedSearchVisibility::new(
+        let visibility = StorageVisibility::new(
             PrincipalId::new(42).unwrap(),
             false,
             None::<[AuthorizationPermission; 0]>,

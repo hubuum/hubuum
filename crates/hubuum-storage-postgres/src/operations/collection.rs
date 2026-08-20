@@ -257,7 +257,7 @@ pub(crate) async fn delete_collection_on(
     Ok(MutationOutcome::committed((), audit))
 }
 
-pub async fn collection_children(
+pub async fn list_collection_children(
     runtime: &PostgresRuntime,
     collection_id: i32,
 ) -> Result<Vec<StorageCollection>, PostgresStorageError> {
@@ -280,7 +280,7 @@ pub(crate) async fn collection_children_on(
     rows.into_iter().map(CollectionRow::into_storage).collect()
 }
 
-pub async fn collection_ancestors(
+pub async fn list_collection_ancestors(
     runtime: &PostgresRuntime,
     collection_id: i32,
 ) -> Result<Vec<StorageCollection>, PostgresStorageError> {

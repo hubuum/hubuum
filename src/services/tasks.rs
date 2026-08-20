@@ -462,7 +462,7 @@ where
     let local = permissions.is_none_or(|backend| backend.uses_local_permission_store());
     let allowed = if local {
         let (identity, _) = storage_handle(backend)
-            .load_authentication_identity(principal_id_to_storage(requestor.principal_id()))
+            .get_authentication_identity(principal_id_to_storage(requestor.principal_id()))
             .await?
             .into_parts();
         requestor.is_admin(backend).await?

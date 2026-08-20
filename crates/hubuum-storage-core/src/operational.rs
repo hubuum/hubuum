@@ -11,65 +11,27 @@ use crate::StorageError;
 /// Backend-neutral readiness data used by probes and orchestration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadinessSnapshot {
-    schema_ready: bool,
+    storage_ready: bool,
     maintenance_state: MaintenanceState,
 }
 
 impl ReadinessSnapshot {
     #[must_use]
-    pub const fn new(schema_ready: bool, maintenance_state: MaintenanceState) -> Self {
+    pub const fn new(storage_ready: bool, maintenance_state: MaintenanceState) -> Self {
         Self {
-            schema_ready,
+            storage_ready,
             maintenance_state,
         }
     }
 
     #[must_use]
-    pub const fn schema_is_ready(self) -> bool {
-        self.schema_ready
+    pub const fn storage_is_ready(self) -> bool {
+        self.storage_ready
     }
 
     #[must_use]
     pub const fn maintenance_state(self) -> MaintenanceState {
         self.maintenance_state
-    }
-}
-
-/// Backend-neutral persisted storage state for administrator diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OperationalStorageSnapshot {
-    active_sessions: i64,
-    storage_bytes: i64,
-    last_maintenance_at: Option<NaiveDateTime>,
-}
-
-impl OperationalStorageSnapshot {
-    #[must_use]
-    pub const fn new(
-        active_sessions: i64,
-        storage_bytes: i64,
-        last_maintenance_at: Option<NaiveDateTime>,
-    ) -> Self {
-        Self {
-            active_sessions,
-            storage_bytes,
-            last_maintenance_at,
-        }
-    }
-
-    #[must_use]
-    pub const fn active_sessions(self) -> i64 {
-        self.active_sessions
-    }
-
-    #[must_use]
-    pub const fn storage_bytes(self) -> i64 {
-        self.storage_bytes
-    }
-
-    #[must_use]
-    pub const fn last_maintenance_at(self) -> Option<NaiveDateTime> {
-        self.last_maintenance_at
     }
 }
 
@@ -752,9 +714,7 @@ impl EventDeliveryHealthSnapshot {
 pub trait OperationalStateStorage: Send + Sync {
     async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError>;
 
-    async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError>;
-
-    async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError>;
+    async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError>;
 
     async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError>;
 

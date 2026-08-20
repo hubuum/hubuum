@@ -21,8 +21,8 @@ use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
-    EventArchive, EventRetentionBatch, EventRetentionStorage, EventRetentionSummary, RetainedEvent,
-    StorageError, StorageHandle, storage_handle,
+    EventArchiveSink, EventRetentionBatch, EventRetentionSummary, RetainedEvent, StorageError,
+    StorageHandle, execute_event_retention_batch, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
@@ -44,11 +44,11 @@ struct ArchivedEventRecord<'a> {
     event: &'a serde_json::Value,
 }
 
-struct FileEventArchive<'a> {
+struct FileEventArchiveSink<'a> {
     path: Option<&'a Path>,
 }
 
-impl EventArchive for FileEventArchive<'_> {
+impl EventArchiveSink for FileEventArchiveSink<'_> {
     fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError> {
         if let Some(path) = self.path
             && !batch.is_empty()
@@ -61,11 +61,11 @@ impl EventArchive for FileEventArchive<'_> {
     }
 }
 
-trait EventArchiveOutput: Write {
+trait EventArchiveSinkOutput: Write {
     fn sync_all(&self) -> io::Result<()>;
 }
 
-impl EventArchiveOutput for File {
+impl EventArchiveSinkOutput for File {
     fn sync_all(&self) -> io::Result<()> {
         File::sync_all(self)
     }
@@ -102,10 +102,13 @@ pub async fn process_event_retention_batch(
 ) -> Result<EventRetentionSummary, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
     let storage = storage_handle(pool);
-    storage
-        .process_event_retention_batch(settings, &FileEventArchive { path: archive_path })
-        .await
-        .map_err(Into::into)
+    execute_event_retention_batch(
+        &storage,
+        settings,
+        &FileEventArchiveSink { path: archive_path },
+    )
+    .await
+    .map_err(Into::into)
 }
 
 fn retention_worker_should_continue(result: &Result<EventRetentionSummary, ApiError>) -> bool {
@@ -236,13 +239,26 @@ fn archive_event_batch(path: &Path, batch: &EventRetentionBatch) -> Result<(), A
             "Failed to commit event archive batch: {error}"
         )));
     }
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| {
-            ApiError::InternalServerError(format!(
-                "Failed to sync event archive directory: {error}"
-            ))
-        })
+    sync_event_archive_directory(path).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to sync event archive directory: {error}"))
+    })
+}
+
+#[cfg(not(windows))]
+fn sync_event_archive_directory(path: &Path) -> std::io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_event_archive_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?
+        .sync_all()
 }
 
 fn secure_event_archive_directory(path: &Path) -> Result<(), ApiError> {
@@ -341,7 +357,7 @@ fn secure_event_archive_file(_file: &File) -> io::Result<()> {
 }
 
 fn write_event_archive(
-    file: &mut impl EventArchiveOutput,
+    file: &mut impl EventArchiveSinkOutput,
     retention_batch_id: uuid::Uuid,
     archived_at: chrono::NaiveDateTime,
     events: &[RetainedEvent],
@@ -407,7 +423,7 @@ mod tests {
         }
     }
 
-    impl EventArchiveOutput for ArchiveOutputSpy {
+    impl EventArchiveSinkOutput for ArchiveOutputSpy {
         fn sync_all(&self) -> io::Result<()> {
             self.sync_called.set(true);
             self.sync_error

@@ -7,9 +7,7 @@
 use std::sync::Arc;
 
 use crate::services::CollectionService;
-use crate::storage::{
-    ApplicationStorageTelemetry, CollectionStorage, ObservedStorage, StorageBackendIdentity,
-};
+use crate::storage::{ApplicationStorageObserver, CollectionStorage, ObservedStorage};
 
 #[cfg(feature = "postgres-bench")]
 use crate::services::Services;
@@ -26,11 +24,12 @@ use hubuum_storage_postgres::PostgresPool;
 #[must_use]
 pub fn observed_collection_service<S>(storage: S) -> CollectionService
 where
-    S: CollectionStorage + StorageBackendIdentity + 'static,
+    S: CollectionStorage + 'static,
 {
     CollectionService::new(Arc::new(ObservedStorage::new(
         storage,
-        Arc::new(ApplicationStorageTelemetry),
+        "benchmark",
+        Arc::new(ApplicationStorageObserver),
     )))
 }
 

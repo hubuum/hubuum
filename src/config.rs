@@ -1513,7 +1513,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         runtime_role: env_or_default_runtime_role("HUBUUM_RUNTIME_ROLE", RuntimeRole::All),
         storage_backend: env_or_default_storage_backend(
             "HUBUUM_STORAGE_BACKEND",
-            StorageBackendKind::Postgresql,
+            StorageBackendKind::Postgres,
         ),
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
@@ -2050,7 +2050,7 @@ mod tests {
             let _empty_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", Some(""));
             let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
             let loaded = get_config_from_env().unwrap();
-            assert_eq!(loaded.storage_backend, StorageBackendKind::Postgresql);
+            assert_eq!(loaded.storage_backend, StorageBackendKind::Postgres);
             parsed
         };
         let error =
@@ -2062,9 +2062,9 @@ mod tests {
                 .expect_err("a non-empty invalid storage backend must be rejected")
         };
 
-        assert_eq!(default.storage_backend, StorageBackendKind::Postgresql);
-        assert_eq!(selected.storage_backend, StorageBackendKind::Postgresql);
-        assert_eq!(empty.storage_backend, StorageBackendKind::Postgresql);
+        assert_eq!(default.storage_backend, StorageBackendKind::Postgres);
+        assert_eq!(selected.storage_backend, StorageBackendKind::Postgres);
+        assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
         assert_eq!(
             whitespace_error.kind(),

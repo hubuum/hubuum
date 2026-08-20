@@ -11,7 +11,8 @@ use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::services::event_administration::{
     create_event_sink as create_event_sink_service, delete_event_sink as delete_event_sink_service,
-    list_event_sinks, load_event_sink, update_event_sink as update_event_sink_service,
+    get_event_sink as get_event_sink_service, list_event_sinks,
+    update_event_sink as update_event_sink_service,
 };
 use crate::storage::with_revision_precondition;
 
@@ -89,7 +90,7 @@ pub async fn get_event_sink(
     _admin: AdminAccess,
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
-    ApiResponse::ok_revisioned(load_event_sink(&context, sink_id.into_inner().id()).await?)
+    ApiResponse::ok_revisioned(get_event_sink_service(&context, sink_id.into_inner().id()).await?)
 }
 
 #[utoipa::path(
@@ -123,7 +124,7 @@ pub async fn patch_event_sink(
             "Event sink update must include at least one field".to_string(),
         ));
     }
-    let existing = load_event_sink(&context, sink_id.id()).await?;
+    let existing = get_event_sink_service(&context, sink_id.id()).await?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = admin.event_context(&req);
     let updated = with_revision_precondition(
@@ -156,7 +157,7 @@ pub async fn delete_event_sink(
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
     let sink_id = sink_id.into_inner();
-    let existing = load_event_sink(&context, sink_id.id()).await?;
+    let existing = get_event_sink_service(&context, sink_id.id()).await?;
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = admin.event_context(&req);

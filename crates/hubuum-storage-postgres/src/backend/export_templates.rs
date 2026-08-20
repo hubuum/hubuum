@@ -4,7 +4,7 @@ use hubuum_domain::{ClassId, CollectionId, ExportTemplateId};
 use hubuum_storage_core::{
     ExportTemplateStorage, MutationOutcome, StorageError, StorageExportTemplate,
     StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
-    StorageExportTemplatePage, StorageExportTemplateReplace,
+    StorageExportTemplateReplace, StoragePage,
 };
 
 use super::PostgresStorage;
@@ -23,7 +23,7 @@ impl ExportTemplateStorage for PostgresStorage {
     async fn list_export_templates(
         &self,
         query: StorageExportTemplateListQuery,
-    ) -> Result<StorageExportTemplatePage, StorageError> {
+    ) -> Result<StoragePage<StorageExportTemplate>, StorageError> {
         crate::operations::export_template::list_export_templates(self.runtime(), query)
             .await
             .map_err(StorageError::from)

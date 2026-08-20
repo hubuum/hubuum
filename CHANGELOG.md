@@ -42,8 +42,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   receipts match durable events, no-ops append nothing, failed mutations roll
   back state and events, durable outbox work reaches a recording sink, and
   logical, backend, and failure telemetry is reported, and stale writes return
-  the exact current revision. A reusable retention verifier additionally proves
-  durable retry identity and idempotent completion.
+  the exact current revision. Reusable retention and deterministic-fault
+  runners additionally prove durable retry identity, idempotent completion,
+  delivery recovery, restore-coordination rollback, and lease-loss
+  finalization while adapters retain native fault injection.
 - Storage backends now provide a mandatory backend-neutral unit of work for
   composing collection, class, object, and relation operations. Transactional
   mutations inherit one audit context, and shared PostgreSQL and memory-model
@@ -51,9 +53,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- Removed the root PostgreSQL compatibility and SQL-test tree. PostgreSQL
-  composition is now confined to the storage factory, adapter-native fixtures
-  are typed and feature-gated in `hubuum-storage-postgres`, and reusable
+- Removed the legacy root PostgreSQL storage implementation tree and direct SQL
+  from the storage compatibility harness. PostgreSQL composition is now
+  confined to the storage factory, adapter-native fixtures are typed and
+  feature-gated in `hubuum-storage-postgres`, and reusable
   application/service/HTTP expectations live in
   `hubuum-storage-conformance`. Deterministic storage fault coverage now
   includes delivery acknowledgement, restore coordination, lease loss, and
@@ -85,16 +88,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   remote-invocation `oneOf` variants are schema-identical to v0.0.9 and
   optional provenance task IDs retain the same integer-or-null representation.
 - **Breaking (workspace storage API):** complete storage adapters must now
-  implement `TransactionalStorage` in addition to the existing capability
-  traits. External adapter authors must provide an atomic callback runner and
-  all transaction-scoped lifecycle accessors; applications continue to select
-  adapters statically, with no dynamic plugin interface.
+  implement `TransactionStorage` in addition to the existing capability
+  traits. Capability traits consistently use the `<Domain>Storage` suffix;
+  operations use `get_*`, `list_*`, `resolve_*`, and `search_*`; observer hooks
+  are `StorageObserver` and `PostgresObserver`; identity administration is
+  split into focused bootstrap, scope, membership, service-account, and
+  external-identity traits; archive destinations implement `EventArchiveSink`;
+  and all paginated operations return `StoragePage<T>` without domain-specific
+  aliases. Long positional parts aliases are replaced by named private-field
+  types, token issuance policy construction validates its invariants, and
+  retention orchestration can no longer be overridden by adapters. Adapter
+  authors must update those names, provide an atomic callback runner and
+  transaction-scoped lifecycle accessors, and use the named `StorageError`
+  constructors. Static
+  application selection remains unchanged; there is no dynamic plugin
+  interface.
 - **Breaking (workspace storage API):** ordinary storage mutations now require
   `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
   non-empty set of durable `AuditReceipt` values for commits and no receipt for
   genuine no-ops. Import
-  and restore are grouped under `MaintenanceStorage`, and storage/PostgreSQL
-  telemetry is supplied explicitly by application composition. External
+  and restore implement `ImportStorage` and `RestoreStorage` directly, and
+  logical/native observers are supplied explicitly by application composition.
+  External
   adapter authors must remove optional audit contexts, return the new outcome
   type from resource methods, provide telemetry observers, implement the
   reusable audit fixture, and be added to the sealed certification registry.
@@ -119,10 +134,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   retain the same claim and source events for retry, and completion deletes
   exactly the claimed IDs. The new retention-claim migration is applied
   automatically before the worker runs.
-- Backend-neutral metrics traits and DTOs now live in `hubuum-storage-core`;
-  PostgreSQL pool statistics are converted into private, structured contract
-  values at the adapter boundary rather than being represented by root-owned
-  database-shaped fields.
+- Backend-neutral logical metrics traits and DTOs now live in
+  `hubuum-storage-core`. PostgreSQL pool statistics remain adapter-owned and
+  are projected by application composition into the root-owned compatibility
+  shape used by the legacy database endpoint and gauges.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

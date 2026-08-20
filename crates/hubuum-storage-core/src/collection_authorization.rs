@@ -363,7 +363,7 @@ pub trait CollectionAuthorizationStorage: Send + Sync {
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError>;
 
-    async fn visible_collections(
+    async fn list_visible_collections(
         &self,
         query: AuthorizationCollectionVisibilityQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError>;

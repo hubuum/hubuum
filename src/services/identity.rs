@@ -20,18 +20,19 @@ use crate::services::storage_boundary::{
     principal_id_to_storage,
 };
 use crate::storage::{
-    AuthenticationResourceScope, AuthenticationTokenScope, IdentityStorage, StorageContext,
-    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageIdentityGroup, StorageIdentityScope, StorageIdentityScopeEnsure,
-    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StoragePrincipalTokensRevoke, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
-    StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
-    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint,
-    StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
+    AuthenticationResourceScope, AuthenticationTokenScope, BootstrapStorage,
+    ExternalIdentityStorage, IdentityMembershipStorage, IdentityScopeStorage,
+    ServiceAccountStorage, StorageContext, StorageExternalGroup, StorageExternalPrincipalState,
+    StorageExternalUserSync, StorageIdentityGroup, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StoragePrincipalTokensRevoke, StorageServiceAccount,
+    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
+    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy,
+    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
+    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate,
+    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserPoint, StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -182,48 +183,45 @@ fn token_metadata_from_storage(
 }
 
 fn user_from_storage(user: StorageUser) -> User {
-    let (id, password, proper_name, email, created_at, updated_at, anonymized_at) =
-        user.into_parts();
+    let user = user.into_parts();
     User {
-        id: id.id(),
+        id: user.id().id(),
         kind: crate::models::PrincipalKind::Human.as_str().to_string(),
-        password,
-        proper_name,
-        email,
-        created_at,
-        updated_at,
-        anonymized_at,
+        password: user.password_hash().map(str::to_string),
+        proper_name: user.proper_name().map(str::to_string),
+        email: user.email().map(str::to_string),
+        created_at: user.created_at(),
+        updated_at: user.updated_at(),
+        anonymized_at: user.anonymized_at(),
     }
 }
 
 fn user_list_item_from_storage(item: StorageUserListItem) -> Result<UserWithName, ApiError> {
-    let (user, scope, provider, name, managed, attempted, succeeded, item_revision) =
-        item.into_parts();
+    let item = item.into_parts();
     Ok(UserWithName::from_tuple((
-        user_from_storage(user),
-        scope,
-        provider,
-        name,
-        managed,
-        attempted,
-        succeeded,
-        item_revision,
+        user_from_storage(item.user().clone()),
+        item.identity_scope().to_string(),
+        item.provider_kind().to_string(),
+        item.name().to_string(),
+        item.provider_managed(),
+        item.last_sync_attempted_at(),
+        item.last_sync_success_at(),
+        item.revision(),
     )))
 }
 
 fn user_point_from_storage(point: StorageUserPoint) -> Result<UserPointResponse, ApiError> {
-    let (id, proper_name, email, created_at, updated_at, scope_id, managed, name, point_revision) =
-        point.into_parts();
+    let point = point.into_parts();
     Ok(UserPointResponse {
-        id: id.id(),
-        identity_scope_id: scope_id.id(),
-        provider_managed: managed,
-        name,
-        proper_name,
-        email,
-        created_at,
-        updated_at,
-        revision: point_revision,
+        id: point.id().id(),
+        identity_scope_id: point.identity_scope_id().id(),
+        provider_managed: point.provider_managed(),
+        name: point.name().to_string(),
+        proper_name: point.proper_name().map(str::to_string),
+        email: point.email().map(str::to_string),
+        created_at: point.created_at(),
+        updated_at: point.updated_at(),
+        revision: point.revision(),
     })
 }
 
@@ -264,6 +262,7 @@ fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssua
         policy.default_lifetime().hours(),
         policy.maximum_lifetime().hours(),
     )
+    .expect("validated application token policy must satisfy the storage contract")
 }
 
 fn token_observation() -> Result<StorageTokenObservation, ApiError> {
@@ -273,33 +272,33 @@ fn token_observation() -> Result<StorageTokenObservation, ApiError> {
         .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
-pub async fn load_user(context: &impl StorageContext, id: i32) -> Result<User, ApiError> {
+pub async fn get_user(context: &impl StorageContext, id: i32) -> Result<User, ApiError> {
     Ok(user_from_storage(
         storage_handle(context)
-            .load_user(hubuum_domain::UserId::new(id).expect("validated user id must be positive"))
+            .get_user(hubuum_domain::UserId::new(id).expect("validated user id must be positive"))
             .await?,
     ))
 }
 
-pub async fn load_user_by_name(
+pub async fn get_user_by_name(
     context: &impl StorageContext,
     identity_scope: &str,
     name: &str,
 ) -> Result<User, ApiError> {
     Ok(user_from_storage(
         storage_handle(context)
-            .load_user_by_name(identity_scope.to_string(), name.to_string())
+            .get_user_by_name(identity_scope.to_string(), name.to_string())
             .await?,
     ))
 }
 
-pub async fn load_user_point(
+pub async fn get_user_point(
     context: &impl StorageContext,
     id: i32,
 ) -> Result<UserPointResponse, ApiError> {
     user_point_from_storage(
         storage_handle(context)
-            .load_user_point(
+            .get_user_point(
                 hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
             )
             .await?,
@@ -483,14 +482,14 @@ pub async fn renew_token(
     Ok(crate::models::IssuedToken::new(raw, expires_at))
 }
 
-pub async fn load_token_metadata(
+pub async fn get_token_metadata(
     context: &impl StorageContext,
     principal_id: i32,
     token_id: i32,
 ) -> Result<PrincipalTokenMetadata, ApiError> {
     token_metadata_from_storage(
         storage_handle(context)
-            .load_token_metadata(
+            .get_token_metadata(
                 principal_id_to_storage(principal_id),
                 hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
                 token_observation()?,
@@ -499,12 +498,12 @@ pub async fn load_token_metadata(
     )
 }
 
-pub async fn load_token_metadata_batch(
+pub async fn get_token_metadata_batch(
     context: &impl StorageContext,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     storage_handle(context)
-        .load_token_metadata_batch(
+        .get_token_metadata_batch(
             tokens
                 .iter()
                 .map(|token| {
@@ -579,24 +578,24 @@ pub async fn ensure_identity_scope(
     )
 }
 
-pub async fn identity_scope_name(
+pub async fn resolve_identity_scope_name(
     context: &impl StorageContext,
     scope_id: i32,
 ) -> Result<String, ApiError> {
     Ok(storage_handle(context)
-        .identity_scope_name(
+        .resolve_identity_scope_name(
             hubuum_domain::IdentityScopeId::new(scope_id)
                 .expect("validated identity scope id must be positive"),
         )
         .await?)
 }
 
-pub async fn identity_scope_names(
+pub async fn resolve_identity_scope_names(
     context: &impl StorageContext,
     scope_ids: &[i32],
 ) -> Result<HashMap<i32, String>, ApiError> {
     Ok(storage_handle(context)
-        .identity_scope_names(
+        .resolve_identity_scope_names(
             scope_ids
                 .iter()
                 .copied()
@@ -612,14 +611,14 @@ pub async fn identity_scope_names(
         .collect())
 }
 
-pub async fn load_principal_group(
+pub async fn get_principal_group(
     context: &impl StorageContext,
     principal_id: i32,
     group_id: i32,
 ) -> Result<PrincipalGroup, ApiError> {
     principal_group_from_storage(
         storage_handle(context)
-            .load_principal_group(
+            .get_principal_group(
                 principal_id_to_storage(principal_id),
                 group_id_to_storage(group_id),
             )
@@ -693,13 +692,13 @@ pub async fn principal_is_disabled(
         .await?)
 }
 
-pub async fn load_service_account(
+pub async fn get_service_account(
     context: &impl StorageContext,
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
     Ok(service_account_from_storage(
         storage_handle(context)
-            .load_service_account(
+            .get_service_account(
                 hubuum_domain::ServiceAccountId::new(service_account_id)
                     .expect("validated service account id must be positive"),
             )
@@ -719,13 +718,13 @@ fn service_account_point_from_storage(
     ))
 }
 
-pub async fn load_service_account_point(
+pub async fn get_service_account_point(
     context: &impl StorageContext,
     service_account_id: i32,
 ) -> Result<crate::models::ServiceAccountPointResponse, ApiError> {
     service_account_point_from_storage(
         storage_handle(context)
-            .load_service_account_point(
+            .get_service_account_point(
                 hubuum_domain::ServiceAccountId::new(service_account_id)
                     .expect("validated service account id must be positive"),
             )

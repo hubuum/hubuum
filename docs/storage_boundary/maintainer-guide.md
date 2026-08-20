@@ -34,7 +34,7 @@ with_connection or with_transaction
 ```
 
 A composed resource workflow follows the same path, but
-`TransactionalStorage` creates one opaque `StorageTransaction` and all of its
+`TransactionStorage` creates one opaque `StorageTransaction` and all of its
 resource operation accessors reuse the same native unit of work.
 
 Results travel back as storage DTOs, then domain or API values. Errors travel
@@ -77,7 +77,11 @@ surface. Do not recreate Diesel rows or SQL helpers in application tests.
 
 The composition modules are grouped by capability family. In `src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource ports, and one exhaustive dispatch macro. Sibling modules own forwarding implementations for identity, queries, computed fields, tasks, workflows, resources, diagnostics, and operations.
 
-`crates/hubuum-storage-postgres/src/backend` implements every contract trait for `PostgresStorage`. The capability modules are thin delegation boundaries; the workflow modules own adapter-specific coordination. Native execution belongs under `crates/hubuum-storage-postgres/src/operations`. Equivalent code under the root PostgreSQL tree is test-only migration debt, not a pattern for new work.
+`crates/hubuum-storage-postgres/src/backend` implements every contract trait for
+`PostgresStorage`. The capability modules are thin delegation boundaries; the
+workflow modules own adapter-specific coordination. Native execution belongs
+under `crates/hubuum-storage-postgres/src/operations`; do not recreate an
+adapter-specific implementation or SQL tree in the root application.
 
 This split is structural, not semantic. A selectable backend still implements
 the single complete `StorageBackend` aggregate, and every application call
@@ -106,7 +110,7 @@ connection so I can query," redesign it around the use case.
 
 Before adding a method, ask whether the use case only composes existing safe
 resource semantics. If it does, implement the orchestration in the application
-through `TransactionalStorage`. Add a trait method when storage needs a new
+through `TransactionStorage`. Add a trait method when storage needs a new
 query semantic, a hidden lock or state machine, or one invariant that callers
 cannot safely reconstruct.
 
@@ -181,7 +185,7 @@ must share PostgreSQL's schema.
 
 ## Transactions
 
-Use `TransactionalStorage` for application-owned composition of existing safe
+Use `TransactionStorage` for application-owned composition of existing safe
 collection, class, object, and relation semantics. The transaction requires an
 `EventContext`; its operation types attach that context to every mutation.
 
@@ -210,9 +214,8 @@ Compatibility code without a user actor uses explicit system attribution.
 Committed outcomes carry the receipt produced by the durable event write;
 genuine no-ops return `Unchanged` and append no event.
 
-Import and restore are the only operations grouped under
-`MaintenanceStorage`. Keep that surface typed and narrow. It is not a general
-way to bypass the ordinary audit contract.
+`ImportStorage` and `RestoreStorage` are explicit, typed workflow capabilities.
+They are not a general way to bypass the ordinary audit contract.
 
 ## Errors
 
@@ -246,10 +249,9 @@ The pair must be bounded and must not contain data. Architecture tests derive
 the expected operation count from the semantic contract inventory, require
 exactly one observer per method, and reject duplicate labels.
 
-Identity metadata and execution-scope helpers are not logical storage
-operations. `metrics_pool_state` is also intentionally unobserved so collecting
-metrics cannot recursively instrument metric collection. Keep such exceptions
-explicit in the architecture guard rather than adding an unlabeled bypass.
+Execution-scope helpers are not logical storage operations. PostgreSQL pool
+metrics use the adapter's diagnostic surface rather than a logical storage
+capability, so collecting them cannot recursively instrument metric collection.
 
 PostgreSQL connection and transaction metrics answer different questions from
 storage-operation metrics:
@@ -269,10 +271,9 @@ application call.
 ## Administrator Configuration
 
 The administrator endpoint, startup logs, and backend-info metric must agree on
-backend identity. Composition asserts that the adapter's `StorageBackendIdentity`
-matches its selectable `StorageBackendKind`, so resource-family and aggregate
-operation labels cannot silently diverge. Add diagnostic settings only when
-they are non-sensitive or can be represented as a safe boolean.
+backend identity. The application registry is the single authority for the
+selected `StorageBackendKind` and its diagnostic name. Add diagnostic settings
+only when they are non-sensitive or can be represented as a safe boolean.
 
 Never expose a connection URL, password, token, certificate contents, remote
 authentication configuration, or raw driver option string.
@@ -280,13 +281,18 @@ authentication configuration, or raw driver option string.
 ## Workspace Ownership
 
 - `hubuum-domain` owns extracted backend-independent domain values.
-- `hubuum-storage-core` owns the complete contract traits and DTOs, including
-  backend-neutral metrics snapshots and pool diagnostics.
-- `hubuum-storage-conformance` owns reusable audit, retention, and
-  application/service/HTTP compatibility expectations. It is a
+- `hubuum-storage-core` owns the complete contract traits and portable DTOs,
+  including backend-neutral logical metrics snapshots. Native pool diagnostics
+  stay in the adapter and are projected into the root-owned legacy database
+  endpoint shape during composition.
+- `hubuum-storage-conformance` owns reusable audit, retention, delivery-fault,
+  restore-coordination, lease-loss, and application/service/HTTP compatibility
+  expectations. It is a
   workspace-internal development dependency, not production code.
 - `hubuum-storage-postgres` owns pool construction, schema, migrations, native helpers, and production operation implementations.
-- The root crate owns application services, authorization-policy selection, adapter registration, telemetry wiring, settings projection, and exhaustive composition.
+- The root crate owns application services, authorization-policy selection,
+  adapter registration, observer wiring, settings and legacy-diagnostics
+  projection, and exhaustive composition.
 
 The backend-independent audit, retention, and application/service/HTTP
 expectations live in `hubuum-storage-conformance`. Root code implements the
@@ -318,7 +324,7 @@ The current source guards verify that:
 - contract DTOs contain no adapter or HTTP types;
 - only adapters convert implementation errors into `StorageError`;
 - only the application converts `StorageError` into `ApiError`;
-- all required capability traits, including `TransactionalStorage`, remain in
+- all required capability traits, including `TransactionStorage`, remain in
   the aggregate;
 - the semantic inventory exactly matches aggregate traits, trait methods,
   tracked input variants, and existing evidence functions;

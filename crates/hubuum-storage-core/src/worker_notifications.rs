@@ -39,7 +39,7 @@ pub type StorageNotificationListener = Pin<Box<dyn Future<Output = ()> + Send + 
 /// different backend-native mechanism. Process and thread supervision remain
 /// application responsibilities.
 pub trait WorkerNotificationStorage: Send + Sync {
-    fn worker_notification_listener(
+    fn listen_for_worker_notifications(
         &self,
         topic: StorageNotification,
         on_notification: fn(),

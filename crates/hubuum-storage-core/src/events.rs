@@ -430,7 +430,7 @@ impl EventRetentionBatch {
 ///
 /// Implementations must be idempotent by [`EventRetentionBatch::id`]. A
 /// retry of the same batch must succeed without duplicating archived events.
-pub trait EventArchive: Send + Sync {
+pub trait EventArchiveSink: Send + Sync {
     fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError>;
 }
 
@@ -482,20 +482,28 @@ pub trait EventRetentionStorage: Send + Sync {
         &self,
         batch_id: EventRetentionBatchId,
     ) -> Result<EventRetentionSummary, StorageError>;
+}
 
-    async fn process_event_retention_batch(
-        &self,
-        settings: EventRetentionSettings,
-        archive: &dyn EventArchive,
-    ) -> Result<EventRetentionSummary, StorageError> {
-        let Some(batch) = self.claim_event_retention_batch(settings).await? else {
-            return Ok(EventRetentionSummary::default());
-        };
-        if !batch.is_empty() {
-            archive.archive(&batch)?;
-        }
-        self.complete_event_retention_batch(batch.id()).await
+/// Execute the application-owned claim/archive/ack protocol.
+///
+/// Keeping this orchestration outside [`EventRetentionStorage`] prevents an
+/// adapter from replacing the ordering guarantee that archival completes
+/// before the durable claim is acknowledged and purged.
+pub async fn execute_event_retention_batch<S>(
+    storage: &S,
+    settings: EventRetentionSettings,
+    archive: &dyn EventArchiveSink,
+) -> Result<EventRetentionSummary, StorageError>
+where
+    S: EventRetentionStorage + ?Sized,
+{
+    let Some(batch) = storage.claim_event_retention_batch(settings).await? else {
+        return Ok(EventRetentionSummary::default());
+    };
+    if !batch.is_empty() {
+        archive.archive(&batch)?;
     }
+    storage.complete_event_retention_batch(batch.id()).await
 }
 
 #[cfg(test)]

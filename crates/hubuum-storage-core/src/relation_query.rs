@@ -9,7 +9,7 @@ use hubuum_domain::{
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StorageRecordMetadata, StorageVisibility};
+use crate::{StorageError, StoragePage, StorageRecordMetadata, StorageVisibility};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageClassRelation {
@@ -441,8 +441,6 @@ impl StorageRelatedObjectForRootRow {
 }
 
 /// Relation-query page retained as a domain-specific API name.
-pub type RelationPage<T> = crate::StoragePage<T>;
-
 #[derive(Clone, PartialEq)]
 pub struct RelationListQuery {
     options: QueryOptions,
@@ -875,22 +873,22 @@ pub trait RelationQueryStorage: Send + Sync {
     async fn list_class_relations(
         &self,
         query: RelationListQuery,
-    ) -> Result<RelationPage<StorageClassRelation>, StorageError>;
+    ) -> Result<StoragePage<StorageClassRelation>, StorageError>;
 
     async fn list_object_relations(
         &self,
         query: RelationListQuery,
-    ) -> Result<RelationPage<StorageObjectRelation>, StorageError>;
+    ) -> Result<StoragePage<StorageObjectRelation>, StorageError>;
 
     async fn list_class_relations_touching(
         &self,
         query: RelationTouchingQuery,
-    ) -> Result<RelationPage<StorageClassRelation>, StorageError>;
+    ) -> Result<StoragePage<StorageClassRelation>, StorageError>;
 
     async fn list_object_relations_touching(
         &self,
         query: RelationTouchingQuery,
-    ) -> Result<RelationPage<StorageObjectRelation>, StorageError>;
+    ) -> Result<StoragePage<StorageObjectRelation>, StorageError>;
 
     async fn class_relations_touching_ids(
         &self,
@@ -912,22 +910,22 @@ pub trait RelationQueryStorage: Send + Sync {
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError>;
 
-    async fn related_classes(
+    async fn list_related_classes(
         &self,
         query: RelationGraphQuery,
-    ) -> Result<RelationPage<StorageClassGraphRow>, StorageError>;
+    ) -> Result<StoragePage<StorageClassGraphRow>, StorageError>;
 
-    async fn related_objects(
+    async fn list_related_objects(
         &self,
         query: RelationGraphQuery,
-    ) -> Result<RelationPage<StorageObjectGraphRow>, StorageError>;
+    ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError>;
 
-    async fn related_objects_for_roots(
+    async fn list_related_objects_for_roots(
         &self,
         query: RelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError>;
 
-    async fn bidirectionally_related_objects_for_roots(
+    async fn list_bidirectionally_related_objects_for_roots(
         &self,
         query: BidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError>;

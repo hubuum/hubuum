@@ -6,7 +6,7 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError, StorageRecordMetadata};
+use crate::{MutationOutcome, StorageError, StoragePage, StorageRecordMetadata};
 
 /// Backend-neutral definition of an export template.
 ///
@@ -28,19 +28,66 @@ pub struct StorageExportTemplateDefinition {
     default_limits: Option<Value>,
 }
 
-pub type StorageExportTemplateDefinitionParts = (
-    String,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<ClassId>,
-    Option<String>,
-    Option<Value>,
-    Option<Value>,
-    Option<String>,
-    Option<Value>,
-);
+pub struct StorageExportTemplateDefinitionParts {
+    description: String,
+    content_type: String,
+    template: String,
+    kind: String,
+    scope_kind: Option<String>,
+    class_id: Option<ClassId>,
+    default_query: Option<String>,
+    include: Option<Value>,
+    relation_context: Option<Value>,
+    default_missing_data_policy: Option<String>,
+    default_limits: Option<Value>,
+}
+
+impl StorageExportTemplateDefinitionParts {
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+    #[must_use]
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    #[must_use]
+    pub fn template(&self) -> &str {
+        &self.template
+    }
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+    #[must_use]
+    pub fn scope_kind(&self) -> Option<&str> {
+        self.scope_kind.as_deref()
+    }
+    #[must_use]
+    pub const fn class_id(&self) -> Option<ClassId> {
+        self.class_id
+    }
+    #[must_use]
+    pub fn default_query(&self) -> Option<&str> {
+        self.default_query.as_deref()
+    }
+    #[must_use]
+    pub const fn include(&self) -> Option<&Value> {
+        self.include.as_ref()
+    }
+    #[must_use]
+    pub const fn relation_context(&self) -> Option<&Value> {
+        self.relation_context.as_ref()
+    }
+    #[must_use]
+    pub fn default_missing_data_policy(&self) -> Option<&str> {
+        self.default_missing_data_policy.as_deref()
+    }
+    #[must_use]
+    pub const fn default_limits(&self) -> Option<&Value> {
+        self.default_limits.as_ref()
+    }
+}
 
 impl StorageExportTemplateDefinition {
     #[must_use]
@@ -104,19 +151,19 @@ impl StorageExportTemplateDefinition {
 
     #[must_use]
     pub fn into_parts(self) -> StorageExportTemplateDefinitionParts {
-        (
-            self.description,
-            self.content_type,
-            self.template,
-            self.kind,
-            self.scope_kind,
-            self.class_id,
-            self.default_query,
-            self.include,
-            self.relation_context,
-            self.default_missing_data_policy,
-            self.default_limits,
-        )
+        StorageExportTemplateDefinitionParts {
+            description: self.description,
+            content_type: self.content_type,
+            template: self.template,
+            kind: self.kind,
+            scope_kind: self.scope_kind,
+            class_id: self.class_id,
+            default_query: self.default_query,
+            include: self.include,
+            relation_context: self.relation_context,
+            default_missing_data_policy: self.default_missing_data_policy,
+            default_limits: self.default_limits,
+        }
     }
 }
 
@@ -245,9 +292,6 @@ impl fmt::Debug for StorageExportTemplateListQuery {
             .finish()
     }
 }
-
-/// Export-template page retained as a domain-specific API name.
-pub type StorageExportTemplatePage = crate::StoragePage<StorageExportTemplate>;
 
 /// Atomic create command including mandatory audit provenance.
 #[derive(Clone, PartialEq)]
@@ -407,7 +451,7 @@ pub trait ExportTemplateStorage: Send + Sync {
     async fn list_export_templates(
         &self,
         query: StorageExportTemplateListQuery,
-    ) -> Result<StorageExportTemplatePage, StorageError>;
+    ) -> Result<StoragePage<StorageExportTemplate>, StorageError>;
 
     async fn list_export_templates_in_collection(
         &self,

@@ -309,11 +309,11 @@ async fn build_authenticated_from_meta(
     crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
     let storage = storage_handle(backend);
     let identity = storage
-        .load_authentication_identity(token_meta.principal_id())
+        .get_authentication_identity(token_meta.principal_id())
         .await?;
     let (principal, _) = identity.into_parts();
     let scope = storage
-        .load_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+        .get_authentication_token_scope(AuthenticationTokenScopeQuery::new(
             token_meta.id(),
             token_meta.is_permission_scoped(),
             token_meta.is_resource_scoped(),
@@ -361,7 +361,7 @@ async fn human_unscoped_user_from_meta(
     // when human, a password-free human projection from the same snapshot.
     let storage = storage_handle(backend);
     let identity = storage
-        .load_authentication_identity(token_meta.principal_id())
+        .get_authentication_identity(token_meta.principal_id())
         .await?;
     let (principal, human) = identity.into_parts();
     if !principal.is_human() {

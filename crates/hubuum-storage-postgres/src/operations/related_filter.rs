@@ -696,7 +696,7 @@ fn sql_datetime_array(
 mod tests {
     use hubuum_domain::{ObjectId, PrincipalId};
     use hubuum_query::parse_query_parameter_with_computed_and_related_filters_and_passthrough;
-    use hubuum_storage_core::UnifiedSearchResourceScope;
+    use hubuum_storage_core::StorageResourceScope;
 
     use super::*;
 
@@ -714,7 +714,7 @@ mod tests {
             PrincipalId::new(11).unwrap(),
             false,
             None::<Vec<AuthorizationPermission>>,
-            Some(UnifiedSearchResourceScope::new(
+            Some(StorageResourceScope::new(
                 [],
                 [],
                 [ObjectId::new(11).unwrap()],

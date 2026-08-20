@@ -110,7 +110,7 @@ pub struct PrincipalKey {
 }
 
 impl PrincipalKey {
-    pub fn identity_scope_name(&self) -> &str {
+    pub fn resolve_identity_scope_name(&self) -> &str {
         self.identity_scope
             .as_deref()
             .unwrap_or(crate::models::identity::LOCAL_IDENTITY_SCOPE)
@@ -171,7 +171,7 @@ impl<'de> Deserialize<'de> for RestoreTimestamps {
 }
 
 impl GroupKey {
-    pub fn identity_scope_name(&self) -> &str {
+    pub fn resolve_identity_scope_name(&self) -> &str {
         self.identity_scope
             .as_deref()
             .unwrap_or(crate::models::identity::LOCAL_IDENTITY_SCOPE)

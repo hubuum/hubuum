@@ -12,10 +12,7 @@ use hubuum_events_core::{
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError};
-
-/// Event-administration page retained as a domain-specific API name.
-pub type StorageEventPage<T> = crate::StoragePage<T>;
+use crate::{MutationOutcome, StorageError, StoragePage};
 
 /// Typed audit filters interpreted by the selected backend.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -243,7 +240,7 @@ pub trait AuditEventStorage: Send + Sync {
     async fn list_audit_events(
         &self,
         query: StorageAuditEventListQuery,
-    ) -> Result<StorageEventPage<StorageAuditEvent>, StorageError>;
+    ) -> Result<StoragePage<StorageAuditEvent>, StorageError>;
 }
 
 /// Backend-neutral persisted event sink.
@@ -1281,11 +1278,10 @@ pub trait EventSubscriptionStorage: Send + Sync {
     async fn list_event_sinks(
         &self,
         query: StorageEventSinkListQuery,
-    ) -> Result<StorageEventPage<StorageEventSink>, StorageError>;
+    ) -> Result<StoragePage<StorageEventSink>, StorageError>;
 
     /// Load one event sink by ID.
-    async fn load_event_sink(&self, sink_id: EventSinkId)
-    -> Result<StorageEventSink, StorageError>;
+    async fn get_event_sink(&self, sink_id: EventSinkId) -> Result<StorageEventSink, StorageError>;
 
     /// Atomically create an event sink and its lifecycle event.
     async fn create_event_sink(
@@ -1311,10 +1307,10 @@ pub trait EventSubscriptionStorage: Send + Sync {
     async fn list_event_subscriptions(
         &self,
         query: StorageEventSubscriptionListQuery,
-    ) -> Result<StorageEventPage<StorageEventSubscription>, StorageError>;
+    ) -> Result<StoragePage<StorageEventSubscription>, StorageError>;
 
     /// Load a subscription only when it belongs to the named collection.
-    async fn load_event_subscription(
+    async fn get_event_subscription(
         &self,
         collection_id: CollectionId,
         subscription_id: EventSubscriptionId,
@@ -1537,10 +1533,10 @@ pub trait EventDeliveryAdministrationStorage: Send + Sync {
     async fn list_event_deliveries(
         &self,
         query: StorageEventDeliveryListQuery,
-    ) -> Result<StorageEventPage<StorageEventDelivery>, StorageError>;
+    ) -> Result<StoragePage<StorageEventDelivery>, StorageError>;
 
     /// Load one claim-free delivery projection.
-    async fn load_event_delivery(
+    async fn get_event_delivery(
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError>;

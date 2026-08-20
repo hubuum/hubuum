@@ -144,7 +144,10 @@ query-capture = ["hubuum-storage-postgres/query-capture"]
 # Enables the opt-in PostgreSQL Criterion target and its embedded migrations.
 # The benchmark provisions its own disposable database outside the measured
 # region so the shared benchmark action can discover and run it directly.
-postgres-bench = ["hubuum-storage-postgres/embedded-migrations"]
+postgres-bench = [
+    "hubuum-storage-postgres/benchmark-support",
+    "hubuum-storage-postgres/embedded-migrations",
+]
 # Enables the opt-in end-to-end runtime behavior validator. It starts real
 # server processes and enforces operational budgets rather than benchmarking a
 # library function, so it is intentionally a binary instead of a Cargo bench.

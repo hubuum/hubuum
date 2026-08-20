@@ -237,7 +237,7 @@ impl User {
     where
         C: StorageContext,
     {
-        crate::services::identity::load_user_point(backend, self.id).await
+        crate::services::identity::get_user_point(backend, self.id).await
     }
 
     /// Set a new local password and revoke every active bearer token for this
@@ -463,7 +463,7 @@ impl UserIdApplicationExt for UserID {
     where
         C: StorageContext,
     {
-        crate::services::identity::load_user(backend, self.id()).await
+        crate::services::identity::get_user(backend, self.id()).await
     }
 
     async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
@@ -521,7 +521,7 @@ impl LoginUser {
             .as_deref()
             .unwrap_or(LOCAL_IDENTITY_SCOPE);
         let user =
-            match crate::services::identity::load_user_by_name(backend, identity_scope, &self.name)
+            match crate::services::identity::get_user_by_name(backend, identity_scope, &self.name)
                 .await
             {
                 Ok(user) => user,

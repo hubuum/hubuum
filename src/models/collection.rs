@@ -253,7 +253,7 @@ where
 {
     let is_admin = user_id.is_admin(backend).await?;
     storage_handle(backend)
-        .visible_collections(AuthorizationCollectionVisibilityQuery::new(
+        .list_visible_collections(AuthorizationCollectionVisibilityQuery::new(
             principal_id_to_storage(user_id.principal_id()),
             is_admin,
             permission_to_storage(permission_type),
@@ -512,7 +512,7 @@ where
         .map(grant_from_storage)
 }
 
-pub async fn collection_children<C, T>(
+pub async fn list_collection_children<C, T>(
     backend: &C,
     collection_ref: T,
 ) -> Result<Vec<Collection>, ApiError>
@@ -523,7 +523,7 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .collection_children(crate::services::storage_boundary::collection_id_to_storage(
+        .list_collection_children(crate::services::storage_boundary::collection_id_to_storage(
             collection_id.id(),
         ))
         .await
@@ -533,7 +533,7 @@ where
         .collect()
 }
 
-pub async fn collection_ancestors<C, T>(
+pub async fn list_collection_ancestors<C, T>(
     backend: &C,
     collection_ref: T,
 ) -> Result<Vec<Collection>, ApiError>
@@ -544,7 +544,7 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .collection_ancestors(crate::services::storage_boundary::collection_id_to_storage(
+        .list_collection_ancestors(crate::services::storage_boundary::collection_id_to_storage(
             collection_id.id(),
         ))
         .await
@@ -869,7 +869,7 @@ mod tests {
         .await
         .unwrap();
 
-        let initial_ancestors = collection_ancestors(&pool, grandchild.clone())
+        let initial_ancestors = list_collection_ancestors(&pool, grandchild.clone())
             .await
             .unwrap()
             .into_iter()
@@ -899,7 +899,7 @@ mod tests {
         .unwrap();
         assert_eq!(moved.parent_collection_id, Some(root_id));
 
-        let moved_ancestors = collection_ancestors(&pool, grandchild.clone())
+        let moved_ancestors = list_collection_ancestors(&pool, grandchild.clone())
             .await
             .unwrap()
             .into_iter()

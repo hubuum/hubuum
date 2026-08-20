@@ -532,6 +532,5 @@ fn resource_scope_snapshot(
 }
 
 fn storage_error_to_postgres(error: StorageError) -> PostgresStorageError {
-    let (kind, message, current_revision) = error.into_parts();
-    PostgresStorageError::new(kind, message, current_revision)
+    error.into()
 }

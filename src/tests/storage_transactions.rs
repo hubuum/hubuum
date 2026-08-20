@@ -12,7 +12,7 @@ use crate::storage::{
     ObjectRelationStorage, ObjectStorage, StorageClassCreate, StorageClassRelationCreate,
     StorageClassSelector, StorageCollectionCreate, StorageError, StorageErrorKind,
     StorageObjectCreate, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectSelector, TransactionalStorage,
+    StorageObjectSelector, TransactionStorage,
 };
 use hubuum_storage_postgres::PostgresStorage;
 use hubuum_storage_postgres::{PostgresPool, with_connection};
@@ -70,7 +70,7 @@ async fn exercise_resource_transaction<S>(
     owner_group_id: i32,
 ) -> TransactionContractResult
 where
-    S: TransactionalStorage
+    S: TransactionStorage
         + CollectionStorage
         + ClassStorage
         + ClassRelationStorage

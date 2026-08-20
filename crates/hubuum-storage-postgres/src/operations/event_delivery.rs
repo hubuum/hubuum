@@ -13,7 +13,7 @@ use hubuum_events_core::EventSequence;
 use hubuum_query::{FilterField, Operator, QueryOptions};
 use hubuum_storage_core::{
     EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
-    EventDeliveryWorkItem, StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventPage,
+    EventDeliveryWorkItem, StorageEventDelivery, StorageEventDeliveryListQuery, StoragePage,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -484,17 +484,15 @@ pub async fn mark_event_delivery_failed(
 pub async fn list_event_deliveries(
     runtime: &PostgresRuntime,
     query: StorageEventDeliveryListQuery,
-) -> Result<StorageEventPage<StorageEventDelivery>, PostgresStorageError> {
+) -> Result<StoragePage<StorageEventDelivery>, PostgresStorageError> {
     let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(
-            async |connection| -> Result<StorageEventPage<StorageEventDelivery>, PostgresStorageError> {
+            async |connection| -> Result<StoragePage<StorageEventDelivery>, PostgresStorageError> {
                 let total = if include_total {
                     Some(
                         build_administration_delivery_query(
-                            query
-                                .subscription_id_value()
-                                .map(EventSubscriptionId::id),
+                            query.subscription_id_value().map(EventSubscriptionId::id),
                             query.options(),
                         )?
                         .count()
@@ -505,9 +503,7 @@ pub async fn list_event_deliveries(
                     None
                 };
                 let mut records = build_administration_delivery_query(
-                    query
-                        .subscription_id_value()
-                        .map(EventSubscriptionId::id),
+                    query.subscription_id_value().map(EventSubscriptionId::id),
                     query.options(),
                 )?;
                 let fields = query
@@ -523,14 +519,14 @@ pub async fn list_event_deliveries(
                     .into_iter()
                     .map(StorageEventDelivery::try_from)
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(StorageEventPage::new(rows, total))
+                Ok(StoragePage::new(rows, total))
             },
         )
         .await
 }
 
 /// Load one administrator-safe delivery projection.
-pub async fn load_event_delivery(
+pub async fn get_event_delivery(
     runtime: &PostgresRuntime,
     delivery_id: i64,
 ) -> Result<StorageEventDelivery, PostgresStorageError> {
@@ -736,6 +732,7 @@ fn truncate_delivery_error(error: &str) -> String {
 
 /// Claim one known delivery for adapter compatibility tests.
 #[doc(hidden)]
+#[cfg(feature = "integration-test-support")]
 pub async fn claim_event_delivery_by_id(
     runtime: &PostgresRuntime,
     delivery_id: i64,
@@ -792,17 +789,6 @@ pub async fn claim_event_delivery_by_id(
                 Ok(work_item)
             },
         )
-        .await
-}
-
-/// Return the earliest known delivery retry or expired-claim wake-up.
-#[doc(hidden)]
-pub async fn next_event_delivery_wakeup_in(
-    runtime: &PostgresRuntime,
-) -> Result<Option<Duration>, PostgresStorageError> {
-    let now = Utc::now().naive_utc();
-    runtime
-        .with_connection(async |connection| next_wakeup_on_connection(connection, now).await)
         .await
 }
 

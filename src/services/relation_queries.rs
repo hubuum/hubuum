@@ -478,7 +478,7 @@ pub(crate) async fn object_relations_touching_ids(
         .collect()
 }
 
-pub(crate) async fn related_classes(
+pub(crate) async fn list_related_classes(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     class_id: i32,
@@ -490,7 +490,7 @@ pub(crate) async fn related_classes(
         access.visibility()?,
     );
     let (rows, total) = storage_handle(backend)
-        .related_classes(query)
+        .list_related_classes(query)
         .await?
         .into_parts();
     Ok((
@@ -501,7 +501,7 @@ pub(crate) async fn related_classes(
     ))
 }
 
-pub(crate) async fn related_objects(
+pub(crate) async fn list_related_objects(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     object_id: i32,
@@ -513,7 +513,7 @@ pub(crate) async fn related_objects(
         access.visibility()?,
     );
     let (rows, total) = storage_handle(backend)
-        .related_objects(query)
+        .list_related_objects(query)
         .await?
         .into_parts();
     Ok((
@@ -524,7 +524,7 @@ pub(crate) async fn related_objects(
     ))
 }
 
-pub(crate) async fn related_objects_for_roots(
+pub(crate) async fn list_related_objects_for_roots(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     root_object_ids: &[i32],
@@ -553,14 +553,14 @@ pub(crate) async fn related_objects_for_roots(
     .limit(include.limit)
     .preserve_alternative_paths(preserve_alternative_paths);
     storage_handle(backend)
-        .related_objects_for_roots(query)
+        .list_related_objects_for_roots(query)
         .await?
         .into_iter()
         .map(related_include_from_storage)
         .collect()
 }
 
-pub(crate) async fn bidirectionally_related_objects_for_roots(
+pub(crate) async fn list_bidirectionally_related_objects_for_roots(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     root_object_ids: &[i32],
@@ -576,7 +576,7 @@ pub(crate) async fn bidirectionally_related_objects_for_roots(
         access.visibility()?,
     );
     storage_handle(backend)
-        .bidirectionally_related_objects_for_roots(query)
+        .list_bidirectionally_related_objects_for_roots(query)
         .await?
         .into_iter()
         .map(related_for_root_from_storage)

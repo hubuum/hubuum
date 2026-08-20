@@ -54,19 +54,6 @@ pub async fn identity_scope_id_by_name_on_connection(
         .map_err(PostgresStorageError::from)
 }
 
-pub async fn identity_scope_by_name_on_connection(
-    connection: &mut PostgresConnection,
-    scope_name: &str,
-) -> Result<StorageIdentityScope, PostgresStorageError> {
-    use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
-    scopes
-        .filter(name.eq(scope_name))
-        .first::<IdentityScopeRow>(connection)
-        .await
-        .map_err(PostgresStorageError::from)?
-        .try_into()
-}
-
 pub async fn identity_scope_name_by_id_on_connection(
     connection: &mut PostgresConnection,
     scope_id: i32,
@@ -146,7 +133,7 @@ pub async fn ensure_identity_scope(
 }
 
 /// Resolve one identity-scope name through the adapter-owned runtime boundary.
-pub async fn identity_scope_name(
+pub async fn resolve_identity_scope_name(
     runtime: &PostgresRuntime,
     scope_id: i32,
 ) -> Result<String, PostgresStorageError> {
@@ -159,7 +146,7 @@ pub async fn identity_scope_name(
 }
 
 /// Resolve identity-scope names once and return them in stable identifier order.
-pub async fn identity_scope_names(
+pub async fn resolve_identity_scope_names(
     runtime: &PostgresRuntime,
     scope_ids: Vec<i32>,
 ) -> Result<Vec<(i32, String)>, PostgresStorageError> {

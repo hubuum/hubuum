@@ -637,12 +637,12 @@ pub trait AuthenticationStorage: Send + Sync {
         attempt: AuthenticationAttempt,
     ) -> Result<AuthenticatedToken, StorageError>;
 
-    async fn load_authentication_identity(
+    async fn get_authentication_identity(
         &self,
         principal_id: PrincipalId,
     ) -> Result<AuthenticationIdentity, StorageError>;
 
-    async fn load_authentication_token_scope(
+    async fn get_authentication_token_scope(
         &self,
         query: AuthenticationTokenScopeQuery,
     ) -> Result<Option<AuthenticationTokenScope>, StorageError>;

@@ -179,6 +179,7 @@ pub(crate) fn json_filter_sql(
 /// Compile one JSON predicate without exposing adapter-private SQL value types.
 ///
 /// This is an internal benchmark seam, not a storage-contract operation.
+#[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 #[doc(hidden)]
 pub fn compile_json_filter_for_benchmark(
     parameter: &ParsedQueryParam,

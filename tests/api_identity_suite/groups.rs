@@ -569,7 +569,7 @@ mod tests {
             .await
             .unwrap();
         let membership =
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
         let tag = membership.entity_tag().unwrap();
@@ -594,7 +594,7 @@ mod tests {
             crate::errors::ApiError::PreconditionFailed(_, _)
         ));
         assert!(matches!(
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id).await,
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id).await,
             Err(crate::errors::ApiError::NotFound(_))
         ));
     }
@@ -620,7 +620,7 @@ mod tests {
         .await
         .unwrap();
         let initial =
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -641,7 +641,7 @@ mod tests {
             .to_string();
         let returned: PrincipalMemberResponse = test::read_body_json(response).await;
         let persisted =
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -693,7 +693,7 @@ mod tests {
         .await
         .unwrap();
         let before =
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -702,7 +702,7 @@ mod tests {
         let response_etag = header_value(&response, actix_web::http::header::ETAG.as_str())
             .expect("surviving membership ETag");
         let surviving =
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -746,7 +746,7 @@ mod tests {
         .await
         .unwrap();
         let before =
-            crate::services::identity::load_principal_group(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
         let stale_tag = before.entity_tag().unwrap();

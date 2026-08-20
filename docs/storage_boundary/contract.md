@@ -122,7 +122,7 @@ The state mutation and canonical audit append share one backend-native commit
 boundary. On failure or rollback, neither may remain visible. Transactional
 notifications may become visible only after the same commit.
 
-`TransactionalStorage::transaction` accepts one required `EventContext` and
+`TransactionStorage::transaction` accepts one required `EventContext` and
 passes it to every transaction-scoped lifecycle mutation. A callback returning
 `Err`, a native operation failure, or a failed commit rolls back the complete
 unit of work, including its audit events.
@@ -139,13 +139,13 @@ the correctness path.
 
 The application supplies two complementary observers in production:
 
-- `StorageTelemetry` receives bounded logical operation observations at the
+- `StorageObserver` receives bounded logical operation observations at the
   opaque storage handle; and
-- adapter-native telemetry, currently `PostgresTelemetry`, reports pool,
+- an adapter-native observer, currently `PostgresObserver`, reports pool,
   transaction, query, failure, and other implementation-level signals.
 
 Adapters and wrappers do not choose a global metrics registry or exporter.
-Production construction requires injected telemetry. Explicit unobserved or
+Production construction requires injected observers. Explicit unobserved or
 no-op constructors exist only for tests, benchmarks, and deliberate one-shot
 maintenance tools.
 
@@ -189,10 +189,10 @@ certification decision; it is not a substitute for running the tests.
 
 ## Maintenance Writes
 
-Imports and restores implement `MaintenanceStorage`, which combines
-`ImportStorage` and `RestoreStorage`. These workflows preserve or reconstruct
-durable state and history, so pretending each imported row is an ordinary user
-mutation would be incorrect.
+Imports and restores implement the explicit `ImportStorage` and
+`RestoreStorage` capabilities. These workflows preserve or reconstruct durable
+state and history, so pretending each imported row is an ordinary user mutation
+would be incorrect.
 
 Maintenance is not a general unaudited write API. It exposes only the typed
 import and restore state machines, including their validation, provenance,
@@ -207,10 +207,14 @@ Retention separates durable database coordination from external archival:
 
 1. `claim_event_retention_batch` durably records one immutable batch ID and
    its exact event documents without deleting them;
-2. `EventArchive::archive` runs outside the database transaction and must be
+2. `EventArchiveSink::archive` runs outside the database transaction and must be
    idempotent for that batch ID; and
 3. `complete_event_retention_batch` deletes exactly the claimed events and
    records completion atomically.
+
+The core `execute_event_retention_batch` helper owns this sequence. Adapters
+implement only claim and completion and cannot replace the archive-before-purge
+ordering.
 
 An archive failure leaves the claim and events intact. Retrying must return the
 same batch ID and documents. Completion is idempotent, but it is valid only

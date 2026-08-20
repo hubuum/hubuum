@@ -87,7 +87,7 @@ use crate::models::{
     PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, Token, TokenResourceScope,
     TokenScope,
 };
-use crate::storage::IdentityStorage;
+use crate::storage::ServiceAccountStorage;
 use hubuum_storage_postgres::PostgresPool;
 
 impl crate::permissions::AuthorizationContext for PostgresPool {}
@@ -630,7 +630,7 @@ pub async fn create_test_service_account(
         .await
         .expect("failed to create test service account")
         .into_value();
-    crate::services::identity::load_service_account(pool, created.id().id())
+    crate::services::identity::get_service_account(pool, created.id().id())
         .await
         .expect("failed to create test service account")
 }
@@ -769,7 +769,7 @@ pub async fn create_groups_with_prefix(
 
 pub async fn ensure_user(pool: &PostgresPool, uname: &str) -> User {
     if let Ok(user) =
-        crate::services::identity::load_user_by_name(pool, LOCAL_IDENTITY_SCOPE, uname).await
+        crate::services::identity::get_user_by_name(pool, LOCAL_IDENTITY_SCOPE, uname).await
     {
         return user;
     }
@@ -787,7 +787,7 @@ pub async fn ensure_user(pool: &PostgresPool, uname: &str) -> User {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return crate::services::identity::load_user_by_name(
+                return crate::services::identity::get_user_by_name(
                     pool,
                     LOCAL_IDENTITY_SCOPE,
                     uname,

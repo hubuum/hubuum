@@ -234,7 +234,7 @@ impl PrincipalTokenMetadata {
     where
         C: StorageContext,
     {
-        crate::services::identity::load_token_metadata_batch(backend, tokens).await
+        crate::services::identity::get_token_metadata_batch(backend, tokens).await
     }
 
     /// Load one retained token by id, constrained to its owning principal.
@@ -250,7 +250,7 @@ impl PrincipalTokenMetadata {
     where
         C: StorageContext,
     {
-        crate::services::identity::load_token_metadata(backend, principal_id.id(), token_id.id())
+        crate::services::identity::get_token_metadata(backend, principal_id.id(), token_id.id())
             .await
     }
 }

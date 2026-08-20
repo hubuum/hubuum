@@ -2,17 +2,20 @@ use super::*;
 
 #[async_trait]
 impl GroupStorage for StorageHandle {
-    async fn load_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "load", async {
-            dispatch_backend!(self, |backend| backend.load_group(group_id).await)
+    async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
+        self.observe_storage_call(self.backend_name(), "groups", "get", async {
+            dispatch_backend!(self, |backend| backend.get_group(group_id).await)
         })
         .await
     }
 
-    async fn group_identity_scope_name(&self, group_id: GroupId) -> Result<String, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "identity_scope", async {
+    async fn resolve_group_identity_scope_name(
+        &self,
+        group_id: GroupId,
+    ) -> Result<String, StorageError> {
+        self.observe_storage_call(self.backend_name(), "groups", "identity_scope", async {
             dispatch_backend!(self, |backend| {
-                backend.group_identity_scope_name(group_id).await
+                backend.resolve_group_identity_scope_name(group_id).await
             })
         })
         .await
@@ -23,7 +26,7 @@ impl GroupStorage for StorageHandle {
         command: StorageGroupCreate,
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "create", async {
+        self.observe_storage_call(self.backend_name(), "groups", "create", async {
             dispatch_backend!(self, |backend| {
                 backend.create_group(command, context).await
             })
@@ -37,7 +40,7 @@ impl GroupStorage for StorageHandle {
         update: StorageGroupUpdate,
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "update", async {
+        self.observe_storage_call(self.backend_name(), "groups", "update", async {
             dispatch_backend!(self, |backend| {
                 backend.update_group(group_id, update, context).await
             })
@@ -50,7 +53,7 @@ impl GroupStorage for StorageHandle {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<MutationOutcome<usize>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "delete", async {
+        self.observe_storage_call(self.backend_name(), "groups", "delete", async {
             dispatch_backend!(self, |backend| {
                 backend.delete_group(group_id, context).await
             })
@@ -62,7 +65,7 @@ impl GroupStorage for StorageHandle {
         &self,
         group_id: GroupId,
     ) -> Result<Vec<StoragePrincipal>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "members", async {
+        self.observe_storage_call(self.backend_name(), "groups", "members", async {
             dispatch_backend!(self, |backend| backend.group_members(group_id).await)
         })
         .await
@@ -73,7 +76,7 @@ impl GroupStorage for StorageHandle {
         group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "members_page", async {
+        self.observe_storage_call(self.backend_name(), "groups", "members_page", async {
             dispatch_backend!(self, |backend| {
                 backend.group_members_page(group_id, query_options).await
             })
@@ -86,7 +89,7 @@ impl GroupStorage for StorageHandle {
         group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<i64, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "members_count", async {
+        self.observe_storage_call(self.backend_name(), "groups", "members_count", async {
             dispatch_backend!(self, |backend| {
                 backend.count_group_members(group_id, query_options).await
             })
@@ -98,7 +101,7 @@ impl GroupStorage for StorageHandle {
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "member_principal", async {
+        self.observe_storage_call(self.backend_name(), "groups", "member_principal", async {
             dispatch_backend!(self, |backend| {
                 backend.group_member_principal(principal_id).await
             })
@@ -112,7 +115,7 @@ impl GroupStorage for StorageHandle {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "member_add", async {
+        self.observe_storage_call(self.backend_name(), "groups", "member_add", async {
             dispatch_backend!(self, |backend| {
                 backend
                     .add_group_member(principal_id, group_id, context)
@@ -128,7 +131,7 @@ impl GroupStorage for StorageHandle {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
-        observe_storage_call(self.backend_name(), "groups", "member_remove", async {
+        self.observe_storage_call(self.backend_name(), "groups", "member_remove", async {
             dispatch_backend!(self, |backend| {
                 backend
                     .remove_group_member(principal_id, group_id, context)
@@ -141,25 +144,25 @@ impl GroupStorage for StorageHandle {
 
 #[async_trait]
 impl PrincipalStorage for StorageHandle {
-    async fn load_principal(
+    async fn get_principal(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError> {
-        observe_storage_call(self.backend_name(), "principals", "load", async {
+        self.observe_storage_call(self.backend_name(), "principals", "get", async {
             dispatch_backend!(self, |backend| {
-                backend.load_principal(principal_id).await
+                backend.get_principal(principal_id).await
             })
         })
         .await
     }
 
-    async fn load_principal_settings(
+    async fn get_principal_settings(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        observe_storage_call(self.backend_name(), "principals", "settings_load", async {
+        self.observe_storage_call(self.backend_name(), "principals", "get_settings", async {
             dispatch_backend!(self, |backend| {
-                backend.load_principal_settings(principal_id).await
+                backend.get_principal_settings(principal_id).await
             })
         })
         .await
@@ -177,7 +180,7 @@ impl PrincipalStorage for StorageHandle {
             StoragePrincipalSettingsMutation::JsonPatch(_) => "settings_json_patch",
             StoragePrincipalSettingsMutation::Reset => "settings_reset",
         };
-        observe_storage_call(self.backend_name(), "principals", operation, async {
+        self.observe_storage_call(self.backend_name(), "principals", operation, async {
             dispatch_backend!(self, |backend| {
                 backend
                     .mutate_principal_settings(principal_id, mutation, context)
@@ -194,7 +197,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "principal",
@@ -211,7 +214,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         principal_id: PrincipalId,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "principal_all",
@@ -230,7 +233,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "principal_page",
@@ -247,7 +250,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "effective_principal",
@@ -262,16 +265,18 @@ impl CollectionAuthorizationStorage for StorageHandle {
         .await
     }
 
-    async fn visible_collections(
+    async fn list_visible_collections(
         &self,
         query: AuthorizationCollectionVisibilityQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "visible",
             async {
-                dispatch_backend!(self, |backend| { backend.visible_collections(query).await })
+                dispatch_backend!(self, |backend| {
+                    backend.list_visible_collections(query).await
+                })
             },
         )
         .await
@@ -281,7 +286,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "group_has",
@@ -299,7 +304,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         collection_id: CollectionId,
         group_id: GroupId,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "effective_group",
@@ -318,7 +323,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "groups",
@@ -335,7 +340,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
     ) -> Result<AuthorizationGroupPage, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "groups_page",
@@ -352,7 +357,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "grants",
@@ -369,7 +374,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<AuthorizationGroupGrantPage, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "grants_page",
@@ -387,7 +392,7 @@ impl CollectionAuthorizationStorage for StorageHandle {
         collection_id: CollectionId,
         group_id: GroupId,
     ) -> Result<AuthorizationGrant, StorageError> {
-        observe_storage_call(
+        self.observe_storage_call(
             self.backend_name(),
             "collection_permissions",
             "group_grant",

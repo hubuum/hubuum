@@ -8,7 +8,7 @@ use hubuum_domain::{IdentityScopeId, UserId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
-    MutationOutcome, StorageIdentityPage, StorageUser, StorageUserAnonymize, StorageUserCreate,
+    MutationOutcome, StoragePage, StorageUser, StorageUserAnonymize, StorageUserCreate,
     StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
     StorageUserPoint, StorageUserUpdate,
 };
@@ -123,7 +123,7 @@ struct UpdateUserRow<'value> {
     email: Option<&'value String>,
 }
 
-pub async fn load_user(
+pub async fn get_user(
     runtime: &PostgresRuntime,
     user_id: i32,
 ) -> Result<StorageUser, PostgresStorageError> {
@@ -135,7 +135,7 @@ pub async fn load_user(
         .await
 }
 
-pub async fn load_user_by_name(
+pub async fn get_user_by_name(
     runtime: &PostgresRuntime,
     identity_scope: String,
     name: String,
@@ -163,7 +163,7 @@ pub async fn load_user_by_name(
         .await
 }
 
-pub async fn load_user_point(
+pub async fn get_user_point(
     runtime: &PostgresRuntime,
     user_id: i32,
 ) -> Result<StorageUserPoint, PostgresStorageError> {
@@ -207,7 +207,7 @@ pub async fn load_user_point(
 pub async fn list_users(
     runtime: &PostgresRuntime,
     query: StorageUserListQuery,
-) -> Result<StorageIdentityPage<StorageUserListItem>, PostgresStorageError> {
+) -> Result<StoragePage<StorageUserListItem>, PostgresStorageError> {
     let options = query.into_options();
     runtime
         .with_read_only_snapshot(async move |connection| {
@@ -279,7 +279,7 @@ pub async fn list_users(
                     },
                 )
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
-            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(items, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(items, total))
         })
         .await
 }

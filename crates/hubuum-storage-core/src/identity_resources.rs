@@ -279,9 +279,12 @@ pub enum StoragePrincipalSettingsMutation {
 /// Complete group lifecycle and membership behavior required from a backend.
 #[async_trait]
 pub trait GroupStorage: Send + Sync {
-    async fn load_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError>;
+    async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError>;
 
-    async fn group_identity_scope_name(&self, group_id: GroupId) -> Result<String, StorageError>;
+    async fn resolve_group_identity_scope_name(
+        &self,
+        group_id: GroupId,
+    ) -> Result<String, StorageError>;
 
     async fn create_group(
         &self,
@@ -340,12 +343,12 @@ pub trait GroupStorage: Send + Sync {
 /// Principal point and settings behavior required from every backend.
 #[async_trait]
 pub trait PrincipalStorage: Send + Sync {
-    async fn load_principal(
+    async fn get_principal(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError>;
 
-    async fn load_principal_settings(
+    async fn get_principal_settings(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipalSettings, StorageError>;

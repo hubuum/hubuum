@@ -244,9 +244,11 @@ impl MembershipPrincipalResponse {
     where
         C: StorageContext,
     {
-        let identity_scope =
-            crate::services::identity::identity_scope_name(backend, principal.identity_scope_id)
-                .await?;
+        let identity_scope = crate::services::identity::resolve_identity_scope_name(
+            backend,
+            principal.identity_scope_id,
+        )
+        .await?;
         Ok(Self {
             principal_id: principal.id,
             identity_scope,
@@ -298,7 +300,7 @@ impl PrincipalMemberResponse {
             .map(|(_, principal)| principal.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
-            crate::services::identity::identity_scope_names(backend, &scope_ids).await?;
+            crate::services::identity::resolve_identity_scope_names(backend, &scope_ids).await?;
 
         memberships
             .into_iter()
@@ -469,7 +471,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .load_principal_settings(crate::services::storage_boundary::principal_id_to_storage(
+            .get_principal_settings(crate::services::storage_boundary::principal_id_to_storage(
                 self.id(),
             ))
             .await
@@ -567,7 +569,7 @@ pub async fn load_principal_by_id(
     principal_id: i32,
 ) -> Result<Principal, ApiError> {
     storage_handle(pool)
-        .load_principal(crate::services::storage_boundary::principal_id_to_storage(
+        .get_principal(crate::services::storage_boundary::principal_id_to_storage(
             principal_id,
         ))
         .await

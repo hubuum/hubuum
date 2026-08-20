@@ -8,7 +8,7 @@ use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ServiceAccountId, Tas
 use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
-    MutationOutcome, StorageIdentityPage, StorageServiceAccount, StorageServiceAccountCreate,
+    MutationOutcome, StoragePage, StorageServiceAccount, StorageServiceAccountCreate,
     StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
     StorageServiceAccountUpdate,
@@ -127,7 +127,7 @@ struct DatabaseTimeRow {
     now: NaiveDateTime,
 }
 
-pub async fn load_service_account(
+pub async fn get_service_account(
     runtime: &PostgresRuntime,
     service_account_id: i32,
 ) -> Result<StorageServiceAccount, PostgresStorageError> {
@@ -141,7 +141,7 @@ pub async fn load_service_account(
         .await
 }
 
-pub async fn load_service_account_point(
+pub async fn get_service_account_point(
     runtime: &PostgresRuntime,
     service_account_id: i32,
 ) -> Result<StorageServiceAccountPoint, PostgresStorageError> {
@@ -177,7 +177,7 @@ pub async fn load_service_account_point(
 pub async fn list_manageable_service_accounts(
     runtime: &PostgresRuntime,
     query: StorageServiceAccountListQuery,
-) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, PostgresStorageError> {
+) -> Result<StoragePage<StorageServiceAccountListItem>, PostgresStorageError> {
     let (requestor_id, administrator, options) = query.into_parts();
     let requestor_id = requestor_id.id();
     validate_positive_id(requestor_id, "requestor id")?;
@@ -241,7 +241,7 @@ pub async fn list_manageable_service_accounts(
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -260,30 +260,6 @@ pub async fn create_service_account(
         context,
     )
     .await
-}
-
-/// Create a fixture service account with system audit attribution.
-///
-/// This is an integration-test bridge for the application's existing fixture
-/// traits. Production callers must use [`create_service_account`].
-#[doc(hidden)]
-pub async fn create_service_account_without_events(
-    runtime: &PostgresRuntime,
-    name: String,
-    description: String,
-    owner_group_id: i32,
-    created_by: Option<i32>,
-) -> Result<StorageServiceAccount, PostgresStorageError> {
-    create_service_account_parts(
-        runtime,
-        name,
-        description,
-        owner_group_id,
-        created_by,
-        EventContext::system(),
-    )
-    .await
-    .map(MutationOutcome::into_value)
 }
 
 async fn create_service_account_parts(
@@ -401,20 +377,6 @@ pub async fn disable_service_account(
 ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, PostgresStorageError> {
     let (service_account_id, context) = request.into_parts();
     disable_service_account_parts(runtime, service_account_id.id(), context).await
-}
-
-/// Disable a fixture service account with system audit attribution.
-///
-/// This is an integration-test bridge for the application's existing fixture
-/// traits. Production callers must use [`disable_service_account`].
-#[doc(hidden)]
-pub async fn disable_service_account_without_events(
-    runtime: &PostgresRuntime,
-    service_account_id: i32,
-) -> Result<StorageServiceAccountDisableOutcome, PostgresStorageError> {
-    disable_service_account_parts(runtime, service_account_id, EventContext::system())
-        .await
-        .map(MutationOutcome::into_value)
 }
 
 async fn disable_service_account_parts(
@@ -576,6 +538,7 @@ async fn cancel_pending_tasks(
 /// Cancel one principal's queued non-reindex work and append system lifecycle
 /// events. The returned task kinds let application composition record metrics.
 #[doc(hidden)]
+#[cfg(feature = "integration-test-support")]
 pub async fn cancel_pending_tasks_for_principal(
     runtime: &PostgresRuntime,
     principal_id: i32,

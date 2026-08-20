@@ -2,14 +2,17 @@ use super::super::*;
 
 #[async_trait]
 impl GroupStorage for PostgresStorage {
-    async fn load_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
-        crate::operations::group::load_group(self.runtime(), group_id.id())
+    async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
+        crate::operations::group::get_group(self.runtime(), group_id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn group_identity_scope_name(&self, group_id: GroupId) -> Result<String, StorageError> {
-        crate::operations::group::group_identity_scope_name(self.runtime(), group_id.id())
+    async fn resolve_group_identity_scope_name(
+        &self,
+        group_id: GroupId,
+    ) -> Result<String, StorageError> {
+        crate::operations::group::resolve_group_identity_scope_name(self.runtime(), group_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -118,20 +121,20 @@ impl GroupStorage for PostgresStorage {
 
 #[async_trait]
 impl PrincipalStorage for PostgresStorage {
-    async fn load_principal(
+    async fn get_principal(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError> {
-        crate::operations::principal::load_principal(self.runtime(), principal_id.id())
+        crate::operations::principal::get_principal(self.runtime(), principal_id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn load_principal_settings(
+    async fn get_principal_settings(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipalSettings, StorageError> {
-        crate::operations::principal::load_principal_settings(self.runtime(), principal_id.id())
+        crate::operations::principal::get_principal_settings(self.runtime(), principal_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -200,11 +203,11 @@ impl CollectionAuthorizationStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn visible_collections(
+    async fn list_visible_collections(
         &self,
         query: AuthorizationCollectionVisibilityQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        crate::operations::authorization::visible_collections(self.runtime(), query)
+        crate::operations::authorization::list_visible_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -328,20 +331,20 @@ impl CollectionStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn collection_children(
+    async fn list_collection_children(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        crate::operations::collection::collection_children(self.runtime(), id.id())
+        crate::operations::collection::list_collection_children(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn collection_ancestors(
+    async fn list_collection_ancestors(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        crate::operations::collection::collection_ancestors(self.runtime(), id.id())
+        crate::operations::collection::list_collection_ancestors(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -405,12 +408,12 @@ impl ClassStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn class_names(
+    async fn resolve_class_names(
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
         let class_ids = class_ids.into_iter().map(ClassId::id).collect();
-        crate::operations::class::class_names(self.runtime(), class_ids)
+        crate::operations::class::resolve_class_names(self.runtime(), class_ids)
             .await
             .map_err(StorageError::from)
             .and_then(|rows| {

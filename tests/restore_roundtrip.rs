@@ -11,7 +11,7 @@ use hubuum::models::{
     RestoreJobStatus, RestoreStageRequest, TaskStatus,
 };
 use hubuum::restores::{
-    RestoreSettings, confirm_restore, maintenance_state, reconcile_interrupted_restore,
+    RestoreSettings, confirm_restore, get_maintenance_state, reconcile_interrupted_restore,
     stage_restore,
 };
 use hubuum::schema::{
@@ -281,7 +281,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         (
             relation_exists,
             reachability_exists,
-            maintenance_state(&pool).await.unwrap(),
+            get_maintenance_state(&pool).await.unwrap(),
         ),
         (
             Some((class_relation.id, Some(1), None)),

@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use hubuum_domain::RemoteTargetId;
 
 use hubuum_storage_core::{
-    MutationOutcome, RemoteTargetStorage, StorageError, StorageRemoteTarget,
+    MutationOutcome, RemoteTargetStorage, StorageError, StoragePage, StorageRemoteTarget,
     StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetUpdate,
+    StorageRemoteTargetListQuery, StorageRemoteTargetUpdate,
 };
 
 use super::PostgresStorage;
@@ -23,7 +23,7 @@ impl RemoteTargetStorage for PostgresStorage {
     async fn list_remote_targets(
         &self,
         query: StorageRemoteTargetListQuery,
-    ) -> Result<StorageRemoteTargetPage, StorageError> {
+    ) -> Result<StoragePage<StorageRemoteTarget>, StorageError> {
         crate::operations::remote_target::list_remote_targets(self.runtime(), query)
             .await
             .map_err(StorageError::from)

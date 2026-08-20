@@ -1935,7 +1935,7 @@ where
         message,
     })?;
 
-    let identity_scope = input.group_key.identity_scope_name();
+    let identity_scope = input.group_key.resolve_identity_scope_name();
     let group_exists = storage_handle(pool)
         .import_group_exists(identity_scope, &input.group_key.groupname)
         .await

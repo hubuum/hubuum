@@ -2,14 +2,14 @@
 
 use crate::errors::ApiError;
 use crate::storage::{
-    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
-    OperationalStorageSnapshot, OperationalTaskQueueSnapshot, StorageHandle,
+    DatabaseStorageSnapshot, OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth,
+    OperationalStateStorage, OperationalTaskQueueSnapshot, StorageHandle,
 };
 
 pub(crate) async fn storage_snapshot(
     storage: &StorageHandle,
-) -> Result<OperationalStorageSnapshot, ApiError> {
-    Ok(storage.storage_snapshot().await?)
+) -> Result<Option<DatabaseStorageSnapshot>, ApiError> {
+    Ok(storage.database_storage_snapshot().await?)
 }
 
 pub(crate) async fn task_queue_snapshot(

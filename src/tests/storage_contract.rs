@@ -5,8 +5,6 @@ use std::time::Duration;
 
 use actix_web::{App, http, test, web::Data};
 use async_trait::async_trait;
-use diesel::{ExpressionMethods, QueryDsl};
-use diesel_async::RunQueryDsl;
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, GroupId, ObjectId,
     ObjectRelationId, PrincipalId, ResourceId, ResourceRevision,
@@ -17,14 +15,18 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use hubuum_storage_conformance::{
-    ApplicationCompatibilityFixture, ApplicationCompatibilityProbe, BackendAuditFixture,
-    CommittedMutationProbe, ContractReport, FanoutProbe, FixtureError, RecordingStorageTelemetry,
-    RevisionConflictProbe, RollbackProbe, TelemetryProbe, UnchangedMutationProbe,
-    verify_application_compatibility, verify_backend_audit_contract,
+    ApplicationCompatibilityExpectations, ApplicationCompatibilityFixture,
+    ApplicationCompatibilityProbe, BackendAuditFixture, CommittedMutationProbe, ContractReport,
+    DeliveryFaultFixture, DeliveryFaultProbe, DeliveryRecoveryProbe, FanoutProbe, FixtureError,
+    LeaseLossFaultFixture, LeaseLossFaultProbe, ObservationProbe, RecordingStorageObserver,
+    RestoreCoordinationFaultFixture, RestoreCoordinationFaultProbe, RevisionConflictProbe,
+    RollbackProbe, TransactionFaultProbe, UnchangedMutationProbe, verify_application_compatibility,
+    verify_backend_audit_contract, verify_delivery_fault_contract,
+    verify_lease_loss_fault_contract, verify_restore_coordination_fault_contract,
 };
 use hubuum_storage_postgres::{
-    PostgresFaultController, PostgresFaultPoint, PostgresRuntime,
-    PostgresStorage as AdapterPostgresStorage, PostgresTelemetry,
+    PostgresFaultController, PostgresFaultPoint, PostgresObserver,
+    PostgresStorage as AdapterPostgresStorage,
 };
 
 fn principal_id(id: i32) -> PrincipalId {
@@ -70,20 +72,21 @@ use crate::storage::{
     AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationPermissionSetQuery,
     AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
     AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
-    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
+    BidirectionalRelatedObjectsQuery, BootstrapStorage, CatalogListQuery, CatalogStorage,
     CollectionAuthorizationStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
     ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectQueryOptions,
-    ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
+    ComputedObjectStorage, ComputedObjectVisibility, EventArchiveSink,
     EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionBatch, EventRetentionStorage, EventSubscriptionStorage,
-    ExportTemplateStorage, GroupStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, IdentityStorage, ImportStorage, InventoryStorage,
-    MetricsStorage, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery,
+    EventHealthStorage, EventRetentionBatch, EventSubscriptionStorage, ExecutionStorage,
+    ExportTemplateStorage, ExternalIdentityStorage, GroupStorage, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryStorage, IdentityMembershipStorage,
+    IdentityScopeStorage, ImportStorage, InventoryStorage, MetricsStorage,
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PrincipalStorage,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
+    ServiceAccountStorage, StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery,
     StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite, StorageClassCreate,
     StorageClassSelector, StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
@@ -91,18 +94,17 @@ use crate::storage::{
     StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
     StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
     StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecution,
-    StorageExecutionScope, StorageExportTaskArtifact, StorageExportTemplateCreate,
-    StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
-    StorageExportTemplateReplace, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
-    StorageImportPlan, StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset,
-    StorageObject, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePrincipalGroupListQuery,
-    StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke, StorageQueryBudget,
-    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
+    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan,
+    StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
+    StorageQueryBudget, StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
@@ -158,19 +160,19 @@ impl ObjectAggregateAuthorizer for AllowAllObjectAggregateAuthorizer {
 /// harness. Concrete resources stay inside the matching adapter branch.
 #[derive(Clone)]
 enum BackendTestEnvironment {
-    Postgresql { pool: PostgresPool },
+    Postgres { pool: PostgresPool },
 }
 
 impl BackendTestEnvironment {
     fn kind(&self) -> StorageBackendKind {
         match self {
-            Self::Postgresql { .. } => StorageBackendKind::Postgresql,
+            Self::Postgres { .. } => StorageBackendKind::Postgres,
         }
     }
 
     fn storage(&self) -> StorageHandle {
         match self {
-            Self::Postgresql { pool } => StorageHandle::postgres(pool.clone()),
+            Self::Postgres { pool } => StorageHandle::postgres(pool.clone()),
         }
     }
 }
@@ -182,7 +184,7 @@ fn available_backend_environments() -> impl Iterator<Item = BackendTestEnvironme
     let postgres_pool = pool();
     StorageBackendKind::ALL.into_iter().map(move |kind| {
         let environment = match kind {
-            StorageBackendKind::Postgresql => BackendTestEnvironment::Postgresql {
+            StorageBackendKind::Postgres => BackendTestEnvironment::Postgres {
                 pool: postgres_pool.get_ref().clone(),
             },
         };
@@ -201,12 +203,12 @@ fn available_backends() -> impl Iterator<Item = StorageHandle> {
 }
 
 #[derive(Debug, Default)]
-struct RecordingPostgresTelemetry {
+struct RecordingPostgresObserver {
     operations: AtomicUsize,
     failures: AtomicUsize,
 }
 
-impl RecordingPostgresTelemetry {
+impl RecordingPostgresObserver {
     fn operation_count(&self) -> usize {
         AtomicUsize::load(&self.operations, Ordering::Relaxed)
     }
@@ -216,7 +218,7 @@ impl RecordingPostgresTelemetry {
     }
 }
 
-impl PostgresTelemetry for RecordingPostgresTelemetry {
+impl PostgresObserver for RecordingPostgresObserver {
     fn operation_finished(
         &self,
         _call_site: StorageCallSite,
@@ -285,19 +287,19 @@ struct PostgresAuditContractFixture {
     sink_id: hubuum_domain::EventSinkId,
     subscription_id: tokio::sync::Mutex<Option<hubuum_domain::EventSubscriptionId>>,
     collection_id: tokio::sync::Mutex<Option<i32>>,
-    logical_telemetry: Arc<RecordingStorageTelemetry>,
-    postgres_telemetry: Arc<RecordingPostgresTelemetry>,
+    logical_observer: Arc<RecordingStorageObserver>,
+    postgres_observer: Arc<RecordingPostgresObserver>,
     sink_deliveries: Arc<AtomicUsize>,
 }
 
 impl PostgresAuditContractFixture {
     async fn new(pool: PostgresPool) -> Result<Self, FixtureError> {
-        let postgres_telemetry = Arc::new(RecordingPostgresTelemetry::default());
-        let logical_telemetry = Arc::new(RecordingStorageTelemetry::default());
-        let adapter = AdapterPostgresStorage::new(pool.clone(), postgres_telemetry.clone());
-        let backend = StorageHandle::from_postgres_backend_with_storage_telemetry(
+        let postgres_observer = Arc::new(RecordingPostgresObserver::default());
+        let logical_observer = Arc::new(RecordingStorageObserver::default());
+        let adapter = AdapterPostgresStorage::new(pool.clone(), postgres_observer.clone());
+        let backend = StorageHandle::from_postgres_backend_with_storage_observer(
             adapter,
-            logical_telemetry.clone(),
+            logical_observer.clone(),
         );
         let context = EventContext::system();
         let group = backend
@@ -331,8 +333,8 @@ impl PostgresAuditContractFixture {
             sink_id: sink.id(),
             subscription_id: tokio::sync::Mutex::new(None),
             collection_id: tokio::sync::Mutex::new(None),
-            logical_telemetry,
-            postgres_telemetry,
+            logical_observer,
+            postgres_observer,
             sink_deliveries: Arc::new(AtomicUsize::new(0)),
         })
     }
@@ -367,18 +369,13 @@ impl PostgresAuditContractFixture {
         &self,
         collection_name: &str,
     ) -> Result<i64, FixtureError> {
-        let count = hubuum_storage_postgres::with_connection(&self.pool, async |connection| {
-            use crate::schema::events::dsl::{entity_name, entity_type, events};
-            events
-                .filter(entity_type.eq(EntityType::Collection.as_str()))
-                .filter(entity_name.eq(collection_name))
-                .count()
-                .get_result::<i64>(connection)
-                .await
-        })
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-        Ok(count)
+        Ok(
+            hubuum_storage_postgres::test_support::count_collection_events_by_name(
+                &self.pool,
+                collection_name,
+            )
+            .await?,
+        )
     }
 
     async fn cleanup(&self) -> Result<(), FixtureError> {
@@ -506,18 +503,9 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
         if result.is_ok() {
             return Err(std::io::Error::other("rollback failpoint did not fail").into());
         }
-        let name_for_state = name.clone();
         let state_count =
-            hubuum_storage_postgres::with_connection(&self.pool, async |connection| {
-                use crate::schema::collections::dsl::{collections, name as collection_name};
-                collections
-                    .filter(collection_name.eq(name_for_state))
-                    .count()
-                    .get_result::<i64>(connection)
-                    .await
-            })
-            .await
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+            hubuum_storage_postgres::test_support::count_collections_by_name(&self.pool, &name)
+                .await?;
         let event_count_after = self.collection_event_count_by_name(&name).await?;
         Ok(RollbackProbe::new(
             state_count != 0,
@@ -558,11 +546,10 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
                     },
                     discard: ContractDiscardSink,
                 };
-                let runtime = PostgresRuntime::unobserved(self.pool.clone());
                 for delivery in deliveries {
-                    let item = hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
-                        &runtime,
-                        delivery.id().id(),
+                    let item = hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
+                        &self.pool,
+                        delivery.id(),
                         settings,
                     )
                     .await?;
@@ -584,12 +571,14 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
         Ok(FanoutProbe::new(0, 0))
     }
 
-    async fn telemetry_observations(&self) -> Result<TelemetryProbe, FixtureError> {
-        Ok(TelemetryProbe::new(
-            self.logical_telemetry
+    async fn observations(&self) -> Result<ObservationProbe, FixtureError> {
+        Ok(ObservationProbe::new(
+            self.logical_observer
                 .operation_count("collections", "create"),
-            self.postgres_telemetry.operation_count(),
-            self.postgres_telemetry.failure_count(),
+            self.logical_observer
+                .operation_count("event_subscriptions", "create_subscription"),
+            self.postgres_observer.operation_count(),
+            self.postgres_observer.failure_count(),
         ))
     }
 
@@ -631,10 +620,255 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
     }
 }
 
+#[async_trait]
+impl DeliveryFaultFixture for PostgresAuditContractFixture {
+    async fn delivery_fault_probe(&self) -> Result<DeliveryFaultProbe, FixtureError> {
+        self.committed_mutation().await?;
+        let subscription_id = self.subscription_id.lock().await.ok_or_else(|| {
+            std::io::Error::other("delivery fault fixture did not create a subscription")
+        })?;
+        let fanout = EventFanoutSettings::new(1_000, 30_000)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let mut delivery_id = None;
+        for _ in 0..10 {
+            self.backend.process_event_fanout_batch(fanout).await?;
+            let (deliveries, _) = self
+                .backend
+                .list_event_deliveries(
+                    StorageEventDeliveryListQuery::new(Self::query_options())
+                        .subscription_id(Some(subscription_id)),
+                )
+                .await?
+                .into_parts();
+            if let Some(delivery) = deliveries.into_iter().next() {
+                delivery_id = Some(delivery.id());
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let delivery_id = delivery_id
+            .ok_or_else(|| std::io::Error::other("delivery fault event produced no delivery"))?;
+        let settings = EventDeliverySettings::builder()
+            .batch_size(1)
+            .lock_timeout_ms(30_000)
+            .transport_timeout_ms(25_000)
+            .retry_backoff_base_ms(1_000)
+            .retry_backoff_max_ms(10_000)
+            .max_attempts(3)
+            .build()
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let claim_error =
+            PostgresFaultController::failing(PostgresFaultPoint::EventDeliveryAfterClaim)
+                .run(
+                    hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
+                        &self.pool,
+                        delivery_id,
+                        settings,
+                    ),
+                )
+                .await
+                .err()
+                .ok_or_else(|| std::io::Error::other("delivery claim failpoint did not fail"))?;
+
+        let work_item = hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
+            &self.pool,
+            delivery_id,
+            settings,
+        )
+        .await?;
+        let (claim, _, _, _) = work_item.into_parts();
+        let acknowledgement_error =
+            PostgresFaultController::failing(PostgresFaultPoint::EventDeliveryBeforeAcknowledge)
+                .run(self.backend.mark_event_delivery_succeeded(&claim))
+                .await
+                .err()
+                .ok_or_else(|| {
+                    std::io::Error::other("delivery acknowledgement failpoint did not fail")
+                })?;
+
+        self.backend
+            .mark_event_delivery_failed(&claim, settings, "deterministic transport failure")
+            .await?;
+        let failed = self.backend.get_event_delivery(delivery_id).await?;
+        let failure_persisted = failed.status() == "failed"
+            && failed.attempts() == 1
+            && failed.last_error() == Some("deterministic transport failure");
+
+        hubuum_storage_postgres::test_support::make_event_delivery_due(&self.pool, delivery_id)
+            .await?;
+        let retry = hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
+            &self.pool,
+            delivery_id,
+            settings,
+        )
+        .await?;
+        let (retry_claim, _, _, _) = retry.into_parts();
+        let attempt_preserved = retry_claim.attempts() == 1;
+        let claim_token_rotated = retry_claim.token() != claim.token();
+        self.backend
+            .mark_event_delivery_succeeded(&retry_claim)
+            .await?;
+        let retry_completed =
+            self.backend.get_event_delivery(delivery_id).await?.status() == "succeeded";
+
+        Ok(DeliveryFaultProbe::new(
+            TransactionFaultProbe::new(claim_error.kind(), true),
+            TransactionFaultProbe::new(acknowledgement_error.kind(), true),
+            DeliveryRecoveryProbe::new(
+                failure_persisted,
+                attempt_preserved,
+                claim_token_rotated,
+                retry_completed,
+            ),
+        ))
+    }
+}
+
+struct PostgresRestoreCoordinationFaultFixture {
+    pool: PostgresPool,
+}
+
+#[async_trait]
+impl RestoreCoordinationFaultFixture for PostgresRestoreCoordinationFaultFixture {
+    async fn restore_coordination_fault_probe(
+        &self,
+    ) -> Result<RestoreCoordinationFaultProbe, FixtureError> {
+        let backend = StorageHandle::postgres(self.pool.clone());
+        let now = chrono::Utc::now().naive_utc();
+        let instance_id = uuid::Uuid::new_v4();
+        let local_idle = || true;
+        let heartbeat_error =
+            PostgresFaultController::failing(PostgresFaultPoint::RestoreCoordinatorAfterHeartbeat)
+                .run(backend.tick_restore_coordinator(instance_id, &local_idle, false))
+                .await
+                .err()
+                .ok_or_else(|| std::io::Error::other("restore heartbeat failpoint did not fail"))?;
+        let (_, instances) = backend
+            .restore_drain_state(
+                now - chrono::Duration::try_minutes(1).expect("valid test duration"),
+            )
+            .await?
+            .into_parts();
+        let heartbeat_rolled_back = instances
+            .iter()
+            .all(|instance| instance.instance_id() != instance_id);
+
+        let job = backend
+            .stage_restore(StorageRestoreStageCreate::new(
+                StorageRestoreInitiator::new(None, "fault-test", prefix("restore_fault")),
+                b"{}".to_vec(),
+                StorageRestoreArtifactSummary::new(2, "e".repeat(64)),
+                "f".repeat(64),
+                serde_json::json!({"compatible": true}),
+                now + chrono::Duration::try_hours(1).expect("valid test duration"),
+            ))
+            .await?;
+        let job_id = job.summary().id();
+        let transition_error =
+            PostgresFaultController::failing(PostgresFaultPoint::RestoreAfterDrainTransition)
+                .run(backend.start_restore_draining(job_id))
+                .await
+                .err()
+                .ok_or_else(|| {
+                    std::io::Error::other("restore transition failpoint did not fail")
+                })?;
+        let transition_rolled_back = backend
+            .get_restore_status(job_id)
+            .await?
+            .into_parts()
+            .0
+            .status()
+            == StorageRestoreJobStatus::Validated;
+        let snapshot = backend.restore_coordinator_snapshot().await?;
+        let coordinator_remained_normal =
+            snapshot.maintenance_state().is_normal() && snapshot.restore_job_id().is_none();
+        hubuum_storage_postgres::test_support::delete_restore_job(&self.pool, job_id).await?;
+
+        Ok(RestoreCoordinationFaultProbe::new(
+            TransactionFaultProbe::new(heartbeat_error.kind(), heartbeat_rolled_back),
+            TransactionFaultProbe::new(transition_error.kind(), transition_rolled_back),
+            coordinator_remained_normal,
+        ))
+    }
+}
+
+struct PostgresLeaseLossFaultFixture {
+    pool: PostgresPool,
+}
+
+#[async_trait]
+impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
+    async fn lease_loss_fault_probe(&self) -> Result<LeaseLossFaultProbe, FixtureError> {
+        let backend = StorageHandle::postgres(self.pool.clone());
+        let user = crate::tests::create_user_with_params(
+            &self.pool,
+            &prefix("lease_loss_user"),
+            "testpassword",
+        )
+        .await;
+        let task = backend
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Import,
+                    principal_id(user.id),
+                    serde_json::json!({"lease_loss": true}),
+                    1,
+                )
+                .idempotency_key(Some(
+                    IdempotencyKey::new(prefix("lease_loss"))
+                        .expect("lease-loss idempotency key should be valid"),
+                ))
+                .request_hash(Some(prefix("lease_loss_hash")))
+                .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+                .build(1),
+            )
+            .await?;
+        let lease_duration = StorageTaskLeaseDuration::from_milliseconds(50)
+            .ok_or_else(|| std::io::Error::other("lease duration must be positive"))?;
+        let first_claim = hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+            &self.pool,
+            task.id(),
+            lease_duration,
+        )
+        .await?;
+        let renewal_error =
+            PostgresFaultController::failing(PostgresFaultPoint::TaskLeaseBeforeRenewal)
+                .run(backend.renew_task_lease(first_claim.lease().clone(), lease_duration))
+                .await
+                .err()
+                .ok_or_else(|| std::io::Error::other("task renewal failpoint did not fail"))?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let recovered = backend.recover_expired_task_leases(100).await?;
+        let recovered_task = recovered
+            .iter()
+            .find(|recovered| recovered.id() == task.id());
+        let recovered_as_failed =
+            recovered_task.is_some_and(|task| task.status() == StorageTaskStatus::Failed);
+        let lease_token_cleared = recovered_task.is_some_and(|task| task.lease_token().is_none());
+        let request_payload_cleared =
+            recovered_task.is_some_and(|task| task.request_payload().is_none());
+        let stale_renewal_rejected = !backend
+            .renew_task_lease(first_claim.lease().clone(), lease_duration)
+            .await?;
+        hubuum_storage_postgres::test_support::delete_task(&self.pool, task.id()).await?;
+        user.delete_without_events(&self.pool)
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+
+        Ok(LeaseLossFaultProbe::new(
+            renewal_error.kind(),
+            recovered_as_failed,
+            lease_token_cleared,
+            request_payload_cleared,
+            stale_renewal_rejected,
+        ))
+    }
+}
+
 impl BackendTestEnvironment {
     async fn verify_audit_contract(&self) -> Result<ContractReport, FixtureError> {
         match self {
-            Self::Postgresql { pool } => {
+            Self::Postgres { pool } => {
                 let fixture = PostgresAuditContractFixture::new(pool.clone()).await?;
                 let report = verify_backend_audit_contract(&fixture).await?;
                 fixture.cleanup().await?;
@@ -657,6 +891,25 @@ async fn every_registered_backend_satisfies_the_audited_mutation_contract() {
     }
 }
 
+#[actix_web::test]
+async fn backend_registration_does_not_require_database_diagnostics() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let backend = StorageHandle::from_registered_backend(AdapterPostgresStorage::unobserved(
+        pool.get_ref().clone(),
+    ));
+
+    assert!(backend.database_pool_state().is_none());
+    assert!(
+        backend
+            .database_storage_snapshot()
+            .await
+            .expect("missing optional diagnostics must not be a backend failure")
+            .is_none()
+    );
+    assert!(backend.readiness_snapshot().await.is_ok());
+}
+
 struct BackendApplicationFixture {
     backend: StorageHandle,
     administrator: crate::models::User,
@@ -667,7 +920,7 @@ async fn backend_application_fixture(
     environment: &BackendTestEnvironment,
 ) -> BackendApplicationFixture {
     match environment {
-        BackendTestEnvironment::Postgresql { pool } => {
+        BackendTestEnvironment::Postgres { pool } => {
             let administrator = crate::tests::create_test_admin(pool).await;
             let bearer_token = administrator
                 .create_token(pool)
@@ -686,7 +939,7 @@ async fn backend_application_fixture(
 impl BackendApplicationFixture {
     async fn cleanup(self, environment: &BackendTestEnvironment) {
         match environment {
-            BackendTestEnvironment::Postgresql { pool } => {
+            BackendTestEnvironment::Postgres { pool } => {
                 self.administrator
                     .delete_without_events(pool)
                     .await
@@ -709,7 +962,6 @@ impl ApplicationCompatibilityFixture for RegisteredApplicationCompatibilityFixtu
             std::io::Error::other(error.to_string()).into()
         };
         let config = crate::tests::integration_test_config().map_err(fixture_error)?;
-        let expected_kind = self.environment.kind();
         let fixture = backend_application_fixture(&self.environment).await;
         let backend = fixture.backend.clone();
         let descriptor = backend.descriptor();
@@ -778,20 +1030,15 @@ impl ApplicationCompatibilityFixture for RegisteredApplicationCompatibilityFixtu
         drop(app);
         fixture.cleanup(&self.environment).await;
 
-        ApplicationCompatibilityProbe::builder(
-            expected_kind.as_str(),
-            descriptor.kind().as_str(),
-            1,
-            http::StatusCode::OK.as_u16(),
-        )
-        .service_resource_id(root.id)
-        .readiness_status(readiness_status)
-        .point(point_status, point_id)
-        .list(
-            list_status,
-            listed.into_iter().map(|collection| collection.id).collect(),
-        )
-        .build()
+        ApplicationCompatibilityProbe::builder(descriptor.kind().as_str())
+            .service_resource_id(root.id)
+            .readiness_status(readiness_status)
+            .point(point_status, point_id)
+            .list(
+                list_status,
+                listed.into_iter().map(|collection| collection.id).collect(),
+            )
+            .build()
     }
 }
 
@@ -800,18 +1047,16 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
     let _permit = postgres_permit().await;
 
     for backend in available_backends() {
-        let pool_state = backend.metrics_pool_state();
-        assert!(pool_state.capacity().max_connections() > 0);
         backend
-            .metrics_inventory_snapshot()
+            .inventory_metrics_snapshot()
             .await
             .expect("certified backend should supply inventory metrics");
         backend
-            .metrics_task_snapshot()
+            .task_metrics_snapshot()
             .await
             .expect("certified backend should supply task metrics");
         backend
-            .metrics_event_snapshot()
+            .event_metrics_snapshot()
             .await
             .expect("certified backend should supply event metrics");
     }
@@ -857,14 +1102,10 @@ async fn postgres_rolls_back_a_compound_collection_create_at_an_injected_failure
     };
     assert_eq!(error.kind(), StorageErrorKind::Backend);
 
-    let persisted = hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-        use crate::schema::collections::dsl::{collections, name};
-        collections
-            .filter(name.eq(&collection_name))
-            .count()
-            .get_result::<i64>(conn)
-            .await
-    })
+    let persisted = hubuum_storage_postgres::test_support::count_collections_by_name(
+        pool.get_ref(),
+        &collection_name,
+    )
     .await
     .expect("collection rollback should remain queryable");
     assert_eq!(persisted, 0, "all collection records must roll back");
@@ -906,20 +1147,14 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
         .await
         .expect("task rollback fixture should be created");
     let claim_token = uuid::Uuid::new_v4();
-    hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-        use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
-        diesel::update(tasks.filter(id.eq(task.id().id())))
-            .set((
-                status.eq(StorageTaskStatus::Validating.as_str()),
-                lease_token.eq(Some(claim_token)),
-                lease_expires_at.eq(Some(
-                    chrono::Utc::now().naive_utc()
-                        + chrono::Duration::try_minutes(1).expect("valid failpoint lease"),
-                )),
-            ))
-            .execute(conn)
-            .await
-    })
+    hubuum_storage_postgres::test_support::assign_task_lease(
+        pool.get_ref(),
+        task.id(),
+        StorageTaskStatus::Validating,
+        claim_token,
+        chrono::Utc::now().naive_utc()
+            + chrono::Duration::try_minutes(1).expect("valid failpoint lease"),
+    )
     .await
     .expect("task rollback fixture should receive a live claim");
     let lease = StorageTaskLease::new(
@@ -960,14 +1195,9 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
         "terminal event must roll back"
     );
 
-    hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-        use crate::schema::tasks::dsl::{id, tasks};
-        diesel::delete(tasks.filter(id.eq(task.id().id())))
-            .execute(conn)
-            .await
-    })
-    .await
-    .expect("task rollback fixture should be removed");
+    hubuum_storage_postgres::test_support::delete_task(pool.get_ref(), task.id())
+        .await
+        .expect("task rollback fixture should be removed");
     user.delete_without_events(pool.get_ref())
         .await
         .expect("task rollback user should be removed");
@@ -980,119 +1210,10 @@ async fn postgres_delivery_faults_preserve_claim_acknowledgement_and_retry_recov
     let fixture = PostgresAuditContractFixture::new(pool.get_ref().clone())
         .await
         .expect("delivery fault fixture should initialize");
-    fixture
-        .committed_mutation()
+    let report = verify_delivery_fault_contract(&fixture)
         .await
-        .expect("delivery fault fixture should create an audited mutation");
-    let subscription_id = fixture
-        .subscription_id
-        .lock()
-        .await
-        .expect("delivery fault fixture should create a subscription");
-
-    let fanout = EventFanoutSettings::new(1_000, 30_000)
-        .expect("delivery fault fanout settings should be valid");
-    let mut delivery_id = None;
-    for _ in 0..10 {
-        fixture
-            .backend
-            .process_event_fanout_batch(fanout)
-            .await
-            .expect("delivery fault event should fan out");
-        let (deliveries, _) = fixture
-            .backend
-            .list_event_deliveries(
-                StorageEventDeliveryListQuery::new(PostgresAuditContractFixture::query_options())
-                    .subscription_id(Some(subscription_id)),
-            )
-            .await
-            .expect("delivery fault delivery should be queryable")
-            .into_parts();
-        if let Some(delivery) = deliveries.into_iter().next() {
-            delivery_id = Some(delivery.id());
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    let delivery_id = delivery_id.expect("delivery fault event must produce one delivery");
-    let settings = EventDeliverySettings::builder()
-        .batch_size(1)
-        .lock_timeout_ms(30_000)
-        .transport_timeout_ms(25_000)
-        .retry_backoff_base_ms(1_000)
-        .retry_backoff_max_ms(10_000)
-        .max_attempts(3)
-        .build()
-        .expect("delivery fault settings should be valid");
-    let runtime = PostgresRuntime::unobserved(pool.get_ref().clone());
-
-    let claim_error = PostgresFaultController::failing(PostgresFaultPoint::EventDeliveryAfterClaim)
-        .run(
-            hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
-                &runtime,
-                delivery_id.id(),
-                settings,
-            ),
-        )
-        .await
-        .expect_err("a claim fault must abort the transaction");
-    assert_eq!(claim_error.kind(), StorageErrorKind::Backend);
-
-    let work_item =
-        hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
-            &runtime,
-            delivery_id.id(),
-            settings,
-        )
-        .await
-        .expect("the same delivery must remain claimable after rollback");
-    let (claim, _, _, _) = work_item.into_parts();
-
-    let acknowledgement_error =
-        PostgresFaultController::failing(PostgresFaultPoint::EventDeliveryBeforeAcknowledge)
-            .run(fixture.backend.mark_event_delivery_succeeded(&claim))
-            .await
-            .expect_err("an acknowledgement fault must abort the transaction");
-    assert_eq!(acknowledgement_error.kind(), StorageErrorKind::Backend);
-
-    fixture
-        .backend
-        .mark_event_delivery_failed(&claim, settings, "deterministic transport failure")
-        .await
-        .expect("the same claim must remain valid after acknowledgement rollback");
-    let failed = fixture
-        .backend
-        .load_event_delivery(delivery_id)
-        .await
-        .expect("the failed delivery should remain queryable");
-    assert_eq!(failed.status(), "failed");
-    assert_eq!(failed.attempts(), 1);
-    assert_eq!(failed.last_error(), Some("deterministic transport failure"));
-
-    hubuum_storage_postgres::test_support::make_event_delivery_due(pool.get_ref(), delivery_id)
-        .await
-        .expect("the failed delivery should be made deterministically due");
-    let retry = hubuum_storage_postgres::operations::event_delivery::claim_event_delivery_by_id(
-        &runtime,
-        delivery_id.id(),
-        settings,
-    )
-    .await
-    .expect("the failed delivery should be claimable for retry");
-    let (retry_claim, _, _, _) = retry.into_parts();
-    assert_eq!(retry_claim.attempts(), 1);
-    assert_ne!(retry_claim.token(), claim.token());
-    fixture
-        .backend
-        .mark_event_delivery_succeeded(&retry_claim)
-        .await
-        .expect("the retry claim should acknowledge successfully");
-    let delivered = fixture
-        .backend
-        .load_event_delivery(delivery_id)
-        .await
-        .expect("the recovered delivery should remain queryable");
-    assert_eq!(delivered.status(), "succeeded");
+        .expect("PostgreSQL must satisfy the portable delivery fault contract");
+    assert_eq!(report.checks(), 8);
 
     fixture
         .cleanup()
@@ -1104,141 +1225,26 @@ async fn postgres_delivery_faults_preserve_claim_acknowledgement_and_retry_recov
 async fn postgres_restore_faults_roll_back_coordination_transitions() {
     let _permit = postgres_permit().await;
     let pool = pool();
-    let backend = StorageHandle::postgres(pool.get_ref().clone());
-    let now = chrono::Utc::now().naive_utc();
-    let instance_id = uuid::Uuid::new_v4();
-    let local_idle = || true;
-
-    let heartbeat_error =
-        PostgresFaultController::failing(PostgresFaultPoint::RestoreCoordinatorAfterHeartbeat)
-            .run(backend.tick_restore_coordinator(instance_id, &local_idle, false))
-            .await
-            .expect_err("a coordinator fault must abort its heartbeat transaction");
-    assert_eq!(heartbeat_error.kind(), StorageErrorKind::Backend);
-    let (_, instances) = backend
-        .restore_drain_state(now - chrono::Duration::try_minutes(1).expect("valid duration"))
+    let fixture = PostgresRestoreCoordinationFaultFixture {
+        pool: pool.get_ref().clone(),
+    };
+    let report = verify_restore_coordination_fault_contract(&fixture)
         .await
-        .expect("restore coordination state should remain readable")
-        .into_parts();
-    assert!(
-        instances
-            .iter()
-            .all(|instance| instance.instance_id() != instance_id),
-        "a failed coordinator tick must not publish its instance heartbeat"
-    );
-
-    let job = backend
-        .stage_restore(StorageRestoreStageCreate::new(
-            StorageRestoreInitiator::new(None, "fault-test", prefix("restore_fault")),
-            b"{}".to_vec(),
-            StorageRestoreArtifactSummary::new(2, "e".repeat(64)),
-            "f".repeat(64),
-            serde_json::json!({"compatible": true}),
-            now + chrono::Duration::try_hours(1).expect("valid duration"),
-        ))
-        .await
-        .expect("restore fault fixture should stage a validated job");
-    let job_id = job.summary().id();
-
-    let transition_error =
-        PostgresFaultController::failing(PostgresFaultPoint::RestoreAfterDrainTransition)
-            .run(backend.start_restore_draining(job_id))
-            .await
-            .expect_err("a drain-transition fault must abort the transaction");
-    assert_eq!(transition_error.kind(), StorageErrorKind::Backend);
-    let status = backend
-        .get_restore_status(job_id)
-        .await
-        .expect("the restore job should remain queryable");
-    assert_eq!(
-        status.into_parts().0.status(),
-        StorageRestoreJobStatus::Validated
-    );
-    let snapshot = backend
-        .restore_coordinator_snapshot()
-        .await
-        .expect("restore coordination should remain queryable");
-    assert!(snapshot.maintenance_state().is_normal());
-    assert_eq!(snapshot.restore_job_id(), None);
-
-    hubuum_storage_postgres::test_support::delete_restore_job(pool.get_ref(), job_id)
-        .await
-        .expect("restore fault fixture should be removed");
+        .expect("PostgreSQL must satisfy the portable restore coordination fault contract");
+    assert_eq!(report.checks(), 5);
 }
 
 #[actix_web::test]
 async fn postgres_lease_renewal_loss_expires_and_finalizes_without_replay() {
     let _permit = postgres_permit().await;
     let pool = pool();
-    let backend = StorageHandle::postgres(pool.get_ref().clone());
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("lease_loss_user"),
-        "testpassword",
-    )
-    .await;
-    let task = backend
-        .create_task(
-            StorageTaskCreateRequest::builder(
-                StorageTaskKind::Import,
-                principal_id(user.id),
-                serde_json::json!({"lease_loss": true}),
-                1,
-            )
-            .idempotency_key(Some(
-                IdempotencyKey::new(prefix("lease_loss"))
-                    .expect("lease-loss idempotency key should be valid"),
-            ))
-            .request_hash(Some(prefix("lease_loss_hash")))
-            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(1),
-        )
+    let fixture = PostgresLeaseLossFaultFixture {
+        pool: pool.get_ref().clone(),
+    };
+    let report = verify_lease_loss_fault_contract(&fixture)
         .await
-        .expect("lease-loss fixture should create a task");
-    let lease_duration = StorageTaskLeaseDuration::from_milliseconds(50)
-        .expect("lease-loss duration should be positive");
-    let first_claim = hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
-        pool.get_ref(),
-        task.id(),
-        lease_duration,
-    )
-    .await
-    .expect("lease-loss task should be claimable by exact fixture id");
-    assert_eq!(first_claim.task().id(), task.id());
-
-    let renewal_error =
-        PostgresFaultController::failing(PostgresFaultPoint::TaskLeaseBeforeRenewal)
-            .run(backend.renew_task_lease(first_claim.lease().clone(), lease_duration))
-            .await
-            .expect_err("a lease-renewal fault must be reported");
-    assert_eq!(renewal_error.kind(), StorageErrorKind::Backend);
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let recovered = backend
-        .recover_expired_task_leases(100)
-        .await
-        .expect("expired lease recovery should succeed");
-    let recovered_task = recovered
-        .iter()
-        .find(|recovered| recovered.id() == task.id())
-        .expect("the task whose renewal failed must be finalized after expiry");
-    assert_eq!(recovered_task.status(), StorageTaskStatus::Failed);
-    assert_eq!(recovered_task.lease_token(), None);
-    assert_eq!(recovered_task.request_payload(), None);
-    assert!(
-        !backend
-            .renew_task_lease(first_claim.lease().clone(), lease_duration)
-            .await
-            .expect("a stale lease renewal should be rejected without a backend error"),
-        "an expired lease must never regain ownership"
-    );
-
-    hubuum_storage_postgres::test_support::delete_task(pool.get_ref(), task.id())
-        .await
-        .expect("lease-loss fixture task should be removed");
-    user.delete_without_events(pool.get_ref())
-        .await
-        .expect("lease-loss fixture user should be removed");
+        .expect("PostgreSQL must satisfy the portable lease-loss fault contract");
+    assert_eq!(report.checks(), 5);
 }
 
 #[actix_web::test]
@@ -1291,13 +1297,13 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .into_value();
 
         let loaded = backend
-            .load_group(created.id())
+            .get_group(created.id())
             .await
             .expect("certified backend should load groups");
         assert_eq!(loaded.id(), created.id());
         assert_eq!(
             backend
-                .group_identity_scope_name(created.id())
+                .resolve_group_identity_scope_name(created.id())
                 .await
                 .expect("certified backend should resolve group identity scopes"),
             LOCAL_IDENTITY_SCOPE
@@ -1412,13 +1418,13 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
 
     for backend in available_backends() {
         let loaded = backend
-            .load_principal(principal_id(user.id))
+            .get_principal(principal_id(user.id))
             .await
             .expect("certified backend should load principals");
         assert_eq!(loaded.id(), principal_id(user.id));
 
         let initial = backend
-            .load_principal_settings(principal_id(user.id))
+            .get_principal_settings(principal_id(user.id))
             .await
             .expect("certified backend should load principal settings");
         assert_eq!(initial.document(), &serde_json::json!({}));
@@ -1508,7 +1514,7 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         assert!(!authenticated.is_scoped());
 
         let identity = backend
-            .load_authentication_identity(principal_id(user.id))
+            .get_authentication_identity(principal_id(user.id))
             .await
             .expect("certified backend should supply authentication identity data");
         let (principal, human) = identity.into_parts();
@@ -1518,7 +1524,7 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         assert!(human.is_some());
 
         let scope = backend
-            .load_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+            .get_authentication_token_scope(AuthenticationTokenScopeQuery::new(
                 hubuum_domain::TokenId::new(i32::MAX).unwrap(),
                 true,
                 false,
@@ -1578,21 +1584,21 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should reconcile identity scopes");
         assert_eq!(
             backend
-                .identity_scope_name(local_scope.id())
+                .resolve_identity_scope_name(local_scope.id())
                 .await
                 .expect("certified backend should resolve one identity scope"),
             LOCAL_IDENTITY_SCOPE
         );
         assert_eq!(
             backend
-                .identity_scope_names(vec![local_scope.id()])
+                .resolve_identity_scope_names(vec![local_scope.id()])
                 .await
                 .expect("certified backend should resolve identity scopes"),
             vec![(local_scope.id(), LOCAL_IDENTITY_SCOPE.to_string())]
         );
 
         let membership = backend
-            .load_principal_group(principal_id(user.id), group_id(owner_group.id))
+            .get_principal_group(principal_id(user.id), group_id(owner_group.id))
             .await
             .expect("certified backend should load effective memberships");
         assert_eq!(membership.principal_id(), principal_id(user.id));
@@ -1636,33 +1642,33 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .await
             .expect("certified backend should create users")
             .into_value();
-        let contract_user_id = contract_user.into_parts().0;
+        let contract_user_id = contract_user.into_parts().id();
         let contract_principal_id = principal_id(contract_user_id.id());
         assert_eq!(
             backend
-                .load_user(contract_user_id)
+                .get_user(contract_user_id)
                 .await
                 .expect("certified backend should load users")
                 .into_parts()
-                .0,
+                .id(),
             contract_user_id
         );
         assert_eq!(
             backend
-                .load_user_by_name(LOCAL_IDENTITY_SCOPE.to_string(), contract_username.clone(),)
+                .get_user_by_name(LOCAL_IDENTITY_SCOPE.to_string(), contract_username.clone(),)
                 .await
                 .expect("certified backend should resolve scoped user names")
                 .into_parts()
-                .0,
+                .id(),
             contract_user_id
         );
         assert_eq!(
             backend
-                .load_user_point(contract_user_id)
+                .get_user_point(contract_user_id)
                 .await
                 .expect("certified backend should load user points")
                 .into_parts()
-                .0,
+                .id(),
             contract_user_id
         );
         let user_options = prepare_db_pagination::<crate::models::UserWithName>(
@@ -1687,8 +1693,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .into_parts();
         assert!(user_total.is_some_and(|total| total >= 1));
         assert!(users.into_iter().any(|item| {
-            let (user, ..) = item.into_parts();
-            user.into_parts().0 == contract_user_id
+            item.into_parts().user().clone().into_parts().id() == contract_user_id
         }));
         backend
             .update_user(StorageUserUpdate::new(
@@ -1711,7 +1716,8 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should replace local passwords")
             .into_value();
 
-        let token_policy = StorageTokenIssuancePolicy::new(24, 24);
+        let token_policy =
+            StorageTokenIssuancePolicy::new(24, 24).expect("contract token policy should be valid");
         let token_observed_at = chrono::Utc::now().naive_utc() + chrono::Duration::seconds(1);
         let token_observation = StorageTokenObservation::new(
             token_observed_at,
@@ -1732,14 +1738,14 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         let first_token_id = first_token.id();
         assert_eq!(
             backend
-                .load_token_metadata(contract_principal_id, first_token_id, token_observation)
+                .get_token_metadata(contract_principal_id, first_token_id, token_observation)
                 .await
                 .expect("certified backend should load token metadata")
                 .id(),
             first_token_id
         );
         let batch = backend
-            .load_token_metadata_batch(vec![first_token_id, first_token_id], token_observation)
+            .get_token_metadata_batch(vec![first_token_id, first_token_id], token_observation)
             .await
             .expect("certified backend should preserve token batch order");
         assert_eq!(batch.len(), 2);
@@ -1866,12 +1872,12 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should create service accounts")
             .into_value();
         let loaded = backend
-            .load_service_account(created.id())
+            .get_service_account(created.id())
             .await
             .expect("certified backend should load service accounts");
         assert_eq!(loaded.owner_group_id(), group_id(owner_group.id));
         let point = backend
-            .load_service_account_point(created.id())
+            .get_service_account_point(created.id())
             .await
             .expect("certified backend should load service-account points");
         assert_eq!(point.into_parts().2, service_account_name);
@@ -2104,42 +2110,31 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
     assert_eq!(state.username(), renamed);
     assert_eq!(state.external_subject(), replacement_subject);
 
-    let (principal_count, memberships) =
-        hubuum_storage_postgres::with_connection(pool.get_ref(), async |connection| {
-            let principal_count = crate::schema::principals::table
-                .inner_join(crate::schema::identity_scopes::table)
-                .filter(crate::schema::identity_scopes::name.eq(&identity_scope))
-                .count()
-                .get_result::<i64>(connection)
-                .await?;
-            let memberships = crate::schema::group_memberships::table
-                .inner_join(crate::schema::groups::table)
-                .filter(crate::schema::group_memberships::principal_id.eq(first_id.id()))
-                .select((
-                    crate::schema::groups::id,
-                    crate::schema::groups::external_key,
-                ))
-                .load::<(i32, Option<String>)>(connection)
-                .await?;
-            Ok::<_, diesel::result::Error>((principal_count, memberships))
-        })
-        .await
-        .expect("external sync state should be queryable");
-    assert_eq!(principal_count, 1);
+    let persistence = hubuum_storage_postgres::test_support::external_identity_persistence(
+        pool.get_ref(),
+        &identity_scope,
+        principal_id(first_id.id()),
+    )
+    .await
+    .expect("external sync state should be queryable");
+    assert_eq!(persistence.principal_count(), 1);
     assert!(
-        memberships
+        persistence
+            .memberships()
             .iter()
-            .any(|(id, _)| *id == manual_group.id().id())
+            .any(|membership| membership.group_id() == manual_group.id())
     );
     assert!(
-        memberships
+        persistence
+            .memberships()
             .iter()
-            .any(|(_, key)| { key.as_deref() == Some(second_group_key.as_str()) })
+            .any(|membership| membership.external_key() == Some(second_group_key.as_str()))
     );
     assert!(
-        !memberships
+        !persistence
+            .memberships()
             .iter()
-            .any(|(_, key)| { key.as_deref() == Some(first_group_key.as_str()) })
+            .any(|membership| membership.external_key() == Some(first_group_key.as_str()))
     );
 }
 
@@ -2597,18 +2592,9 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
             Ok(StorageTaskOutputLookup::Missing)
         ));
 
-        hubuum_storage_postgres::with_transaction(
-            pool.get_ref(),
-            async |conn| -> Result<(), diesel::result::Error> {
-                use crate::schema::tasks::dsl::{id, tasks};
-                diesel::delete(tasks.filter(id.eq(task_id.id())))
-                    .execute(conn)
-                    .await?;
-                Ok(())
-            },
-        )
-        .await
-        .expect("task queue compatibility fixture should be removed");
+        hubuum_storage_postgres::test_support::delete_task(pool.get_ref(), task_id)
+            .await
+            .expect("task queue compatibility fixture should be removed");
     }
 
     user.delete_without_events(pool.get_ref())
@@ -2656,24 +2642,11 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("certified backend should create an executable task");
             fixture_ids.push(task.id());
         }
-        hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-            use crate::schema::tasks::dsl::{created_at, id, tasks};
-            let fixture_ids = fixture_ids
-                .iter()
-                .map(|task_id| task_id.id())
-                .collect::<Vec<_>>();
-            diesel::update(tasks.filter(id.eq_any(fixture_ids)))
-                .set(
-                    created_at.eq(chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
-                        .expect("compatibility date")
-                        .and_hms_opt(0, 0, 0)
-                        .expect("compatibility time")),
-                )
-                .execute(conn)
+        for task_id in &fixture_ids {
+            hubuum_storage_postgres::test_support::prioritize_task(pool.get_ref(), *task_id)
                 .await
-        })
-        .await
-        .expect("compatibility tasks should be made claim-first");
+                .expect("compatibility tasks should be made claim-first");
+        }
 
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(60_000)
             .expect("compatibility lease duration should be valid");
@@ -2779,24 +2752,11 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             failure_fixture_ids.push(task.id());
             fixture_ids.push(task.id());
         }
-        hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-            use crate::schema::tasks::dsl::{created_at, id, tasks};
-            let failure_fixture_ids = failure_fixture_ids
-                .iter()
-                .map(|task_id| task_id.id())
-                .collect::<Vec<_>>();
-            diesel::update(tasks.filter(id.eq_any(failure_fixture_ids)))
-                .set(
-                    created_at.eq(chrono::NaiveDate::from_ymd_opt(1999, 1, 1)
-                        .expect("compatibility date")
-                        .and_hms_opt(0, 0, 0)
-                        .expect("compatibility time")),
-                )
-                .execute(conn)
+        for task_id in &failure_fixture_ids {
+            hubuum_storage_postgres::test_support::prioritize_task(pool.get_ref(), *task_id)
                 .await
-        })
-        .await
-        .expect("failure fixtures should be made claim-first");
+                .expect("failure fixtures should be made claim-first");
+        }
         let failed = backend
             .claim_next_task(lease_duration)
             .await
@@ -2821,22 +2781,9 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             .await
             .expect("certified backend should purge expired backup outputs");
 
-        hubuum_storage_postgres::with_transaction(
-            pool.get_ref(),
-            async |conn| -> Result<(), diesel::result::Error> {
-                use crate::schema::tasks::dsl::{id, tasks};
-                let fixture_ids = fixture_ids
-                    .iter()
-                    .map(|task_id| task_id.id())
-                    .collect::<Vec<_>>();
-                diesel::delete(tasks.filter(id.eq_any(fixture_ids)))
-                    .execute(conn)
-                    .await?;
-                Ok(())
-            },
-        )
-        .await
-        .expect("task execution compatibility fixtures should be removed");
+        hubuum_storage_postgres::test_support::delete_tasks(pool.get_ref(), &fixture_ids)
+            .await
+            .expect("task execution compatibility fixtures should be removed");
     }
 
     user.delete_without_events(pool.get_ref())
@@ -3289,18 +3236,9 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
         assert_eq!(expired_summary.status(), StorageRestoreJobStatus::Expired);
     }
 
-    hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-        use crate::schema::restore_jobs::dsl::{id, restore_jobs};
-        let staged_ids = staged_ids
-            .iter()
-            .map(|job_id| job_id.id())
-            .collect::<Vec<_>>();
-        diesel::delete(restore_jobs.filter(id.eq_any(staged_ids)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .expect("restore compatibility fixtures should be removed");
+    hubuum_storage_postgres::test_support::delete_restore_jobs(pool.get_ref(), &staged_ids)
+        .await
+        .expect("restore compatibility fixtures should be removed");
 }
 
 #[actix_web::test]
@@ -3420,13 +3358,13 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
         assert_eq!(updated.description(), "updated class lifecycle");
         assert_eq!(
             classes
-                .class_names(vec![created.id(), created.id()])
+                .resolve_class_names(vec![created.id(), created.id()])
                 .await
                 .expect("certified backend should resolve a complete class-name set"),
             vec![(created.id(), updated.name().to_string())]
         );
         let missing = classes
-            .class_names(vec![
+            .resolve_class_names(vec![
                 created.id(),
                 ClassId::new(i32::MAX).expect("maximum class id is positive"),
             ])
@@ -3512,7 +3450,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
     for backend in available_backends() {
         let principal = backend
-            .load_authorization_principal(principal_id)
+            .get_authorization_principal(principal_id)
             .await
             .expect("certified backend should supply authorization principal facts");
         assert!(principal.group_ids().contains(&group_id));
@@ -3530,7 +3468,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let classes = backend
-            .load_authorization_classes(AuthorizationResourceIds::new([
+            .get_authorization_classes(AuthorizationResourceIds::new([
                 ResourceId::new(fixture.class.id).unwrap(),
                 ResourceId::new(fixture.class.id).unwrap(),
             ]))
@@ -3541,7 +3479,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert_eq!(classes[0].collection_id(), collection_id);
 
         let objects = backend
-            .load_authorization_objects(AuthorizationResourceIds::new([
+            .get_authorization_objects(AuthorizationResourceIds::new([
                 ResourceId::new(fixture.objects[0].id).unwrap(),
                 ResourceId::new(fixture.objects[0].id).unwrap(),
             ]))
@@ -3608,7 +3546,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .contains(&AuthorizationPermission::ReadCollection)
         );
         let (permission_collection_id, permission_revision, permission_grants) = backend
-            .load_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
+            .get_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
                 collection_id,
                 Some(group_id),
             ))
@@ -3682,7 +3620,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let visible = backend
-            .visible_collections(AuthorizationCollectionVisibilityQuery::new(
+            .list_visible_collections(AuthorizationCollectionVisibilityQuery::new(
                 principal_id,
                 false,
                 AuthorizationPermission::ReadCollection,
@@ -4272,7 +4210,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
 
     for backend in available_backends() {
         let initial_state = backend
-            .computed_field_state(class_id)
+            .get_computed_field_state(class_id)
             .await
             .expect("certified backend should supply computed-field state");
         assert_eq!(initial_state.class_id(), class_id);
@@ -4339,20 +4277,14 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
             .active_task_id()
             .expect("rebuild request should identify its task");
         let claim_token = uuid::Uuid::new_v4();
-        hubuum_storage_postgres::with_connection(pool.get_ref(), async |conn| {
-            use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
-            diesel::update(tasks.filter(id.eq(rebuild_task_id.id())))
-                .set((
-                    status.eq(StorageTaskStatus::Validating.as_str()),
-                    lease_token.eq(Some(claim_token)),
-                    lease_expires_at.eq(Some(
-                        chrono::Utc::now().naive_utc()
-                            + chrono::Duration::try_minutes(1).expect("valid compatibility lease"),
-                    )),
-                ))
-                .execute(conn)
-                .await
-        })
+        hubuum_storage_postgres::test_support::assign_task_lease(
+            pool.get_ref(),
+            rebuild_task_id,
+            StorageTaskStatus::Validating,
+            claim_token,
+            chrono::Utc::now().naive_utc()
+                + chrono::Duration::try_minutes(1).expect("valid compatibility lease"),
+        )
         .await
         .expect("compatibility rebuild should receive a live backend claim");
         let rebuilt = backend
@@ -4364,7 +4296,7 @@ async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
             .expect("certified backend should execute a claimed computed-field rebuild");
         assert_eq!(rebuilt.status(), StorageTaskStatus::Succeeded);
         let ready_state = backend
-            .computed_field_state(class_id)
+            .get_computed_field_state(class_id)
             .await
             .expect("certified backend should expose the completed rebuild state");
         assert_eq!(ready_state.rebuild_status(), "ready");
@@ -4740,8 +4672,8 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             1
         );
 
-        let (related_classes, _) = backend
-            .related_classes(RelationGraphQuery::new(
+        let (list_related_classes, _) = backend
+            .list_related_classes(RelationGraphQuery::new(
                 class_one_id,
                 options(),
                 visibility(),
@@ -4749,10 +4681,10 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             .await
             .expect("certified backend should traverse related classes")
             .into_parts();
-        assert!(!related_classes.is_empty());
+        assert!(!list_related_classes.is_empty());
 
-        let (related_objects, _) = backend
-            .related_objects(RelationGraphQuery::new(
+        let (list_related_objects, _) = backend
+            .list_related_objects(RelationGraphQuery::new(
                 object_one_resource_id,
                 options(),
                 visibility(),
@@ -4760,10 +4692,10 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             .await
             .expect("certified backend should traverse related objects")
             .into_parts();
-        assert!(!related_objects.is_empty());
+        assert!(!list_related_objects.is_empty());
 
         let included = backend
-            .related_objects_for_roots(
+            .list_related_objects_for_roots(
                 RelatedObjectsForRootsQuery::new([object_one_id], class_two_typed_id, visibility())
                     .class_relation_id(Some(class_relation_id))
                     .direction(StorageRelatedDirection::Any)
@@ -4776,7 +4708,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         assert_eq!(included.len(), 1);
 
         let bidirectional = backend
-            .bidirectionally_related_objects_for_roots(BidirectionalRelatedObjectsQuery::new(
+            .list_bidirectionally_related_objects_for_roots(BidirectionalRelatedObjectsQuery::new(
                 [object_one_id],
                 1,
                 10,
@@ -4837,7 +4769,7 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         };
 
         let collections = backend
-            .search_unified_collections(request())
+            .search_collections(request())
             .await
             .expect("certified backend should search collections");
         assert!(collections.into_iter().any(|row| {
@@ -4846,7 +4778,7 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         }));
 
         let classes = backend
-            .search_unified_classes(request())
+            .search_classes(request())
             .await
             .expect("certified backend should search classes");
         assert!(classes.into_iter().any(|row| {
@@ -4855,7 +4787,7 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         }));
 
         let objects = backend
-            .search_unified_objects(request())
+            .search_objects(request())
             .await
             .expect("certified backend should search objects");
         assert!(objects.into_iter().any(|row| {
@@ -4876,7 +4808,7 @@ async fn every_available_storage_backend_supplies_operational_state() {
 
     for backend in available_backends() {
         let state = backend
-            .maintenance_state()
+            .get_maintenance_state()
             .await
             .expect("certified backend should expose maintenance state");
         let readiness = backend
@@ -4885,13 +4817,7 @@ async fn every_available_storage_backend_supplies_operational_state() {
             .expect("certified backend should expose readiness state");
 
         assert_eq!(readiness.maintenance_state(), state);
-        assert!(readiness.schema_is_ready());
-        let storage = backend
-            .storage_snapshot()
-            .await
-            .expect("certified backend should expose database diagnostics");
-        assert!(storage.active_sessions() >= 0);
-        assert!(storage.storage_bytes() > 0);
+        assert!(readiness.storage_is_ready());
         let task_queue = backend
             .task_queue_snapshot()
             .await
@@ -4961,7 +4887,7 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         );
         assert_eq!(
             backend
-                .load_event_sink(sink_id)
+                .get_event_sink(sink_id)
                 .await
                 .expect("certified backend should load event sinks")
                 .id(),
@@ -5005,7 +4931,7 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         let subscription_id = subscription.id();
         assert_eq!(
             backend
-                .load_event_subscription(event_admin_collection_id, subscription_id)
+                .get_event_subscription(event_admin_collection_id, subscription_id)
                 .await
                 .expect("certified backend should load scoped subscriptions")
                 .collection_id(),
@@ -5090,7 +5016,7 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         assert_eq!(pending.status(), "pending");
         assert_eq!(
             backend
-                .load_event_delivery(delivery_id)
+                .get_event_delivery(delivery_id)
                 .await
                 .expect("certified backend should load event deliveries")
                 .id(),
@@ -5132,7 +5058,7 @@ async fn every_available_storage_backend_processes_event_fanout() {
 async fn every_available_storage_backend_processes_event_retention() {
     struct DiscardArchive;
 
-    impl EventArchive for DiscardArchive {
+    impl EventArchiveSink for DiscardArchive {
         fn archive(&self, _batch: &EventRetentionBatch) -> Result<(), StorageError> {
             Ok(())
         }
@@ -5143,10 +5069,10 @@ async fn every_available_storage_backend_processes_event_retention() {
         .expect("compatibility event-retention settings should be valid");
 
     for backend in available_backends() {
-        let summary = backend
-            .process_event_retention_batch(settings, &DiscardArchive)
-            .await
-            .expect("certified backend should process event retention");
+        let summary =
+            crate::storage::execute_event_retention_batch(&backend, settings, &DiscardArchive)
+                .await
+                .expect("certified backend should process event retention");
 
         assert!(!summary.did_work());
     }
@@ -5177,8 +5103,13 @@ async fn every_available_storage_backend_composes_through_services_and_http() {
     let _permit = postgres_permit().await;
 
     for environment in available_backend_environments() {
+        let expectations = ApplicationCompatibilityExpectations::new(
+            environment.kind().as_str(),
+            1,
+            http::StatusCode::OK.as_u16(),
+        );
         let fixture = RegisteredApplicationCompatibilityFixture { environment };
-        let report = verify_application_compatibility(&fixture)
+        let report = verify_application_compatibility(&fixture, &expectations)
             .await
             .expect("registered backend must satisfy application compatibility");
         assert_eq!(report.checks(), 7);

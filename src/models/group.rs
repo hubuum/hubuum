@@ -55,7 +55,7 @@ impl GroupIdApplicationExt for GroupID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .load_group(*self)
+            .get_group(*self)
             .await
             .map_err(ApiError::from)
             .and_then(group_from_storage)
@@ -188,7 +188,7 @@ impl GroupResponse {
             .map(|group| group.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
-            crate::services::identity::identity_scope_names(backend, &scope_ids).await?;
+            crate::services::identity::resolve_identity_scope_names(backend, &scope_ids).await?;
 
         groups
             .into_iter()
@@ -262,7 +262,7 @@ impl Group {
         C: StorageContext,
     {
         let identity_scope = storage_handle(backend)
-            .group_identity_scope_name(group_id_to_storage(self.id))
+            .resolve_group_identity_scope_name(group_id_to_storage(self.id))
             .await
             .map_err(ApiError::from)?;
         Ok(GroupResponse::from_parts(self, identity_scope))

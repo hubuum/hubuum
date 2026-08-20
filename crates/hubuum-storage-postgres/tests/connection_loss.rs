@@ -5,7 +5,8 @@ use std::time::Duration;
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::{
-    GroupStorage, IdentityStorage, StorageErrorKind, StorageGroupCreate, StorageGroupListQuery,
+    GroupStorage, IdentityMembershipStorage, StorageErrorKind, StorageGroupCreate,
+    StorageGroupListQuery,
 };
 use hubuum_storage_postgres::test_support::{integration_test_pool, terminate_backend};
 use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresStorage};

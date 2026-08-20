@@ -10,17 +10,59 @@ use crate::{
     StorageTokenObservation,
 };
 
-/// Owned fields returned when token creation input enters an adapter.
-pub type StorageTokenCreateParts = (
-    PrincipalId,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<NaiveDateTime>,
-    Option<AuthenticationTokenScope>,
-    StorageTokenIssuancePolicy,
-    EventContext,
-);
+/// Named token-creation fields exposed to an adapter.
+pub struct StorageTokenCreateParts {
+    principal_id: PrincipalId,
+    token_hash: String,
+    name: Option<String>,
+    description: Option<String>,
+    expires_at: Option<NaiveDateTime>,
+    scope: Option<AuthenticationTokenScope>,
+    policy: StorageTokenIssuancePolicy,
+    event_context: EventContext,
+}
+
+impl StorageTokenCreateParts {
+    #[must_use]
+    pub const fn principal_id(&self) -> PrincipalId {
+        self.principal_id
+    }
+
+    #[must_use]
+    pub fn token_hash(&self) -> &str {
+        &self.token_hash
+    }
+
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    #[must_use]
+    pub const fn expires_at(&self) -> Option<NaiveDateTime> {
+        self.expires_at
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> Option<&AuthenticationTokenScope> {
+        self.scope.as_ref()
+    }
+
+    #[must_use]
+    pub const fn policy(&self) -> StorageTokenIssuancePolicy {
+        self.policy
+    }
+
+    #[must_use]
+    pub const fn event_context(&self) -> &EventContext {
+        &self.event_context
+    }
+}
 
 /// Validated application policy used to materialize token expiry at the
 /// backend's authoritative issuance timestamp.
@@ -31,12 +73,23 @@ pub struct StorageTokenIssuancePolicy {
 }
 
 impl StorageTokenIssuancePolicy {
-    #[must_use]
-    pub const fn new(default_lifetime_hours: i64, maximum_lifetime_hours: i64) -> Self {
-        Self {
+    pub const fn new(
+        default_lifetime_hours: i64,
+        maximum_lifetime_hours: i64,
+    ) -> Result<Self, StorageTokenIssuancePolicyError> {
+        if default_lifetime_hours <= 0 {
+            return Err(StorageTokenIssuancePolicyError::NonPositiveDefault);
+        }
+        if maximum_lifetime_hours <= 0 {
+            return Err(StorageTokenIssuancePolicyError::NonPositiveMaximum);
+        }
+        if default_lifetime_hours > maximum_lifetime_hours {
+            return Err(StorageTokenIssuancePolicyError::DefaultExceedsMaximum);
+        }
+        Ok(Self {
             default_lifetime_hours,
             maximum_lifetime_hours,
-        }
+        })
     }
 
     #[must_use]
@@ -44,6 +97,27 @@ impl StorageTokenIssuancePolicy {
         (self.default_lifetime_hours, self.maximum_lifetime_hours)
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageTokenIssuancePolicyError {
+    NonPositiveDefault,
+    NonPositiveMaximum,
+    DefaultExceedsMaximum,
+}
+
+impl fmt::Display for StorageTokenIssuancePolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NonPositiveDefault => "default token lifetime must be positive",
+            Self::NonPositiveMaximum => "maximum token lifetime must be positive",
+            Self::DefaultExceedsMaximum => {
+                "default token lifetime cannot exceed the maximum token lifetime"
+            }
+        })
+    }
+}
+
+impl std::error::Error for StorageTokenIssuancePolicyError {}
 
 /// Token issuance input. The raw bearer secret never crosses the storage
 /// boundary; only its application-generated HMAC is persisted.
@@ -105,16 +179,16 @@ impl StorageTokenCreate {
 
     #[must_use]
     pub fn into_parts(self) -> StorageTokenCreateParts {
-        (
-            self.principal_id,
-            self.token_hash,
-            self.name,
-            self.description,
-            self.expires_at,
-            self.scope,
-            self.policy,
-            self.event_context,
-        )
+        StorageTokenCreateParts {
+            principal_id: self.principal_id,
+            token_hash: self.token_hash,
+            name: self.name,
+            description: self.description,
+            expires_at: self.expires_at,
+            scope: self.scope,
+            policy: self.policy,
+            event_context: self.event_context,
+        }
     }
 }
 
@@ -323,7 +397,7 @@ pub trait TokenStorage: Send + Sync {
         request: StorageTokenRenew,
     ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError>;
 
-    async fn load_token_metadata(
+    async fn get_token_metadata(
         &self,
         principal_id: PrincipalId,
         token_id: TokenId,
@@ -331,7 +405,7 @@ pub trait TokenStorage: Send + Sync {
     ) -> Result<StorageTokenMetadata, StorageError>;
 
     /// Load metadata for token IDs in the same order, including duplicates.
-    async fn load_token_metadata_batch(
+    async fn get_token_metadata_batch(
         &self,
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
@@ -362,7 +436,7 @@ mod tests {
         let request = StorageTokenCreate::new(
             PrincipalId::new(42).unwrap(),
             "sensitive-token-hash",
-            StorageTokenIssuancePolicy::new(24, 48),
+            StorageTokenIssuancePolicy::new(24, 48).unwrap(),
             EventContext::system(),
         )
         .name(Some("sensitive-name".to_string()));
@@ -371,5 +445,21 @@ mod tests {
         assert!(!debug.contains("42"));
         assert!(!debug.contains("sensitive-token-hash"));
         assert!(!debug.contains("sensitive-name"));
+    }
+
+    #[test]
+    fn token_issuance_policy_rejects_invalid_lifetimes() {
+        assert_eq!(
+            StorageTokenIssuancePolicy::new(0, 48),
+            Err(StorageTokenIssuancePolicyError::NonPositiveDefault)
+        );
+        assert_eq!(
+            StorageTokenIssuancePolicy::new(24, 0),
+            Err(StorageTokenIssuancePolicyError::NonPositiveMaximum)
+        );
+        assert_eq!(
+            StorageTokenIssuancePolicy::new(49, 48),
+            Err(StorageTokenIssuancePolicyError::DefaultExceedsMaximum)
+        );
     }
 }

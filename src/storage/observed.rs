@@ -8,14 +8,13 @@ use tracing::{Instrument, debug, debug_span, warn};
 
 use super::{
     ClassRelationStorage, ClassStorage, CollectionStorage, MutationOutcome, ObjectRelationStorage,
-    ObjectStorage, StorageBackendIdentity, StorageClassCreate, StorageClassRecord,
-    StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageObject,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelationCreateSelector,
-    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
-    StorageOperationObservation, StoragePreparedClassRelation, StoragePreparedObjectRelation,
-    StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
-    StorageResolvedObjectRelation, StorageTelemetry,
+    ObjectStorage, StorageClassCreate, StorageClassRecord, StorageClassRelationCreate,
+    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
+    StorageObjectDataPatch, StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
+    StorageObjectSelector, StorageObjectUpdate, StorageObservation, StorageObserver,
+    StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClass,
+    StorageResolvedClassRelation, StorageResolvedObject, StorageResolvedObjectRelation,
 };
 use crate::events::EventContext;
 
@@ -27,14 +26,14 @@ use crate::events::EventContext;
 pub(crate) struct ObservedStorage<S> {
     backend: &'static str,
     inner: Arc<S>,
-    telemetry: Arc<dyn StorageTelemetry>,
+    observer: Arc<dyn StorageObserver>,
 }
 
 #[derive(Debug)]
-pub(crate) struct ApplicationStorageTelemetry;
+pub(crate) struct ApplicationStorageObserver;
 
-impl StorageTelemetry for ApplicationStorageTelemetry {
-    fn operation_finished(&self, observation: &StorageOperationObservation) {
+impl StorageObserver for ApplicationStorageObserver {
+    fn operation_finished(&self, observation: &StorageObservation) {
         crate::observability::metrics::storage_operation_finished(
             observation.backend(),
             observation.capability(),
@@ -45,16 +44,16 @@ impl StorageTelemetry for ApplicationStorageTelemetry {
     }
 }
 
-impl<S> ObservedStorage<S>
-where
-    S: StorageBackendIdentity,
-{
-    pub(crate) fn new(storage: S, telemetry: Arc<dyn StorageTelemetry>) -> Self {
-        let backend = storage.storage_name();
+impl<S> ObservedStorage<S> {
+    pub(crate) fn new(
+        storage: S,
+        backend: &'static str,
+        observer: Arc<dyn StorageObserver>,
+    ) -> Self {
         Self {
             backend,
             inner: Arc::new(storage),
-            telemetry,
+            observer,
         }
     }
 
@@ -65,7 +64,7 @@ where
         future: impl Future<Output = Result<T, StorageError>>,
     ) -> Result<T, StorageError> {
         observe_storage_call_with(
-            self.telemetry.as_ref(),
+            self.observer.as_ref(),
             self.backend,
             capability,
             operation,
@@ -75,25 +74,8 @@ where
     }
 }
 
-/// Apply the common logical-storage diagnostics to any capability entrypoint.
-pub(super) async fn observe_storage_call<T>(
-    backend: &'static str,
-    capability: &'static str,
-    operation: &'static str,
-    future: impl Future<Output = Result<T, StorageError>>,
-) -> Result<T, StorageError> {
-    observe_storage_call_with(
-        &ApplicationStorageTelemetry,
-        backend,
-        capability,
-        operation,
-        future,
-    )
-    .await
-}
-
-async fn observe_storage_call_with<T>(
-    telemetry: &dyn StorageTelemetry,
+pub(super) async fn observe_storage_call_with<T>(
+    observer: &dyn StorageObserver,
     backend: &'static str,
     capability: &'static str,
     operation: &'static str,
@@ -108,7 +90,7 @@ async fn observe_storage_call_with<T>(
             .as_ref()
             .map(|_| "ok")
             .unwrap_or_else(|error| error.kind().as_str());
-        telemetry.operation_finished(&StorageOperationObservation::new(
+        observer.operation_finished(&StorageObservation::new(
             backend,
             capability,
             operation,
@@ -141,7 +123,8 @@ async fn observe_storage_call_with<T>(
 }
 
 /// Apply the common diagnostics to an infallible synchronous storage entrypoint.
-pub(super) fn observe_infallible_storage_call<T>(
+pub(super) fn observe_infallible_storage_call_with<T>(
+    observer: &dyn StorageObserver,
     backend: &'static str,
     capability: &'static str,
     operation: &'static str,
@@ -152,9 +135,9 @@ pub(super) fn observe_infallible_storage_call<T>(
     let started_at = Instant::now();
     let result = call();
     let duration = started_at.elapsed();
-    crate::observability::metrics::storage_operation_finished(
+    observer.operation_finished(&StorageObservation::new(
         backend, capability, operation, "ok", duration,
-    );
+    ));
     debug!(
         message = "storage operation complete",
         elapsed_ms = duration.as_millis(),
@@ -162,19 +145,10 @@ pub(super) fn observe_infallible_storage_call<T>(
     result
 }
 
-impl<S> StorageBackendIdentity for ObservedStorage<S>
-where
-    S: StorageBackendIdentity,
-{
-    fn storage_name(&self) -> &'static str {
-        self.backend
-    }
-}
-
 #[async_trait]
 impl<S> CollectionStorage for ObservedStorage<S>
 where
-    S: CollectionStorage + StorageBackendIdentity,
+    S: CollectionStorage,
 {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         self.call("collections", "get", self.inner.get_collection(id))
@@ -221,26 +195,26 @@ where
         .await
     }
 
-    async fn collection_children(
+    async fn list_collection_children(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "children",
-            self.inner.collection_children(id),
+            self.inner.list_collection_children(id),
         )
         .await
     }
 
-    async fn collection_ancestors(
+    async fn list_collection_ancestors(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             "collections",
             "ancestors",
-            self.inner.collection_ancestors(id),
+            self.inner.list_collection_ancestors(id),
         )
         .await
     }
@@ -263,7 +237,7 @@ where
 #[async_trait]
 impl<S> ClassStorage for ObservedStorage<S>
 where
-    S: ClassStorage + StorageBackendIdentity,
+    S: ClassStorage,
 {
     async fn resolve_class(
         &self,
@@ -313,19 +287,23 @@ where
         .await
     }
 
-    async fn class_names(
+    async fn resolve_class_names(
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
-        self.call("classes", "names", self.inner.class_names(class_ids))
-            .await
+        self.call(
+            "classes",
+            "names",
+            self.inner.resolve_class_names(class_ids),
+        )
+        .await
     }
 }
 
 #[async_trait]
 impl<S> ObjectStorage for ObservedStorage<S>
 where
-    S: ObjectStorage + StorageBackendIdentity,
+    S: ObjectStorage,
 {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         self.call("objects", "get", self.inner.get_object(object_id))
@@ -429,7 +407,7 @@ where
 #[async_trait]
 impl<S> ClassRelationStorage for ObservedStorage<S>
 where
-    S: ClassRelationStorage + StorageBackendIdentity,
+    S: ClassRelationStorage,
 {
     async fn prepare_class_relation(
         &self,
@@ -485,7 +463,7 @@ where
 #[async_trait]
 impl<S> ObjectRelationStorage for ObservedStorage<S>
 where
-    S: ObjectRelationStorage + StorageBackendIdentity,
+    S: ObjectRelationStorage,
 {
     async fn prepare_object_relation(
         &self,

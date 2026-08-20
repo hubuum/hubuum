@@ -34,6 +34,7 @@ pub mod observability;
 pub mod pagination;
 pub mod permissions;
 pub mod restores;
+#[cfg(any(test, feature = "integration-test-support"))]
 #[doc(hidden)]
 pub use hubuum_storage_postgres::schema;
 pub mod services;

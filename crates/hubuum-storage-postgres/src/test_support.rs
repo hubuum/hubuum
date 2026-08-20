@@ -11,16 +11,23 @@ use diesel::{
     Selectable, SelectableHelper,
 };
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{EventDeliveryId, EventDeliveryStatus, ResourceRevision, RestoreJobId, TaskId};
+use hubuum_domain::{
+    EventDeliveryId, EventDeliverySettings, EventDeliveryStatus, GroupId, PrincipalId,
+    ResourceRevision, RestoreJobId, TaskId,
+};
 use hubuum_events_core::{Action, EntityType, EventEntityId, EventSequence, NewEvent};
 use hubuum_storage_core::{
-    StorageEventDelivery, StorageExportTaskArtifact, StorageIdentityGroup, StorageRecordedEvent,
-    StorageTask, StorageTaskClaim, StorageTaskClaimToken, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
+    EventDeliveryWorkItem, StorageEventDelivery, StorageExportTaskArtifact, StorageIdentityGroup,
+    StorageRecordedEvent, StorageTask, StorageTaskClaim, StorageTaskClaimToken, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskProgress, StorageTaskScopeSnapshot,
+    StorageTaskStatus,
 };
 use tokio::time::{Duration, Instant, sleep};
 
-use crate::{PostgresPool, PostgresPoolSettings, PostgresStorageError, build_postgres_pool};
+use crate::{
+    PostgresConnection, PostgresPool, PostgresPoolSettings, PostgresStorageError,
+    build_postgres_pool,
+};
 
 /// Build a pool for an adapter integration test against the migrated database
 /// selected by the repository test runner.
@@ -789,6 +796,14 @@ pub async fn append_event(
     .await
 }
 
+/// Append one validated event inside a caller-owned adapter transaction.
+pub async fn append_event_on_connection(
+    connection: &mut PostgresConnection,
+    event: &NewEvent,
+) -> Result<StorageRecordedEvent, PostgresStorageError> {
+    crate::operations::event_record::append_event(connection, event).await
+}
+
 /// Load exact typed audit events for one entity.
 pub async fn list_events(
     pool: &PostgresPool,
@@ -973,6 +988,20 @@ pub async fn load_event_delivery_for_event(
     .await
 }
 
+/// Claim one known delivery through the production adapter operation.
+pub async fn claim_event_delivery_by_id(
+    pool: &PostgresPool,
+    delivery_id: EventDeliveryId,
+    settings: EventDeliverySettings,
+) -> Result<EventDeliveryWorkItem, PostgresStorageError> {
+    crate::operations::event_delivery::claim_event_delivery_by_id(
+        &crate::PostgresRuntime::unobserved(pool.clone()),
+        delivery_id.id(),
+        settings,
+    )
+    .await
+}
+
 /// Set one delivery status for administrator/request compatibility setup.
 pub async fn set_event_delivery_status(
     pool: &PostgresPool,
@@ -1123,6 +1152,161 @@ pub async fn delete_restore_job(
             restore_job_id.id()
         )))
     }
+}
+
+/// Count collections with one exact name without exposing adapter schema types.
+pub async fn count_collections_by_name(
+    pool: &PostgresPool,
+    collection_name: &str,
+) -> Result<i64, PostgresStorageError> {
+    use crate::schema::collections::dsl::{collections, name};
+
+    let mut connection = pool.get().await?;
+    Ok(collections
+        .filter(name.eq(collection_name))
+        .count()
+        .get_result(&mut connection)
+        .await?)
+}
+
+/// Count collection audit events with one exact entity name.
+pub async fn count_collection_events_by_name(
+    pool: &PostgresPool,
+    collection_name: &str,
+) -> Result<i64, PostgresStorageError> {
+    use crate::schema::events::dsl::{entity_name, entity_type, events};
+
+    let mut connection = pool.get().await?;
+    Ok(events
+        .filter(entity_type.eq(EntityType::Collection.as_str()))
+        .filter(entity_name.eq(collection_name))
+        .count()
+        .get_result(&mut connection)
+        .await?)
+}
+
+/// Put one task into an adapter-owned live-lease fixture state.
+pub async fn assign_task_lease(
+    pool: &PostgresPool,
+    task_id: TaskId,
+    status_value: StorageTaskStatus,
+    claim_token: uuid::Uuid,
+    expires_at: NaiveDateTime,
+) -> Result<(), PostgresStorageError> {
+    use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
+
+    let mut connection = pool.get().await?;
+    let updated = diesel::update(tasks.filter(id.eq(task_id.id())))
+        .set((
+            status.eq(status_value.as_str()),
+            lease_token.eq(Some(claim_token)),
+            lease_expires_at.eq(Some(expires_at)),
+        ))
+        .execute(&mut connection)
+        .await?;
+    if updated == 1 {
+        Ok(())
+    } else {
+        Err(PostgresStorageError::not_found(format!(
+            "task {} was not available for lease assignment",
+            task_id.id()
+        )))
+    }
+}
+
+/// Delete several integration-test tasks while keeping SQL in the adapter.
+pub async fn delete_tasks(
+    pool: &PostgresPool,
+    task_ids: &[TaskId],
+) -> Result<(), PostgresStorageError> {
+    for task_id in task_ids {
+        delete_task(pool, *task_id).await?;
+    }
+    Ok(())
+}
+
+/// Delete several integration-test restore jobs while keeping SQL in the adapter.
+pub async fn delete_restore_jobs(
+    pool: &PostgresPool,
+    restore_job_ids: &[RestoreJobId],
+) -> Result<(), PostgresStorageError> {
+    for restore_job_id in restore_job_ids {
+        delete_restore_job(pool, *restore_job_id).await?;
+    }
+    Ok(())
+}
+
+/// One persisted group membership used to verify external identity reconciliation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PersistedGroupMembership {
+    group_id: GroupId,
+    external_key: Option<String>,
+}
+
+impl PersistedGroupMembership {
+    #[must_use]
+    pub const fn group_id(&self) -> GroupId {
+        self.group_id
+    }
+
+    #[must_use]
+    pub fn external_key(&self) -> Option<&str> {
+        self.external_key.as_deref()
+    }
+}
+
+/// Adapter-owned persisted evidence for one external identity scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalIdentityPersistence {
+    principal_count: i64,
+    memberships: Vec<PersistedGroupMembership>,
+}
+
+impl ExternalIdentityPersistence {
+    #[must_use]
+    pub const fn principal_count(&self) -> i64 {
+        self.principal_count
+    }
+
+    #[must_use]
+    pub fn memberships(&self) -> &[PersistedGroupMembership] {
+        &self.memberships
+    }
+}
+
+/// Inspect external identity reconciliation without exposing Diesel rows.
+pub async fn external_identity_persistence(
+    pool: &PostgresPool,
+    identity_scope_name: &str,
+    principal_id: PrincipalId,
+) -> Result<ExternalIdentityPersistence, PostgresStorageError> {
+    use crate::schema::{group_memberships, groups, identity_scopes, principals};
+
+    let mut connection = pool.get().await?;
+    let principal_count = principals::table
+        .inner_join(identity_scopes::table)
+        .filter(identity_scopes::name.eq(identity_scope_name))
+        .count()
+        .get_result::<i64>(&mut connection)
+        .await?;
+    let memberships = group_memberships::table
+        .inner_join(groups::table)
+        .filter(group_memberships::principal_id.eq(principal_id.id()))
+        .select((groups::id, groups::external_key))
+        .load::<(i32, Option<String>)>(&mut connection)
+        .await?
+        .into_iter()
+        .map(|(group_id, external_key)| {
+            Ok(PersistedGroupMembership {
+                group_id: GroupId::new(group_id)?,
+                external_key,
+            })
+        })
+        .collect::<Result<Vec<_>, PostgresStorageError>>()?;
+    Ok(ExternalIdentityPersistence {
+        principal_count,
+        memberships,
+    })
 }
 
 /// Cancel externally submitted pending tasks for one principal.

@@ -4,23 +4,23 @@ use hubuum_domain::{ClassId, ComputedFieldDefinitionId};
 
 use hubuum_storage_core::{
     ComputedFieldLifecycleStorage, MutationOutcome, StorageClassComputationState,
-    StorageComputedFieldDefinition, StorageComputedFieldMutation, StorageComputedFieldPage,
-    StorageComputedFieldRebuildRequest, StorageError, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
-    StorageTaskLease,
+    StorageComputedFieldDefinition, StorageComputedFieldMutation,
+    StorageComputedFieldRebuildRequest, StorageError, StoragePage,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskLease,
 };
 
 use super::PostgresStorage;
 
 #[async_trait]
 impl ComputedFieldLifecycleStorage for PostgresStorage {
-    async fn computed_field_state(
+    async fn get_computed_field_state(
         &self,
         class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError> {
-        postgres_computed_lifecycle::computed_field_state(self.runtime(), class_id.id())
+        postgres_computed_lifecycle::get_computed_field_state(self.runtime(), class_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -37,7 +37,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
     async fn list_personal_computed_fields(
         &self,
         query: StoragePersonalComputedFieldListQuery,
-    ) -> Result<StorageComputedFieldPage, StorageError> {
+    ) -> Result<StoragePage<StorageComputedFieldDefinition>, StorageError> {
         postgres_computed_lifecycle::list_personal_computed_fields(self.runtime(), query)
             .await
             .map_err(StorageError::from)

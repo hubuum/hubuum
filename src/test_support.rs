@@ -21,9 +21,11 @@ use crate::models::{
     RemoteCallResult, TaskKind, validate_sink_parts, validate_subscription_parts,
 };
 use crate::services::Services;
-use crate::storage::{StorageEventSinkCreate, StorageEventSubscriptionCreate, StorageHandle};
+use crate::storage::{
+    EventSubscriptionStorage, StorageEventSinkCreate, StorageEventSubscriptionCreate, StorageHandle,
+};
 use crate::traits::PrincipalIdAccessor;
-use hubuum_storage_postgres::PostgresPool;
+use hubuum_storage_postgres::{PostgresPool, PostgresStorage};
 
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
@@ -497,14 +499,11 @@ pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<
     )
     .enabled(sink.enabled)
     .build();
-    hubuum_storage_postgres::operations::event_subscription::create_event_sink(
-        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
-        request,
-    )
-    .await
-    .map(|outcome| outcome.into_value().id().id())
-    .map_err(hubuum_storage_core::StorageError::from)
-    .map_err(ApiError::from)
+    PostgresStorage::unobserved(pool.clone())
+        .create_event_sink(request)
+        .await
+        .map(|outcome| outcome.into_value().id().id())
+        .map_err(ApiError::from)
 }
 
 pub async fn save_event_subscription(
@@ -532,14 +531,11 @@ pub async fn save_event_subscription(
     .routing(subscription.routing)
     .enabled(subscription.enabled)
     .build();
-    hubuum_storage_postgres::operations::event_subscription::create_event_subscription(
-        &hubuum_storage_postgres::PostgresRuntime::unobserved(pool.clone()),
-        request,
-    )
-    .await
-    .map(|outcome| outcome.into_value().id().id())
-    .map_err(hubuum_storage_core::StorageError::from)
-    .map_err(ApiError::from)
+    PostgresStorage::unobserved(pool.clone())
+        .create_event_subscription(request)
+        .await
+        .map(|outcome| outcome.into_value().id().id())
+        .map_err(ApiError::from)
 }
 
 pub async fn sync_external_user(

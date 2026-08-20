@@ -2,6 +2,7 @@
 name = "hubuum-storage-postgres"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 description = "PostgreSQL storage adapter primitives for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
@@ -47,6 +48,7 @@ pq-sys = { version = "0.7.5", optional = true }
 [features]
 query-capture = []
 integration-test-support = []
+benchmark-support = []
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 
 [dev-dependencies]

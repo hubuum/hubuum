@@ -13,7 +13,7 @@ use crate::models::{
 };
 use crate::permissions::AppContext;
 use crate::restores::{
-    RestoreSettings, confirm_restore, identity_scope_name, restore_status, stage_restore,
+    RestoreSettings, confirm_restore, resolve_identity_scope_name, restore_status, stage_restore,
 };
 
 const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
@@ -60,7 +60,7 @@ pub async fn create_restore_stage(
         ));
     }
     let principal = load_principal_by_id(&context, admin.user.id).await?;
-    let scope_name = identity_scope_name(&context, principal.identity_scope_id).await?;
+    let scope_name = resolve_identity_scope_name(&context, principal.identity_scope_id).await?;
     let initiator = RestoreInitiator::principal(&principal, scope_name)?;
     let request = RestoreStageRequest::new(initiator, document.to_vec())?;
     let staged = stage_restore(&context, &settings, request).await?;

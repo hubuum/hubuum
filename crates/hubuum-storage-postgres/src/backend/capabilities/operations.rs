@@ -2,23 +2,19 @@ use super::super::*;
 
 #[async_trait]
 impl MetricsStorage for PostgresStorage {
-    fn metrics_pool_state(&self) -> StoragePoolState {
-        crate::operations::metrics::pool_state(self.runtime())
-    }
-
-    async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+    async fn inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
         crate::operations::metrics::load_inventory_gauge_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn metrics_task_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+    async fn task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
         crate::operations::metrics::load_task_gauge_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+    async fn event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
         crate::operations::event_observability::load_event_metrics_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -42,14 +38,8 @@ impl OperationalStateStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
+    async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
         crate::operations::maintenance::load_maintenance_state(self.runtime())
-            .await
-            .map_err(StorageError::from)
-    }
-
-    async fn storage_snapshot(&self) -> Result<OperationalStorageSnapshot, StorageError> {
-        crate::operations::meta::load_storage_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
@@ -91,7 +81,7 @@ impl AuditEventStorage for PostgresStorage {
     async fn list_audit_events(
         &self,
         query: StorageAuditEventListQuery,
-    ) -> Result<StorageEventPage<StorageAuditEvent>, StorageError> {
+    ) -> Result<StoragePage<StorageAuditEvent>, StorageError> {
         crate::operations::event_audit::list_audit_events(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -109,17 +99,14 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn list_event_sinks(
         &self,
         query: StorageEventSinkListQuery,
-    ) -> Result<StorageEventPage<StorageEventSink>, StorageError> {
+    ) -> Result<StoragePage<StorageEventSink>, StorageError> {
         crate::operations::event_subscription::list_event_sinks(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn load_event_sink(
-        &self,
-        sink_id: EventSinkId,
-    ) -> Result<StorageEventSink, StorageError> {
-        crate::operations::event_subscription::load_event_sink(self.runtime(), sink_id.id())
+    async fn get_event_sink(&self, sink_id: EventSinkId) -> Result<StorageEventSink, StorageError> {
+        crate::operations::event_subscription::get_event_sink(self.runtime(), sink_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -154,18 +141,18 @@ impl EventSubscriptionStorage for PostgresStorage {
     async fn list_event_subscriptions(
         &self,
         query: StorageEventSubscriptionListQuery,
-    ) -> Result<StorageEventPage<StorageEventSubscription>, StorageError> {
+    ) -> Result<StoragePage<StorageEventSubscription>, StorageError> {
         crate::operations::event_subscription::list_event_subscriptions(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn load_event_subscription(
+    async fn get_event_subscription(
         &self,
         collection_id: CollectionId,
         subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError> {
-        crate::operations::event_subscription::load_event_subscription(
+        crate::operations::event_subscription::get_event_subscription(
             self.runtime(),
             collection_id.id(),
             subscription_id.id(),
@@ -207,17 +194,17 @@ impl EventDeliveryAdministrationStorage for PostgresStorage {
     async fn list_event_deliveries(
         &self,
         query: StorageEventDeliveryListQuery,
-    ) -> Result<StorageEventPage<StorageEventDelivery>, StorageError> {
+    ) -> Result<StoragePage<StorageEventDelivery>, StorageError> {
         crate::operations::event_delivery::list_event_deliveries(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn load_event_delivery(
+    async fn get_event_delivery(
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        crate::operations::event_delivery::load_event_delivery(self.runtime(), delivery_id.id())
+        crate::operations::event_delivery::get_event_delivery(self.runtime(), delivery_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -314,20 +301,6 @@ impl EventRetentionStorage for PostgresStorage {
         crate::operations::event_retention::complete_event_retention_batch(self.runtime(), batch_id)
             .await
             .map_err(StorageError::from)
-    }
-
-    async fn process_event_retention_batch(
-        &self,
-        settings: EventRetentionSettings,
-        archive: &dyn EventArchive,
-    ) -> Result<EventRetentionSummary, StorageError> {
-        crate::operations::event_retention::process_event_retention_batch(
-            self.runtime(),
-            settings,
-            archive,
-        )
-        .await
-        .map_err(StorageError::from)
     }
 }
 

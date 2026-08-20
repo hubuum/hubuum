@@ -10,9 +10,9 @@ use hubuum_storage_core::{
     StorageObjectSelector, StorageObjectUpdate, StoragePreparedClassRelation,
     StoragePreparedObjectRelation, StorageResolvedClass, StorageResolvedClassRelation,
     StorageResolvedObject, StorageResolvedObjectRelation, StorageTransaction,
-    StorageTransactionFuture, TransactionalClassRelations, TransactionalClasses,
-    TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
-    TransactionalStorage,
+    StorageTransactionFuture, TransactionStorage, TransactionalClassRelations,
+    TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,
+    TransactionalObjects,
 };
 use tokio::sync::Mutex;
 
@@ -112,7 +112,7 @@ impl CollectionStorage for PostgresTransaction<'_> {
             .map_err(StorageError::from)
     }
 
-    async fn collection_children(
+    async fn list_collection_children(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -122,7 +122,7 @@ impl CollectionStorage for PostgresTransaction<'_> {
             .map_err(StorageError::from)
     }
 
-    async fn collection_ancestors(
+    async fn list_collection_ancestors(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -196,7 +196,7 @@ impl ClassStorage for PostgresTransaction<'_> {
             .map_err(StorageError::from)
     }
 
-    async fn class_names(
+    async fn resolve_class_names(
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
@@ -426,7 +426,7 @@ impl ObjectRelationStorage for PostgresTransaction<'_> {
 }
 
 #[async_trait]
-impl TransactionalStorage for PostgresStorage {
+impl TransactionStorage for PostgresStorage {
     async fn transaction<F, R>(
         &self,
         event_context: EventContext,

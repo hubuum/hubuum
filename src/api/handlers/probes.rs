@@ -53,7 +53,7 @@ pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
     )
     .await
     .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
-    if !snapshot.schema_is_ready() {
+    if !snapshot.storage_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Database schema is not ready".to_string(),
         ));

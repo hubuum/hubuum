@@ -59,7 +59,7 @@ The boundary has five responsibilities:
 
 ## Complete Means Complete
 
-`StorageBackend` is the aggregate trait in `crates/hubuum-storage-core/src/backend.rs`. Its supertraits are the complete compile-time contract, including the mandatory `TransactionalStorage` unit-of-work capability.
+`StorageBackend` is the aggregate trait in `crates/hubuum-storage-core/src/backend.rs`. Its supertraits are the complete compile-time contract, including the mandatory `TransactionStorage` unit-of-work capability.
 
 An adapter opts in structurally only after it implements every required family.
 Rust rejects the implementation if any method or family is missing. The
@@ -106,7 +106,7 @@ There is no aggregate lifecycle trait and no default "unsupported" behavior. A f
 Production composition projects exact observed trait objects from a complete `StorageHandle`.
 
 Application workflows that must compose several resource mutations use
-`TransactionalStorage`. The callback receives an opaque `StorageTransaction`
+`TransactionStorage`. The callback receives an opaque `StorageTransaction`
 whose `collections()`, `classes()`, `class_relations()`, `objects()`, and
 `object_relations()` accessors return discoverable operation types. Every
 transactional mutation inherits one required `EventContext`.
@@ -123,7 +123,7 @@ The following rules are architectural invariants:
 - Adapter inputs and results are crate-owned or storage-owned DTOs with private
   representation where practical.
 - A use case may compose safe resource primitives through
-  `TransactionalStorage`. The adapter owns the native transaction and exposes
+  `TransactionStorage`. The adapter owns the native transaction and exposes
   neither a connection nor a query language.
 - Invariant-heavy state machines remain one operation-shaped trait method.
   Task completion, restore application, retention, permission mutation, and
@@ -133,9 +133,9 @@ The following rules are architectural invariants:
 - Ordinary audited mutations require `EventContext` and return
   `MutationOutcome`: committed changes carry a durable `AuditReceipt`, while
   genuine no-ops carry no receipt and append no event.
-- Imports and restores are restricted to `MaintenanceStorage`; that typed
-  surface preserves or reconstructs history and is not an unaudited shortcut
-  for ordinary writes.
+- Imports and restores are restricted to the explicit `ImportStorage` and
+  `RestoreStorage` capabilities. Those typed surfaces preserve or reconstruct
+  history and are not unaudited shortcuts for ordinary writes.
 - Native mechanisms such as SQL cursors, statement timeouts, advisory locks,
   task-local database settings, and notification listeners remain private to
   the adapter.
@@ -183,15 +183,17 @@ hubuum application
   `hubuum-domain` newtypes instead of raw database integers.
 - `hubuum-task-core` owns task values shared by storage and worker code.
 - `hubuum-storage-core` owns the complete storage contract, private-field DTOs,
-  semantic errors, and backend identity. It has no Actix, Diesel, global
+  and semantic errors. It has no Actix, Diesel, global
   configuration, or `ApiError` dependency. Resource lifecycle, revision,
   metadata, and principal boundaries use domain IDs and revisions rather than
   persistence-shaped strings and integers.
 - `hubuum-storage-conformance` owns the reusable six-part behavioral verifier
   for receipts, no-ops, rollback, fan-out to a recording sink, telemetry, and
   exact revision-conflict propagation. It also owns the retention retry
-  verifier for durable claim identity and idempotent completion and the common
-  application, service, readiness, and authenticated HTTP expectations.
+  verifier for durable claim identity and idempotent completion, deterministic
+  delivery, restore-coordination, and lease-loss protocol expectations, and
+  the common application, service, readiness, and authenticated HTTP
+  expectations.
   It is workspace-internal and used only as a development dependency.
 - `hubuum-storage-postgres` owns the native pool, TLS, endpoint diagnostics, generated schema, migrations, JSONB validation, query instrumentation, and all production PostgreSQL operations.
 - The root crate owns application services and static composition. It constructs the PostgreSQL adapter with telemetry and dedicated operational pools, then places it behind the opaque handle.
@@ -219,8 +221,9 @@ Adapter-private deterministic failpoints prove rollback at representative
 compound-write and task-state-machine seams.
 
 This is strong practical coverage, not a formal proof of portability.
-PostgreSQL is the only complete production adapter. The portable six-part and
-retention-retry verifiers are extracted, while the broader compatibility suite
-still uses root application fixtures and remains in the root test module.
+PostgreSQL is the only complete production adapter. The portable six-part,
+retention-retry, delivery-fault, restore-coordination, and lease-loss
+expectations are extracted, while backend provisioning and the broader
+application compatibility fixtures remain application-owned.
 
 The [testing guide](storage_boundary/testing.md) gives the detailed assessment and the highest-value remaining improvements.

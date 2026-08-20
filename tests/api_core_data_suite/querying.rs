@@ -599,8 +599,9 @@ mod tests {
         let classes: Vec<crate::models::HubuumClassExpanded> =
             actix_test::read_body_json(resp).await;
 
-        let class_names: Vec<&str> = classes.iter().map(|class| class.name.as_str()).collect();
-        assert_eq!(class_names, expected_names);
+        let resolve_class_names: Vec<&str> =
+            classes.iter().map(|class| class.name.as_str()).collect();
+        assert_eq!(resolve_class_names, expected_names);
 
         collection.cleanup().await.unwrap();
     }

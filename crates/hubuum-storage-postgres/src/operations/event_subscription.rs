@@ -8,10 +8,10 @@ use hubuum_domain::{CollectionId, EventSinkId, EventSubscriptionId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent, redact_event_sink_config};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    AuditReceipt, MutationOutcome, StorageEventPage, StorageEventSink, StorageEventSinkCreate,
+    AuditReceipt, MutationOutcome, StorageEventSink, StorageEventSinkCreate,
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
     StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StoragePage,
 };
 use serde_json::{Value, json};
 
@@ -296,7 +296,7 @@ pub async fn enabled_event_sink_count(
 pub async fn list_event_sinks(
     runtime: &PostgresRuntime,
     query: StorageEventSinkListQuery,
-) -> Result<StorageEventPage<StorageEventSink>, PostgresStorageError> {
+) -> Result<StoragePage<StorageEventSink>, PostgresStorageError> {
     let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(async |connection| {
@@ -324,12 +324,12 @@ pub async fn list_event_sinks(
                 .into_iter()
                 .map(StorageEventSink::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StorageEventPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
 
-pub async fn load_event_sink(
+pub async fn get_event_sink(
     runtime: &PostgresRuntime,
     sink_id: i32,
 ) -> Result<StorageEventSink, PostgresStorageError> {
@@ -473,7 +473,7 @@ pub async fn delete_event_sink(
 pub async fn list_event_subscriptions(
     runtime: &PostgresRuntime,
     query: StorageEventSubscriptionListQuery,
-) -> Result<StorageEventPage<StorageEventSubscription>, PostgresStorageError> {
+) -> Result<StoragePage<StorageEventSubscription>, PostgresStorageError> {
     let include_total = query.options().include_total();
     runtime
         .with_read_only_snapshot(async |connection| {
@@ -502,12 +502,12 @@ pub async fn list_event_subscriptions(
                 .into_iter()
                 .map(StorageEventSubscription::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StorageEventPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
 
-pub async fn load_event_subscription(
+pub async fn get_event_subscription(
     runtime: &PostgresRuntime,
     collection_id: i32,
     subscription_id: i32,

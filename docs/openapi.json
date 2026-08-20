@@ -443,6 +443,16 @@
               }
             }
           },
+          "404": {
+            "description": "Database diagnostics are not available for the configured storage backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "content": {

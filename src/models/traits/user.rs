@@ -209,7 +209,7 @@ pub trait Search: UserCollectionAccessors {
         K: SelfAccessors<HubuumClass>,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::related_classes(
+        crate::services::relation_queries::list_related_classes(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -235,7 +235,7 @@ pub trait Search: UserCollectionAccessors {
         K: SelfAccessors<HubuumClass>,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        let (rows, total) = crate::services::relation_queries::related_classes(
+        let (rows, total) = crate::services::relation_queries::list_related_classes(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -364,7 +364,7 @@ pub trait Search: UserCollectionAccessors {
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::related_objects(
+        crate::services::relation_queries::list_related_objects(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -390,7 +390,7 @@ pub trait Search: UserCollectionAccessors {
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        let (rows, total) = crate::services::relation_queries::related_objects(
+        let (rows, total) = crate::services::relation_queries::list_related_objects(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -407,7 +407,7 @@ pub trait Search: UserCollectionAccessors {
         ))
     }
 
-    async fn related_objects_for_roots<C>(
+    async fn list_related_objects_for_roots<C>(
         &self,
         backend: &C,
         root_object_ids: &[i32],
@@ -418,7 +418,7 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::related_objects_for_roots(
+        crate::services::relation_queries::list_related_objects_for_roots(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -432,7 +432,7 @@ pub trait Search: UserCollectionAccessors {
         .await
     }
 
-    async fn bidirectionally_related_objects_for_roots<C>(
+    async fn list_bidirectionally_related_objects_for_roots<C>(
         &self,
         backend: &C,
         root_object_ids: &[i32],
@@ -444,7 +444,7 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::bidirectionally_related_objects_for_roots(
+        crate::services::relation_queries::list_bidirectionally_related_objects_for_roots(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -586,7 +586,7 @@ impl InstanceAdapter<User> for UserID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<User, ApiError> {
-        crate::services::identity::load_user(pool, self.id()).await
+        crate::services::identity::get_user(pool, self.id()).await
     }
 }
 

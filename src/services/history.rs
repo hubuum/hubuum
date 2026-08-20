@@ -168,36 +168,24 @@ fn export_template_from_storage(
 ) -> Result<ExportTemplateHistory, ApiError> {
     let (record, metadata) = row.into_parts();
     let (record_metadata, collection_id, name, definition) = record.into_parts();
-    let (
-        description,
-        content_type,
-        template,
-        kind,
-        scope_kind,
-        class_id,
-        default_query,
-        include,
-        relation_context,
-        default_missing_data_policy,
-        default_limits,
-    ) = definition.into_parts();
+    let definition = definition.into_parts();
     let (id, created_at, updated_at, _) = record_metadata.into_parts();
     let metadata = AppHistoryMetadata::from(metadata);
     Ok(ExportTemplateHistory {
         id: id.id(),
         collection_id: collection_id.id(),
         name,
-        description,
-        content_type,
-        template,
-        kind,
-        scope_kind,
-        class_id: class_id.map(|id| id.id()),
-        default_query,
-        include,
-        relation_context,
-        default_missing_data_policy,
-        default_limits,
+        description: definition.description().to_string(),
+        content_type: definition.content_type().to_string(),
+        template: definition.template().to_string(),
+        kind: definition.kind().to_string(),
+        scope_kind: definition.scope_kind().map(str::to_string),
+        class_id: definition.class_id().map(|id| id.id()),
+        default_query: definition.default_query().map(str::to_string),
+        include: definition.include().cloned(),
+        relation_context: definition.relation_context().cloned(),
+        default_missing_data_policy: definition.default_missing_data_policy().map(str::to_string),
+        default_limits: definition.default_limits().cloned(),
         created_at,
         updated_at,
         op: metadata.operation,

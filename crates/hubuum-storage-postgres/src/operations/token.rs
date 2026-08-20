@@ -13,10 +13,9 @@ use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     AuditReceipt, AuditReceipts, AuthenticationResourceScope, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, MutationOutcome, StorageIdentityPage,
-    StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
-    StorageTokenRenew, StorageTokenRevoke,
+    AuthenticationTokenScopeQuery, MutationOutcome, StoragePage, StoragePrincipalTokensRevoke,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
 };
 use serde_json::{Value, json};
 
@@ -174,7 +173,7 @@ macro_rules! apply_token_filters {
 pub async fn list_retained_tokens(
     runtime: &PostgresRuntime,
     query: StorageTokenListQuery,
-) -> Result<StorageIdentityPage<StorageTokenMetadata>, PostgresStorageError> {
+) -> Result<StoragePage<StorageTokenMetadata>, PostgresStorageError> {
     let (principal_id, options, state, observation) = query.into_parts();
     let principal_id = principal_id.id();
     validate_positive_id(principal_id, "principal id")?;
@@ -200,7 +199,7 @@ pub async fn list_retained_tokens(
                 .load::<TokenRow>(connection)
                 .await?;
             let metadata = metadata_for_rows(connection, rows, observation).await?;
-            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(metadata, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(metadata, total))
         })
         .await
 }
@@ -209,9 +208,15 @@ pub async fn create_token(
     runtime: &PostgresRuntime,
     request: StorageTokenCreate,
 ) -> Result<MutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
-    let (principal_id, token_hash, name, description, expires_at, scope, policy, event_context) =
-        request.into_parts();
-    let principal_id = principal_id.id();
+    let parts = request.into_parts();
+    let principal_id = parts.principal_id().id();
+    let token_hash = parts.token_hash().to_string();
+    let name = parts.name().map(str::to_string);
+    let description = parts.description().map(str::to_string);
+    let expires_at = parts.expires_at();
+    let scope = parts.scope().cloned();
+    let policy = parts.policy();
+    let event_context = parts.event_context().clone();
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(
@@ -303,7 +308,7 @@ pub async fn renew_token(
         .await
 }
 
-pub async fn load_token_metadata(
+pub async fn get_token_metadata(
     runtime: &PostgresRuntime,
     principal_id: i32,
     token_id: i32,
@@ -324,7 +329,7 @@ pub async fn load_token_metadata(
         .await
 }
 
-pub async fn load_token_metadata_batch(
+pub async fn get_token_metadata_batch(
     runtime: &PostgresRuntime,
     token_ids: Vec<i32>,
     observation: StorageTokenObservation,

@@ -6,7 +6,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageEventPage,
+    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StoragePage,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -18,7 +18,7 @@ use super::event_rows::{StoredEventProjection, enrich_stored_events};
 pub async fn list_audit_events(
     runtime: &PostgresRuntime,
     query: StorageAuditEventListQuery,
-) -> Result<StorageEventPage<StorageAuditEvent>, PostgresStorageError> {
+) -> Result<StoragePage<StorageAuditEvent>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let accessible_collection_ids = query
         .accessible_collection_ids()
@@ -27,7 +27,7 @@ pub async fn list_audit_events(
         .collect::<Vec<_>>();
     runtime
         .with_read_only_snapshot(
-            async |connection| -> Result<StorageEventPage<StorageAuditEvent>, PostgresStorageError> {
+            async |connection| -> Result<StoragePage<StorageAuditEvent>, PostgresStorageError> {
                 let total = if include_total {
                     Some(
                         build_audit_event_query(
@@ -71,11 +71,12 @@ pub async fn list_audit_events(
                     .map(|event| {
                         let directly_visible = event.collection_id.is_some_and(|collection_id| {
                             accessible_collection_ids.contains(&collection_id)
-                        }) || (query.include_collection_less() && event.collection_id.is_none());
+                        }) || (query.include_collection_less()
+                            && event.collection_id.is_none());
                         event.into_audit_event(&principal_names, !directly_visible)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(StorageEventPage::new(rows, total))
+                Ok(StoragePage::new(rows, total))
             },
         )
         .await

@@ -4,11 +4,11 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, ExportTemplateId};
 use hubuum_storage_core::{
     OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth,
-    OperationalStorageSnapshot, OperationalTaskActiveCounts, OperationalTaskKindCounts,
-    OperationalTaskQueueSnapshot, OperationalTaskStatusCounts, OperationalTaskTerminalCounts,
+    OperationalTaskActiveCounts, OperationalTaskKindCounts, OperationalTaskQueueSnapshot,
+    OperationalTaskStatusCounts, OperationalTaskTerminalCounts,
 };
 
-use crate::{PostgresRuntime, PostgresStorageError};
+use crate::{PostgresRuntime, PostgresStorageError, PostgresStorageSnapshot};
 
 #[derive(QueryableByName, Debug)]
 struct DatabaseStateRow {
@@ -86,7 +86,7 @@ struct ExportTemplateAuditRow {
 
 pub async fn load_storage_snapshot(
     runtime: &PostgresRuntime,
-) -> Result<OperationalStorageSnapshot, PostgresStorageError> {
+) -> Result<PostgresStorageSnapshot, PostgresStorageError> {
     const QUERY: &str = r#"
         SELECT
           (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') AS active_connections,
@@ -103,11 +103,7 @@ pub async fn load_storage_snapshot(
         })
         .await
         .map(|row| {
-            OperationalStorageSnapshot::new(
-                row.active_connections,
-                row.db_size,
-                row.last_vacuum_time,
-            )
+            PostgresStorageSnapshot::new(row.active_connections, row.db_size, row.last_vacuum_time)
         })
 }
 

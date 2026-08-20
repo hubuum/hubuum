@@ -1166,7 +1166,7 @@ impl fmt::Debug for AuthorizationObjectResource {
 /// backend.
 #[async_trait]
 pub trait AuthorizationStorage: Send + Sync {
-    async fn load_authorization_principal(
+    async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
     ) -> Result<AuthorizationPrincipal, StorageError>;
@@ -1176,12 +1176,12 @@ pub trait AuthorizationStorage: Send + Sync {
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError>;
 
-    async fn load_authorization_classes(
+    async fn get_authorization_classes(
         &self,
         query: AuthorizationResourceIds,
     ) -> Result<Vec<AuthorizationClassResource>, StorageError>;
 
-    async fn load_authorization_objects(
+    async fn get_authorization_objects(
         &self,
         query: AuthorizationResourceIds,
     ) -> Result<Vec<AuthorizationObjectResource>, StorageError>;
@@ -1224,7 +1224,7 @@ pub trait AuthorizationStorage: Send + Sync {
         key: AuthorizationGrantKey,
     ) -> Result<Option<AuthorizationGrant>, StorageError>;
 
-    async fn load_local_collection_permission_set(
+    async fn get_local_collection_permission_set(
         &self,
         query: AuthorizationPermissionSetQuery,
     ) -> Result<AuthorizationPermissionSet, StorageError>;

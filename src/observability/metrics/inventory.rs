@@ -17,7 +17,7 @@ pub(super) async fn refresh_inventory_gauges(
     }
 
     let refresh_started_at = Instant::now();
-    match backend.metrics_inventory_snapshot().await {
+    match backend.inventory_metrics_snapshot().await {
         Ok(row) => {
             record_refresh_attempt(
                 metrics,

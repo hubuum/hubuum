@@ -28,8 +28,7 @@ mod tests {
         service_account_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
-    use hubuum_storage_postgres::operations::computed_materialization::source_data_sha256;
-    use hubuum_storage_postgres::{capture_queries, with_connection};
+    use hubuum_storage_postgres::{capture_queries, source_data_sha256, with_connection};
 
     #[derive(QueryableByName)]
     struct ComputedQuerySqlValue {

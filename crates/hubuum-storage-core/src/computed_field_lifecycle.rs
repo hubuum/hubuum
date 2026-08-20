@@ -7,7 +7,10 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError, StorageRecordMetadata, StorageTask, StorageTaskLease};
+use crate::{
+    MutationOutcome, StorageError, StoragePage, StorageRecordMetadata, StorageTask,
+    StorageTaskLease,
+};
 
 /// Non-negative generation of the materialized computed-field state.
 ///
@@ -528,9 +531,6 @@ impl fmt::Debug for StoragePersonalComputedFieldListQuery {
     }
 }
 
-/// Computed-field page retained as a domain-specific API name.
-pub type StorageComputedFieldPage = crate::StoragePage<StorageComputedFieldDefinition>;
-
 #[derive(Clone, PartialEq)]
 pub struct StorageSharedComputedFieldCreate {
     class_id: ClassId,
@@ -788,7 +788,7 @@ impl StorageComputedFieldRebuildRequest {
 /// Mandatory backend contract for computed-field definitions and rebuild state.
 #[async_trait]
 pub trait ComputedFieldLifecycleStorage: Send + Sync {
-    async fn computed_field_state(
+    async fn get_computed_field_state(
         &self,
         class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError>;
@@ -801,7 +801,7 @@ pub trait ComputedFieldLifecycleStorage: Send + Sync {
     async fn list_personal_computed_fields(
         &self,
         query: StoragePersonalComputedFieldListQuery,
-    ) -> Result<StorageComputedFieldPage, StorageError>;
+    ) -> Result<StoragePage<StorageComputedFieldDefinition>, StorageError>;
 
     async fn get_computed_field(
         &self,

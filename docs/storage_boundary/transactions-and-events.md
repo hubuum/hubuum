@@ -12,7 +12,7 @@ semantics.
 ## The Shape
 
 ```text
-TransactionalStorage::transaction(EventContext, callback)
+TransactionStorage::transaction(EventContext, callback)
                             |
                             v
                   opaque StorageTransaction
@@ -77,7 +77,7 @@ preventing application code from rebuilding backend state machines.
 
 ## Audit and Event Guarantee
 
-`TransactionalStorage::transaction` requires one `EventContext`. Callers do
+`TransactionStorage::transaction` requires one `EventContext`. Callers do
 not pass an optional event context to individual transactional mutations.
 `TransactionalCollections`, `TransactionalClasses`,
 `TransactionalClassRelations`, `TransactionalObjects`, and
@@ -108,9 +108,9 @@ identifying the durable event written in the same atomic operation. A genuine
 no-op returns `MutationOutcome::Unchanged` and appends no event.
 
 Fixture compatibility helpers use explicit system attribution. Import and
-restore behavior belongs to `MaintenanceStorage`, which is a separate surface
-because those workflows preserve or reconstruct durable history rather than
-masquerading as ordinary user mutations.
+restore behavior belongs to explicit workflow capabilities because those
+operations preserve or reconstruct durable history rather than masquerading as
+ordinary user mutations.
 
 ## Example
 
@@ -118,7 +118,7 @@ masquerading as ordinary user mutations.
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
     StorageObjectCreate, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, TransactionalStorage,
+    StorageObjectRelationCreateSelector, TransactionStorage,
 };
 
 storage
@@ -159,7 +159,7 @@ trait calls.
 
 A complete adapter must:
 
-- implement `TransactionalStorage` and every trait aggregated by
+- implement `TransactionStorage` and every trait aggregated by
   `StorageBackend`;
 - provide one native atomic unit for the complete callback;
 - implement every exposed transaction accessor;

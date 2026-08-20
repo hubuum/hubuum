@@ -398,7 +398,7 @@ impl StorageResolvedObjectRelation {
 /// Complete class-relation lifecycle required from a selectable backend.
 ///
 /// Every mutation is audited. Restore and import operations use the separate
-/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
+/// [`crate::ImportStorage`] and [`crate::RestoreStorage`] contracts and never weaken this interface.
 #[async_trait]
 pub trait ClassRelationStorage: Send + Sync {
     async fn prepare_class_relation(
@@ -427,7 +427,7 @@ pub trait ClassRelationStorage: Send + Sync {
 /// Complete object-relation lifecycle required from a selectable backend.
 ///
 /// Every mutation is audited. Restore and import operations use the separate
-/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
+/// [`crate::ImportStorage`] and [`crate::RestoreStorage`] contracts and never weaken this interface.
 #[async_trait]
 pub trait ObjectRelationStorage: Send + Sync {
     async fn prepare_object_relation(

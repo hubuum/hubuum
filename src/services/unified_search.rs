@@ -46,7 +46,7 @@ pub async fn search_collections(
     spec: &UnifiedSearchSpec,
 ) -> Result<Vec<Collection>, ApiError> {
     storage_handle(backend)
-        .search_unified_collections(query(
+        .search_collections(query(
             principal_id,
             is_admin,
             scope,
@@ -68,7 +68,7 @@ pub async fn search_classes(
     spec: &UnifiedSearchSpec,
 ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
     storage_handle(backend)
-        .search_unified_classes(query(
+        .search_classes(query(
             principal_id,
             is_admin,
             scope,
@@ -90,7 +90,7 @@ pub async fn search_objects(
     spec: &UnifiedSearchSpec,
 ) -> Result<Vec<HubuumObject>, ApiError> {
     storage_handle(backend)
-        .search_unified_objects(query(
+        .search_objects(query(
             principal_id,
             is_admin,
             scope,

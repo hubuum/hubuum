@@ -16,7 +16,10 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::*;
 
-use crate::{PostgresPool, PostgresRuntime, PostgresTelemetry};
+use crate::{
+    PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime, PostgresStorageError,
+    PostgresStorageSnapshot,
+};
 
 mod backup_snapshot;
 mod capabilities;
@@ -43,9 +46,9 @@ pub struct PostgresStorage {
 
 impl PostgresStorage {
     #[must_use]
-    pub fn new(pool: PostgresPool, telemetry: Arc<dyn PostgresTelemetry>) -> Self {
+    pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
-            runtime: PostgresRuntime::new(pool.clone(), telemetry),
+            runtime: PostgresRuntime::new(pool.clone(), observer),
             notification_listener_pool: pool,
         }
     }
@@ -55,7 +58,7 @@ impl PostgresStorage {
     /// This is intended for tests, benchmarks, and one-shot maintenance tools.
     #[must_use]
     pub fn unobserved(pool: PostgresPool) -> Self {
-        Self::new(pool, Arc::new(crate::NoopPostgresTelemetry))
+        Self::new(pool, Arc::new(crate::NoopPostgresObserver))
     }
 
     #[must_use]
@@ -74,6 +77,17 @@ impl PostgresStorage {
     pub fn with_computed_reindex_batch_size(mut self, batch_size: NonZeroUsize) -> Self {
         self.runtime = self.runtime.with_computed_reindex_batch_size(batch_size);
         self
+    }
+
+    /// Return PostgreSQL connection-pool diagnostics.
+    #[must_use]
+    pub fn pool_state(&self) -> PostgresPoolState {
+        crate::operations::metrics::pool_state(self.runtime())
+    }
+
+    /// Return PostgreSQL database diagnostics used by the legacy `/meta/db` API.
+    pub async fn storage_snapshot(&self) -> Result<PostgresStorageSnapshot, PostgresStorageError> {
+        crate::operations::meta::load_storage_snapshot(self.runtime()).await
     }
 
     fn runtime(&self) -> &PostgresRuntime {

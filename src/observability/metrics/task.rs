@@ -127,7 +127,7 @@ pub(super) async fn refresh_task_gauges(
     }
 
     let refresh_started_at = Instant::now();
-    match backend.metrics_task_snapshot().await {
+    match backend.task_metrics_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,

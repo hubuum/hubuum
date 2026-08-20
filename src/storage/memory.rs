@@ -32,16 +32,15 @@ use crate::services::storage_boundary::{
 
 use super::{
     ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
-    StorageBackendIdentity, StorageClassCreate, StorageClassRecord, StorageClassRelationCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
-    StorageObjectDataPatch, StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
-    StorageObjectSelector, StorageObjectUpdate, StoragePreparedClassRelation,
-    StoragePreparedObjectRelation, StorageResolvedClass, StorageResolvedClassRelation,
-    StorageResolvedObject, StorageResolvedObjectRelation, StorageTransaction,
-    StorageTransactionFuture, TransactionalClassRelations, TransactionalClasses,
+    StorageClassCreate, StorageClassRecord, StorageClassRelationCreate, StorageClassSelector,
+    StorageClassUpdate, StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
+    StorageError, StorageObject, StorageObjectCreate, StorageObjectDataPatch,
+    StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
+    StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
+    StorageResolvedClass, StorageResolvedClassRelation, StorageResolvedObject,
+    StorageResolvedObjectRelation, StorageTransaction, StorageTransactionFuture,
+    TransactionStorage, TransactionalClassRelations, TransactionalClasses,
     TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
-    TransactionalStorage,
 };
 use error::map_memory_error;
 use hubuum_storage_core::{AuditReceipt, MutationOutcome};
@@ -564,12 +563,6 @@ impl MemoryStorageModel {
     }
 }
 
-impl StorageBackendIdentity for MemoryStorageModel {
-    fn storage_name(&self) -> &'static str {
-        "memory_contract_model"
-    }
-}
-
 struct MemoryTransaction {
     storage: MemoryStorageModel,
     event_context: EventContext,
@@ -598,7 +591,7 @@ impl StorageTransaction for MemoryTransaction {
 }
 
 #[async_trait]
-impl TransactionalStorage for MemoryStorageModel {
+impl TransactionStorage for MemoryStorageModel {
     async fn transaction<F, R>(
         &self,
         event_context: EventContext,
@@ -802,7 +795,7 @@ impl CollectionStorage for MemoryStorageModel {
         ))
     }
 
-    async fn collection_children(
+    async fn list_collection_children(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -819,7 +812,7 @@ impl CollectionStorage for MemoryStorageModel {
         Ok(children.into_iter().map(collection_to_storage).collect())
     }
 
-    async fn collection_ancestors(
+    async fn list_collection_ancestors(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -1102,7 +1095,7 @@ impl ClassStorage for MemoryStorageModel {
         ))
     }
 
-    async fn class_names(
+    async fn resolve_class_names(
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {

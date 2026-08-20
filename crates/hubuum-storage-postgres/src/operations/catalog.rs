@@ -8,8 +8,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::CollectionId;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
-    AuthorizationPermission, CatalogListQuery, CatalogPage, StorageClass, StorageCollection,
-    StorageObject, UnifiedSearchResourceScope,
+    AuthorizationPermission, CatalogListQuery, StorageClass, StorageCollection, StorageObject,
+    StoragePage, StorageResourceScope,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -52,13 +52,13 @@ impl CollectionCatalogRow {
 pub async fn list_collections(
     runtime: &PostgresRuntime,
     query: CatalogListQuery,
-) -> Result<CatalogPage<StorageCollection>, PostgresStorageError> {
+) -> Result<StoragePage<StorageCollection>, PostgresStorageError> {
     let include_total = query.options().include_total();
     if !query
         .visibility()
         .allows_permissions(&[AuthorizationPermission::ReadCollection])
     {
-        return Ok(CatalogPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     let (options, visibility) = query.into_parts();
@@ -89,7 +89,7 @@ pub async fn list_collections(
                 .map(CollectionCatalogRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok::<_, PostgresStorageError>(CatalogPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -99,7 +99,7 @@ pub async fn list_collections(
 pub async fn list_classes(
     runtime: &PostgresRuntime,
     query: CatalogListQuery,
-) -> Result<CatalogPage<StorageClass>, PostgresStorageError> {
+) -> Result<StoragePage<StorageClass>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(
@@ -110,7 +110,7 @@ pub async fn list_classes(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(CatalogPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -146,7 +146,7 @@ pub async fn list_classes(
                 .map(|row| class_to_storage(row, &collections))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok::<_, PostgresStorageError>(CatalogPage::new(classes, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(classes, total))
         })
         .await
 }
@@ -156,7 +156,7 @@ pub async fn list_classes(
 pub async fn list_objects(
     runtime: &PostgresRuntime,
     query: CatalogListQuery,
-) -> Result<CatalogPage<StorageObject>, PostgresStorageError> {
+) -> Result<StoragePage<StorageObject>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(
@@ -167,7 +167,7 @@ pub async fn list_objects(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(CatalogPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
     reject_computed_object_query(&options)?;
 
@@ -205,7 +205,7 @@ pub async fn list_objects(
                 .map(ObjectRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok::<_, PostgresStorageError>(CatalogPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -229,7 +229,7 @@ fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresSt
 
 pub(crate) fn object_query<'query>(
     collection_ids: &'query [i32],
-    resource_scope: Option<&'query UnifiedSearchResourceScope>,
+    resource_scope: Option<&'query StorageResourceScope>,
 ) -> crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg> {
     use crate::schema::hubuumobject;
 
@@ -385,7 +385,7 @@ pub(crate) fn object_cursor_field(
 
 fn class_query<'query>(
     collection_ids: &'query [i32],
-    resource_scope: Option<&'query UnifiedSearchResourceScope>,
+    resource_scope: Option<&'query StorageResourceScope>,
 ) -> crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg> {
     use crate::schema::hubuumclass;
 
@@ -568,7 +568,7 @@ fn class_to_storage(
 fn collection_query<'query>(
     principal_id: i32,
     is_admin: bool,
-    resource_scope: Option<&'query UnifiedSearchResourceScope>,
+    resource_scope: Option<&'query StorageResourceScope>,
 ) -> crate::schema::collections::BoxedQuery<'query, diesel::pg::Pg> {
     use crate::schema::collection_closure;
     use crate::schema::collections;

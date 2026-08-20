@@ -7,7 +7,6 @@ use crate::middlewares::rate_limit;
 use crate::permissions::AppContext;
 use crate::services::inventory as inventory_service;
 use crate::services::operational_administration as operational_service;
-use crate::storage::MetricsStorage;
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -88,6 +87,7 @@ pub struct TaskQueueStateResponse {
     responses(
         (status = 200, description = "Database state", body = DbStateResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Database diagnostics are not available for the configured storage backend", body = ApiErrorResponse),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
@@ -96,8 +96,19 @@ pub async fn get_db_state(
     context: AppContext,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let row = operational_service::storage_snapshot(context.backend()).await?;
-    let state = context.backend().metrics_pool_state();
+    let row = operational_service::storage_snapshot(context.backend())
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(
+                "Database diagnostics are unavailable for the configured storage backend"
+                    .to_string(),
+            )
+        })?;
+    let state = context.backend().database_pool_state().ok_or_else(|| {
+        ApiError::NotFound(
+            "Database diagnostics are unavailable for the configured storage backend".to_string(),
+        )
+    })?;
     debug!(
         message = "DB state requested",
         requestor = requestor.user.id

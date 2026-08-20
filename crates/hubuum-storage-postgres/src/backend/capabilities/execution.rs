@@ -1,12 +1,6 @@
 use super::super::*;
 
-impl StorageBackendIdentity for PostgresStorage {
-    fn storage_name(&self) -> &'static str {
-        "postgresql"
-    }
-}
-
-impl StorageExecution for PostgresStorage {
+impl ExecutionStorage for PostgresStorage {
     fn run_in_scope<'a, F, R>(
         &'a self,
         scope: StorageExecutionScope,

@@ -3,7 +3,9 @@ use std::fmt;
 use async_trait::async_trait;
 use hubuum_query::QueryOptions;
 
-use crate::{StorageClass, StorageCollection, StorageError, StorageObject, StorageVisibility};
+use crate::{
+    StorageClass, StorageCollection, StorageError, StorageObject, StoragePage, StorageVisibility,
+};
 
 /// A validated list/filter/count request for one catalog resource kind.
 ///
@@ -56,8 +58,6 @@ impl fmt::Debug for CatalogListQuery {
 }
 
 /// Catalog page retained as a domain-specific API name.
-pub type CatalogPage<T> = crate::StoragePage<T>;
-
 /// Mandatory backend contract for ordinary collection, class, and object
 /// listing, filtering, cursor paging, and optional exact counts.
 #[async_trait]
@@ -65,17 +65,17 @@ pub trait CatalogStorage: Send + Sync {
     async fn list_collections(
         &self,
         query: CatalogListQuery,
-    ) -> Result<CatalogPage<StorageCollection>, StorageError>;
+    ) -> Result<StoragePage<StorageCollection>, StorageError>;
 
     async fn list_classes(
         &self,
         query: CatalogListQuery,
-    ) -> Result<CatalogPage<StorageClass>, StorageError>;
+    ) -> Result<StoragePage<StorageClass>, StorageError>;
 
     async fn list_objects(
         &self,
         query: CatalogListQuery,
-    ) -> Result<CatalogPage<StorageObject>, StorageError>;
+    ) -> Result<StoragePage<StorageObject>, StorageError>;
 }
 
 #[cfg(test)]

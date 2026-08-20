@@ -239,7 +239,7 @@ pub(crate) async fn delete_class_on(
     Ok(MutationOutcome::committed((), audit))
 }
 
-pub async fn class_names(
+pub async fn resolve_class_names(
     runtime: &PostgresRuntime,
     class_ids: Vec<i32>,
 ) -> Result<Vec<(i32, String)>, PostgresStorageError> {

@@ -11,8 +11,8 @@ use hubuum::services::CollectionService;
 use hubuum_domain::{CollectionId, ResourceId, ResourceRevision};
 use hubuum_events_core::EventSequence;
 use hubuum_storage_core::{
-    AuditReceipt, CollectionStorage, MutationOutcome, StorageBackendIdentity, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageRecordMetadata,
+    AuditReceipt, CollectionStorage, MutationOutcome, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageRecordMetadata,
 };
 use uuid::Uuid;
 
@@ -32,12 +32,6 @@ impl FixedCollectionStorage {
                 .map(|id| collection(id as i32, (id > 1).then_some(id as i32 - 1)))
                 .collect(),
         }
-    }
-}
-
-impl StorageBackendIdentity for FixedCollectionStorage {
-    fn storage_name(&self) -> &'static str {
-        "fixed-benchmark"
     }
 }
 
@@ -75,14 +69,14 @@ impl CollectionStorage for FixedCollectionStorage {
         Ok(MutationOutcome::committed((), audit_receipt()))
     }
 
-    async fn collection_children(
+    async fn list_collection_children(
         &self,
         _id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         Ok(Vec::new())
     }
 
-    async fn collection_ancestors(
+    async fn list_collection_ancestors(
         &self,
         _id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {

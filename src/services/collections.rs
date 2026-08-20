@@ -73,7 +73,7 @@ impl CollectionService {
 
     pub async fn children(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .collection_children(collection_id_to_storage(id.id()))
+            .list_collection_children(collection_id_to_storage(id.id()))
             .await
             .map_err(ApiError::from)?
             .into_iter()
@@ -83,7 +83,7 @@ impl CollectionService {
 
     pub async fn ancestors(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .collection_ancestors(collection_id_to_storage(id.id()))
+            .list_collection_ancestors(collection_id_to_storage(id.id()))
             .await
             .map_err(ApiError::from)?
             .into_iter()

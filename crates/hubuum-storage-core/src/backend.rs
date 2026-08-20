@@ -1,14 +1,15 @@
 use crate::{
     AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationStorage,
-    CollectionStorage, ComputedFieldLifecycleStorage, ComputedObjectStorage,
-    EventDeliveryAdministrationStorage, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage, ExportTemplateStorage,
-    GroupStorage, HistoryStorage, IdentityStorage, InventoryStorage, MaintenanceStorage,
+    BootstrapStorage, CatalogStorage, ClassRelationStorage, ClassStorage,
+    CollectionAuthorizationStorage, CollectionStorage, ComputedFieldLifecycleStorage,
+    ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage,
+    ExecutionStorage, ExportTemplateStorage, ExternalIdentityStorage, GroupStorage, HistoryStorage,
+    IdentityMembershipStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
     MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
-    StorageBackendIdentity, StorageExecution, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, TransactionalStorage, UnifiedSearchStorage, UserStorage,
+    RestoreStorage, ServiceAccountStorage, TaskExecutionStorage, TaskQueueStorage,
+    TokenRetentionStorage, TokenStorage, TransactionStorage, UnifiedSearchStorage, UserStorage,
     WorkerNotificationStorage,
 };
 
@@ -22,14 +23,17 @@ use crate::{
 /// This trait describes static Rust composition. It is not a dynamic plugin
 /// interface and does not define runtime discovery or contract versioning.
 pub trait StorageBackend:
-    StorageBackendIdentity
-    + CollectionStorage
+    CollectionStorage
     + ClassStorage
     + ObjectStorage
     + ClassRelationStorage
     + ObjectRelationStorage
     + AuthenticationStorage
-    + IdentityStorage
+    + BootstrapStorage
+    + IdentityScopeStorage
+    + IdentityMembershipStorage
+    + ServiceAccountStorage
+    + ExternalIdentityStorage
     + UserStorage
     + TokenStorage
     + AuthorizationStorage
@@ -58,10 +62,11 @@ pub trait StorageBackend:
     + TaskQueueStorage
     + TaskExecutionStorage
     + BackupSnapshotStorage
-    + MaintenanceStorage
+    + ImportStorage
+    + RestoreStorage
     + ExportTemplateStorage
     + WorkerNotificationStorage
-    + StorageExecution
-    + TransactionalStorage
+    + ExecutionStorage
+    + TransactionStorage
 {
 }

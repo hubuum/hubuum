@@ -107,7 +107,7 @@ impl CatalogStorage for PostgresStorage {
     async fn list_collections(
         &self,
         query: CatalogListQuery,
-    ) -> Result<CatalogPage<StorageCollection>, StorageError> {
+    ) -> Result<StoragePage<StorageCollection>, StorageError> {
         crate::operations::catalog::list_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -116,7 +116,7 @@ impl CatalogStorage for PostgresStorage {
     async fn list_classes(
         &self,
         query: CatalogListQuery,
-    ) -> Result<CatalogPage<StorageClass>, StorageError> {
+    ) -> Result<StoragePage<StorageClass>, StorageError> {
         crate::operations::catalog::list_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -125,7 +125,7 @@ impl CatalogStorage for PostgresStorage {
     async fn list_objects(
         &self,
         query: CatalogListQuery,
-    ) -> Result<CatalogPage<StorageObject>, StorageError> {
+    ) -> Result<StoragePage<StorageObject>, StorageError> {
         crate::operations::catalog::list_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -171,7 +171,7 @@ impl RelationQueryStorage for PostgresStorage {
     async fn list_class_relations(
         &self,
         query: RelationListQuery,
-    ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
+    ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         crate::operations::relation_query::list_class_relations(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -180,7 +180,7 @@ impl RelationQueryStorage for PostgresStorage {
     async fn list_object_relations(
         &self,
         query: RelationListQuery,
-    ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
+    ) -> Result<StoragePage<StorageObjectRelation>, StorageError> {
         crate::operations::relation_query::list_object_relations(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -189,7 +189,7 @@ impl RelationQueryStorage for PostgresStorage {
     async fn list_class_relations_touching(
         &self,
         query: RelationTouchingQuery,
-    ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
+    ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         crate::operations::relation_query::list_class_relations_touching(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -198,7 +198,7 @@ impl RelationQueryStorage for PostgresStorage {
     async fn list_object_relations_touching(
         &self,
         query: RelationTouchingQuery,
-    ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
+    ) -> Result<StoragePage<StorageObjectRelation>, StorageError> {
         crate::operations::relation_query::list_object_relations_touching(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -240,38 +240,38 @@ impl RelationQueryStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn related_classes(
+    async fn list_related_classes(
         &self,
         query: RelationGraphQuery,
-    ) -> Result<RelationPage<StorageClassGraphRow>, StorageError> {
-        crate::operations::relation_query::related_classes(self.runtime(), query)
+    ) -> Result<StoragePage<StorageClassGraphRow>, StorageError> {
+        crate::operations::relation_query::list_related_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn related_objects(
+    async fn list_related_objects(
         &self,
         query: RelationGraphQuery,
-    ) -> Result<RelationPage<StorageObjectGraphRow>, StorageError> {
-        crate::operations::relation_query::related_objects(self.runtime(), query)
+    ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError> {
+        crate::operations::relation_query::list_related_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn related_objects_for_roots(
+    async fn list_related_objects_for_roots(
         &self,
         query: RelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
-        crate::operations::relation_query::related_objects_for_roots(self.runtime(), query)
+        crate::operations::relation_query::list_related_objects_for_roots(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn bidirectionally_related_objects_for_roots(
+    async fn list_bidirectionally_related_objects_for_roots(
         &self,
         query: BidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
-        crate::operations::relation_query::bidirectionally_related_objects_for_roots(
+        crate::operations::relation_query::list_bidirectionally_related_objects_for_roots(
             self.runtime(),
             query,
         )
@@ -282,28 +282,28 @@ impl RelationQueryStorage for PostgresStorage {
 
 #[async_trait]
 impl UnifiedSearchStorage for PostgresStorage {
-    async fn search_unified_collections(
+    async fn search_collections(
         &self,
         query: UnifiedSearchQuery,
-    ) -> Result<Vec<UnifiedSearchCollection>, StorageError> {
+    ) -> Result<Vec<StorageCollection>, StorageError> {
         crate::operations::unified_search::search_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn search_unified_classes(
+    async fn search_classes(
         &self,
         query: UnifiedSearchQuery,
-    ) -> Result<Vec<UnifiedSearchClass>, StorageError> {
+    ) -> Result<Vec<StorageClass>, StorageError> {
         crate::operations::unified_search::search_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn search_unified_objects(
+    async fn search_objects(
         &self,
         query: UnifiedSearchQuery,
-    ) -> Result<Vec<UnifiedSearchObject>, StorageError> {
+    ) -> Result<Vec<StorageObject>, StorageError> {
         crate::operations::unified_search::search_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)

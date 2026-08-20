@@ -79,14 +79,14 @@ impl<'transaction> TransactionalCollections<'transaction> {
         &self,
         collection_id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        self.storage.collection_children(collection_id).await
+        self.storage.list_collection_children(collection_id).await
     }
 
     pub async fn ancestors(
         &self,
         collection_id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        self.storage.collection_ancestors(collection_id).await
+        self.storage.list_collection_ancestors(collection_id).await
     }
 
     pub async fn move_to(
@@ -159,7 +159,7 @@ impl<'transaction> TransactionalClasses<'transaction> {
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
-        self.storage.class_names(class_ids).await
+        self.storage.resolve_class_names(class_ids).await
     }
 }
 
@@ -406,7 +406,7 @@ pub type StorageTransactionFuture<'transaction, R> =
 /// A backend commits when `operation` returns `Ok` and rolls back when it
 /// returns `Err`. Every composable mutation receives `event_context`, so the
 /// resulting state change and durable audit event are one semantic operation.
-/// The transaction also inherits the surrounding [`crate::StorageExecution`]
+/// The transaction also inherits the surrounding [`crate::ExecutionStorage`]
 /// context, including call-site attribution and revision preconditions.
 ///
 /// This method is intentionally generic and therefore not object-safe. Hubuum
@@ -414,7 +414,7 @@ pub type StorageTransactionFuture<'transaction, R> =
 /// discovery. Keeping the result typed avoids the `Any` downcasts required by
 /// object-safe transaction runners.
 #[async_trait]
-pub trait TransactionalStorage: Send + Sync {
+pub trait TransactionStorage: Send + Sync {
     async fn transaction<F, R>(
         &self,
         event_context: EventContext,

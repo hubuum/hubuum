@@ -46,7 +46,7 @@ use crate::services::tasks::{
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{
-    StorageExecution, StorageExecutionScope, StorageExportTaskArtifact, StorageQueryBudget,
+    ExecutionStorage, StorageExecutionScope, StorageExportTaskArtifact, StorageQueryBudget,
     StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
@@ -785,7 +785,7 @@ where
         query: QueryOptions,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return relation_queries::related_objects(
+            return relation_queries::list_related_objects(
                 self.pool(),
                 relation_queries::RelationAccess::new(
                     self.subject.principal_id(),
@@ -798,7 +798,7 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let (candidates, _) = relation_queries::related_objects(
+        let (candidates, _) = relation_queries::list_related_objects(
             self.pool(),
             relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
             object.id(),
@@ -827,7 +827,7 @@ where
         include: ExportIncludeRelatedQuery,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return relation_queries::related_objects_for_roots(
+            return relation_queries::list_related_objects_for_roots(
                 self.pool(),
                 relation_queries::RelationAccess::new(
                     self.subject.principal_id(),
@@ -840,7 +840,7 @@ where
             )
             .await;
         }
-        let candidates = relation_queries::related_objects_for_roots(
+        let candidates = relation_queries::list_related_objects_for_roots(
             self.pool(),
             relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
             root_ids,
@@ -874,7 +874,7 @@ where
         per_root_cap: i32,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return relation_queries::bidirectionally_related_objects_for_roots(
+            return relation_queries::list_bidirectionally_related_objects_for_roots(
                 self.pool(),
                 relation_queries::RelationAccess::new(
                     self.subject.principal_id(),
@@ -888,7 +888,7 @@ where
             )
             .await;
         }
-        let candidates = relation_queries::bidirectionally_related_objects_for_roots(
+        let candidates = relation_queries::list_bidirectionally_related_objects_for_roots(
             self.pool(),
             relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
             root_ids,
@@ -1902,7 +1902,7 @@ where
 }
 
 struct HydrationClassMetadata {
-    class_names: BTreeMap<i32, String>,
+    resolve_class_names: BTreeMap<i32, String>,
     class_relations_by_object_class: BTreeMap<i32, Vec<HubuumClassRelation>>,
 }
 
@@ -1956,11 +1956,11 @@ where
         }
     }
 
-    let mut class_names = BTreeMap::new();
-    ensure_class_name_ids(pool, &name_ids, &mut class_names).await?;
+    let mut resolve_class_names = BTreeMap::new();
+    ensure_class_name_ids(pool, &name_ids, &mut resolve_class_names).await?;
 
     Ok(HydrationClassMetadata {
-        class_names,
+        resolve_class_names,
         class_relations_by_object_class,
     })
 }
@@ -1977,7 +1977,7 @@ fn build_object_neighborhood(
         objects_by_id.insert(object.id, object);
     }
 
-    let class_names = &class_metadata.class_names;
+    let resolve_class_names = &class_metadata.resolve_class_names;
 
     let mut aliases_by_object_id = objects_by_id
         .keys()
@@ -1995,7 +1995,7 @@ fn build_object_neighborhood(
         &mut alias_owners,
         &mut class_relations_by_pair,
         &class_metadata.class_relations_by_object_class,
-        class_names,
+        resolve_class_names,
     )?;
 
     for relation in relations {
@@ -2004,7 +2004,7 @@ fn build_object_neighborhood(
             &mut aliases_by_object_id,
             &mut alias_owners,
             &class_relations_by_pair,
-            class_names,
+            resolve_class_names,
             relation.from_hubuum_object_id,
             relation.to_hubuum_object_id,
         )?;
@@ -2013,7 +2013,7 @@ fn build_object_neighborhood(
             &mut aliases_by_object_id,
             &mut alias_owners,
             &class_relations_by_pair,
-            class_names,
+            resolve_class_names,
             relation.to_hubuum_object_id,
             relation.from_hubuum_object_id,
         )?;
@@ -2037,7 +2037,7 @@ fn build_object_neighborhood(
         objects_by_id,
         aliases_by_object_id,
         class_relations_by_pair,
-        class_names_by_id: class_names.clone(),
+        class_names_by_id: resolve_class_names.clone(),
     })
 }
 
@@ -2047,7 +2047,7 @@ fn seed_alias_buckets(
     alias_owners: &mut BTreeMap<i32, BTreeMap<String, i32>>,
     class_relations_by_pair: &mut BTreeMap<(i32, i32), crate::models::HubuumClassRelation>,
     class_relations_by_object_class: &BTreeMap<i32, Vec<HubuumClassRelation>>,
-    class_names: &BTreeMap<i32, String>,
+    resolve_class_names: &BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
     for object in objects_by_id.values() {
         let Some(class_relations) = class_relations_by_object_class.get(&object.hubuum_class_id)
@@ -2069,7 +2069,7 @@ fn seed_alias_buckets(
                 relation,
                 object.hubuum_class_id,
                 adjacent_class_id,
-                class_names,
+                resolve_class_names,
             )?;
             let alias_owner_map = alias_owners.get_mut(&object.id).ok_or_else(|| {
                 ApiError::InternalServerError("Missing alias ownership state".to_string())
@@ -2099,13 +2099,13 @@ fn seed_alias_buckets(
 async fn ensure_class_name_ids(
     pool: &impl crate::storage::StorageContext,
     class_ids: &[i32],
-    class_names: &mut BTreeMap<i32, String>,
+    resolve_class_names: &mut BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
     let missing = ClassIdSet::new(
         class_ids
             .iter()
             .copied()
-            .filter(|class_id| !class_names.contains_key(class_id)),
+            .filter(|class_id| !resolve_class_names.contains_key(class_id)),
     )?;
 
     if missing.is_empty() {
@@ -2114,7 +2114,7 @@ async fn ensure_class_name_ids(
 
     for (class_id, class_name) in storage_handle(pool)
         .class_store()
-        .class_names(
+        .resolve_class_names(
             missing
                 .as_slice()
                 .iter()
@@ -2125,11 +2125,11 @@ async fn ensure_class_name_ids(
         .await
         .map_err(ApiError::from)?
     {
-        class_names.insert(class_id.id(), class_name);
+        resolve_class_names.insert(class_id.id(), class_name);
     }
 
     for class_id in missing.as_slice() {
-        if !class_names.contains_key(class_id) {
+        if !resolve_class_names.contains_key(class_id) {
             return Err(ApiError::NotFound(format!("Class {class_id} not found")));
         }
     }
@@ -2142,7 +2142,7 @@ fn add_bidirectional_alias_edge(
     aliases_by_object_id: &mut BTreeMap<i32, BTreeMap<String, Vec<i32>>>,
     alias_owners: &mut BTreeMap<i32, BTreeMap<String, i32>>,
     class_relations_by_pair: &BTreeMap<(i32, i32), crate::models::HubuumClassRelation>,
-    class_names: &BTreeMap<i32, String>,
+    resolve_class_names: &BTreeMap<i32, String>,
     from_object_id: i32,
     to_object_id: i32,
 ) -> Result<(), ApiError> {
@@ -2154,7 +2154,7 @@ fn add_bidirectional_alias_edge(
     };
     let alias = reachable_alias_for_classes(
         class_relations_by_pair,
-        class_names,
+        resolve_class_names,
         from_object.hubuum_class_id,
         to_object.hubuum_class_id,
     )?;
@@ -2197,7 +2197,7 @@ fn relation_alias_for_viewer(
     relation: &crate::models::HubuumClassRelation,
     viewer_class_id: i32,
     adjacent_class_id: i32,
-    class_names: &BTreeMap<i32, String>,
+    resolve_class_names: &BTreeMap<i32, String>,
 ) -> Result<String, ApiError> {
     if viewer_class_id == relation.from_hubuum_class_id
         && adjacent_class_id == relation.to_hubuum_class_id
@@ -2213,7 +2213,7 @@ fn relation_alias_for_viewer(
     }
 
     Ok(inferred_relation_alias(
-        class_names.get(&adjacent_class_id).ok_or_else(|| {
+        resolve_class_names.get(&adjacent_class_id).ok_or_else(|| {
             ApiError::InternalServerError(
                 "Missing adjacent class name while hydrating relations".to_string(),
             )
@@ -2223,18 +2223,23 @@ fn relation_alias_for_viewer(
 
 fn reachable_alias_for_classes(
     class_relations_by_pair: &BTreeMap<(i32, i32), crate::models::HubuumClassRelation>,
-    class_names: &BTreeMap<i32, String>,
+    resolve_class_names: &BTreeMap<i32, String>,
     source_class_id: i32,
     target_class_id: i32,
 ) -> Result<String, ApiError> {
     if let Some(relation) =
         class_relations_by_pair.get(&relation_pair_key(source_class_id, target_class_id))
     {
-        return relation_alias_for_viewer(relation, source_class_id, target_class_id, class_names);
+        return relation_alias_for_viewer(
+            relation,
+            source_class_id,
+            target_class_id,
+            resolve_class_names,
+        );
     }
 
     Ok(inferred_relation_alias(
-        class_names.get(&target_class_id).ok_or_else(|| {
+        resolve_class_names.get(&target_class_id).ok_or_else(|| {
             ApiError::InternalServerError(
                 "Missing class name while hydrating relations".to_string(),
             )
@@ -3142,10 +3147,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            metadata.class_names.get(&source_class.id),
+            metadata.resolve_class_names.get(&source_class.id),
             Some(&source_class.name)
         );
-        assert!(!metadata.class_names.contains_key(&hidden_adjacent_class.id));
+        assert!(
+            !metadata
+                .resolve_class_names
+                .contains_key(&hidden_adjacent_class.id)
+        );
         assert!(
             metadata
                 .class_relations_by_object_class

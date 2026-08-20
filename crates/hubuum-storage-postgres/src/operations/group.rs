@@ -9,7 +9,7 @@ use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     MutationOutcome, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
-    StorageIdentityGroup, StorageIdentityPage, StoragePrincipal, StoragePrincipalGroup,
+    StorageIdentityGroup, StoragePage, StoragePrincipal, StoragePrincipalGroup,
     StoragePrincipalGroupListQuery,
 };
 use serde_json::{Value, json};
@@ -179,7 +179,7 @@ impl<'value> From<&'value StorageGroupUpdate> for UpdateGroupRow<'value> {
     }
 }
 
-pub async fn load_group(
+pub async fn get_group(
     runtime: &PostgresRuntime,
     group_id: i32,
 ) -> Result<StorageIdentityGroup, PostgresStorageError> {
@@ -208,7 +208,7 @@ pub(crate) async fn load_group_by_name_for_test(
         .await
 }
 
-pub async fn group_identity_scope_name(
+pub async fn resolve_group_identity_scope_name(
     runtime: &PostgresRuntime,
     group_id: i32,
 ) -> Result<String, PostgresStorageError> {
@@ -228,7 +228,7 @@ pub async fn group_identity_scope_name(
 pub async fn list_principal_groups(
     runtime: &PostgresRuntime,
     query: StoragePrincipalGroupListQuery,
-) -> Result<StorageIdentityPage<StorageIdentityGroup>, PostgresStorageError> {
+) -> Result<StoragePage<StorageIdentityGroup>, PostgresStorageError> {
     let (principal_id, options) = query.into_parts();
     let principal_id = principal_id.id();
     runtime
@@ -267,7 +267,7 @@ pub async fn list_principal_groups(
                 .into_iter()
                 .map(GroupRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(groups, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(groups, total))
         })
         .await
 }
@@ -275,7 +275,7 @@ pub async fn list_principal_groups(
 pub async fn list_groups(
     runtime: &PostgresRuntime,
     query: StorageGroupListQuery,
-) -> Result<StorageIdentityPage<StorageIdentityGroup>, PostgresStorageError> {
+) -> Result<StoragePage<StorageIdentityGroup>, PostgresStorageError> {
     let (options, count_options) = query.into_parts();
     runtime
         .with_read_only_snapshot(async move |connection| {
@@ -309,7 +309,7 @@ pub async fn list_groups(
                 .into_iter()
                 .map(GroupRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StorageIdentityPage::new(groups, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(groups, total))
         })
         .await
 }
@@ -576,22 +576,6 @@ pub async fn remove_group_member(
                 return Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit));
             }
             Ok::<_, PostgresStorageError>(MutationOutcome::unchanged(()))
-        })
-        .await
-}
-
-pub async fn load_principal_group(
-    runtime: &PostgresRuntime,
-    principal_id: i32,
-    group_id: i32,
-) -> Result<StoragePrincipalGroup, PostgresStorageError> {
-    validate_positive_id(principal_id, "principal id")?;
-    validate_positive_id(group_id, "group id")?;
-    runtime
-        .with_connection(async |connection| {
-            load_principal_group_row(connection, principal_id, group_id)
-                .await?
-                .into_storage()
         })
         .await
 }

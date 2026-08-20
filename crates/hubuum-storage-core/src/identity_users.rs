@@ -6,44 +6,148 @@ use hubuum_domain::{IdentityScopeId, ResourceRevision, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{MutationOutcome, StorageError, StorageIdentityPage};
+use crate::{MutationOutcome, StorageError, StoragePage};
 
-/// Owned fields returned when a storage user crosses into an adapter or
-/// application model.
-pub type StorageUserParts = (
-    UserId,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    NaiveDateTime,
-    NaiveDateTime,
-    Option<NaiveDateTime>,
-);
+/// Named fields returned when a storage user crosses an API boundary.
+pub struct StorageUserParts {
+    id: UserId,
+    password_hash: Option<String>,
+    proper_name: Option<String>,
+    email: Option<String>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+    anonymized_at: Option<NaiveDateTime>,
+}
 
-/// Owned fields returned when a user-list projection is consumed.
-pub type StorageUserListItemParts = (
-    StorageUser,
-    String,
-    String,
-    String,
-    bool,
-    Option<NaiveDateTime>,
-    Option<NaiveDateTime>,
-    ResourceRevision,
-);
+impl StorageUserParts {
+    #[must_use]
+    pub const fn id(&self) -> UserId {
+        self.id
+    }
+    #[must_use]
+    pub fn password_hash(&self) -> Option<&str> {
+        self.password_hash.as_deref()
+    }
+    #[must_use]
+    pub fn proper_name(&self) -> Option<&str> {
+        self.proper_name.as_deref()
+    }
+    #[must_use]
+    pub fn email(&self) -> Option<&str> {
+        self.email.as_deref()
+    }
+    #[must_use]
+    pub const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+    #[must_use]
+    pub const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+    #[must_use]
+    pub const fn anonymized_at(&self) -> Option<NaiveDateTime> {
+        self.anonymized_at
+    }
+}
 
-/// Owned fields returned when a point projection is consumed.
-pub type StorageUserPointParts = (
-    UserId,
-    Option<String>,
-    Option<String>,
-    NaiveDateTime,
-    NaiveDateTime,
-    IdentityScopeId,
-    bool,
-    String,
-    ResourceRevision,
-);
+/// Named fields returned when a user-list projection is consumed.
+pub struct StorageUserListItemParts {
+    user: StorageUser,
+    identity_scope: String,
+    provider_kind: String,
+    name: String,
+    provider_managed: bool,
+    last_sync_attempted_at: Option<NaiveDateTime>,
+    last_sync_success_at: Option<NaiveDateTime>,
+    revision: ResourceRevision,
+}
+
+impl StorageUserListItemParts {
+    #[must_use]
+    pub const fn user(&self) -> &StorageUser {
+        &self.user
+    }
+    #[must_use]
+    pub fn identity_scope(&self) -> &str {
+        &self.identity_scope
+    }
+    #[must_use]
+    pub fn provider_kind(&self) -> &str {
+        &self.provider_kind
+    }
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    #[must_use]
+    pub const fn provider_managed(&self) -> bool {
+        self.provider_managed
+    }
+    #[must_use]
+    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+        self.last_sync_attempted_at
+    }
+    #[must_use]
+    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+        self.last_sync_success_at
+    }
+    #[must_use]
+    pub const fn revision(&self) -> ResourceRevision {
+        self.revision
+    }
+}
+
+/// Named fields returned when a point projection is consumed.
+pub struct StorageUserPointParts {
+    id: UserId,
+    proper_name: Option<String>,
+    email: Option<String>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+    identity_scope_id: IdentityScopeId,
+    provider_managed: bool,
+    name: String,
+    revision: ResourceRevision,
+}
+
+impl StorageUserPointParts {
+    #[must_use]
+    pub const fn id(&self) -> UserId {
+        self.id
+    }
+    #[must_use]
+    pub fn proper_name(&self) -> Option<&str> {
+        self.proper_name.as_deref()
+    }
+    #[must_use]
+    pub fn email(&self) -> Option<&str> {
+        self.email.as_deref()
+    }
+    #[must_use]
+    pub const fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+    #[must_use]
+    pub const fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+    #[must_use]
+    pub const fn identity_scope_id(&self) -> IdentityScopeId {
+        self.identity_scope_id
+    }
+    #[must_use]
+    pub const fn provider_managed(&self) -> bool {
+        self.provider_managed
+    }
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    #[must_use]
+    pub const fn revision(&self) -> ResourceRevision {
+        self.revision
+    }
+}
 
 /// Backend-neutral human principal row.
 #[derive(Clone, PartialEq, Eq)]
@@ -81,15 +185,15 @@ impl StorageUser {
 
     #[must_use]
     pub fn into_parts(self) -> StorageUserParts {
-        (
-            self.id,
-            self.password_hash,
-            self.proper_name,
-            self.email,
-            self.created_at,
-            self.updated_at,
-            self.anonymized_at,
-        )
+        StorageUserParts {
+            id: self.id,
+            password_hash: self.password_hash,
+            proper_name: self.proper_name,
+            email: self.email,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            anonymized_at: self.anonymized_at,
+        }
     }
 }
 
@@ -142,16 +246,16 @@ impl StorageUserListItem {
 
     #[must_use]
     pub fn into_parts(self) -> StorageUserListItemParts {
-        (
-            self.user,
-            self.identity_scope,
-            self.provider_kind,
-            self.name,
-            self.provider_managed,
-            self.last_sync_attempted_at,
-            self.last_sync_success_at,
-            self.revision,
-        )
+        StorageUserListItemParts {
+            user: self.user,
+            identity_scope: self.identity_scope,
+            provider_kind: self.provider_kind,
+            name: self.name,
+            provider_managed: self.provider_managed,
+            last_sync_attempted_at: self.last_sync_attempted_at,
+            last_sync_success_at: self.last_sync_success_at,
+            revision: self.revision,
+        }
     }
 }
 
@@ -253,17 +357,17 @@ impl StorageUserPoint {
 
     #[must_use]
     pub fn into_parts(self) -> StorageUserPointParts {
-        (
-            self.id,
-            self.proper_name,
-            self.email,
-            self.created_at,
-            self.updated_at,
-            self.identity_scope_id,
-            self.provider_managed,
-            self.name,
-            self.revision,
-        )
+        StorageUserPointParts {
+            id: self.id,
+            proper_name: self.proper_name,
+            email: self.email,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            identity_scope_id: self.identity_scope_id,
+            provider_managed: self.provider_managed,
+            name: self.name,
+            revision: self.revision,
+        }
     }
 }
 
@@ -585,20 +689,20 @@ impl fmt::Debug for StorageUserAnonymize {
 /// Complete human-user persistence required of every selectable backend.
 #[async_trait]
 pub trait UserStorage: Send + Sync {
-    async fn load_user(&self, id: UserId) -> Result<StorageUser, StorageError>;
+    async fn get_user(&self, id: UserId) -> Result<StorageUser, StorageError>;
 
-    async fn load_user_by_name(
+    async fn get_user_by_name(
         &self,
         identity_scope: String,
         name: String,
     ) -> Result<StorageUser, StorageError>;
 
-    async fn load_user_point(&self, id: UserId) -> Result<StorageUserPoint, StorageError>;
+    async fn get_user_point(&self, id: UserId) -> Result<StorageUserPoint, StorageError>;
 
     async fn list_users(
         &self,
         query: StorageUserListQuery,
-    ) -> Result<StorageIdentityPage<StorageUserListItem>, StorageError>;
+    ) -> Result<StoragePage<StorageUserListItem>, StorageError>;
 
     async fn create_user(
         &self,

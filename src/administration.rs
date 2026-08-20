@@ -133,20 +133,23 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         return Err(destructive_confirmation_error());
     }
 
-    let database_url = admin_cli.database_url.unwrap_or_else(|| {
-        std::env::var("HUBUUM_DATABASE_URL").unwrap_or_else(|_| {
-            fatal_error(
-                "HUBUUM_DATABASE_URL must be set if not provided as an argument",
-                EXIT_CODE_CONFIG_ERROR,
-            )
-        })
-    });
-
-    let storage_settings = StorageSettings::builder(admin_cli.storage_backend, database_url)
-        .max_connections(1)
-        .statement_timeout_ms(admin_cli.db_statement_timeout_ms)
-        .acquire_timeout_ms(DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS)
-        .build()?;
+    let storage_settings = match admin_cli.storage_backend {
+        StorageBackendKind::Postgres => {
+            let database_url = admin_cli.database_url.unwrap_or_else(|| {
+                std::env::var("HUBUUM_DATABASE_URL").unwrap_or_else(|_| {
+                    fatal_error(
+                        "HUBUUM_DATABASE_URL must be set if not provided as an argument",
+                        EXIT_CODE_CONFIG_ERROR,
+                    )
+                })
+            });
+            StorageSettings::postgres(database_url)
+                .max_connections(1)
+                .statement_timeout_ms(admin_cli.db_statement_timeout_ms)
+                .acquire_timeout_ms(DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS)
+                .build()?
+        }
+    };
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
@@ -456,7 +459,7 @@ fn destructive_confirmation_error() -> ApiError {
 
 async fn storage_ready(storage: &StorageHandle) -> Result<(), ApiError> {
     let readiness = storage.readiness_snapshot().await?;
-    if !readiness.schema_is_ready() {
+    if !readiness.storage_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Storage backend schema is not ready".to_string(),
         ));
@@ -600,7 +603,7 @@ mod tests {
                 Err(error) => error,
             };
 
-        assert_eq!(empty.storage_backend, StorageBackendKind::Postgresql);
+        assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
         assert_eq!(unsupported.kind(), clap::error::ErrorKind::InvalidValue);
     }
 }

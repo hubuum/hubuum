@@ -8,7 +8,9 @@ use hubuum_domain::{
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{AuthenticationTokenScope, MutationOutcome, StorageError, StorageRecordMetadata};
+use crate::{
+    AuthenticationTokenScope, MutationOutcome, StorageError, StoragePage, StorageRecordMetadata,
+};
 
 /// One identity scope owned by the selected storage backend.
 #[derive(Clone, PartialEq, Eq)]
@@ -719,8 +721,6 @@ impl StorageTokenMetadataBuilder {
 }
 
 /// Identity page retained as a domain-specific API name.
-pub type StorageIdentityPage<T> = crate::StoragePage<T>;
-
 /// Service-account row without its separately stored principal name.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageServiceAccount {
@@ -1542,9 +1542,9 @@ impl StorageSyncedHuman {
     }
 }
 
-/// Complete identity and IAM operations every selectable backend must provide.
+/// Initial local-identity bootstrap and credential-recovery operations.
 #[async_trait]
-pub trait IdentityStorage: Send + Sync {
+pub trait BootstrapStorage: Send + Sync {
     /// Return whether the backend is empty enough to require its initial local
     /// administrator. This is an optimization; the atomic bootstrap operation
     /// must repeat the check under its backend-native coordination primitive.
@@ -1564,7 +1564,11 @@ pub trait IdentityStorage: Send + Sync {
         &self,
         request: StorageLocalPasswordReset,
     ) -> Result<usize, StorageError>;
+}
 
+/// Identity-provider scope discovery and reconciliation.
+#[async_trait]
+pub trait IdentityScopeStorage: Send + Sync {
     /// Create the named scope if absent, or reconcile its provider kind when it
     /// already exists, and return the authoritative stored row.
     async fn ensure_identity_scope(
@@ -1574,20 +1578,27 @@ pub trait IdentityStorage: Send + Sync {
 
     /// Resolve one scope ID to its name, returning `NotFound` when it does not
     /// exist.
-    async fn identity_scope_name(&self, scope_id: IdentityScopeId) -> Result<String, StorageError>;
+    async fn resolve_identity_scope_name(
+        &self,
+        scope_id: IdentityScopeId,
+    ) -> Result<String, StorageError>;
 
     /// Resolve every distinct requested scope ID.
     ///
     /// An empty request returns an empty result. A non-empty request must fail
     /// rather than return a partial mapping when any ID cannot be resolved.
-    async fn identity_scope_names(
+    async fn resolve_identity_scope_names(
         &self,
         scope_ids: Vec<IdentityScopeId>,
     ) -> Result<Vec<(IdentityScopeId, String)>, StorageError>;
+}
 
+/// Administrative membership and retained-token read models.
+#[async_trait]
+pub trait IdentityMembershipStorage: Send + Sync {
     /// Load one effective principal-to-group membership with its authoritative
     /// revision, returning `NotFound` when no membership source remains.
-    async fn load_principal_group(
+    async fn get_principal_group(
         &self,
         principal_id: PrincipalId,
         group_id: GroupId,
@@ -1598,21 +1609,21 @@ pub trait IdentityStorage: Send + Sync {
     async fn list_principal_groups(
         &self,
         query: StoragePrincipalGroupListQuery,
-    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError>;
+    ) -> Result<StoragePage<StorageIdentityGroup>, StorageError>;
 
     /// List groups with stable filtering, cursor pagination, and an optional
     /// exact total in one operation-shaped backend capability.
     async fn list_groups(
         &self,
         query: StorageGroupListQuery,
-    ) -> Result<StorageIdentityPage<StorageIdentityGroup>, StorageError>;
+    ) -> Result<StoragePage<StorageIdentityGroup>, StorageError>;
 
     /// Return hash-free retained token metadata using the requested lifecycle
     /// state, filters, stable cursor page, and optional exact total.
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,
-    ) -> Result<StorageIdentityPage<StorageTokenMetadata>, StorageError>;
+    ) -> Result<StoragePage<StorageTokenMetadata>, StorageError>;
 
     /// Return whether the principal is both human and an effective member of
     /// the service account owner group.
@@ -1621,21 +1632,25 @@ pub trait IdentityStorage: Send + Sync {
         principal_id: PrincipalId,
         owner_group_id: GroupId,
     ) -> Result<bool, StorageError>;
+}
 
+/// Service-account lifecycle and authorization state.
+#[async_trait]
+pub trait ServiceAccountStorage: Send + Sync {
     /// Return `true` only for a disabled service-account principal.
     ///
     /// Human principals and IDs without a service-account row return `false`.
     async fn principal_is_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError>;
 
     /// Load the service-account row for one principal ID.
-    async fn load_service_account(
+    async fn get_service_account(
         &self,
         service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccount, StorageError>;
 
     /// Load one service account together with the principal-owned name, scope,
     /// and revision needed for a strong point response.
-    async fn load_service_account_point(
+    async fn get_service_account_point(
         &self,
         service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccountPoint, StorageError>;
@@ -1646,7 +1661,7 @@ pub trait IdentityStorage: Send + Sync {
     async fn list_manageable_service_accounts(
         &self,
         query: StorageServiceAccountListQuery,
-    ) -> Result<StorageIdentityPage<StorageServiceAccountListItem>, StorageError>;
+    ) -> Result<StoragePage<StorageServiceAccountListItem>, StorageError>;
 
     /// Atomically create one local service account, its principal projection,
     /// and the required lifecycle event.
@@ -1675,7 +1690,11 @@ pub trait IdentityStorage: Send + Sync {
         &self,
         request: StorageServiceAccountMutation,
     ) -> Result<MutationOutcome<()>, StorageError>;
+}
 
+/// External-provider identity refresh and reconciliation.
+#[async_trait]
+pub trait ExternalIdentityStorage: Send + Sync {
     /// Return refresh state only for a provider-managed external human.
     ///
     /// Missing, local, and unmanaged principals return `None`; inconsistent

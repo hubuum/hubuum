@@ -697,8 +697,7 @@ fn record_computed_evaluation(
 }
 
 fn postgres_error_from_storage(error: StorageError) -> PostgresStorageError {
-    let (kind, message, current_revision) = error.into_parts();
-    PostgresStorageError::new(kind, message, current_revision)
+    error.into()
 }
 
 fn validate_object_selector(selector: &StorageObjectSelector) -> Result<(), PostgresStorageError> {

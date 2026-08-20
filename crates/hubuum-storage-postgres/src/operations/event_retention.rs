@@ -6,7 +6,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::EventRetentionSettings;
 use hubuum_events_core::EventSequence;
 use hubuum_storage_core::{
-    EventArchive, EventRetentionBatch, EventRetentionBatchId, EventRetentionSummary, RetainedEvent,
+    EventRetentionBatch, EventRetentionBatchId, EventRetentionSummary, RetainedEvent,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -85,7 +85,7 @@ struct RetentionEventRow {
 /// Try to become the event-retention coordinator for the current transaction.
 ///
 /// This narrow entrypoint exists for adapter concurrency tests. Normal callers
-/// use [`process_event_retention_batch`].
+/// use `hubuum_storage_core::execute_event_retention_batch`.
 #[doc(hidden)]
 pub async fn try_acquire_event_retention_lock(
     connection: &mut PostgresConnection,
@@ -220,23 +220,6 @@ pub async fn complete_event_retention_batch(
             Ok(summary)
         })
         .await
-}
-
-/// Claim, archive outside a transaction, and acknowledge one batch.
-pub async fn process_event_retention_batch(
-    runtime: &PostgresRuntime,
-    settings: EventRetentionSettings,
-    archive: &dyn EventArchive,
-) -> Result<EventRetentionSummary, PostgresStorageError> {
-    let Some(batch) = claim_event_retention_batch(runtime, settings).await? else {
-        return Ok(EventRetentionSummary::default());
-    };
-    if !batch.is_empty() {
-        archive
-            .archive(&batch)
-            .map_err(PostgresStorageError::from)?;
-    }
-    complete_event_retention_batch(runtime, batch.id()).await
 }
 
 async fn delete_expired_completed_claims(
@@ -467,24 +450,4 @@ async fn purge_events_by_id(
     .execute(connection)
     .await
     .map_err(PostgresStorageError::from)
-}
-
-/// Run retention without an external archive. Intended for adapter tests.
-#[doc(hidden)]
-pub async fn purge_without_archive(
-    runtime: &PostgresRuntime,
-    settings: EventRetentionSettings,
-) -> Result<EventRetentionSummary, PostgresStorageError> {
-    struct DiscardArchive;
-
-    impl EventArchive for DiscardArchive {
-        fn archive(
-            &self,
-            _batch: &EventRetentionBatch,
-        ) -> Result<(), hubuum_storage_core::StorageError> {
-            Ok(())
-        }
-    }
-
-    process_event_retention_batch(runtime, settings, &DiscardArchive).await
 }

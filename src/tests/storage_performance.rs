@@ -24,7 +24,7 @@ use crate::services::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
 use crate::services::storage_boundary::{object_create_to_storage, resolved_class_to_storage};
-use crate::storage::{StorageHandle, TransactionalStorage, with_mutation_provenance};
+use crate::storage::{StorageHandle, TransactionStorage, with_mutation_provenance};
 use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
 use hubuum_storage_postgres::diesel_async_prelude::{QueryableByName, RunQueryDsl};
@@ -1563,11 +1563,13 @@ async fn collection_history_query_count_is_constant_with_page_size() {
 
 #[actix_web::test]
 async fn external_identity_sync_query_count_is_constant_with_group_count() {
-    use hubuum_storage_core::{StorageExternalGroup, StorageExternalUserSync};
-    use hubuum_storage_postgres::PostgresRuntime;
+    use hubuum_storage_core::{
+        ExternalIdentityStorage, StorageExternalGroup, StorageExternalUserSync,
+    };
+    use hubuum_storage_postgres::PostgresStorage;
 
     let scope = TestScope::new();
-    let runtime = PostgresRuntime::unobserved(scope.pool.get_ref().clone());
+    let backend = PostgresStorage::unobserved(scope.pool.get_ref().clone());
     let request = |label: &str, group_count: usize| {
         StorageExternalUserSync::builder(
             scope.scoped_name(&format!("external_budget_scope_{label}")),
@@ -1589,23 +1591,13 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
         .build()
     };
 
-    let (small_result, small_queries) = capture_queries(
-        hubuum_storage_postgres::operations::external_identity::sync_external_user(
-            &runtime,
-            request("small", 1),
-        ),
-    )
-    .await;
+    let (small_result, small_queries) =
+        capture_queries(backend.sync_external_user(request("small", 1))).await;
     small_result
         .expect("one-group external sync should succeed")
         .into_value();
-    let (large_result, large_queries) = capture_queries(
-        hubuum_storage_postgres::operations::external_identity::sync_external_user(
-            &runtime,
-            request("large", 20),
-        ),
-    )
-    .await;
+    let (large_result, large_queries) =
+        capture_queries(backend.sync_external_user(request("large", 20))).await;
     large_result
         .expect("twenty-group external sync should succeed")
         .into_value();

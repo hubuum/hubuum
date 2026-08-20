@@ -18,9 +18,9 @@ use hubuum_query::{DataType, FilterField, Operator, ParsedQueryParam, QueryOptio
 use hubuum_storage_core::{
     AuthorizationPermission, BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationPage, RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation,
-    StorageGraphClass, StorageGraphObject, StorageGraphResource, StorageObjectGraphRow,
-    StorageObjectRelation, StorageRelatedDirection, StorageRelatedObjectForRootRow,
+    RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation, StorageGraphClass,
+    StorageGraphObject, StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
+    StoragePage, StorageRelatedDirection, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRelatedSort, StorageVisibility,
 };
 
@@ -50,12 +50,12 @@ macro_rules! bind_raw_sql_query {
 pub async fn list_class_relations(
     runtime: &PostgresRuntime,
     query: RelationListQuery,
-) -> Result<RelationPage<StorageClassRelation>, PostgresStorageError> {
+) -> Result<StoragePage<StorageClassRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -89,7 +89,7 @@ pub async fn list_class_relations(
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -98,12 +98,12 @@ pub async fn list_class_relations(
 pub async fn list_object_relations(
     runtime: &PostgresRuntime,
     query: RelationListQuery,
-) -> Result<RelationPage<StorageObjectRelation>, PostgresStorageError> {
+) -> Result<StoragePage<StorageObjectRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -127,7 +127,7 @@ pub async fn list_object_relations(
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -136,13 +136,13 @@ pub async fn list_object_relations(
 pub async fn list_class_relations_touching(
     runtime: &PostgresRuntime,
     query: RelationTouchingQuery,
-) -> Result<RelationPage<StorageClassRelation>, PostgresStorageError> {
+) -> Result<StoragePage<StorageClassRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (class_id, options, visibility) = query.into_parts();
     validate_positive_id(class_id.id(), "class id")?;
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -174,7 +174,7 @@ pub async fn list_class_relations_touching(
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -183,13 +183,13 @@ pub async fn list_class_relations_touching(
 pub async fn list_object_relations_touching(
     runtime: &PostgresRuntime,
     query: RelationTouchingQuery,
-) -> Result<RelationPage<StorageObjectRelation>, PostgresStorageError> {
+) -> Result<StoragePage<StorageObjectRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (object_id, options, visibility) = query.into_parts();
     validate_positive_id(object_id.id(), "object id")?;
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -219,7 +219,7 @@ pub async fn list_object_relations_touching(
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
@@ -321,10 +321,10 @@ pub async fn object_relations_touching_ids(
 }
 
 /// Return classes reachable from one class, with PostgreSQL-native filtering and paging.
-pub async fn related_classes(
+pub async fn list_related_classes(
     runtime: &PostgresRuntime,
     query: RelationGraphQuery,
-) -> Result<RelationPage<StorageClassGraphRow>, PostgresStorageError> {
+) -> Result<StoragePage<StorageClassGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
     validate_positive_id(root_id.id(), "class id")?;
@@ -336,7 +336,7 @@ pub async fn related_classes(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -344,7 +344,7 @@ pub async fn related_classes(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
-                return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+                return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Class,
@@ -365,7 +365,7 @@ pub async fn related_classes(
             };
             let paged = apply_raw_sql_pagination(base, &options, GraphKind::Class)?;
             tracing::debug!(
-                operation = "related_classes",
+                operation = "list_related_classes",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
                 has_cursor = options.cursor().is_some(),
@@ -378,16 +378,16 @@ pub async fn related_classes(
                 .into_iter()
                 .map(ClassGraphQueryRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
 
 /// Return objects reachable from one object, with PostgreSQL-native filtering and paging.
-pub async fn related_objects(
+pub async fn list_related_objects(
     runtime: &PostgresRuntime,
     query: RelationGraphQuery,
-) -> Result<RelationPage<StorageObjectGraphRow>, PostgresStorageError> {
+) -> Result<StoragePage<StorageObjectGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
     validate_positive_id(root_id.id(), "object id")?;
@@ -399,7 +399,7 @@ pub async fn related_objects(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
     }
 
     runtime
@@ -407,7 +407,7 @@ pub async fn related_objects(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
-                return Ok(RelationPage::new(Vec::new(), include_total.then_some(0)));
+                return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Object,
@@ -428,7 +428,7 @@ pub async fn related_objects(
             };
             let paged = apply_raw_sql_pagination(base, &options, GraphKind::Object)?;
             tracing::debug!(
-                operation = "related_objects",
+                operation = "list_related_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
                 has_cursor = options.cursor().is_some(),
@@ -441,13 +441,13 @@ pub async fn related_objects(
                 .into_iter()
                 .map(ObjectGraphQueryRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(RelationPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
         })
         .await
 }
 
 /// Walk directional object relations for several roots in one bounded query.
-pub async fn related_objects_for_roots(
+pub async fn list_related_objects_for_roots(
     runtime: &PostgresRuntime,
     query: RelatedObjectsForRootsQuery,
 ) -> Result<Vec<StorageRelatedObjectIncludeRow>, PostgresStorageError> {
@@ -502,7 +502,7 @@ pub async fn related_objects_for_roots(
                 preserve_alternative_paths,
             });
             tracing::debug!(
-                operation = "related_objects_for_roots",
+                operation = "list_related_objects_for_roots",
                 root_count = root_ids.len(),
                 max_depth,
                 per_root_limit = limit,
@@ -519,7 +519,7 @@ pub async fn related_objects_for_roots(
 }
 
 /// Walk bidirectional object relations for several roots in one bounded query.
-pub async fn bidirectionally_related_objects_for_roots(
+pub async fn list_bidirectionally_related_objects_for_roots(
     runtime: &PostgresRuntime,
     query: BidirectionalRelatedObjectsQuery,
 ) -> Result<Vec<StorageRelatedObjectForRootRow>, PostgresStorageError> {
@@ -560,7 +560,7 @@ pub async fn bidirectionally_related_objects_for_roots(
                 preserve_alternative_paths,
             });
             tracing::debug!(
-                operation = "bidirectionally_related_objects_for_roots",
+                operation = "list_bidirectionally_related_objects_for_roots",
                 root_count = root_ids.len(),
                 max_depth,
                 per_root_limit = per_root_cap,
@@ -649,10 +649,10 @@ fn build_related_graph_query_spec(
     };
     let mut sql = match kind {
         GraphKind::Class => format!(
-            "SELECT related_classes.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_classes(?, {collection_array_sql}, {depth_sql}) AS related_classes JOIN hubuumclass ancestor ON ancestor.id = related_classes.ancestor_class_id JOIN hubuumclass descendant ON descendant.id = related_classes.descendant_class_id"
+            "SELECT list_related_classes.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_classes(?, {collection_array_sql}, {depth_sql}) AS list_related_classes JOIN hubuumclass ancestor ON ancestor.id = list_related_classes.ancestor_class_id JOIN hubuumclass descendant ON descendant.id = list_related_classes.descendant_class_id"
         ),
         GraphKind::Object => format!(
-            "SELECT related_objects.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_objects(?, {collection_array_sql}, {depth_sql}) AS related_objects JOIN hubuumobject ancestor ON ancestor.id = related_objects.ancestor_object_id JOIN hubuumobject descendant ON descendant.id = related_objects.descendant_object_id"
+            "SELECT list_related_objects.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_objects(?, {collection_array_sql}, {depth_sql}) AS list_related_objects JOIN hubuumobject ancestor ON ancestor.id = list_related_objects.ancestor_object_id JOIN hubuumobject descendant ON descendant.id = list_related_objects.descendant_object_id"
         ),
     };
 
@@ -696,7 +696,7 @@ fn append_graph_scope_clause(
     let class_sql = sql_integer_array(&class_ids, bind_variables);
     match kind {
         GraphKind::Class => clauses.push(format!(
-            "NOT EXISTS (SELECT 1 FROM unnest(related_classes.path) AS path_class_id JOIN hubuumclass path_class ON path_class.id = path_class_id WHERE NOT (path_class.collection_id = ANY({collection_sql}) OR path_class.id = ANY({class_sql})))"
+            "NOT EXISTS (SELECT 1 FROM unnest(list_related_classes.path) AS path_class_id JOIN hubuumclass path_class ON path_class.id = path_class_id WHERE NOT (path_class.collection_id = ANY({collection_sql}) OR path_class.id = ANY({class_sql})))"
         )),
         GraphKind::Object => {
             let object_ids = scope
@@ -706,7 +706,7 @@ fn append_graph_scope_clause(
                 .collect::<Vec<_>>();
             let object_sql = sql_integer_array(&object_ids, bind_variables);
             clauses.push(format!(
-                "NOT EXISTS (SELECT 1 FROM unnest(related_objects.path) AS path_object_id JOIN hubuumobject path_object ON path_object.id = path_object_id WHERE NOT (path_object.collection_id = ANY({collection_sql}) OR path_object.hubuum_class_id = ANY({class_sql}) OR path_object.id = ANY({object_sql})))"
+                "NOT EXISTS (SELECT 1 FROM unnest(list_related_objects.path) AS path_object_id JOIN hubuumobject path_object ON path_object.id = path_object_id WHERE NOT (path_object.collection_id = ANY({collection_sql}) OR path_object.hubuum_class_id = ANY({class_sql}) OR path_object.id = ANY({object_sql})))"
             ));
         }
     }
@@ -727,9 +727,9 @@ fn build_graph_filter_clause(
         )
     {
         let expression = if parameter.field == FilterField::JsonDataFrom {
-            "related_objects.ancestor_data"
+            "list_related_objects.ancestor_data"
         } else {
-            "related_objects.descendant_data"
+            "list_related_objects.descendant_data"
         };
         let component = json_filter_sql(parameter, expression)?;
         bind_variables.extend(component.bind_variables);
@@ -847,78 +847,84 @@ fn graph_column(kind: GraphKind, field: &FilterField) -> Option<&'static str> {
         (
             GraphKind::Class,
             FilterField::Id | FilterField::ClassTo | FilterField::ClassId | FilterField::Classes,
-        ) => Some("related_classes.descendant_class_id"),
-        (GraphKind::Class, FilterField::ClassFrom) => Some("related_classes.ancestor_class_id"),
-        (GraphKind::Object, FilterField::Id | FilterField::ObjectTo) => {
-            Some("related_objects.descendant_object_id")
+        ) => Some("list_related_classes.descendant_class_id"),
+        (GraphKind::Class, FilterField::ClassFrom) => {
+            Some("list_related_classes.ancestor_class_id")
         }
-        (GraphKind::Object, FilterField::ObjectFrom) => Some("related_objects.ancestor_object_id"),
-        (GraphKind::Object, FilterField::ClassFrom) => Some("related_objects.ancestor_class_id"),
+        (GraphKind::Object, FilterField::Id | FilterField::ObjectTo) => {
+            Some("list_related_objects.descendant_object_id")
+        }
+        (GraphKind::Object, FilterField::ObjectFrom) => {
+            Some("list_related_objects.ancestor_object_id")
+        }
+        (GraphKind::Object, FilterField::ClassFrom) => {
+            Some("list_related_objects.ancestor_class_id")
+        }
         (GraphKind::Object, FilterField::ClassId | FilterField::Classes | FilterField::ClassTo) => {
-            Some("related_objects.descendant_class_id")
+            Some("list_related_objects.descendant_class_id")
         }
         (
             GraphKind::Class,
             FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo,
-        ) => Some("related_classes.descendant_collection_id"),
+        ) => Some("list_related_classes.descendant_collection_id"),
         (GraphKind::Class, FilterField::CollectionsFrom) => {
-            Some("related_classes.ancestor_collection_id")
+            Some("list_related_classes.ancestor_collection_id")
         }
         (
             GraphKind::Object,
             FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo,
-        ) => Some("related_objects.descendant_collection_id"),
+        ) => Some("list_related_objects.descendant_collection_id"),
         (GraphKind::Object, FilterField::CollectionsFrom) => {
-            Some("related_objects.ancestor_collection_id")
+            Some("list_related_objects.ancestor_collection_id")
         }
         (GraphKind::Class, FilterField::Name | FilterField::NameTo) => {
-            Some("related_classes.descendant_name")
+            Some("list_related_classes.descendant_name")
         }
-        (GraphKind::Class, FilterField::NameFrom) => Some("related_classes.ancestor_name"),
+        (GraphKind::Class, FilterField::NameFrom) => Some("list_related_classes.ancestor_name"),
         (GraphKind::Object, FilterField::Name | FilterField::NameTo) => {
-            Some("related_objects.descendant_name")
+            Some("list_related_objects.descendant_name")
         }
-        (GraphKind::Object, FilterField::NameFrom) => Some("related_objects.ancestor_name"),
+        (GraphKind::Object, FilterField::NameFrom) => Some("list_related_objects.ancestor_name"),
         (GraphKind::Class, FilterField::Description | FilterField::DescriptionTo) => {
-            Some("related_classes.descendant_description")
+            Some("list_related_classes.descendant_description")
         }
         (GraphKind::Class, FilterField::DescriptionFrom) => {
-            Some("related_classes.ancestor_description")
+            Some("list_related_classes.ancestor_description")
         }
         (GraphKind::Object, FilterField::Description | FilterField::DescriptionTo) => {
-            Some("related_objects.descendant_description")
+            Some("list_related_objects.descendant_description")
         }
         (GraphKind::Object, FilterField::DescriptionFrom) => {
-            Some("related_objects.ancestor_description")
+            Some("list_related_objects.ancestor_description")
         }
         (GraphKind::Class, FilterField::CreatedAt | FilterField::CreatedAtTo) => {
-            Some("related_classes.descendant_created_at")
+            Some("list_related_classes.descendant_created_at")
         }
         (GraphKind::Class, FilterField::CreatedAtFrom) => {
-            Some("related_classes.ancestor_created_at")
+            Some("list_related_classes.ancestor_created_at")
         }
         (GraphKind::Object, FilterField::CreatedAt | FilterField::CreatedAtTo) => {
-            Some("related_objects.descendant_created_at")
+            Some("list_related_objects.descendant_created_at")
         }
         (GraphKind::Object, FilterField::CreatedAtFrom) => {
-            Some("related_objects.ancestor_created_at")
+            Some("list_related_objects.ancestor_created_at")
         }
         (GraphKind::Class, FilterField::UpdatedAt | FilterField::UpdatedAtTo) => {
-            Some("related_classes.descendant_updated_at")
+            Some("list_related_classes.descendant_updated_at")
         }
         (GraphKind::Class, FilterField::UpdatedAtFrom) => {
-            Some("related_classes.ancestor_updated_at")
+            Some("list_related_classes.ancestor_updated_at")
         }
         (GraphKind::Object, FilterField::UpdatedAt | FilterField::UpdatedAtTo) => {
-            Some("related_objects.descendant_updated_at")
+            Some("list_related_objects.descendant_updated_at")
         }
         (GraphKind::Object, FilterField::UpdatedAtFrom) => {
-            Some("related_objects.ancestor_updated_at")
+            Some("list_related_objects.ancestor_updated_at")
         }
-        (GraphKind::Class, FilterField::Depth) => Some("related_classes.depth"),
-        (GraphKind::Class, FilterField::Path) => Some("related_classes.path"),
-        (GraphKind::Object, FilterField::Depth) => Some("related_objects.depth"),
-        (GraphKind::Object, FilterField::Path) => Some("related_objects.path"),
+        (GraphKind::Class, FilterField::Depth) => Some("list_related_classes.depth"),
+        (GraphKind::Class, FilterField::Path) => Some("list_related_classes.path"),
+        (GraphKind::Object, FilterField::Depth) => Some("list_related_objects.depth"),
+        (GraphKind::Object, FilterField::Path) => Some("list_related_objects.path"),
         _ => None,
     }
 }

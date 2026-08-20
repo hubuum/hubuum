@@ -6,7 +6,7 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError, StorageRecordMetadata};
+use crate::{MutationOutcome, StorageError, StoragePage, StorageRecordMetadata};
 
 /// HTTP transport configuration for a remote target.
 #[derive(Clone, PartialEq)]
@@ -241,9 +241,6 @@ impl fmt::Debug for StorageRemoteTargetListQuery {
     }
 }
 
-/// Remote-target page retained as a domain-specific API name.
-pub type StorageRemoteTargetPage = crate::StoragePage<StorageRemoteTarget>;
-
 /// Atomic remote-target create command including audit provenance.
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetCreate {
@@ -298,20 +295,71 @@ impl fmt::Debug for StorageRemoteTargetCreate {
     }
 }
 
-pub type StorageRemoteTargetPatchParts = (
-    Option<CollectionId>,
-    Option<Option<ClassId>>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<Value>,
-    Option<Option<String>>,
-    Option<Value>,
-    Option<Vec<String>>,
-    Option<i32>,
-    Option<bool>,
-);
+pub struct StorageRemoteTargetPatchParts {
+    collection_id: Option<CollectionId>,
+    class_id: Option<Option<ClassId>>,
+    name: Option<String>,
+    description: Option<String>,
+    method: Option<String>,
+    url_template: Option<String>,
+    headers_template: Option<Value>,
+    body_template: Option<Option<String>>,
+    auth_config: Option<Value>,
+    allowed_subject_types: Option<Vec<String>>,
+    timeout_ms: Option<i32>,
+    enabled: Option<bool>,
+}
+
+impl StorageRemoteTargetPatchParts {
+    #[must_use]
+    pub const fn collection_id(&self) -> Option<CollectionId> {
+        self.collection_id
+    }
+    #[must_use]
+    pub const fn class_id(&self) -> Option<Option<ClassId>> {
+        self.class_id
+    }
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+    #[must_use]
+    pub fn method(&self) -> Option<&str> {
+        self.method.as_deref()
+    }
+    #[must_use]
+    pub fn url_template(&self) -> Option<&str> {
+        self.url_template.as_deref()
+    }
+    #[must_use]
+    pub const fn headers_template(&self) -> Option<&Value> {
+        self.headers_template.as_ref()
+    }
+    #[must_use]
+    pub fn body_template(&self) -> Option<Option<&str>> {
+        self.body_template.as_ref().map(|value| value.as_deref())
+    }
+    #[must_use]
+    pub const fn auth_config(&self) -> Option<&Value> {
+        self.auth_config.as_ref()
+    }
+    #[must_use]
+    pub fn allowed_subject_types(&self) -> Option<&[String]> {
+        self.allowed_subject_types.as_deref()
+    }
+    #[must_use]
+    pub const fn timeout_ms(&self) -> Option<i32> {
+        self.timeout_ms
+    }
+    #[must_use]
+    pub const fn enabled(&self) -> Option<bool> {
+        self.enabled
+    }
+}
 
 /// Sparse, already validated remote-target update.
 #[derive(Clone, Default, PartialEq)]
@@ -423,20 +471,20 @@ impl StorageRemoteTargetPatch {
 
     #[must_use]
     pub fn into_parts(self) -> StorageRemoteTargetPatchParts {
-        (
-            self.collection_id,
-            self.class_id,
-            self.name,
-            self.description,
-            self.method,
-            self.url_template,
-            self.headers_template,
-            self.body_template,
-            self.auth_config,
-            self.allowed_subject_types,
-            self.timeout_ms,
-            self.enabled,
-        )
+        StorageRemoteTargetPatchParts {
+            collection_id: self.collection_id,
+            class_id: self.class_id,
+            name: self.name,
+            description: self.description,
+            method: self.method,
+            url_template: self.url_template,
+            headers_template: self.headers_template,
+            body_template: self.body_template,
+            auth_config: self.auth_config,
+            allowed_subject_types: self.allowed_subject_types,
+            timeout_ms: self.timeout_ms,
+            enabled: self.enabled,
+        }
     }
 }
 
@@ -576,7 +624,7 @@ pub trait RemoteTargetStorage: Send + Sync {
     async fn list_remote_targets(
         &self,
         query: StorageRemoteTargetListQuery,
-    ) -> Result<StorageRemoteTargetPage, StorageError>;
+    ) -> Result<StoragePage<StorageRemoteTarget>, StorageError>;
 
     async fn create_remote_target(
         &self,

@@ -27,7 +27,7 @@ use super::rows::{CollectionRow, GroupRow, PermissionRow};
 
 const SKIPPED_TOTAL_COUNT: i64 = -1;
 
-pub async fn load_authorization_principal(
+pub async fn get_authorization_principal(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<AuthorizationPrincipal, PostgresStorageError> {
@@ -80,7 +80,7 @@ pub async fn authorization_principal_is_group_member(
         .await
 }
 
-pub async fn load_authorization_classes(
+pub async fn get_authorization_classes(
     runtime: &PostgresRuntime,
     query: AuthorizationResourceIds,
 ) -> Result<Vec<AuthorizationClassResource>, PostgresStorageError> {
@@ -111,7 +111,7 @@ pub async fn load_authorization_classes(
         .await
 }
 
-pub async fn load_authorization_objects(
+pub async fn get_authorization_objects(
     runtime: &PostgresRuntime,
     query: AuthorizationResourceIds,
 ) -> Result<Vec<AuthorizationObjectResource>, PostgresStorageError> {
@@ -516,7 +516,7 @@ pub async fn effective_principal_collection_permissions(
 }
 
 /// Return collections visible through one permission and an optional token scope.
-pub async fn visible_collections(
+pub async fn list_visible_collections(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionVisibilityQuery,
 ) -> Result<Vec<AuthorizationCollection>, PostgresStorageError> {
@@ -1095,7 +1095,7 @@ pub async fn collection_group_permission(
     })
 }
 
-pub async fn load_local_collection_permission_set(
+pub async fn get_local_collection_permission_set(
     runtime: &PostgresRuntime,
     query: AuthorizationPermissionSetQuery,
 ) -> Result<AuthorizationPermissionSet, PostgresStorageError> {

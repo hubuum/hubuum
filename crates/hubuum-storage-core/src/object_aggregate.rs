@@ -9,7 +9,7 @@ use hubuum_query::{ComputedFieldScope, JsonFieldPath, QueryOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{AuthorizationPermission, StorageError, StorageErrorKind, StorageVisibility};
+use crate::{AuthorizationPermission, StorageError, StorageVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectAggregateAuthorizationMode {
@@ -459,13 +459,9 @@ impl StorageObjectAggregateSpec {
         maximum_encoded_bytes: usize,
     ) -> Result<StorageObjectAggregateCursor, StorageError> {
         if cursor.len() > maximum_encoded_bytes {
-            return Err(StorageError::new(
-                StorageErrorKind::InputTooLarge,
-                format!(
-                    "aggregate cursor exceeds the replay-safe limit of {maximum_encoded_bytes} bytes for this request"
-                ),
-                None,
-            ));
+            return Err(StorageError::input_too_large(format!(
+                "aggregate cursor exceeds the replay-safe limit of {maximum_encoded_bytes} bytes for this request"
+            )));
         }
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(cursor)
@@ -521,13 +517,9 @@ impl StorageObjectAggregateSpec {
         })?;
         let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
         if cursor.len() > maximum_encoded_bytes {
-            return Err(StorageError::new(
-                StorageErrorKind::InputTooLarge,
-                format!(
-                    "aggregate value at the page boundary produces a cursor larger than the replay-safe limit of {maximum_encoded_bytes} bytes for this request; shorten the filters, narrow the grouping dimensions, or use a page limit that does not end on this value"
-                ),
-                None,
-            ));
+            return Err(StorageError::input_too_large(format!(
+                "aggregate value at the page boundary produces a cursor larger than the replay-safe limit of {maximum_encoded_bytes} bytes for this request; shorten the filters, narrow the grouping dimensions, or use a page limit that does not end on this value"
+            )));
         }
         Ok(cursor)
     }

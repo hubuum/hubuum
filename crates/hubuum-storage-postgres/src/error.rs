@@ -42,11 +42,14 @@ impl PostgresStorageError {
         message: impl Into<String>,
         current_revision: Option<ResourceRevision>,
     ) -> Self {
-        Self::revision_conflict(message, current_revision)
+        Self::new(
+            StorageErrorKind::PreconditionFailed,
+            message,
+            current_revision,
+        )
     }
 
-    #[must_use]
-    pub fn new(
+    fn new(
         kind: StorageErrorKind,
         message: impl Into<String>,
         current_revision: Option<ResourceRevision>,
@@ -66,6 +69,11 @@ impl PostgresStorageError {
     #[must_use]
     pub fn database(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Backend, message, None)
+    }
+
+    #[must_use]
+    pub fn authorization_unavailable(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::AuthorizationUnavailable, message, None)
     }
 
     #[must_use]
@@ -114,14 +122,24 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::Unsupported, message, None)
+    }
+
+    #[must_use]
+    pub fn authentication_required(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::AuthenticationRequired, message, None)
+    }
+
+    #[must_use]
     pub fn revision_conflict(
         message: impl Into<String>,
-        current_revision: Option<ResourceRevision>,
+        current_revision: ResourceRevision,
     ) -> Self {
         Self::new(
             StorageErrorKind::RevisionConflict,
             message,
-            current_revision,
+            Some(current_revision),
         )
     }
 }
@@ -159,7 +177,28 @@ impl std::error::Error for PostgresStorageError {}
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
         let (kind, message, current_revision) = error.into_parts();
-        Self::new(kind, message, current_revision)
+        match kind {
+            StorageErrorKind::AuthorizationUnavailable => Self::authorization_unavailable(message),
+            StorageErrorKind::InvalidInput => Self::invalid_input(message),
+            StorageErrorKind::Conflict => Self::conflict(message),
+            StorageErrorKind::Backend => Self::database(message),
+            StorageErrorKind::PermissionDenied => Self::permission_denied(message),
+            StorageErrorKind::Internal => Self::internal(message),
+            StorageErrorKind::NotFound => Self::not_found(message),
+            StorageErrorKind::Unsupported => Self::unsupported(message),
+            StorageErrorKind::InputTooLarge => Self::input_too_large(message),
+            StorageErrorKind::RevisionConflict => Self::revision_conflict(
+                message,
+                current_revision.expect("revision conflicts always carry a current revision"),
+            ),
+            StorageErrorKind::PreconditionFailed => {
+                Self::precondition_failed(message, current_revision)
+            }
+            StorageErrorKind::RateLimited => Self::rate_limited(message),
+            StorageErrorKind::Unavailable => Self::unavailable(message),
+            StorageErrorKind::AuthenticationRequired => Self::authentication_required(message),
+            StorageErrorKind::Validation => Self::validation(message),
+        }
     }
 }
 
@@ -184,34 +223,28 @@ impl From<DieselError> for PostgresStorageError {
                 );
                 Self::not_found("Entity not found")
             }
-            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => Self::new(
-                StorageErrorKind::Conflict,
-                "Unique constraint not met",
-                None,
-            ),
+            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
+                Self::conflict("Unique constraint not met")
+            }
             DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
                 Self::not_found("Attempt to associate to a non-existent entity")
             }
             DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
                 if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
-                    return Self::new(StorageErrorKind::Conflict, info.message(), None);
+                    return Self::conflict(info.message());
                 }
-                Self::new(
-                    StorageErrorKind::InvalidInput,
-                    "Check constraint not met",
-                    None,
-                )
+                Self::invalid_input("Check constraint not met")
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
                 if message == "hubuum_stale_resource" {
-                    return Self::revision_conflict(
+                    return Self::precondition_failed(
                         "The resource changed since the supplied validator was issued",
                         None,
                     );
                 }
                 if message.starts_with("Invalid object relation:") {
-                    return Self::new(StorageErrorKind::InvalidInput, message, None);
+                    return Self::invalid_input(message);
                 }
                 error!(
                     message = "PostgreSQL query failed",
@@ -234,7 +267,34 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
-        Self::new(error.kind, error.message, error.current_revision)
+        match error.kind {
+            StorageErrorKind::AuthorizationUnavailable => {
+                Self::authorization_unavailable(error.message)
+            }
+            StorageErrorKind::InvalidInput => Self::invalid_input(error.message),
+            StorageErrorKind::Conflict => Self::conflict(error.message),
+            StorageErrorKind::Backend => Self::backend_failure(error.message),
+            StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),
+            StorageErrorKind::Internal => Self::internal(error.message),
+            StorageErrorKind::NotFound => Self::not_found(error.message),
+            StorageErrorKind::Unsupported => Self::unsupported(error.message),
+            StorageErrorKind::InputTooLarge => Self::input_too_large(error.message),
+            StorageErrorKind::RevisionConflict => Self::revision_conflict(
+                error.message,
+                error
+                    .current_revision
+                    .expect("revision conflicts always carry a current revision"),
+            ),
+            StorageErrorKind::PreconditionFailed => {
+                Self::precondition_failed(error.message, error.current_revision)
+            }
+            StorageErrorKind::RateLimited => Self::rate_limited(error.message),
+            StorageErrorKind::Unavailable => Self::unavailable(error.message),
+            StorageErrorKind::AuthenticationRequired => {
+                Self::authentication_required(error.message)
+            }
+            StorageErrorKind::Validation => Self::validation(error.message),
+        }
     }
 }
 
@@ -244,10 +304,9 @@ mod tests {
 
     #[test]
     fn postgres_errors_cross_the_boundary_as_storage_errors() {
-        let error = StorageError::from(PostgresStorageError::new(
-            StorageErrorKind::RevisionConflict,
+        let error = StorageError::from(PostgresStorageError::revision_conflict(
             "stale resource",
-            Some(ResourceRevision::new(2).unwrap()),
+            ResourceRevision::new(2).unwrap(),
         ));
 
         let (kind, message, current_revision) = error.into_parts();

@@ -1,16 +1,5 @@
 use super::*;
 
-pub(super) fn assert_complete_storage_backend(
-    backend: &impl CertifiedStorageBackend,
-    expected_kind: StorageBackendKind,
-) {
-    assert_eq!(
-        backend.storage_name(),
-        expected_kind.as_str(),
-        "storage adapter identity must match its selectable backend kind"
-    );
-}
-
 /// A persistence capability accepted by Hubuum's domain and workflow APIs.
 ///
 /// The trait is sealed so consumers cannot depend on backend implementation

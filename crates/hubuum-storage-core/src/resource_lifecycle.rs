@@ -596,12 +596,11 @@ impl StorageObjectDataPatch {
     pub fn apply(&self, document: &Value) -> Result<Value, StorageError> {
         self.patch.apply(document).map_err(|error| {
             let (kind, message) = error.into_parts();
-            let kind = match kind {
-                JsonPatchErrorKind::BadRequest => crate::StorageErrorKind::InvalidInput,
-                JsonPatchErrorKind::Conflict => crate::StorageErrorKind::Conflict,
-                JsonPatchErrorKind::PayloadTooLarge => crate::StorageErrorKind::InputTooLarge,
-            };
-            StorageError::new(kind, message, None)
+            match kind {
+                JsonPatchErrorKind::BadRequest => StorageError::invalid_input(message),
+                JsonPatchErrorKind::Conflict => StorageError::conflict(message),
+                JsonPatchErrorKind::PayloadTooLarge => StorageError::input_too_large(message),
+            }
         })
     }
 }
@@ -652,7 +651,7 @@ impl StorageResolvedObject {
 /// Complete collection lifecycle required from a selectable backend.
 ///
 /// Every mutation is audited. Restore and import operations use the separate
-/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
+/// [`crate::ImportStorage`] and [`crate::RestoreStorage`] contracts and never weaken this interface.
 #[async_trait]
 pub trait CollectionStorage: Send + Sync {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError>;
@@ -676,12 +675,12 @@ pub trait CollectionStorage: Send + Sync {
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError>;
 
-    async fn collection_children(
+    async fn list_collection_children(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError>;
 
-    async fn collection_ancestors(
+    async fn list_collection_ancestors(
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError>;
@@ -697,7 +696,7 @@ pub trait CollectionStorage: Send + Sync {
 /// Complete class lifecycle required from a selectable backend.
 ///
 /// Every mutation is audited. Restore and import operations use the separate
-/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
+/// [`crate::ImportStorage`] and [`crate::RestoreStorage`] contracts and never weaken this interface.
 #[async_trait]
 pub trait ClassStorage: Send + Sync {
     async fn resolve_class(
@@ -728,7 +727,7 @@ pub trait ClassStorage: Send + Sync {
     ///
     /// Implementations must return one row for every distinct requested ID or
     /// fail rather than silently returning a partial mapping.
-    async fn class_names(
+    async fn resolve_class_names(
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError>;
@@ -737,7 +736,7 @@ pub trait ClassStorage: Send + Sync {
 /// Complete object lifecycle required from a selectable backend.
 ///
 /// Every mutation is audited. Restore and import operations use the separate
-/// [`crate::MaintenanceStorage`] contract and never weaken this interface.
+/// [`crate::ImportStorage`] and [`crate::RestoreStorage`] contracts and never weaken this interface.
 #[async_trait]
 pub trait ObjectStorage: Send + Sync {
     /// Load one object and its class by object ID.

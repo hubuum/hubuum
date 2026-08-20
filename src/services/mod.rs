@@ -43,12 +43,12 @@ pub use objects::ObjectService;
 use std::sync::Arc;
 
 #[cfg(test)]
-use crate::storage::ApplicationStorageTelemetry;
+use crate::storage::ApplicationStorageObserver;
 use crate::storage::StorageHandle;
 #[cfg(test)]
 use crate::storage::{
     ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
-    ObservedStorage, StorageBackendIdentity,
+    ObservedStorage,
 };
 
 /// Application use-case facade.
@@ -75,8 +75,7 @@ impl Services {
     #[cfg(test)]
     pub(crate) fn from_resource_storage<S>(storage: S) -> Self
     where
-        S: StorageBackendIdentity
-            + CollectionStorage
+        S: CollectionStorage
             + ClassStorage
             + ObjectStorage
             + ClassRelationStorage
@@ -85,7 +84,8 @@ impl Services {
     {
         let storage = Arc::new(ObservedStorage::new(
             storage,
-            Arc::new(ApplicationStorageTelemetry),
+            "test",
+            Arc::new(ApplicationStorageObserver),
         ));
         Self {
             classes: ClassService::new(storage.clone()),

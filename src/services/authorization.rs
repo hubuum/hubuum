@@ -15,7 +15,7 @@ pub(crate) async fn collection_permission_set(
     group_id: Option<i32>,
 ) -> Result<CollectionPermissionSet, ApiError> {
     let (collection_id, revision, grants) = storage
-        .load_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
+        .get_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
             collection_id_to_storage(collection_id),
             group_id.map(group_id_to_storage),
         ))

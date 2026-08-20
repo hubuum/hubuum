@@ -1,4 +1,4 @@
-pub(crate) use hubuum_storage_core::{StorageBackend, StorageBackendIdentity};
+pub(crate) use hubuum_storage_core::StorageBackend;
 
 pub(crate) use super::registry::StorageBackendDescriptor;
 

@@ -15,8 +15,9 @@ use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::services::event_administration::{
     create_event_subscription as create_event_subscription_service,
-    delete_event_subscription as delete_event_subscription_service, list_event_subscriptions,
-    load_event_subscription, update_event_subscription as update_event_subscription_service,
+    delete_event_subscription as delete_event_subscription_service,
+    get_event_subscription as get_event_subscription_service, list_event_subscriptions,
+    update_event_subscription as update_event_subscription_service,
 };
 use crate::storage::with_revision_precondition;
 use crate::traits::UserPermissions;
@@ -138,7 +139,7 @@ pub async fn get_event_subscription(
         collection_id
     );
     let subscription =
-        load_event_subscription(&context, collection_id.id(), subscription_id.id()).await?;
+        get_event_subscription_service(&context, collection_id.id(), subscription_id.id()).await?;
     ApiResponse::ok_revisioned(subscription)
 }
 
@@ -184,7 +185,7 @@ pub async fn patch_event_subscription(
         ));
     }
     let existing =
-        load_event_subscription(&context, collection_id.id(), subscription_id.id()).await?;
+        get_event_subscription_service(&context, collection_id.id(), subscription_id.id()).await?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
     let updated = with_revision_precondition(
@@ -235,7 +236,7 @@ pub async fn delete_event_subscription(
         collection_id
     );
     let existing =
-        load_event_subscription(&context, collection_id.id(), subscription_id.id()).await?;
+        get_event_subscription_service(&context, collection_id.id(), subscription_id.id()).await?;
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);

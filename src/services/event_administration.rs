@@ -222,13 +222,13 @@ pub(crate) async fn list_event_sinks(
     ))
 }
 
-pub(crate) async fn load_event_sink(
+pub(crate) async fn get_event_sink(
     backend: &impl StorageContext,
     sink_id: i32,
 ) -> Result<EventSink, ApiError> {
     event_sink_from_storage(
         storage_handle(backend)
-            .load_event_sink(
+            .get_event_sink(
                 hubuum_domain::EventSinkId::new(sink_id)
                     .expect("validated event sink id must be positive"),
             )
@@ -343,14 +343,14 @@ pub(crate) async fn list_event_subscriptions(
     ))
 }
 
-pub(crate) async fn load_event_subscription(
+pub(crate) async fn get_event_subscription(
     backend: &impl StorageContext,
     collection_id: i32,
     subscription_id: i32,
 ) -> Result<EventSubscription, ApiError> {
     event_subscription_from_storage(
         storage_handle(backend)
-            .load_event_subscription(
+            .get_event_subscription(
                 collection_id_to_storage(collection_id),
                 hubuum_domain::EventSubscriptionId::new(subscription_id)
                     .expect("validated event subscription id must be positive"),
@@ -366,7 +366,7 @@ pub(crate) async fn create_event_subscription(
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
     storage_handle(backend)
-        .load_event_sink(subscription.sink_id)
+        .get_event_sink(subscription.sink_id)
         .await?;
     validate_subscription_parts(
         &subscription.entity_types,
@@ -404,7 +404,7 @@ pub(crate) async fn update_event_subscription(
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
     if let Some(sink_id) = update.sink_id {
-        storage_handle(backend).load_event_sink(sink_id).await?;
+        storage_handle(backend).get_event_sink(sink_id).await?;
     }
     let entity_types = update
         .entity_types
@@ -486,13 +486,13 @@ pub(crate) async fn list_event_deliveries(
     ))
 }
 
-pub(crate) async fn load_event_delivery(
+pub(crate) async fn get_event_delivery(
     backend: &impl StorageContext,
     delivery_id: i64,
 ) -> Result<EventDeliveryResponse, ApiError> {
     Ok(event_delivery_from_storage(
         storage_handle(backend)
-            .load_event_delivery(
+            .get_event_delivery(
                 hubuum_domain::EventDeliveryId::new(delivery_id)
                     .expect("validated event delivery id must be positive"),
             )

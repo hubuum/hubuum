@@ -132,14 +132,17 @@ fn assert_scenario_exists(root: &Path, scenario: &str) {
 
 #[cfg(test)]
 const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
-    "StorageBackendIdentity",
     "CollectionStorage",
     "ClassStorage",
     "ObjectStorage",
     "ClassRelationStorage",
     "ObjectRelationStorage",
     "AuthenticationStorage",
-    "IdentityStorage",
+    "BootstrapStorage",
+    "IdentityScopeStorage",
+    "IdentityMembershipStorage",
+    "ServiceAccountStorage",
+    "ExternalIdentityStorage",
     "UserStorage",
     "TokenStorage",
     "AuthorizationStorage",
@@ -172,8 +175,8 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "ImportStorage",
     "ExportTemplateStorage",
     "WorkerNotificationStorage",
-    "StorageExecution",
-    "TransactionalStorage",
+    "ExecutionStorage",
+    "TransactionStorage",
 ];
 
 #[test]
@@ -222,8 +225,9 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
     }
     for contract_artifact in [
         "MutationOutcome",
-        "MaintenanceStorage",
-        "StorageTelemetry",
+        "ImportStorage",
+        "RestoreStorage",
+        "StorageObserver",
         "hubuum-storage-conformance",
         "CertifiedStorageBackend",
         "crates/hubuum-storage-postgres/migrations",
@@ -265,7 +269,7 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
 
     let contract = read_source(&root.join("crates/hubuum-storage-core/src/backend.rs"))
         .expect("complete storage contract should be readable");
-    let mut aggregate = contract
+    let aggregate = contract
         .split_once("pub trait StorageBackend:")
         .and_then(|(_, remainder)| remainder.split_once("\n{"))
         .map(|(body, _)| body)
@@ -275,10 +279,6 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
         .filter(|name| !name.is_empty())
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
-    if aggregate.remove("MaintenanceStorage") {
-        aggregate.insert("ImportStorage".to_string());
-        aggregate.insert("RestoreStorage".to_string());
-    }
     assert_eq!(
         aggregate, expected_traits,
         "the complete backend aggregate and semantic inventory must change together"
@@ -556,7 +556,7 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
         .get("traits")
         .and_then(toml::Value::as_table)
         .expect("semantic coverage inventory should have a traits table");
-    let unobserved_traits = ["StorageBackendIdentity", "StorageExecution"];
+    let unobserved_traits = ["ExecutionStorage"];
     let mut expected_observations = 0;
 
     for (trait_name, value) in traits {
@@ -595,13 +595,6 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
             let body = item_body(implementation, "fn", &method);
             let observer_count = body.matches(observer).count()
                 + body.matches("observe_infallible_storage_call(").count();
-            if trait_name == "MetricsStorage" && method == "metrics_pool_state" {
-                assert_eq!(
-                    observer_count, 0,
-                    "pool-state collection must not recursively observe metric collection"
-                );
-                continue;
-            }
             expected_observations += 1;
             assert_eq!(
                 observer_count, 1,
@@ -1041,9 +1034,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         .expect("StorageBackend should have a readable aggregate trait declaration");
     for required in REQUIRED_STORAGE_BACKEND_TRAITS {
         assert!(
-            contract_body.contains(required)
-                || (["ImportStorage", "RestoreStorage"].contains(required)
-                    && contract_body.contains("MaintenanceStorage")),
+            contract_body.contains(required),
             "complete storage contract is missing {required}"
         );
     }
@@ -1061,15 +1052,11 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "complete storage certification must not rely on marker {forbidden_marker}"
         );
     }
-    for required in [
-        "S: CertifiedStorageBackend",
-        "assert_complete_storage_backend(&backend, kind)",
-    ] {
-        assert!(
-            context_source.contains(required),
-            "application composition must enforce the complete contract and backend identity through {required}"
-        );
-    }
+    let required = "S: RegisteredStorageBackend";
+    assert!(
+        context_source.contains(required),
+        "application composition must enforce the complete contract through {required}"
+    );
     let notification_adapter_production = notification_adapter_source
         .split("#[cfg(test)]")
         .next()
@@ -1100,11 +1087,11 @@ fn ordinary_storage_mutations_have_no_optional_audit_context_escape_hatch() {
         }
     }
 
-    let maintenance = read_source(&root.join("crates/hubuum-storage-core/src/maintenance.rs"))
-        .expect("maintenance storage contract should be readable");
+    let backend = read_source(&root.join("crates/hubuum-storage-core/src/backend.rs"))
+        .expect("complete storage contract should be readable");
     assert!(
-        maintenance.contains("pub trait MaintenanceStorage: ImportStorage + RestoreStorage"),
-        "import and restore must remain on the explicit maintenance surface"
+        backend.contains("+ ImportStorage") && backend.contains("+ RestoreStorage"),
+        "import and restore must remain explicit complete-backend capabilities"
     );
 }
 
@@ -1156,33 +1143,35 @@ fn selectable_backends_pass_a_sealed_behavioral_certification_gate() {
         );
     }
 
-    let composition = read_source(&root.join("src/storage/context/api.rs"))
+    let composition = read_source(&root.join("src/storage/context/mod.rs"))
         .expect("storage composition gate should be readable");
     assert!(
-        composition.contains("backend: &impl CertifiedStorageBackend"),
+        composition.contains(
+            "trait RegisteredStorageBackend:\n    CertifiedStorageBackend + Clone + 'static"
+        ) && composition.contains("S: RegisteredStorageBackend"),
         "runtime storage selection must require behavioral certification"
     );
 }
 
 #[test]
-fn storage_telemetry_is_required_at_production_composition() {
+fn storage_observers_are_required_at_production_composition() {
     let root = repository_root();
     let runtime = read_source(&root.join("crates/hubuum-storage-postgres/src/runtime.rs"))
         .expect("PostgreSQL runtime should be readable");
     assert!(
-        runtime.contains("pub fn new(pool: PostgresPool, telemetry: Arc<dyn PostgresTelemetry>)"),
-        "PostgreSQL runtime construction must require application-owned telemetry"
+        runtime.contains("pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>)"),
+        "PostgreSQL runtime construction must require an application-owned observer"
     );
     assert!(
         runtime.contains("pub fn unobserved(pool: PostgresPool)"),
-        "tests and one-shot tools need an explicit telemetry opt-out"
+        "tests and one-shot tools need an explicit observation opt-out"
     );
 
     let composition = read_source(&root.join("src/storage/factory.rs"))
         .expect("PostgreSQL application composition should be readable");
     assert!(
-        composition.contains("PostgresStorage::new(pool, Arc::new(ApplicationPostgresTelemetry))"),
-        "production composition must provide its telemetry implementation"
+        composition.contains("PostgresStorage::new(pool, Arc::new(ApplicationPostgresObserver))"),
+        "production composition must provide its native observer implementation"
     );
 }
 
@@ -1235,7 +1224,6 @@ fn process_entry_points_compose_only_through_backend_neutral_storage() {
             "diesel::",
             "diesel_async",
             "crate::schema",
-            "StorageBackendKind::Postgresql",
         ] {
             if production.contains(forbidden) {
                 violations.push(format!("{} imports or uses {forbidden}", path.display()));
@@ -1920,7 +1908,7 @@ fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
         );
     }
     for required in [
-        "pub async fn computed_field_state",
+        "pub async fn get_computed_field_state",
         "pub async fn list_shared_computed_fields",
         "pub async fn list_personal_computed_fields",
         "pub async fn create_shared_computed_field",
@@ -1947,7 +1935,7 @@ fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
         "ComputedFieldLifecycleStorage for PostgresStorage",
     );
     for method in [
-        "computed_field_state",
+        "get_computed_field_state",
         "list_shared_computed_fields",
         "list_personal_computed_fields",
         "get_computed_field",
@@ -2108,7 +2096,7 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
         "principal_all_collection_permissions",
         "principal_collection_permissions_page",
         "effective_principal_collection_permissions",
-        "visible_collections",
+        "list_visible_collections",
         "group_has_collection_permission",
         "effective_group_collection_permissions",
         "groups_with_collection_permission",
@@ -2308,10 +2296,10 @@ fn relation_queries_are_owned_by_the_postgres_adapter() {
         "class_relations_between_ids",
         "object_relations_touching_ids",
         "object_relations_between_ids",
-        "related_classes",
-        "related_objects",
-        "related_objects_for_roots",
-        "bidirectionally_related_objects_for_roots",
+        "list_related_classes",
+        "list_related_objects",
+        "list_related_objects_for_roots",
+        "list_bidirectionally_related_objects_for_roots",
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
@@ -2355,22 +2343,34 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
         root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
-    let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
-    for method in [
-        "load_principal_group",
-        "is_human_owner_group_member",
-        "principal_is_disabled",
-    ] {
-        let method_body = item_body(implementation, "fn", method);
+    let membership = item_body(
+        &capability,
+        "impl",
+        "IdentityMembershipStorage for PostgresStorage",
+    );
+    for method in ["get_principal_group", "is_human_owner_group_member"] {
+        let method_body = item_body(membership, "fn", method);
         assert!(
             method_body.contains("crate::operations::identity_principals"),
             "the {method} implementation must delegate into the adapter crate"
         );
-        assert!(
-            !method_body.contains("&self.pool"),
-            "the {method} implementation must not expose the PostgreSQL pool"
-        );
+        assert!(!method_body.contains("&self.pool"));
     }
+    let service_accounts = item_body(
+        &capability,
+        "impl",
+        "ServiceAccountStorage for PostgresStorage",
+    );
+    let method = "principal_is_disabled";
+    let method_body = item_body(service_accounts, "fn", method);
+    assert!(
+        method_body.contains("crate::operations::identity_principals"),
+        "the {method} implementation must delegate into the adapter crate"
+    );
+    assert!(
+        !method_body.contains("&self.pool"),
+        "the {method} implementation must not expose the PostgreSQL pool"
+    );
 }
 
 #[test]
@@ -2397,10 +2397,14 @@ fn service_account_resources_are_owned_by_the_postgres_adapter() {
         root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
-    let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "ServiceAccountStorage for PostgresStorage",
+    );
     for method in [
-        "load_service_account",
-        "load_service_account_point",
+        "get_service_account",
+        "get_service_account_point",
         "list_manageable_service_accounts",
         "create_service_account",
         "update_service_account",
@@ -2444,7 +2448,11 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
         root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
-    let implementation = item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    let implementation = item_body(
+        &capability,
+        "impl",
+        "ExternalIdentityStorage for PostgresStorage",
+    );
     for method in [
         "external_principal_state",
         "mark_external_sync_attempted",
@@ -2494,8 +2502,8 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "PrincipalStorage for PostgresStorage");
     for method in [
-        "load_principal",
-        "load_principal_settings",
+        "get_principal",
+        "get_principal_settings",
         "mutate_principal_settings",
     ] {
         let method_body = item_body(implementation, "fn", method);
@@ -2537,8 +2545,8 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "GroupStorage for PostgresStorage");
     for method in [
-        "load_group",
-        "group_identity_scope_name",
+        "get_group",
+        "resolve_group_identity_scope_name",
         "create_group",
         "update_group",
         "delete_group",
@@ -2571,7 +2579,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     let identity_implementation = item_body(
         &identity_capability,
         "impl",
-        "IdentityStorage for PostgresStorage",
+        "IdentityMembershipStorage for PostgresStorage",
     );
     for method in ["list_principal_groups", "list_groups"] {
         let method_body = item_body(identity_implementation, "fn", method);
@@ -2613,9 +2621,9 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "UserStorage for PostgresStorage");
     for method in [
-        "load_user",
-        "load_user_by_name",
-        "load_user_point",
+        "get_user",
+        "get_user_by_name",
+        "get_user_point",
         "list_users",
         "create_user",
         "update_user",
@@ -2664,8 +2672,8 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
     for method in [
         "create_token",
         "renew_token",
-        "load_token_metadata",
-        "load_token_metadata_batch",
+        "get_token_metadata",
+        "get_token_metadata_batch",
         "revoke_token",
         "revoke_token_by_hash",
         "revoke_all_principal_tokens",
@@ -2681,8 +2689,11 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
         );
     }
 
-    let identity_implementation =
-        item_body(&capability, "impl", "IdentityStorage for PostgresStorage");
+    let identity_implementation = item_body(
+        &capability,
+        "impl",
+        "IdentityMembershipStorage for PostgresStorage",
+    );
     let list_body = item_body(identity_implementation, "fn", "list_retained_tokens");
     assert!(list_body.contains("crate::operations::token"));
     assert!(!list_body.contains("&self.pool"));

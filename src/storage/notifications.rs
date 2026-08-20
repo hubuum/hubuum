@@ -14,7 +14,7 @@ pub(crate) fn spawn_storage_notification_listener(
 ) {
     spawn_background_worker(worker_name, move |shutdown| {
         let system = actix_rt::System::new();
-        system.block_on(storage.worker_notification_listener(
+        system.block_on(storage.listen_for_worker_notifications(
             topic,
             on_notification,
             Box::pin(async move { shutdown.requested().await }),

@@ -3,7 +3,7 @@
 diesel::infix_operator!(RegexMatch, " ~ ", backend: diesel::pg::Pg);
 
 #[doc(hidden)]
-pub fn regex_match<T, U, ST>(left: T, right: U) -> RegexMatch<T, U::Expression>
+pub(crate) fn regex_match<T, U, ST>(left: T, right: U) -> RegexMatch<T, U::Expression>
 where
     T: diesel::expression::Expression<SqlType = ST>,
     U: diesel::expression::AsExpression<ST>,
@@ -12,7 +12,6 @@ where
     RegexMatch::new(left, right.as_expression())
 }
 
-#[macro_export]
 macro_rules! postgres_is_null_filter {
     ($query:ident, $param:expr, $operator:expr, $field:expr) => {{
         let is_null = hubuum_query::parse_boolean_value(&$param.value)
@@ -26,7 +25,6 @@ macro_rules! postgres_is_null_filter {
     }};
 }
 
-#[macro_export]
 macro_rules! postgres_string_filter {
     ($query:ident, $param:expr, $field:expr) => {{
         use diesel::dsl::not;
@@ -121,7 +119,6 @@ macro_rules! postgres_string_filter {
     }};
 }
 
-#[macro_export]
 macro_rules! postgres_datetime_filter {
     ($query:ident, $param:expr, $field:expr) => {{
         use diesel::dsl::not;
@@ -185,7 +182,6 @@ macro_rules! postgres_datetime_filter {
     }};
 }
 
-#[macro_export]
 macro_rules! postgres_integer_filter {
     ($query:ident, $param:expr, $field:expr) => {{
         use diesel::dsl::not;
@@ -255,7 +251,6 @@ macro_rules! postgres_integer_filter {
     }};
 }
 
-#[macro_export]
 macro_rules! postgres_revision_filter {
     ($query:ident, $param:expr, $field:expr) => {{
         use diesel::dsl::not;
@@ -325,7 +320,6 @@ macro_rules! postgres_revision_filter {
     }};
 }
 
-#[macro_export]
 macro_rules! postgres_boolean_filter {
     ($query:ident, $param:expr, $field:expr) => {{
         use diesel::dsl::not;
@@ -357,3 +351,8 @@ macro_rules! postgres_boolean_filter {
         }
     }};
 }
+
+pub(crate) use {
+    postgres_boolean_filter, postgres_datetime_filter, postgres_integer_filter,
+    postgres_is_null_filter, postgres_revision_filter, postgres_string_filter,
+};

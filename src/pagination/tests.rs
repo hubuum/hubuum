@@ -6,6 +6,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::models::Collection;
+use crate::models::search::FilterField;
 
 struct UserCursorContract;
 
@@ -349,105 +350,6 @@ async fn exact_total_count_can_be_skipped() {
     assert_eq!(headers.get(PAGE_LIMIT_HEADER), Some(&"25".to_string()));
 }
 
-fn encoded_cursor(sort: &SortParam, value: CursorValue) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&CursorToken {
-            sorts: vec![CursorSort {
-                field: sort.field.to_string(),
-                descending: sort.descending,
-            }],
-            values: vec![value],
-        })
-        .unwrap(),
-    )
-}
-
-#[test]
-fn sql_cursor_filter_rejects_a_value_with_the_wrong_resolved_type() {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::Boolean,
-        nullable: false,
-    }];
-    let cursor = encoded_cursor(&sort, CursorValue::String("true".to_string()));
-    let query_options = QueryOptions::new(vec![], vec![sort], Some(2), Some(cursor), true).unwrap();
-
-    let error = cursor_filter_sql_for_fields(
-        query_options.sort(),
-        &fields,
-        query_options.cursor().map(|cursor| cursor.as_str()),
-    )
-    .unwrap_err();
-
-    assert_eq!(
-        error,
-        ApiError::BadRequest(
-            "cursor value does not match expected type for 'computed_value'".to_string()
-        )
-    );
-}
-
-#[test]
-fn sql_string_cursor_rejects_an_embedded_nul() {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::String,
-        nullable: false,
-    }];
-    let cursor = encoded_cursor(&sort, CursorValue::String("a\0b".to_string()));
-
-    let error = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap_err();
-
-    assert_eq!(
-        error,
-        ApiError::BadRequest(
-            "cursor string values cannot contain an embedded NUL byte".to_string()
-        )
-    );
-}
-
-#[rstest]
-#[case::nul_string(r#"{"value":"\u0000"}"#)]
-#[case::nul_key(r#"{"\u0000":true}"#)]
-#[case::integral_overflow(r#"{"value":1e131072}"#)]
-#[case::fractional_overflow(r#"{"value":1e-16384}"#)]
-fn sql_json_cursor_rejects_values_postgres_jsonb_cannot_represent(#[case] json: &str) {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::Json,
-        nullable: false,
-    }];
-    let value = serde_json::from_str(json).unwrap();
-    let cursor = encoded_cursor(&sort, CursorValue::Json(value));
-    let query_options = QueryOptions::new(vec![], vec![sort], Some(2), Some(cursor), true).unwrap();
-
-    let error = cursor_filter_sql_for_fields(
-        query_options.sort(),
-        &fields,
-        query_options.cursor().map(|cursor| cursor.as_str()),
-    )
-    .unwrap_err();
-
-    assert_eq!(
-        error,
-        ApiError::BadRequest(
-            "cursor contains JSON that PostgreSQL JSONB cannot represent".to_string()
-        )
-    );
-}
-
 #[test]
 fn cursor_decoding_rejects_a_mismatched_value_count() {
     let sort = SortParam {
@@ -471,95 +373,6 @@ fn cursor_decoding_rejects_a_mismatched_value_count() {
         error,
         ApiError::BadRequest("cursor value count does not match current sort order".to_string())
     );
-}
-
-#[test]
-fn numeric_cursor_sql_uses_a_canonical_decimal_literal() {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::Numeric,
-        nullable: false,
-    }];
-    let cursor = encoded_cursor(&sort, CursorValue::Decimal("1_".to_string()));
-
-    let sql = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap();
-
-    assert_eq!(sql.as_deref(), Some("((computed_value > 1::numeric))"));
-}
-
-#[test]
-fn numeric_cursor_sql_rejects_a_decimal_outside_evaluator_bounds() {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::Numeric,
-        nullable: false,
-    }];
-    let cursor = encoded_cursor(&sort, CursorValue::Decimal("1e200000".to_string()));
-
-    let error = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        "cursor contains an invalid decimal value"
-    );
-}
-
-#[rstest]
-#[case::nul_string(r#"{"value":"\u0000"}"#)]
-#[case::nul_key(r#"{"\u0000":true}"#)]
-#[case::integral_overflow(r#"{"value":1e131072}"#)]
-#[case::fractional_overflow(r#"{"value":1e-16384}"#)]
-fn json_cursor_sql_rejects_values_postgres_jsonb_cannot_represent(#[case] json: &str) {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::Json,
-        nullable: false,
-    }];
-    let value = serde_json::from_str(json).unwrap();
-    let cursor = encoded_cursor(&sort, CursorValue::Json(value));
-
-    let error = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap_err();
-
-    assert_eq!(
-        error,
-        ApiError::BadRequest(
-            "cursor contains JSON that PostgreSQL JSONB cannot represent".to_string()
-        )
-    );
-}
-
-#[rstest]
-#[case::maximum_integral_digits(r#"{"value":1e131071}"#)]
-#[case::normalized_maximum_integral_digits(r#"{"value":0.1e131072}"#)]
-#[case::maximum_fractional_digits(r#"{"value":1e-16383}"#)]
-fn json_cursor_sql_accepts_postgres_numeric_boundaries(#[case] json: &str) {
-    let sort = SortParam {
-        field: FilterField::Id,
-        descending: false,
-    };
-    let fields = [CursorSqlField {
-        column: "computed_value".to_string(),
-        sql_type: CursorSqlType::Json,
-        nullable: false,
-    }];
-    let value = serde_json::from_str(json).unwrap();
-    let cursor = encoded_cursor(&sort, CursorValue::Json(value));
-
-    let sql = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap();
-
-    assert!(sql.is_some());
 }
 
 fn nested_json_arrays(depth: usize) -> serde_json::Value {

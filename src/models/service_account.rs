@@ -36,7 +36,7 @@ impl ServiceAccount {
     where
         C: StorageContext,
     {
-        crate::services::identity::load_service_account_point(backend, self.id).await
+        crate::services::identity::get_service_account_point(backend, self.id).await
     }
 }
 

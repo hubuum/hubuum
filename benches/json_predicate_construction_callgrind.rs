@@ -1,6 +1,6 @@
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::search::{ParsedQueryParam, SearchOperator};
-use hubuum_storage_postgres::operations::json_filter::compile_json_filter_for_benchmark;
+use hubuum_storage_postgres::compile_json_filter_for_benchmark;
 use std::hint::black_box;
 
 fn json_filter_fixtures() -> [ParsedQueryParam; 4] {

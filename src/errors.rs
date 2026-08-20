@@ -180,7 +180,11 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::NotFound => Self::NotFound(message),
             StorageErrorKind::Unsupported => Self::NotAcceptable(message),
             StorageErrorKind::InputTooLarge => Self::PayloadTooLarge(message),
-            StorageErrorKind::RevisionConflict => match current_revision {
+            StorageErrorKind::RevisionConflict => Self::RevisionConflict(
+                message,
+                current_revision.expect("revision conflicts always carry a current revision"),
+            ),
+            StorageErrorKind::PreconditionFailed => match current_revision {
                 Some(current_revision) => Self::RevisionConflict(message, current_revision),
                 None => Self::PreconditionFailed(message, None),
             },
@@ -461,59 +465,40 @@ mod tests {
     fn storage_errors_preserve_public_failure_categories() {
         for (error, expected_class) in [
             (
-                StorageError::new(
-                    StorageErrorKind::AuthorizationUnavailable,
-                    "policy unavailable",
-                    None,
-                ),
+                StorageError::authorization_unavailable("policy unavailable"),
                 "permission_backend_unavailable",
             ),
+            (StorageError::invalid_input("invalid move"), "bad_request"),
             (
-                StorageError::new(StorageErrorKind::InvalidInput, "invalid move", None),
-                "bad_request",
-            ),
-            (
-                StorageError::new(StorageErrorKind::Conflict, "collection has children", None),
+                StorageError::conflict("collection has children"),
                 "conflict",
             ),
             (
-                StorageError::new(StorageErrorKind::PermissionDenied, "access denied", None),
+                StorageError::permission_denied("access denied"),
                 "forbidden",
             ),
+            (StorageError::not_found("collection missing"), "not_found"),
             (
-                StorageError::new(StorageErrorKind::NotFound, "collection missing", None),
-                "not_found",
-            ),
-            (
-                StorageError::new(StorageErrorKind::Validation, "object schema mismatch", None),
+                StorageError::validation("object schema mismatch"),
                 "validation_error",
             ),
             (
-                StorageError::new(
-                    StorageErrorKind::InputTooLarge,
-                    "object data exceeds its limit",
-                    None,
-                ),
+                StorageError::input_too_large("object data exceeds its limit"),
                 "payload_too_large",
             ),
             (
-                StorageError::new(
-                    StorageErrorKind::RevisionConflict,
+                StorageError::revision_conflict(
                     "stale collection",
-                    Some(hubuum_domain::ResourceRevision::new(2).unwrap()),
+                    hubuum_domain::ResourceRevision::new(2).unwrap(),
                 ),
                 "revision_conflict",
             ),
             (
-                StorageError::new(StorageErrorKind::RateLimited, "task capacity reached", None),
+                StorageError::rate_limited("task capacity reached"),
                 "too_many_requests",
             ),
             (
-                StorageError::new(
-                    StorageErrorKind::AuthenticationRequired,
-                    "login required",
-                    None,
-                ),
+                StorageError::authentication_required("login required"),
                 "unauthorized",
             ),
         ] {
@@ -525,11 +510,8 @@ mod tests {
     async fn revision_conflicts_preserve_the_authoritative_revision() {
         use actix_web::body::to_bytes;
 
-        let error = StorageError::new(
-            StorageErrorKind::RevisionConflict,
-            "stale collection",
-            Some(ResourceRevision::new(7).unwrap()),
-        );
+        let error =
+            StorageError::revision_conflict("stale collection", ResourceRevision::new(7).unwrap());
         let response = ApiError::from(error).error_response();
 
         assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);

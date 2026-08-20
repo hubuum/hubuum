@@ -2,7 +2,9 @@ use crate::errors::ApiError;
 use crate::models::Group;
 use crate::models::search::QueryOptions;
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
-use crate::storage::{IdentityStorage, StorageContext, StorageGroupListQuery, storage_handle};
+use crate::storage::{
+    IdentityMembershipStorage, StorageContext, StorageGroupListQuery, storage_handle,
+};
 
 use super::identity::identity_group_from_storage;
 

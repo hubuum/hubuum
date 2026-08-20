@@ -3,7 +3,7 @@ use std::future::Future;
 use crate::events::MutationProvenance;
 
 use super::{
-    StorageCallSite, StorageContext, StorageExecution, StorageExecutionScope,
+    ExecutionStorage, StorageCallSite, StorageContext, StorageExecutionScope,
     StorageRevisionPrecondition, storage_handle,
 };
 

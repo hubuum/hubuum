@@ -33,7 +33,7 @@ impl PrincipalRef {
     {
         let user_id = subject.principal_id();
         let principal = storage_handle(pool)
-            .load_authorization_principal(principal_id_to_storage(user_id))
+            .get_authorization_principal(principal_id_to_storage(user_id))
             .await?;
         Ok(Self::new(
             user_id,

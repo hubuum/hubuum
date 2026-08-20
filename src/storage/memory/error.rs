@@ -30,47 +30,25 @@ impl From<MemoryStorageModelError> for StorageError {
         match source {
             ApiError::BadRequest(message)
             | ApiError::InvalidIntegerRange(message)
-            | ApiError::OperatorMismatch(message) => {
-                Self::new(StorageErrorKind::InvalidInput, message, None)
-            }
-            ApiError::NotAcceptable(message) => {
-                Self::new(StorageErrorKind::Unsupported, message, None)
-            }
-            ApiError::ValidationError(message) => {
-                Self::new(StorageErrorKind::Validation, message, None)
-            }
-            ApiError::PayloadTooLarge(message) => {
-                Self::new(StorageErrorKind::InputTooLarge, message, None)
-            }
-            ApiError::Conflict(message) => Self::new(StorageErrorKind::Conflict, message, None),
+            | ApiError::OperatorMismatch(message) => Self::invalid_input(message),
+            ApiError::NotAcceptable(message) => Self::unsupported(message),
+            ApiError::ValidationError(message) => Self::validation(message),
+            ApiError::PayloadTooLarge(message) => Self::input_too_large(message),
+            ApiError::Conflict(message) => Self::conflict(message),
             ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
-                Self::new(StorageErrorKind::Backend, message, None)
+                Self::backend_failure(message)
             }
-            ApiError::NotFound(message) | ApiError::Gone(message) => {
-                Self::new(StorageErrorKind::NotFound, message, None)
+            ApiError::NotFound(message) | ApiError::Gone(message) => Self::not_found(message),
+            ApiError::PreconditionFailed(message, _) => Self::precondition_failed(message, None),
+            ApiError::RevisionConflict(message, current_revision) => {
+                Self::revision_conflict(message, current_revision)
             }
-            ApiError::PreconditionFailed(message, _) => {
-                Self::new(StorageErrorKind::RevisionConflict, message, None)
-            }
-            ApiError::RevisionConflict(message, current_revision) => Self::new(
-                StorageErrorKind::RevisionConflict,
-                message,
-                Some(current_revision),
-            ),
-            ApiError::TooManyRequests(message) => {
-                Self::new(StorageErrorKind::RateLimited, message, None)
-            }
-            ApiError::ServiceUnavailable(message) => {
-                Self::new(StorageErrorKind::Unavailable, message, None)
-            }
-            error => Self::new(
-                StorageErrorKind::Internal,
-                format!(
-                    "unexpected memory storage model error ({}): {error}",
-                    error.class()
-                ),
-                None,
-            ),
+            ApiError::TooManyRequests(message) => Self::rate_limited(message),
+            ApiError::ServiceUnavailable(message) => Self::unavailable(message),
+            error => Self::internal(format!(
+                "unexpected memory storage model error ({}): {error}",
+                error.class()
+            )),
         }
     }
 }

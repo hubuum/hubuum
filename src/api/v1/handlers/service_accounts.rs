@@ -17,9 +17,9 @@ use crate::permissions::AppContext;
 use crate::services::identity::{
     create_service_account as create_service_account_record,
     delete_service_account as delete_service_account_record,
-    disable_service_account as disable_service_account_record, is_human_owner_group_member,
-    list_manageable_service_accounts, load_service_account,
-    update_service_account as update_service_account_record,
+    disable_service_account as disable_service_account_record,
+    get_service_account as get_service_account_record, is_human_owner_group_member,
+    list_manageable_service_accounts, update_service_account as update_service_account_record,
 };
 use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
@@ -159,7 +159,7 @@ pub async fn get_service_account(
     requestor: ManagementAccess,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
-    let sa = load_service_account(&context, service_account_id.into_inner().id()).await?;
+    let sa = get_service_account_record(&context, service_account_id.into_inner().id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
     ApiResponse::ok_revisioned(sa.to_point_response(&context).await?)
 }
@@ -187,7 +187,7 @@ pub async fn update_service_account(
     update: web::Json<UpdateServiceAccount>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = load_service_account(&context, id.id()).await?;
+    let sa = get_service_account_record(&context, id.id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
 
     let update = update.into_inner();
@@ -239,7 +239,7 @@ pub async fn disable_service_account(
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = load_service_account(&context, id.id()).await?;
+    let sa = get_service_account_record(&context, id.id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
 
     let current = sa.to_point_response(&context).await?;
@@ -282,7 +282,7 @@ pub async fn delete_service_account(
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = load_service_account(&context, id.id()).await?;
+    let sa = get_service_account_record(&context, id.id()).await?;
     ensure_can_manage(&context, &requestor, &sa).await?;
     let current = sa.to_point_response(&context).await?;
     let etag = current.entity_tag()?;

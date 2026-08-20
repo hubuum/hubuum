@@ -28,7 +28,7 @@ compiler to a production request.
 
 Partiality is therefore structural:
 
-- a collection-only model implements `StorageBackendIdentity` and `CollectionStorage`;
+- a collection-only model implements `CollectionStorage`;
 - a service accepts `Arc<dyn CollectionStorage>`, not a complete backend; and
 - application composition accepts only `StorageBackend`, whose supertraits
   require every family.
@@ -42,7 +42,8 @@ backend.
 ## Implementation Order
 
 The grouped imports under `hubuum_storage_core::capabilities` provide the
-canonical discovery map while the crate-root exports remain available.
+canonical discovery map. Crate-root reexports remain workspace-compatibility
+paths until the initial publication surface is selected.
 
 The following order minimizes rework:
 
@@ -50,7 +51,7 @@ The following order minimizes rework:
    pool.
 2. Define the adapter error and its conversion to `StorageError`.
 3. Implement foundational lifecycle, identity, and authorization facts.
-4. Implement `TransactionalStorage` over the lifecycle operations and prove
+4. Implement `TransactionStorage` over the lifecycle operations and prove
    state-plus-event commit and rollback.
 5. Implement permission-aware read models.
 6. Implement task execution and workflow families.
@@ -101,7 +102,7 @@ may legitimately touch many native tables.
 
 ## Atomicity and Consistency
 
-Every selectable backend implements `TransactionalStorage`. It provides an
+Every selectable backend implements `TransactionStorage`. It provides an
 opaque unit of work for composing the safe resource operations exposed by
 `StorageTransaction`. The callback sees crate-owned operation types, never a
 native connection, driver session, or query interface.
@@ -136,8 +137,9 @@ commit or roll back state, audit events, and transactional notifications
 together. It must serialize access when its native transaction cannot safely
 execute concurrent operations.
 
-Import and restore implement `MaintenanceStorage`. Do not use that surface as
-an unaudited shortcut for ordinary application writes.
+Import and restore implement explicit `ImportStorage` and `RestoreStorage`
+capabilities. Do not use those surfaces as unaudited shortcuts for ordinary
+application writes.
 
 Read contracts state whether paging, totals, visibility, and projections must
 come from one snapshot. Implement those semantics even when a native store
@@ -218,7 +220,7 @@ observation. Its production constructor must accept an application-owned
 telemetry implementation. Any no-op observer must be an explicit opt-out for
 tests, benchmarks, or one-shot tools.
 
-`TransactionalStorage::transaction` is one logical observed entrypoint. Calls
+`TransactionStorage::transaction` is one logical observed entrypoint. Calls
 made through its operation accessors are constituent steps rather than new
 composition entrypoints. Native transaction and query instrumentation supplies
 the implementation-level detail without multiplying logical metrics.
@@ -229,7 +231,7 @@ construction.
 
 ## Execution Context
 
-Implement both `StorageExecution::run_in_scope` and `run_in_scope_send` using
+Implement both `ExecutionStorage::run_in_scope` and `run_in_scope_send` using
 the backend's native context mechanism. They must evaluate each wrapped future
 exactly once and preserve every override in `StorageExecutionScope`:
 
@@ -281,17 +283,22 @@ these edits:
 4. Add the adapter type to the sealed `CertifiedStorageBackend` registry only
    after its shared and native behavioral evidence passes.
 5. Add one `BackendImplementation` variant and one arm to the exhaustive
-   dispatch macro. Compose it through the generic certified-handle constructor,
-   which fixes its descriptor and common observed resource ports once.
+   dispatch macro, then implement the root-local `RegisteredStorageBackend` for
+   the certified adapter. Compose it through `from_registered_backend`, which
+   fixes its descriptor and common observed resource ports once.
 6. Add one application-local adapter factory in `src/storage/factory.rs`. It
-   owns settings translation, safe diagnostics, native telemetry wiring,
-   initialization errors, operational resources, and migrations.
+   owns settings translation, native observer wiring, initialization errors,
+   operational resources and migrations. If the adapter is database-backed
+   and can support the legacy database endpoint, attach the optional root-owned
+   `DatabaseDiagnosticsProvider` projection. Registration itself must not
+   require database diagnostics. Native diagnostics do not become core
+   capability traits.
 7. Add one `BackendTestEnvironment` variant. Keep its native client or pool
    inside that variant while provisioning the reusable audit, service, and
    HTTP fixtures.
 8. Run the reusable six-part audit verifier and every shared compatibility
-   scenario. When the adapter owns event retention, also run the retention
-   retry verifier.
+   scenario. Also implement and run the applicable retention-retry,
+   delivery-fault, restore-coordination, and lease-loss fixture contracts.
 9. Add native consistency, failure, concurrency, recovery, migration, and
    performance coverage appropriate to the adapter.
 

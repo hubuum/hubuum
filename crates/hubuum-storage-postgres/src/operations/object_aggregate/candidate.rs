@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::bounded_json::ObjectAggregateJsonBound;
 use hubuum_query::{CursorValue, FilterField, QueryOptions, SortParam, encode_cursor_values};
-use hubuum_storage_core::{StorageObjectAggregateSpec, UnifiedSearchResourceScope};
+use hubuum_storage_core::{StorageObjectAggregateSpec, StorageResourceScope};
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::operations::catalog::{apply_object_filters, object_query};
@@ -36,7 +36,7 @@ pub(super) struct ObjectAggregateCandidateBatch {
 pub(super) struct ObjectAggregateCandidateQuery<'a> {
     query_options: &'a QueryOptions,
     collection_id: i32,
-    resource_scope: Option<&'a UnifiedSearchResourceScope>,
+    resource_scope: Option<&'a StorageResourceScope>,
     include_object_data: bool,
     computed_filter_snapshot: Option<&'a ComputedQuerySnapshot>,
 }
@@ -58,7 +58,7 @@ impl<'a> ObjectAggregateCandidateQuery<'a> {
 
     pub(super) fn resource_scope(
         mut self,
-        resource_scope: Option<&'a UnifiedSearchResourceScope>,
+        resource_scope: Option<&'a StorageResourceScope>,
     ) -> Self {
         self.resource_scope = resource_scope;
         self

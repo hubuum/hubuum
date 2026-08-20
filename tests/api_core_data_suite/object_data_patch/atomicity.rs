@@ -250,10 +250,7 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
     assert_eq!(computed.values()["display_name"], "after.example");
     assert_eq!(
         computed.source_data_sha256(),
-        hubuum_storage_postgres::operations::computed_materialization::source_data_sha256(
-            &updated.data,
-        )
-        .unwrap()
+        hubuum_storage_postgres::source_data_sha256(&updated.data).unwrap()
     );
     assert_eq!(history.len() as i64, history_before + 1);
     assert_eq!(history.last().unwrap().0, updated.data);

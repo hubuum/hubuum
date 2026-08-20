@@ -250,7 +250,6 @@ fn validate_postgres_jsonb_cursor_value(
     }
 }
 
-#[macro_export]
 macro_rules! apply_cursor_ordering_fields {
     ($query:ident, $sorts:expr, $sql_fields:expr) => {{
         use diesel::dsl::sql;
@@ -364,7 +363,6 @@ macro_rules! apply_cursor_ordering_fields {
     }};
 }
 
-#[macro_export]
 macro_rules! apply_query_options_with_fields {
     ($query:ident, $query_options:expr, $sql_fields:expr) => {{
         let query_options = &$query_options;
@@ -381,6 +379,8 @@ macro_rules! apply_query_options_with_fields {
         }
     }};
 }
+
+pub(crate) use {apply_cursor_ordering_fields, apply_query_options_with_fields};
 
 #[cfg(test)]
 mod tests {

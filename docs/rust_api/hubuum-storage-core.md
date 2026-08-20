@@ -16,7 +16,7 @@ The normative semantics of that Rust surface are documented in the
 [storage contract](../storage_boundary/contract.md). The Rust declarations,
 semantic coverage inventory, and contract documentation must change together.
 
-The crate also exposes the mandatory `TransactionalStorage` unit of work.
+The crate also exposes the mandatory `TransactionStorage` unit of work.
 Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by `StorageTransaction`; native connections and query
 interfaces remain private to each adapter.
@@ -24,10 +24,11 @@ interfaces remain private to each adapter.
 Ordinary resource mutations require `EventContext` and return
 `MutationOutcome`. A committed outcome includes a non-empty set of
 non-sensitive `AuditReceipt` values for the durable events written atomically
-with the state change; a genuine no-op returns `Unchanged`. Imports and restores are grouped under the explicit
-`MaintenanceStorage` surface and do not weaken ordinary mutation signatures.
+with the state change; a genuine no-op returns `Unchanged`. Imports and
+restores use explicit `ImportStorage` and `RestoreStorage` capabilities and do
+not weaken ordinary mutation signatures.
 
-Application composition supplies `StorageTelemetry`, keeping metrics exporters
+Application composition supplies `StorageObserver`, keeping metrics exporters
 and global registries out of adapter-neutral contracts.
 
 The root `hubuum` crate remains an internal application composition crate.
@@ -62,7 +63,7 @@ Async methods require a Send-capable executor but do not prescribe Tokio or an
 I/O driver. Dropping a returned future requests cancellation; a backend must
 document and test any operation that can continue or commit after cancellation.
 Multi-step writes that promise atomicity must use the backend's transaction
-mechanism. A `TransactionalStorage` implementation commits when its callback
+mechanism. A `TransactionStorage` implementation commits when its callback
 returns `Ok` and rolls back when it returns `Err`. Transaction-scoped mutations
 inherit one required event context, and adapters must commit or roll back state
 and audit side effects together.
@@ -84,8 +85,9 @@ reference implementation, and shared compatibility tests exercise every
 statically registered backend. The
 workspace-internal `hubuum-storage-conformance` harness certifies durable
 receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
-revision conflicts, and retention retry identity, while each backend owns
-native query, transaction, migration, and failure tests. An external-crate
+revision conflicts, retention retry identity, delivery recovery, restore
+coordination rollback, and lease-loss finalization, while each backend owns
+native query, transaction, migration, connection-loss, and failure tests. An external-crate
 integration test also compiles representative transaction,
 query, and typed DTO usage so accidental reliance on crate-private adapter
 hooks fails before a later promotion review.

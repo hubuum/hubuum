@@ -25,7 +25,8 @@ mod tests {
         test_mutex,
     };
     use crate::traits::{CanSave, CanUpdate};
-    use hubuum_storage_postgres::operations::task_execution::purge_expired_export_outputs;
+    use hubuum_storage_core::TaskExecutionStorage;
+    use hubuum_storage_postgres::PostgresStorage;
     const EXPORTS_ENDPOINT: &str = "/api/v1/exports";
 
     /// Serializes only the two tests that contend over the process-wide set of expired export
@@ -1780,11 +1781,10 @@ mod tests {
 
         // The purge is process-wide; assert it cleaned *our* task rather than asserting it cleaned
         // nothing else, so other suites' expired rows can't make this brittle.
-        let cleaned = purge_expired_export_outputs(
-            &hubuum_storage_postgres::PostgresRuntime::unobserved(context.pool.get_ref().clone()),
-        )
-        .await
-        .unwrap();
+        let cleaned = PostgresStorage::unobserved(context.pool.get_ref().clone())
+            .purge_expired_export_outputs()
+            .await
+            .unwrap();
         assert!(
             cleaned >= 1,
             "expected the purge to remove an expired output"

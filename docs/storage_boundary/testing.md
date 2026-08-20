@@ -21,7 +21,7 @@ The obligations being tested are defined by the normative
 | Audit/event contract | Strong | The reusable conformance harness verifies a durable receipt, no-op behavior, rollback, outbox-to-sink delivery, and logical/backend/failure telemetry for every registered backend. |
 | Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The scenarios still require human review for semantic depth. |
 | Application and HTTP behavior | Strong | Every registered backend runs a service point read, readiness, and representative authenticated point/list HTTP requests. Larger integration suites exercise the remaining real application path. |
-| Concurrency and failure recovery | Good | Targeted lease, notification, transaction, restore, retention, and atomicity tests exist. Task-local PostgreSQL failpoints prove rollback at collection-create and task-finalization seams without changing the public contract. |
+| Concurrency and failure recovery | Good | Portable runners own delivery, restore-coordination, and lease-loss expectations; adapters provide deterministic fault injection. Native connection-loss, notification, transaction, retention, and atomicity tests cover implementation mechanics. |
 | Cross-backend portability | Moderate | Traits and DTOs are neutral and a focused resource model provides independent evidence, but only PostgreSQL implements the complete contract. |
 | Quantified source coverage | Unknown | The project does not currently publish line or branch coverage for the storage adapter. Test counts alone cannot reveal unvisited branches. |
 
@@ -182,9 +182,11 @@ fixture through `BackendAuditFixture`; the root registry invokes it for every
 5. logical, native-backend, and failure telemetry observations; and
 6. exact current-revision propagation for a stale mutation.
 
-The same crate exposes a retention retry verifier. It proves that an archive
-failure preserves the exact durable claim and source events, retry returns the
-same batch ID, and completion is idempotent.
+The same crate exposes retention-retry, delivery-fault,
+restore-coordination-fault, and lease-loss runners. They prove the portable
+protocol invariants; each adapter owns provisioning and native fault injection.
+Connection-loss remains adapter-native because connection and transport
+semantics are implementation-specific.
 
 This is behavioral certification, not a type-system proof of implementation
 semantics. The application seals its `CertifiedStorageBackend` registry so an
@@ -341,8 +343,9 @@ The next improvements should be:
 1. Move additional backend-neutral family scenarios into
    `hubuum-storage-conformance` once their root application DTOs and fixture
    interfaces are neutral.
-2. Extend deterministic fault injection to event delivery, restore
-   coordination, lease loss, and connection failure.
+2. Add portable fault fixtures for further backend-neutral state machines as
+   concrete rollback or process-death risks are identified. High-availability
+   failover remains outside this change.
 3. Produce periodic line and branch coverage reports for diagnosis, focusing
    review on error and rollback paths rather than a repository-wide percentage.
 4. Run the unchanged service, transaction, and HTTP suites through a second complete adapter

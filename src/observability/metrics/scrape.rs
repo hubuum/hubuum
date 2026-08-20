@@ -75,10 +75,7 @@ pub async fn scrape(context: AppContext) -> Result<impl Responder, ApiError> {
         .body(body))
 }
 
-async fn refresh_scrape_gauges(
-    metrics: &Metrics,
-    backend: &(impl crate::storage::MetricsStorage + ?Sized),
-) {
+async fn refresh_scrape_gauges(metrics: &Metrics, backend: &crate::storage::StorageHandle) {
     db::refresh_pool_gauges(metrics, backend);
     login::refresh_login_limiter_gauges(metrics).await;
     if let Ok(_refresh_guard) = metrics.db_refresh_lock.try_lock() {

@@ -1,10 +1,17 @@
+#[cfg(feature = "integration-test-support")]
 use std::future::Future;
+#[cfg(feature = "integration-test-support")]
 use std::sync::Arc;
+#[cfg(feature = "integration-test-support")]
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+#[cfg(feature = "integration-test-support")]
 use diesel::QueryableByName;
+#[cfg(feature = "integration-test-support")]
 use diesel_async::RunQueryDsl;
+#[cfg(feature = "integration-test-support")]
 use tokio::sync::Notify;
+#[cfg(feature = "integration-test-support")]
 use tracing::error;
 
 use crate::{PostgresConnection, PostgresStorageError};
@@ -26,6 +33,7 @@ pub enum PostgresFaultPoint {
     TransactionBeforeCommit,
 }
 
+#[cfg(feature = "integration-test-support")]
 impl PostgresFaultPoint {
     const fn as_str(self) -> &'static str {
         match self {
@@ -42,11 +50,13 @@ impl PostgresFaultPoint {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(feature = "integration-test-support")]
 enum FaultMode {
     Fail,
     Pause,
 }
 
+#[cfg(feature = "integration-test-support")]
 struct FaultState {
     point: PostgresFaultPoint,
     mode: FaultMode,
@@ -59,10 +69,12 @@ struct FaultState {
 /// Evidence emitted when a paused fault seam is reached.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(feature = "integration-test-support")]
 pub struct PostgresFaultReached {
     backend_pid: Option<i32>,
 }
 
+#[cfg(feature = "integration-test-support")]
 impl PostgresFaultReached {
     /// PostgreSQL backend PID for a seam reached while holding a connection.
     #[must_use]
@@ -77,10 +89,12 @@ impl PostgresFaultReached {
 /// parallel tests from injecting failures into unrelated storage work.
 #[doc(hidden)]
 #[derive(Clone)]
+#[cfg(feature = "integration-test-support")]
 pub struct PostgresFaultController {
     state: Arc<FaultState>,
 }
 
+#[cfg(feature = "integration-test-support")]
 impl PostgresFaultController {
     #[must_use]
     pub fn failing(point: PostgresFaultPoint) -> Self {
@@ -126,11 +140,13 @@ impl PostgresFaultController {
     }
 }
 
+#[cfg(feature = "integration-test-support")]
 tokio::task_local! {
     static ACTIVE_FAULT: Arc<FaultState>;
 }
 
 #[derive(QueryableByName)]
+#[cfg(feature = "integration-test-support")]
 struct BackendPid {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     backend_pid: i32,
@@ -138,6 +154,7 @@ struct BackendPid {
 
 /// Reach one deterministic adapter failure seam.
 #[doc(hidden)]
+#[cfg(feature = "integration-test-support")]
 pub async fn reach_fault_point(
     point: PostgresFaultPoint,
     mut connection: Option<&mut PostgresConnection>,
@@ -180,4 +197,12 @@ pub async fn reach_fault_point(
             Ok(())
         }
     }
+}
+
+#[cfg(not(feature = "integration-test-support"))]
+pub(crate) async fn reach_fault_point(
+    _point: PostgresFaultPoint,
+    _connection: Option<&mut PostgresConnection>,
+) -> Result<(), PostgresStorageError> {
+    Ok(())
 }

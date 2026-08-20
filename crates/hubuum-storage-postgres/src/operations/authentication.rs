@@ -7,7 +7,7 @@ use hubuum_domain::{IdentityScopeId, PrincipalId, UserId};
 use hubuum_storage_core::{
     AuthenticatedToken, AuthenticationAttempt, AuthenticationHuman, AuthenticationIdentity,
     AuthenticationPrincipal, AuthenticationPrincipalKind, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, StorageErrorKind,
+    AuthenticationTokenScopeQuery,
 };
 
 use crate::schema;
@@ -100,10 +100,8 @@ pub async fn authenticate_bearer_token(
         token_revision,
     )) = row
     else {
-        return Err(PostgresStorageError::new(
-            StorageErrorKind::AuthenticationRequired,
+        return Err(PostgresStorageError::authentication_required(
             "Invalid token",
-            None,
         ));
     };
 
@@ -154,7 +152,7 @@ type AuthenticationIdentityRow = (
     Option<NaiveDateTime>,
 );
 
-pub async fn load_authentication_identity(
+pub async fn get_authentication_identity(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<AuthenticationIdentity, PostgresStorageError> {
@@ -246,7 +244,7 @@ fn authentication_identity_from_row(
     Ok(AuthenticationIdentity::new(principal, human))
 }
 
-pub async fn load_authentication_token_scope(
+pub async fn get_authentication_token_scope(
     runtime: &PostgresRuntime,
     query: AuthenticationTokenScopeQuery,
 ) -> Result<Option<AuthenticationTokenScope>, PostgresStorageError> {

@@ -11,7 +11,7 @@ use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
 };
 use hubuum::services::Services;
-use hubuum::storage::{BenchmarkStorageContext, TransactionalStorage};
+use hubuum::storage::{BenchmarkStorageContext, TransactionStorage};
 use hubuum::traits::{CanDelete, CanSave};
 use hubuum_storage_core::StorageCollectionCreate;
 use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};

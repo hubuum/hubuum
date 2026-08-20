@@ -3,7 +3,7 @@
 //! Rust trait bounds prove that an adapter has methods with the right shapes.
 //! This crate tests the semantic obligations that the type system cannot
 //! express: durable audit receipts, transaction rollback, outbox delivery,
-//! and telemetry observations.
+//! and bounded logical/native observations.
 
 use std::error::Error;
 use std::fmt;
@@ -13,18 +13,18 @@ use async_trait::async_trait;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
     EventRetentionBatchId, EventRetentionSummary, MutationOutcome, StorageError, StorageErrorKind,
-    StorageOperationObservation, StorageRecordedEvent, StorageTelemetry,
+    StorageObservation, StorageObserver, StorageRecordedEvent,
 };
 
 /// Thread-safe application observer used by backend contract fixtures.
 #[derive(Debug, Default)]
-pub struct RecordingStorageTelemetry {
-    observations: Mutex<Vec<StorageOperationObservation>>,
+pub struct RecordingStorageObserver {
+    observations: Mutex<Vec<StorageObservation>>,
 }
 
-impl RecordingStorageTelemetry {
+impl RecordingStorageObserver {
     #[must_use]
-    pub fn observations(&self) -> Vec<StorageOperationObservation> {
+    pub fn observations(&self) -> Vec<StorageObservation> {
         self.observations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -42,8 +42,8 @@ impl RecordingStorageTelemetry {
     }
 }
 
-impl StorageTelemetry for RecordingStorageTelemetry {
-    fn operation_finished(&self, observation: &StorageOperationObservation) {
+impl StorageObserver for RecordingStorageObserver {
+    fn operation_finished(&self, observation: &StorageObservation) {
         self.observations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -61,11 +61,8 @@ pub type FixtureError = Box<dyn Error + Send + Sync + 'static>;
 /// does not have to copy PostgreSQL's Actix harness or assertion logic.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationCompatibilityProbe {
-    expected_backend_name: String,
     observed_backend_name: String,
-    expected_resource_id: i32,
     service_resource_id: i32,
-    success_status: u16,
     readiness_status: u16,
     point_status: u16,
     point_resource_id: i32,
@@ -76,16 +73,10 @@ pub struct ApplicationCompatibilityProbe {
 impl ApplicationCompatibilityProbe {
     #[must_use]
     pub fn builder(
-        expected_backend_name: impl Into<String>,
         observed_backend_name: impl Into<String>,
-        expected_resource_id: i32,
-        success_status: u16,
     ) -> ApplicationCompatibilityProbeBuilder {
         ApplicationCompatibilityProbeBuilder {
-            expected_backend_name: expected_backend_name.into(),
             observed_backend_name: observed_backend_name.into(),
-            expected_resource_id,
-            success_status,
             service_resource_id: None,
             readiness_status: None,
             point_status: None,
@@ -96,12 +87,28 @@ impl ApplicationCompatibilityProbe {
     }
 }
 
+/// Expectations supplied independently of the backend fixture evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationCompatibilityExpectations {
+    backend_name: String,
+    resource_id: i32,
+    success_status: u16,
+}
+
+impl ApplicationCompatibilityExpectations {
+    #[must_use]
+    pub fn new(backend_name: impl Into<String>, resource_id: i32, success_status: u16) -> Self {
+        Self {
+            backend_name: backend_name.into(),
+            resource_id,
+            success_status,
+        }
+    }
+}
+
 /// Validating construction for a complete application compatibility probe.
 pub struct ApplicationCompatibilityProbeBuilder {
-    expected_backend_name: String,
     observed_backend_name: String,
-    expected_resource_id: i32,
-    success_status: u16,
     service_resource_id: Option<i32>,
     readiness_status: Option<u16>,
     point_status: Option<u16>,
@@ -145,13 +152,10 @@ impl ApplicationCompatibilityProbeBuilder {
             .into()
         };
         Ok(ApplicationCompatibilityProbe {
-            expected_backend_name: self.expected_backend_name,
             observed_backend_name: self.observed_backend_name,
-            expected_resource_id: self.expected_resource_id,
             service_resource_id: self
                 .service_resource_id
                 .ok_or_else(|| missing("the service resource identifier"))?,
-            success_status: self.success_status,
             readiness_status: self
                 .readiness_status
                 .ok_or_else(|| missing("the readiness status"))?,
@@ -299,23 +303,26 @@ impl FanoutProbe {
 }
 
 /// Application-side observations captured while executing the other probes.
-pub struct TelemetryProbe {
-    logical_mutation_count: usize,
-    backend_operation_count: usize,
-    failure_count: usize,
+pub struct ObservationProbe {
+    logical_resource_operation_count: usize,
+    logical_capability_operation_count: usize,
+    native_operation_count: usize,
+    failure_observation_count: usize,
 }
 
-impl TelemetryProbe {
+impl ObservationProbe {
     #[must_use]
     pub const fn new(
-        logical_mutation_count: usize,
-        backend_operation_count: usize,
-        failure_count: usize,
+        logical_resource_operation_count: usize,
+        logical_capability_operation_count: usize,
+        native_operation_count: usize,
+        failure_observation_count: usize,
     ) -> Self {
         Self {
-            logical_mutation_count,
-            backend_operation_count,
-            failure_count,
+            logical_resource_operation_count,
+            logical_capability_operation_count,
+            native_operation_count,
+            failure_observation_count,
         }
     }
 }
@@ -334,9 +341,148 @@ pub trait BackendAuditFixture: Send + Sync {
 
     async fn fanout_to_recording_sink(&self) -> Result<FanoutProbe, FixtureError>;
 
-    async fn telemetry_observations(&self) -> Result<TelemetryProbe, FixtureError>;
+    async fn observations(&self) -> Result<ObservationProbe, FixtureError>;
 
     async fn revision_conflict(&self) -> Result<RevisionConflictProbe, FixtureError>;
+}
+
+/// One injected transactional failure and evidence that its state transition
+/// was rolled back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransactionFaultProbe {
+    error_kind: StorageErrorKind,
+    rollback_preserved: bool,
+}
+
+impl TransactionFaultProbe {
+    #[must_use]
+    pub const fn new(error_kind: StorageErrorKind, rollback_preserved: bool) -> Self {
+        Self {
+            error_kind,
+            rollback_preserved,
+        }
+    }
+}
+
+/// Recovery evidence after delivery claim and acknowledgement failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeliveryRecoveryProbe {
+    failure_persisted: bool,
+    attempt_preserved: bool,
+    claim_token_rotated: bool,
+    retry_completed: bool,
+}
+
+impl DeliveryRecoveryProbe {
+    #[must_use]
+    pub const fn new(
+        failure_persisted: bool,
+        attempt_preserved: bool,
+        claim_token_rotated: bool,
+        retry_completed: bool,
+    ) -> Self {
+        Self {
+            failure_persisted,
+            attempt_preserved,
+            claim_token_rotated,
+            retry_completed,
+        }
+    }
+}
+
+/// Evidence for deterministic delivery failure and retry behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeliveryFaultProbe {
+    claim_failure: TransactionFaultProbe,
+    acknowledgement_failure: TransactionFaultProbe,
+    recovery: DeliveryRecoveryProbe,
+}
+
+impl DeliveryFaultProbe {
+    #[must_use]
+    pub const fn new(
+        claim_failure: TransactionFaultProbe,
+        acknowledgement_failure: TransactionFaultProbe,
+        recovery: DeliveryRecoveryProbe,
+    ) -> Self {
+        Self {
+            claim_failure,
+            acknowledgement_failure,
+            recovery,
+        }
+    }
+}
+
+/// Evidence for rollback-safe restore coordinator transitions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RestoreCoordinationFaultProbe {
+    heartbeat_failure: TransactionFaultProbe,
+    transition_failure: TransactionFaultProbe,
+    coordinator_remained_normal: bool,
+}
+
+impl RestoreCoordinationFaultProbe {
+    #[must_use]
+    pub const fn new(
+        heartbeat_failure: TransactionFaultProbe,
+        transition_failure: TransactionFaultProbe,
+        coordinator_remained_normal: bool,
+    ) -> Self {
+        Self {
+            heartbeat_failure,
+            transition_failure,
+            coordinator_remained_normal,
+        }
+    }
+}
+
+/// Evidence that lease ownership is lost permanently after renewal failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LeaseLossFaultProbe {
+    renewal_error_kind: StorageErrorKind,
+    recovered_as_failed: bool,
+    lease_token_cleared: bool,
+    request_payload_cleared: bool,
+    stale_renewal_rejected: bool,
+}
+
+impl LeaseLossFaultProbe {
+    #[must_use]
+    pub const fn new(
+        renewal_error_kind: StorageErrorKind,
+        recovered_as_failed: bool,
+        lease_token_cleared: bool,
+        request_payload_cleared: bool,
+        stale_renewal_rejected: bool,
+    ) -> Self {
+        Self {
+            renewal_error_kind,
+            recovered_as_failed,
+            lease_token_cleared,
+            request_payload_cleared,
+            stale_renewal_rejected,
+        }
+    }
+}
+
+/// Adapter-owned delivery fault injection consumed by the portable runner.
+#[async_trait]
+pub trait DeliveryFaultFixture: Send + Sync {
+    async fn delivery_fault_probe(&self) -> Result<DeliveryFaultProbe, FixtureError>;
+}
+
+/// Adapter-owned restore fault injection consumed by the portable runner.
+#[async_trait]
+pub trait RestoreCoordinationFaultFixture: Send + Sync {
+    async fn restore_coordination_fault_probe(
+        &self,
+    ) -> Result<RestoreCoordinationFaultProbe, FixtureError>;
+}
+
+/// Adapter-owned lease fault injection consumed by the portable runner.
+#[async_trait]
+pub trait LeaseLossFaultFixture: Send + Sync {
+    async fn lease_loss_fault_probe(&self) -> Result<LeaseLossFaultProbe, FixtureError>;
 }
 
 /// Successful completion of all semantic storage checks.
@@ -365,9 +511,10 @@ pub enum ContractViolation {
     RollbackPersistedAuditEvent,
     MissingDurableDelivery,
     MissingSinkDelivery,
-    MissingLogicalTelemetry,
-    MissingBackendTelemetry,
-    MissingFailureTelemetry,
+    MissingLogicalResourceObservation,
+    MissingLogicalCapabilityObservation,
+    MissingNativeObservation,
+    MissingFailureObservation,
     WrongRevisionConflictKind,
     MissingCurrentRevision,
     RetentionClaimWasReplaced,
@@ -380,6 +527,20 @@ pub enum ContractViolation {
     HttpPointMismatch,
     HttpListFailed,
     HttpListOmittedResource,
+    FaultDidNotReportBackendFailure,
+    DeliveryClaimWasNotRecoverable,
+    DeliveryAcknowledgementWasNotRecoverable,
+    DeliveryFailureWasNotPersisted,
+    DeliveryAttemptWasNotPreserved,
+    DeliveryClaimTokenWasReused,
+    DeliveryRetryDidNotComplete,
+    RestoreHeartbeatWasPublished,
+    RestoreTransitionWasPersisted,
+    RestoreCoordinatorStateChanged,
+    LeaseWasNotRecoveredAsFailed,
+    LeaseTokenWasNotCleared,
+    LeasePayloadWasNotCleared,
+    StaleLeaseRegainedOwnership,
 }
 
 impl fmt::Display for ContractViolation {
@@ -399,9 +560,16 @@ impl fmt::Display for ContractViolation {
             Self::RollbackPersistedAuditEvent => "failed mutation persisted an audit event",
             Self::MissingDurableDelivery => "committed event produced no durable delivery",
             Self::MissingSinkDelivery => "durable delivery did not reach the recording sink",
-            Self::MissingLogicalTelemetry => "mutation produced no logical storage telemetry",
-            Self::MissingBackendTelemetry => "mutation produced no backend telemetry",
-            Self::MissingFailureTelemetry => "rolled-back mutation produced no failure telemetry",
+            Self::MissingLogicalResourceObservation => {
+                "resource mutation produced no logical storage observation"
+            }
+            Self::MissingLogicalCapabilityObservation => {
+                "non-resource capability produced no logical storage observation"
+            }
+            Self::MissingNativeObservation => "mutation produced no native backend observation",
+            Self::MissingFailureObservation => {
+                "rolled-back mutation produced no failure observation"
+            }
             Self::WrongRevisionConflictKind => {
                 "stale mutation did not return a revision-conflict error"
             }
@@ -430,6 +598,36 @@ impl fmt::Display for ContractViolation {
             Self::HttpListOmittedResource => {
                 "authenticated HTTP list read omitted the compatibility resource"
             }
+            Self::FaultDidNotReportBackendFailure => {
+                "injected storage fault did not report a backend failure"
+            }
+            Self::DeliveryClaimWasNotRecoverable => {
+                "failed delivery claim did not roll back to claimable state"
+            }
+            Self::DeliveryAcknowledgementWasNotRecoverable => {
+                "failed delivery acknowledgement invalidated the active claim"
+            }
+            Self::DeliveryFailureWasNotPersisted => {
+                "delivery failure state was not persisted after recovery"
+            }
+            Self::DeliveryAttemptWasNotPreserved => {
+                "delivery retry did not preserve the authoritative attempt count"
+            }
+            Self::DeliveryClaimTokenWasReused => "delivery retry reused the previous claim token",
+            Self::DeliveryRetryDidNotComplete => "delivery retry did not complete successfully",
+            Self::RestoreHeartbeatWasPublished => {
+                "failed restore heartbeat was visible after rollback"
+            }
+            Self::RestoreTransitionWasPersisted => {
+                "failed restore transition changed the staged job"
+            }
+            Self::RestoreCoordinatorStateChanged => {
+                "failed restore transition changed coordinator state"
+            }
+            Self::LeaseWasNotRecoveredAsFailed => "expired task lease was not finalized as failed",
+            Self::LeaseTokenWasNotCleared => "expired task lease retained its ownership token",
+            Self::LeasePayloadWasNotCleared => "expired task lease retained its request payload",
+            Self::StaleLeaseRegainedOwnership => "stale task lease regained ownership",
         };
         formatter.write_str(message)
     }
@@ -438,29 +636,30 @@ impl fmt::Display for ContractViolation {
 /// Execute the portable application/service/HTTP compatibility expectations.
 pub async fn verify_application_compatibility(
     fixture: &impl ApplicationCompatibilityFixture,
+    expectations: &ApplicationCompatibilityExpectations,
 ) -> Result<ContractReport, ContractViolation> {
     let probe = fixture.application_compatibility_probe().await?;
-    if probe.observed_backend_name != probe.expected_backend_name {
+    if probe.observed_backend_name != expectations.backend_name {
         return Err(ContractViolation::WrongApplicationBackend);
     }
-    if probe.service_resource_id != probe.expected_resource_id {
+    if probe.service_resource_id != expectations.resource_id {
         return Err(ContractViolation::ServicePointMismatch);
     }
-    if probe.readiness_status != probe.success_status {
+    if probe.readiness_status != expectations.success_status {
         return Err(ContractViolation::ReadinessFailed);
     }
-    if probe.point_status != probe.success_status {
+    if probe.point_status != expectations.success_status {
         return Err(ContractViolation::HttpPointFailed);
     }
-    if probe.point_resource_id != probe.expected_resource_id {
+    if probe.point_resource_id != expectations.resource_id {
         return Err(ContractViolation::HttpPointMismatch);
     }
-    if probe.list_status != probe.success_status {
+    if probe.list_status != expectations.success_status {
         return Err(ContractViolation::HttpListFailed);
     }
     if !probe
         .listed_resource_ids
-        .contains(&probe.expected_resource_id)
+        .contains(&expectations.resource_id)
     {
         return Err(ContractViolation::HttpListOmittedResource);
     }
@@ -490,9 +689,92 @@ pub async fn verify_backend_audit_contract(
     verify_unchanged_mutation(fixture.unchanged_mutation().await?)?;
     verify_rollback(fixture.rolled_back_mutation().await?)?;
     verify_fanout(fixture.fanout_to_recording_sink().await?)?;
-    verify_telemetry(fixture.telemetry_observations().await?)?;
+    verify_observations(fixture.observations().await?)?;
     verify_revision_conflict(fixture.revision_conflict().await?)?;
     Ok(ContractReport { checks: 6 })
+}
+
+/// Execute portable delivery claim, acknowledgement, and retry expectations.
+pub async fn verify_delivery_fault_contract(
+    fixture: &impl DeliveryFaultFixture,
+) -> Result<ContractReport, ContractViolation> {
+    let probe = fixture.delivery_fault_probe().await?;
+    verify_backend_fault(
+        probe.claim_failure,
+        ContractViolation::DeliveryClaimWasNotRecoverable,
+    )?;
+    verify_backend_fault(
+        probe.acknowledgement_failure,
+        ContractViolation::DeliveryAcknowledgementWasNotRecoverable,
+    )?;
+    if !probe.recovery.failure_persisted {
+        return Err(ContractViolation::DeliveryFailureWasNotPersisted);
+    }
+    if !probe.recovery.attempt_preserved {
+        return Err(ContractViolation::DeliveryAttemptWasNotPreserved);
+    }
+    if !probe.recovery.claim_token_rotated {
+        return Err(ContractViolation::DeliveryClaimTokenWasReused);
+    }
+    if !probe.recovery.retry_completed {
+        return Err(ContractViolation::DeliveryRetryDidNotComplete);
+    }
+    Ok(ContractReport { checks: 8 })
+}
+
+/// Execute portable restore-coordination rollback expectations.
+pub async fn verify_restore_coordination_fault_contract(
+    fixture: &impl RestoreCoordinationFaultFixture,
+) -> Result<ContractReport, ContractViolation> {
+    let probe = fixture.restore_coordination_fault_probe().await?;
+    verify_backend_fault(
+        probe.heartbeat_failure,
+        ContractViolation::RestoreHeartbeatWasPublished,
+    )?;
+    verify_backend_fault(
+        probe.transition_failure,
+        ContractViolation::RestoreTransitionWasPersisted,
+    )?;
+    if !probe.coordinator_remained_normal {
+        return Err(ContractViolation::RestoreCoordinatorStateChanged);
+    }
+    Ok(ContractReport { checks: 5 })
+}
+
+/// Execute portable lease-loss recovery expectations.
+pub async fn verify_lease_loss_fault_contract(
+    fixture: &impl LeaseLossFaultFixture,
+) -> Result<ContractReport, ContractViolation> {
+    let probe = fixture.lease_loss_fault_probe().await?;
+    if probe.renewal_error_kind != StorageErrorKind::Backend {
+        return Err(ContractViolation::FaultDidNotReportBackendFailure);
+    }
+    if !probe.recovered_as_failed {
+        return Err(ContractViolation::LeaseWasNotRecoveredAsFailed);
+    }
+    if !probe.lease_token_cleared {
+        return Err(ContractViolation::LeaseTokenWasNotCleared);
+    }
+    if !probe.request_payload_cleared {
+        return Err(ContractViolation::LeasePayloadWasNotCleared);
+    }
+    if !probe.stale_renewal_rejected {
+        return Err(ContractViolation::StaleLeaseRegainedOwnership);
+    }
+    Ok(ContractReport { checks: 5 })
+}
+
+fn verify_backend_fault(
+    probe: TransactionFaultProbe,
+    rollback_violation: ContractViolation,
+) -> Result<(), ContractViolation> {
+    if probe.error_kind != StorageErrorKind::Backend {
+        return Err(ContractViolation::FaultDidNotReportBackendFailure);
+    }
+    if !probe.rollback_preserved {
+        return Err(rollback_violation);
+    }
+    Ok(())
 }
 
 fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), ContractViolation> {
@@ -588,15 +870,18 @@ const fn verify_fanout(probe: FanoutProbe) -> Result<(), ContractViolation> {
     Ok(())
 }
 
-const fn verify_telemetry(probe: TelemetryProbe) -> Result<(), ContractViolation> {
-    if probe.logical_mutation_count == 0 {
-        return Err(ContractViolation::MissingLogicalTelemetry);
+const fn verify_observations(probe: ObservationProbe) -> Result<(), ContractViolation> {
+    if probe.logical_resource_operation_count == 0 {
+        return Err(ContractViolation::MissingLogicalResourceObservation);
     }
-    if probe.backend_operation_count == 0 {
-        return Err(ContractViolation::MissingBackendTelemetry);
+    if probe.logical_capability_operation_count == 0 {
+        return Err(ContractViolation::MissingLogicalCapabilityObservation);
     }
-    if probe.failure_count == 0 {
-        return Err(ContractViolation::MissingFailureTelemetry);
+    if probe.native_operation_count == 0 {
+        return Err(ContractViolation::MissingNativeObservation);
+    }
+    if probe.failure_observation_count == 0 {
+        return Err(ContractViolation::MissingFailureObservation);
     }
     Ok(())
 }
@@ -622,5 +907,15 @@ mod tests {
         let _receipt_type_is_part_of_the_contract: Option<AuditReceipt> = None;
         let outcome = MutationOutcome::unchanged(());
         assert!(outcome.audits().is_none());
+    }
+
+    #[test]
+    fn observation_probe_requires_non_resource_capability_evidence() {
+        let probe = ObservationProbe::new(1, 0, 1, 1);
+
+        assert!(matches!(
+            verify_observations(probe),
+            Err(ContractViolation::MissingLogicalCapabilityObservation)
+        ));
     }
 }

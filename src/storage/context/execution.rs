@@ -1,6 +1,6 @@
 use super::*;
 
-impl StorageExecution for StorageHandle {
+impl ExecutionStorage for StorageHandle {
     fn run_in_scope<'a, F, R>(
         &'a self,
         scope: StorageExecutionScope,
@@ -27,14 +27,14 @@ impl StorageExecution for StorageHandle {
 }
 
 impl WorkerNotificationStorage for StorageHandle {
-    fn worker_notification_listener(
+    fn listen_for_worker_notifications(
         &self,
         topic: StorageNotification,
         on_notification: fn(),
         shutdown: StorageNotificationShutdown,
     ) -> StorageNotificationListener {
         let backend_name = self.backend_name();
-        observe_infallible_storage_call(
+        self.observe_infallible_storage_call(
             backend_name,
             "worker_notifications",
             "create_listener",
@@ -43,7 +43,7 @@ impl WorkerNotificationStorage for StorageHandle {
                     message = "storage worker notification listener created",
                     topic = topic.as_str(),
                 );
-                dispatch_backend!(self, |backend| backend.worker_notification_listener(
+                dispatch_backend!(self, |backend| backend.listen_for_worker_notifications(
                     topic,
                     on_notification,
                     shutdown,

@@ -8,10 +8,10 @@ use hubuum_domain::{ClassId, CollectionId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    AuditReceipt, MutationOutcome, StorageRemoteTarget, StorageRemoteTargetCreate,
+    AuditReceipt, MutationOutcome, StoragePage, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPage, StorageRemoteTargetPatch,
-    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
 };
 use serde_json::{Value, json};
 
@@ -207,35 +207,24 @@ impl_redacted_remote_target_debug!(
 
 impl UpdateRemoteTargetRow {
     fn from_patch(patch: StorageRemoteTargetPatch) -> Result<Self, PostgresStorageError> {
-        let (
-            collection_id,
-            class_id,
-            name,
-            description,
-            method,
-            url_template,
-            headers_template,
-            body_template,
-            auth_config,
-            allowed_subject_types,
-            timeout_ms,
-            enabled,
-        ) = patch.into_parts();
+        let parts = patch.into_parts();
         Ok(Self {
-            collection_id: collection_id.map(|id| id.id()),
-            class_id: class_id.map(|value| value.map(|id| id.id())),
-            name,
-            description,
-            method,
-            url_template,
-            headers_template,
-            body_template,
-            auth_config,
-            allowed_subject_types: allowed_subject_types
+            collection_id: parts.collection_id().map(|id| id.id()),
+            class_id: parts.class_id().map(|value| value.map(|id| id.id())),
+            name: parts.name().map(str::to_string),
+            description: parts.description().map(str::to_string),
+            method: parts.method().map(str::to_string),
+            url_template: parts.url_template().map(str::to_string),
+            headers_template: parts.headers_template().cloned(),
+            body_template: parts.body_template().map(|value| value.map(str::to_string)),
+            auth_config: parts.auth_config().cloned(),
+            allowed_subject_types: parts
+                .allowed_subject_types()
+                .map(<[String]>::to_vec)
                 .map(encode_subject_types)
                 .transpose()?,
-            timeout_ms,
-            enabled,
+            timeout_ms: parts.timeout_ms(),
+            enabled: parts.enabled(),
         })
     }
 
@@ -338,7 +327,7 @@ pub async fn get_remote_target(
 pub async fn list_remote_targets(
     runtime: &PostgresRuntime,
     query: StorageRemoteTargetListQuery,
-) -> Result<StorageRemoteTargetPage, PostgresStorageError> {
+) -> Result<StoragePage<StorageRemoteTarget>, PostgresStorageError> {
     let (allowed_collection_ids, options) = query.into_parts();
     let allowed_collection_ids = allowed_collection_ids
         .into_iter()
@@ -353,7 +342,7 @@ pub async fn list_remote_targets(
                     .await?;
                 let targets =
                     load_remote_target_rows(connection, &allowed_collection_ids, &options).await?;
-                Ok::<_, PostgresStorageError>(StorageRemoteTargetPage::new(targets, Some(total)))
+                Ok::<_, PostgresStorageError>(StoragePage::new(targets, Some(total)))
             })
             .await
     } else {
@@ -361,7 +350,7 @@ pub async fn list_remote_targets(
             .with_connection(async |connection| {
                 let targets =
                     load_remote_target_rows(connection, &allowed_collection_ids, &options).await?;
-                Ok::<_, PostgresStorageError>(StorageRemoteTargetPage::new(targets, None))
+                Ok::<_, PostgresStorageError>(StoragePage::new(targets, None))
             })
             .await
     }

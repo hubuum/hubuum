@@ -17,8 +17,8 @@ use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
     MutationOutcome, StorageClassComputationState, StorageComputationRevision,
     StorageComputedFieldDefinition, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation, StorageComputedFieldPage,
-    StorageComputedFieldRebuildRequest, StoragePersonalComputedFieldCreate,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation,
+    StorageComputedFieldRebuildRequest, StoragePage, StoragePersonalComputedFieldCreate,
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
@@ -262,7 +262,7 @@ enum ReindexBatch {
     Complete,
 }
 
-pub async fn computed_field_state(
+pub async fn get_computed_field_state(
     runtime: &PostgresRuntime,
     class_id: i32,
 ) -> Result<StorageClassComputationState, PostgresStorageError> {
@@ -307,7 +307,7 @@ pub async fn list_shared_computed_fields(
 pub async fn list_personal_computed_fields(
     runtime: &PostgresRuntime,
     query: StoragePersonalComputedFieldListQuery,
-) -> Result<StorageComputedFieldPage, PostgresStorageError> {
+) -> Result<StoragePage<StorageComputedFieldDefinition>, PostgresStorageError> {
     let (owner_id, class_id, mut options) = query.into_parts();
     let owner_id = owner_id.id();
     let class_id = class_id.map(|id| id.id());
@@ -352,7 +352,7 @@ pub async fn list_personal_computed_fields(
         .into_iter()
         .map(ComputedDefinitionRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StorageComputedFieldPage::new(definitions, total))
+    Ok(StoragePage::new(definitions, total))
 }
 
 pub async fn get_computed_field(

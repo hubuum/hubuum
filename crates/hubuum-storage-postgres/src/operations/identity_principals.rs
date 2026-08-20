@@ -32,7 +32,7 @@ impl PrincipalGroupRow {
     }
 }
 
-pub async fn load_principal_group(
+pub async fn get_principal_group(
     runtime: &PostgresRuntime,
     principal_id: i32,
     group_id: i32,

@@ -1,7 +1,7 @@
 use diesel::prelude::{ExpressionMethods, JoinOnDsl, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::LOCAL_IDENTITY_SCOPE;
-use hubuum_storage_core::{StorageErrorKind, StorageLocalPasswordReset};
+use hubuum_storage_core::StorageLocalPasswordReset;
 
 use crate::{PostgresRuntime, PostgresStorageError};
 
@@ -27,10 +27,8 @@ pub async fn reset_local_password(
                 .first::<(i32, bool)>(connection)
                 .await?;
             if provider_managed {
-                return Err(PostgresStorageError::new(
-                    StorageErrorKind::PermissionDenied,
+                return Err(PostgresStorageError::permission_denied(
                     "Provider-managed users are read-only in Hubuum",
-                    None,
                 ));
             }
 

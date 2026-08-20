@@ -40,7 +40,9 @@ use crate::middlewares::rate_limit::{
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use crate::services::event_administration::enabled_event_sink_count;
-use crate::storage::{OperationalStateStorage, StorageSettings, initialize_storage};
+use crate::storage::{
+    OperationalStateStorage, StorageBackendKind, StorageSettings, initialize_storage,
+};
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
@@ -101,13 +103,14 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
-    let storage_settings =
-        StorageSettings::builder(config.storage_backend, config.database_url.clone())
+    let storage_settings = match config.storage_backend {
+        StorageBackendKind::Postgres => StorageSettings::postgres(config.database_url.clone())
             .max_connections(config.db_pool_size)
             .statement_timeout_ms(config.db_statement_timeout_ms)
             .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
             .build()
-            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
+    };
     let storage = initialize_storage(&storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     let readiness = storage.readiness_snapshot().await.unwrap_or_else(|error| {
@@ -116,7 +119,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             EXIT_CODE_DATABASE_ERROR,
         )
     });
-    if !readiness.schema_is_ready() {
+    if !readiness.storage_is_ready() {
         fatal_error(
             "Storage backend schema is not ready",
             EXIT_CODE_DATABASE_ERROR,

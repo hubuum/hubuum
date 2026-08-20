@@ -212,7 +212,7 @@ impl StorageRevisionPrecondition {
 /// The contract carries diagnostic attribution, durable mutation provenance,
 /// and optimistic-concurrency assertions without exposing task locals,
 /// transaction settings, connections, or database-specific session state.
-pub trait StorageExecution: Send + Sync {
+pub trait ExecutionStorage: Send + Sync {
     /// Run task-local work under the supplied composable scope overrides.
     fn run_in_scope<'a, F, R>(
         &'a self,

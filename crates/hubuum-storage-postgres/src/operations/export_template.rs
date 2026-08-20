@@ -8,7 +8,7 @@ use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
     AuditReceipt, MutationOutcome, StorageExportTemplate, StorageExportTemplateCreate,
     StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
-    StorageExportTemplatePage, StorageExportTemplateReplace,
+    StorageExportTemplateReplace, StoragePage,
 };
 use serde_json::{Value, json};
 
@@ -225,31 +225,19 @@ struct ExportTemplateDefinitionParts {
 
 impl From<StorageExportTemplateDefinition> for ExportTemplateDefinitionParts {
     fn from(definition: StorageExportTemplateDefinition) -> Self {
-        let (
-            description,
-            content_type,
-            template,
-            kind,
-            scope_kind,
-            class_id,
-            default_query,
-            include,
-            relation_context,
-            default_missing_data_policy,
-            default_limits,
-        ) = definition.into_parts();
+        let parts = definition.into_parts();
         Self {
-            description,
-            content_type,
-            template,
-            kind,
-            scope_kind,
-            class_id: class_id.map(|id| id.id()),
-            default_query,
-            include,
-            relation_context,
-            default_missing_data_policy,
-            default_limits,
+            description: parts.description().to_string(),
+            content_type: parts.content_type().to_string(),
+            template: parts.template().to_string(),
+            kind: parts.kind().to_string(),
+            scope_kind: parts.scope_kind().map(str::to_string),
+            class_id: parts.class_id().map(|id| id.id()),
+            default_query: parts.default_query().map(str::to_string),
+            include: parts.include().cloned(),
+            relation_context: parts.relation_context().cloned(),
+            default_missing_data_policy: parts.default_missing_data_policy().map(str::to_string),
+            default_limits: parts.default_limits().cloned(),
         }
     }
 }
@@ -271,12 +259,12 @@ pub async fn get_export_template(
 pub async fn list_export_templates(
     runtime: &PostgresRuntime,
     query: StorageExportTemplateListQuery,
-) -> Result<StorageExportTemplatePage, PostgresStorageError> {
+) -> Result<StoragePage<StorageExportTemplate>, PostgresStorageError> {
     let (collection_ids, options) = query.into_parts();
     let collection_ids = collection_ids.map(|ids| ids.into_iter().map(CollectionId::id).collect());
     let options = normalize_query_options(options)?;
     if collection_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Ok(StorageExportTemplatePage::new(
+        return Ok(StoragePage::new(
             Vec::new(),
             options.include_total().then_some(0),
         ));
@@ -292,10 +280,7 @@ pub async fn list_export_templates(
                 let templates =
                     load_export_template_rows(connection, collection_ids.as_deref(), &options)
                         .await?;
-                Ok::<_, PostgresStorageError>(StorageExportTemplatePage::new(
-                    templates,
-                    Some(total),
-                ))
+                Ok::<_, PostgresStorageError>(StoragePage::new(templates, Some(total)))
             })
             .await
     } else {
@@ -304,7 +289,7 @@ pub async fn list_export_templates(
                 let templates =
                     load_export_template_rows(connection, collection_ids.as_deref(), &options)
                         .await?;
-                Ok::<_, PostgresStorageError>(StorageExportTemplatePage::new(templates, None))
+                Ok::<_, PostgresStorageError>(StoragePage::new(templates, None))
             })
             .await
     }

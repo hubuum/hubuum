@@ -19,7 +19,7 @@ use crate::services::storage_boundary::{
 use crate::storage::{
     AuthorizationPermission, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
     ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageComputedFieldSelector,
-    StorageError, StorageErrorKind, StorageObjectAggregateAuthorizationCandidate,
+    StorageError, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateDimension,
     StorageObjectAggregateMeasure, StorageObjectAggregateMeasureField,
     StorageObjectAggregateMeasureOperation, StorageObjectAggregateMeasureState,
@@ -349,12 +349,13 @@ fn is_object_specific_permission(permission: &Permissions) -> bool {
 
 fn authorization_error_to_storage(error: ApiError) -> StorageError {
     let message = error.to_string();
-    let kind = match error {
-        ApiError::PermissionBackendUnavailable(_) => StorageErrorKind::AuthorizationUnavailable,
-        ApiError::ServiceUnavailable(_) => StorageErrorKind::Unavailable,
-        _ => StorageErrorKind::Internal,
-    };
-    StorageError::new(kind, message, None)
+    match error {
+        ApiError::PermissionBackendUnavailable(_) => {
+            StorageError::authorization_unavailable(message)
+        }
+        ApiError::ServiceUnavailable(_) => StorageError::unavailable(message),
+        _ => StorageError::internal(message),
+    }
 }
 
 fn sort_to_storage(sort: ObjectAggregateSort) -> StorageObjectAggregateSort {

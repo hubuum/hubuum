@@ -10,8 +10,7 @@ use diesel_async::RunQueryDsl;
 use futures_util::StreamExt;
 use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
 use hubuum_storage_core::StorageNotification;
-use hubuum_storage_postgres::operations::event_record::append_event;
-use hubuum_storage_postgres::test_support::integration_test_pool;
+use hubuum_storage_postgres::test_support::{append_event_on_connection, integration_test_pool};
 use hubuum_storage_postgres::worker_notifications::{channel_name, listen, notify_task_queue};
 use hubuum_storage_postgres::{PostgresConnection, PostgresStorageError, with_transaction};
 
@@ -65,7 +64,7 @@ async fn fanout_trigger_notifies_only_after_commit() {
         )
         .expect("test event must be valid");
         let result = with_transaction(&pool, async |connection| {
-            let event = append_event(connection, &event).await?;
+            let event = append_event_on_connection(connection, &event).await?;
             captured_id.store(event.into_parts().0.id.get(), Ordering::Release);
             if commit {
                 Ok(())

@@ -184,40 +184,28 @@ fn export_template_from_storage(
 ) -> Result<ExportTemplate, ApiError> {
     let (metadata, collection_id, name, definition) = template.into_parts();
     let (id, created_at, updated_at, revision) = metadata.into_parts();
-    let (
-        description,
-        content_type,
-        template,
-        kind,
-        scope_kind,
-        class_id,
-        default_query,
-        include,
-        relation_context,
-        default_missing_data_policy,
-        default_limits,
-    ) = definition.into_parts();
+    let definition = definition.into_parts();
     Ok(ExportTemplate {
         id: id.id(),
         collection_id: collection_id.id(),
         name,
-        description,
-        content_type: ExportContentType::from_mime(&content_type)?,
-        template,
-        kind: ExportTemplateKind::from_str(&kind)?,
-        scope_kind: scope_kind
-            .as_deref()
+        description: definition.description().to_string(),
+        content_type: ExportContentType::from_mime(definition.content_type())?,
+        template: definition.template().to_string(),
+        kind: ExportTemplateKind::from_str(definition.kind())?,
+        scope_kind: definition
+            .scope_kind()
             .map(ExportScopeKind::from_str)
             .transpose()?,
-        class_id: class_id.map(|id| id.id()),
-        default_query,
-        include: from_optional_json(include)?,
-        relation_context: from_optional_json(relation_context)?,
-        default_missing_data_policy: default_missing_data_policy
-            .as_deref()
+        class_id: definition.class_id().map(|id| id.id()),
+        default_query: definition.default_query().map(str::to_string),
+        include: from_optional_json(definition.include().cloned())?,
+        relation_context: from_optional_json(definition.relation_context().cloned())?,
+        default_missing_data_policy: definition
+            .default_missing_data_policy()
             .map(ExportMissingDataPolicy::from_str)
             .transpose()?,
-        default_limits: from_optional_json(default_limits)?,
+        default_limits: from_optional_json(definition.default_limits().cloned())?,
         created_at,
         updated_at,
         revision,

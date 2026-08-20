@@ -3,8 +3,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    MutationOutcome, StorageErrorKind, StoragePrincipal, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation,
+    MutationOutcome, StoragePrincipal, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
 };
 use serde_json::{Map, Value, json};
 
@@ -51,7 +50,7 @@ impl PrincipalRow {
 }
 
 /// Load one principal without exposing the PostgreSQL principal row.
-pub async fn load_principal(
+pub async fn get_principal(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<StoragePrincipal, PostgresStorageError> {
@@ -69,7 +68,7 @@ pub async fn load_principal(
 }
 
 /// Load one principal-settings document and its owning revision.
-pub async fn load_principal_settings(
+pub async fn get_principal_settings(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<StoragePrincipalSettings, PostgresStorageError> {
@@ -191,12 +190,13 @@ fn apply_settings_mutation(
                 .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
             let after = patch.apply(&before).map_err(|error| {
                 let (kind, message) = error.into_parts();
-                let storage_kind = match kind {
-                    JsonPatchErrorKind::BadRequest => StorageErrorKind::InvalidInput,
-                    JsonPatchErrorKind::Conflict => StorageErrorKind::Conflict,
-                    JsonPatchErrorKind::PayloadTooLarge => StorageErrorKind::InputTooLarge,
-                };
-                PostgresStorageError::new(storage_kind, message, None)
+                match kind {
+                    JsonPatchErrorKind::BadRequest => PostgresStorageError::invalid_input(message),
+                    JsonPatchErrorKind::Conflict => PostgresStorageError::conflict(message),
+                    JsonPatchErrorKind::PayloadTooLarge => {
+                        PostgresStorageError::input_too_large(message)
+                    }
+                }
             })?;
             validate_input_settings(after)
         }
@@ -302,6 +302,9 @@ mod tests {
         )
         .expect_err("non-object settings must be rejected");
 
-        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+        assert_eq!(
+            error.kind(),
+            hubuum_storage_core::StorageErrorKind::InvalidInput
+        );
     }
 }

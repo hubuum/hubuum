@@ -22,7 +22,7 @@ use crate::models::{
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobStatus,
     RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
-use crate::services::identity::identity_scope_name as load_identity_scope_name;
+use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
 use crate::storage::{
     OperationalStateStorage, RestoreStorage, StorageBackupSnapshot, StorageContext,
@@ -1199,17 +1199,17 @@ where
 pub(crate) async fn current_maintenance_state(
     storage: &(impl OperationalStateStorage + ?Sized),
 ) -> Result<MaintenanceState, ApiError> {
-    storage.maintenance_state().await.map_err(Into::into)
+    storage.get_maintenance_state().await.map_err(Into::into)
 }
 
-pub async fn maintenance_state(storage: &impl StorageContext) -> Result<String, ApiError> {
+pub async fn get_maintenance_state(storage: &impl StorageContext) -> Result<String, ApiError> {
     let storage = storage_handle(storage);
     current_maintenance_state(&storage)
         .await
         .map(|state| state.as_str().to_string())
 }
 
-pub async fn identity_scope_name(
+pub async fn resolve_identity_scope_name(
     pool: &impl crate::storage::StorageContext,
     identity_scope_id: i32,
 ) -> Result<String, ApiError> {

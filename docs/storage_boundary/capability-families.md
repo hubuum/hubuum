@@ -15,16 +15,18 @@ For source locations, see the [maintainer guide](maintainer-guide.md).
 
 A **trait** is the Rust interface that makes an operation available. A
 **capability family** is a documentation grouping for related traits and
-semantics. The same groupings are discoverable under
-`hubuum_storage_core::capabilities`; they are not separately versioned or
-negotiable runtime features.
+semantics. `hubuum_storage_core::capabilities` exposes broader discovery
+modules for resources, identity, queries, workflows, events, and operations;
+the more detailed families below are semantic subgroups, not a one-to-one
+module map. Neither form represents separately versioned or negotiable runtime
+features.
 
 Persistence ports use the suffix `Storage`: for example,
-`CollectionStorage`, `CatalogStorage`, and `EventRetentionStorage`.
-Cross-cutting wrappers and roles use a descriptive `Storage` prefix or role
-name: `StorageExecution`, `StorageTelemetry`, `StorageBackendIdentity`, and
-`EventArchive`. In particular, backend diagnostic identity is distinct from
-the persisted identity capability, `IdentityStorage`.
+`CollectionStorage`, `CatalogStorage`, `EventRetentionStorage`, and
+`ExecutionStorage`. Collaborators that are not backend capabilities use role
+names such as `EventArchiveSink`, `StorageObserver`, `StorageTransaction`, and
+`ObjectAggregateAuthorizer`. Backend names come from the application registry
+rather than a second adapter identity trait.
 
 `StorageBackend` aggregates every required trait. An adapter implements that
 aggregate explicitly when it is ready to be selectable. Rust checks all
@@ -81,14 +83,14 @@ lifecycle and workflow mutations
           v
 atomic audit events -> fan-out -> delivery -> retention
 
-safe lifecycle primitives -> TransactionalStorage -> one atomic unit of work
+safe lifecycle primitives -> TransactionStorage -> one atomic unit of work
 
 task queue -> task execution
      |            |
      `------------+--> imports, exports, backups, remote calls,
                         restores, and computed-field rebuilds
 
-StorageExecution wraps calls from requests and workers
+ExecutionStorage wraps calls from requests and workers
           |
           v
 call-site attribution, mutation provenance, revision preconditions
@@ -104,8 +106,7 @@ the atomic operations each use case requires.
 
 Required traits:
 
-- `StorageBackendIdentity`;
-- `TransactionalStorage`;
+- `TransactionStorage`;
 - `CollectionStorage`, `ClassStorage`, and `ObjectStorage`; and
 - `ClassRelationStorage` and `ObjectRelationStorage`.
 
@@ -114,7 +115,7 @@ mutation. Implementations own locking, hierarchy maintenance, JSON validation
 coordination, relation cardinality, cascades, initial grants, revisions, and
 atomic lifecycle events.
 
-`TransactionalStorage` composes safe lifecycle primitives without exposing a
+`TransactionStorage` composes safe lifecycle primitives without exposing a
 native transaction. Its `StorageTransaction` accessors return crate-owned
 operation types for collections, classes, class relations, objects, and object
 relations. Transaction-scoped mutations inherit one required `EventContext`,
@@ -122,8 +123,8 @@ so state and audit events commit or roll back together.
 
 The resource traits also include validation and bulk lookup. Every ordinary
 mutation requires audit context and returns an explicit mutation outcome.
-Imports and restores use `MaintenanceStorage`; fixture compatibility helpers
-use system attribution. See
+Imports and restores implement their explicit `ImportStorage` and
+`RestoreStorage` capabilities; fixture compatibility helpers use system attribution. See
 [transactions and side effects](transactions-and-events.md).
 
 These are operation-shaped capabilities, not table repositories. A backend
@@ -135,7 +136,9 @@ or a query builder.
 Required traits:
 
 - `AuthenticationStorage`;
-- `IdentityStorage`, `UserStorage`, and `TokenStorage`;
+- `BootstrapStorage`, `IdentityScopeStorage`, `IdentityMembershipStorage`,
+  `ServiceAccountStorage`, `ExternalIdentityStorage`, `UserStorage`, and
+  `TokenStorage`;
 - `AuthorizationStorage` and `CollectionAuthorizationStorage`; and
 - `GroupStorage` and `PrincipalStorage`.
 
@@ -257,7 +260,7 @@ hashing, and retained task artifacts.
 
 ### `restores`
 
-Required trait: `RestoreStorage`, aggregated through `MaintenanceStorage`.
+Required trait: `RestoreStorage`.
 
 Owns durable artifact staging, compare-and-set lifecycle transitions, global
 drain coordination, rollback-safe state replacement, provenance, cleanup, and
@@ -266,7 +269,7 @@ backend owns destructive transactional application.
 
 ### `imports`
 
-Required trait: `ImportStorage`, aggregated through `MaintenanceStorage`.
+Required trait: `ImportStorage`.
 
 Owns planning lookups, rollback-only preflight, strict atomic application,
 best-effort per-item application, reference resolution, and durable result
@@ -275,7 +278,7 @@ validation, authorization, and collision policy.
 
 ### `export_queries`
 
-Required trait: `StorageExecution` with a `StorageExecutionScope` query-budget
+Required trait: `ExecutionStorage` with a `StorageExecutionScope` query-budget
 override.
 
 Owns a backend-enforced, optional non-zero query budget around each export read
@@ -313,14 +316,14 @@ Required traits:
 - `EventDeliveryStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
   `EventRetentionStorage`;
 - `TokenRetentionStorage` and `WorkerNotificationStorage`; and
-- `StorageExecution`.
+- `ExecutionStorage`.
 
 This family owns probes and administrative snapshots, logical metrics inputs,
 retention, worker claims and acknowledgements, native wake-up integration, and
 the execution context applied across requests and workers.
 
 Common logical observation is reported through application-owned
-`StorageTelemetry`. An adapter may also define native telemetry for pool,
+`StorageObserver`. An adapter may also define native telemetry for pool,
 transaction, and query mechanics. Production composition supplies both; a
 no-op implementation is an explicit test, benchmark, or one-shot tool opt-out.
 
@@ -335,11 +338,11 @@ EventFanoutStorage -> durable deliveries -> EventDeliveryStorage
                                               v
                                       external transport
 
-EventRetentionStorage durably claims, externally archives, then completes batches
+execute_event_retention_batch -> EventRetentionStorage claim/complete + EventArchiveSink
 WorkerNotificationStorage wakes workers without exposing native listeners
 ```
 
-`StorageExecution` is cross-cutting. One composable `StorageExecutionScope`
+`ExecutionStorage` is cross-cutting. One composable `StorageExecutionScope`
 carries bounded call-site attribution, mutation provenance, revision
 preconditions, and optional query budgets. `run_in_scope` supports task-local
 work; `run_in_scope_send` is the explicit `Send` form. An absent override
@@ -347,10 +350,12 @@ inherits its surrounding value, while a present `None` deliberately clears
 one. The adapter translates the scope into its native mechanism; callers never
 select task locals, session variables, or transaction settings.
 
-Retention uses durable claim/archive/complete coordination. Archive calls run
-outside the database transaction and are idempotent by batch ID. Failed
-archives preserve the exact claim and source events for retry; completion
-deletes exactly that claim and is itself idempotent.
+Retention uses durable claim/archive/complete coordination. The core
+`execute_event_retention_batch` helper owns that ordering so adapters cannot
+override it. Archive calls run outside the database transaction and are
+idempotent by batch ID. Failed archives preserve the exact claim and source
+events for retry; completion deletes exactly that claim and is itself
+idempotent.
 
 ## Changing a Family
 

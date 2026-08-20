@@ -45,6 +45,7 @@ impl NotificationChannel {
 /// continue to select topics through [`StorageNotification`].
 #[doc(hidden)]
 #[must_use]
+#[cfg(any(test, feature = "integration-test-support"))]
 pub const fn channel_name(topic: StorageNotification) -> &'static str {
     NotificationChannel::for_topic(topic).as_str()
 }
