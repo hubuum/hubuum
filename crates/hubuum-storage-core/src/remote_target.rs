@@ -98,12 +98,44 @@ pub struct StorageRemoteTargetTransport {
 
 /// Named HTTP transport components used by adapters and application mappers.
 pub struct StorageRemoteTargetTransportParts {
-    pub method: StorageRemoteHttpMethod,
-    pub url_template: String,
-    pub headers_template: Value,
-    pub body_template: Option<String>,
-    pub auth_config: Value,
-    pub timeout_ms: i32,
+    method: StorageRemoteHttpMethod,
+    url_template: String,
+    headers_template: Value,
+    body_template: Option<String>,
+    auth_config: Value,
+    timeout_ms: i32,
+}
+
+impl StorageRemoteTargetTransportParts {
+    #[must_use]
+    pub const fn method(&self) -> StorageRemoteHttpMethod {
+        self.method
+    }
+
+    #[must_use]
+    pub fn url_template(&self) -> &str {
+        &self.url_template
+    }
+
+    #[must_use]
+    pub const fn headers_template(&self) -> &Value {
+        &self.headers_template
+    }
+
+    #[must_use]
+    pub fn body_template(&self) -> Option<&str> {
+        self.body_template.as_deref()
+    }
+
+    #[must_use]
+    pub const fn auth_config(&self) -> &Value {
+        &self.auth_config
+    }
+
+    #[must_use]
+    pub const fn timeout_ms(&self) -> i32 {
+        self.timeout_ms
+    }
 }
 
 impl StorageRemoteTargetTransport {

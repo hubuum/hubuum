@@ -23,8 +23,7 @@ use crate::models::{
 use crate::storage::{
     RemoteTargetStorage, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
     StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetPatch,
-    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetTransportParts,
-    StorageRemoteTargetUpdate,
+    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
 };
 use crate::tests::{TestScope, create_test_user, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate, GroupIdApplicationExt, PermissionController};
@@ -1239,14 +1238,13 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         .into_value();
     let (updated_metadata, collection_id, name, definition) = updated.clone().into_parts();
     let (description, transport, policy) = definition.into_parts();
-    let StorageRemoteTargetTransportParts {
-        method,
-        url_template,
-        headers_template,
-        body_template,
-        auth_config,
-        timeout_ms,
-    } = transport.into_parts();
+    let transport = transport.into_parts();
+    let method = transport.method();
+    let url_template = transport.url_template().to_owned();
+    let headers_template = transport.headers_template().clone();
+    let body_template = transport.body_template().map(str::to_owned);
+    let auth_config = transport.auth_config().clone();
+    let timeout_ms = transport.timeout_ms();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     let unchanged = backend
         .update_remote_target(StorageRemoteTargetUpdate::new(

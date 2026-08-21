@@ -54,9 +54,26 @@ pub struct StorageRestoreInitiator {
 
 /// Named restore-initiator components used by adapters and application mappers.
 pub struct StorageRestoreInitiatorParts {
-    pub principal_id: Option<PrincipalId>,
-    pub identity_scope: String,
-    pub name: String,
+    principal_id: Option<PrincipalId>,
+    identity_scope: String,
+    name: String,
+}
+
+impl StorageRestoreInitiatorParts {
+    #[must_use]
+    pub const fn principal_id(&self) -> Option<PrincipalId> {
+        self.principal_id
+    }
+
+    #[must_use]
+    pub fn identity_scope(&self) -> &str {
+        &self.identity_scope
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl StorageRestoreInitiator {
@@ -113,8 +130,20 @@ pub struct StorageRestoreArtifactSummary {
 
 /// Named restore-artifact components used by adapters and application mappers.
 pub struct StorageRestoreArtifactSummaryParts {
-    pub byte_size: i64,
-    pub sha256: String,
+    byte_size: i64,
+    sha256: String,
+}
+
+impl StorageRestoreArtifactSummaryParts {
+    #[must_use]
+    pub const fn byte_size(&self) -> i64 {
+        self.byte_size
+    }
+
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
 }
 
 impl StorageRestoreArtifactSummary {
@@ -164,11 +193,38 @@ pub struct StorageRestoreTimestamps {
 
 /// Named lifecycle timestamps for a staged restore.
 pub struct StorageRestoreTimestampParts {
-    pub expires_at: DateTime<Utc>,
-    pub confirmed_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    confirmed_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl StorageRestoreTimestampParts {
+    #[must_use]
+    pub const fn expires_at(&self) -> DateTime<Utc> {
+        self.expires_at
+    }
+
+    #[must_use]
+    pub const fn confirmed_at(&self) -> Option<DateTime<Utc>> {
+        self.confirmed_at
+    }
+
+    #[must_use]
+    pub const fn finished_at(&self) -> Option<DateTime<Utc>> {
+        self.finished_at
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> DateTime<Utc> {
+        self.updated_at
+    }
 }
 
 impl StorageRestoreTimestamps {

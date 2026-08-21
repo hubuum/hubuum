@@ -175,15 +175,62 @@ pub struct HistoryMetadata {
 
 /// Named temporal and provenance values used by application mappers.
 pub struct HistoryMetadataParts {
-    pub operation: StorageHistoryOperation,
-    pub valid_from: DateTime<Utc>,
-    pub valid_to: Option<DateTime<Utc>>,
-    pub actor_id: Option<PrincipalId>,
-    pub history_entry_id: HistoryRecordId,
-    pub actor_kind: Option<String>,
-    pub initiator_principal_id: Option<PrincipalId>,
-    pub task_id: Option<TaskId>,
-    pub revision: ResourceRevision,
+    operation: StorageHistoryOperation,
+    valid_from: DateTime<Utc>,
+    valid_to: Option<DateTime<Utc>>,
+    actor_id: Option<PrincipalId>,
+    history_entry_id: HistoryRecordId,
+    actor_kind: Option<String>,
+    initiator_principal_id: Option<PrincipalId>,
+    task_id: Option<TaskId>,
+    revision: ResourceRevision,
+}
+
+impl HistoryMetadataParts {
+    #[must_use]
+    pub const fn operation(&self) -> StorageHistoryOperation {
+        self.operation
+    }
+
+    #[must_use]
+    pub const fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
+    }
+
+    #[must_use]
+    pub const fn valid_to(&self) -> Option<DateTime<Utc>> {
+        self.valid_to
+    }
+
+    #[must_use]
+    pub const fn actor_id(&self) -> Option<PrincipalId> {
+        self.actor_id
+    }
+
+    #[must_use]
+    pub const fn history_entry_id(&self) -> HistoryRecordId {
+        self.history_entry_id
+    }
+
+    #[must_use]
+    pub fn actor_kind(&self) -> Option<&str> {
+        self.actor_kind.as_deref()
+    }
+
+    #[must_use]
+    pub const fn initiator_principal_id(&self) -> Option<PrincipalId> {
+        self.initiator_principal_id
+    }
+
+    #[must_use]
+    pub const fn task_id(&self) -> Option<TaskId> {
+        self.task_id
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> ResourceRevision {
+        self.revision
+    }
 }
 
 impl HistoryMetadata {

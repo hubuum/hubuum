@@ -12,7 +12,7 @@ use crate::storage::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryStorage,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    StorageContext, StorageHistoryOperation, StorageRemoteTargetTransportParts, storage_handle,
+    StorageContext, StorageHistoryOperation, storage_handle,
 };
 
 /// Collection visibility applied before history rows are counted or paged.
@@ -64,7 +64,7 @@ impl From<HistoryMetadata> for AppHistoryMetadata {
         let parts = value.into_parts();
         // Preserve the established HTTP history representation while the
         // storage contract uses semantic operation values.
-        let operation = match parts.operation {
+        let operation = match parts.operation() {
             StorageHistoryOperation::Create => "I",
             StorageHistoryOperation::Update => "U",
             StorageHistoryOperation::Delete => "D",
@@ -72,14 +72,14 @@ impl From<HistoryMetadata> for AppHistoryMetadata {
         .to_string();
         Self {
             operation,
-            valid_from: parts.valid_from,
-            valid_to: parts.valid_to,
-            actor_id: parts.actor_id.map(|id| id.id()),
-            history_id: parts.history_entry_id.id(),
-            actor_kind: parts.actor_kind,
-            initiator_principal_id: parts.initiator_principal_id.map(|id| id.id()),
-            task_id: parts.task_id.map(|id| id.id()),
-            revision: parts.revision,
+            valid_from: parts.valid_from(),
+            valid_to: parts.valid_to(),
+            actor_id: parts.actor_id().map(|id| id.id()),
+            history_id: parts.history_entry_id().id(),
+            actor_kind: parts.actor_kind().map(str::to_owned),
+            initiator_principal_id: parts.initiator_principal_id().map(|id| id.id()),
+            task_id: parts.task_id().map(|id| id.id()),
+            revision: parts.revision(),
         }
     }
 }
@@ -212,14 +212,13 @@ fn remote_target_from_storage(
     let (record, metadata) = row.into_parts();
     let (record_metadata, collection_id, name, definition) = record.into_parts();
     let (description, transport, policy) = definition.into_parts();
-    let StorageRemoteTargetTransportParts {
-        method,
-        url_template,
-        headers_template,
-        body_template,
-        auth_config,
-        timeout_ms,
-    } = transport.into_parts();
+    let transport = transport.into_parts();
+    let method = transport.method();
+    let url_template = transport.url_template().to_owned();
+    let headers_template = transport.headers_template().clone();
+    let body_template = transport.body_template().map(str::to_owned);
+    let auth_config = transport.auth_config().clone();
+    let timeout_ms = transport.timeout_ms();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     let (id, created_at, updated_at, _) = record_metadata.into_parts();
     let allowed_subject_types = serde_json::to_value(

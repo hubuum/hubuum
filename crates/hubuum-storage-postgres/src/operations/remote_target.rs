@@ -12,7 +12,7 @@ use hubuum_storage_core::{
     StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
     StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
     StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
-    StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
+    StorageRemoteTargetUpdate,
 };
 use serde_json::{Value, json};
 
@@ -293,15 +293,13 @@ impl RemoteTargetDefinitionParts {
         definition: StorageRemoteTargetDefinition,
     ) -> Result<Self, PostgresStorageError> {
         let (description, transport, policy) = definition.into_parts();
-        let StorageRemoteTargetTransportParts {
-            method,
-            url_template,
-            headers_template,
-            body_template,
-            auth_config,
-            timeout_ms,
-        } = transport.into_parts();
-        let method = method.as_str().to_string();
+        let transport = transport.into_parts();
+        let method = transport.method().as_str().to_string();
+        let url_template = transport.url_template().to_owned();
+        let headers_template = transport.headers_template().clone();
+        let body_template = transport.body_template().map(str::to_owned);
+        let auth_config = transport.auth_config().clone();
+        let timeout_ms = transport.timeout_ms();
         let (class_id, allowed_subject_types, enabled) = policy.into_parts();
         Ok(Self {
             class_id: class_id.map(|id| id.id()),

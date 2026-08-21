@@ -12,11 +12,11 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, MutationProvenance, NewEvent};
 use hubuum_storage_core::{
-    StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallArtifactTargetParts,
-    StorageRemoteCallTaskArtifact, StorageTask, StorageTaskClaim, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus,
+    StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
+    StorageTask, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -956,25 +956,19 @@ fn remote_call_artifact(
     artifact: StorageRemoteCallTaskArtifact,
 ) -> NewRemoteCallResultRow {
     let (target, response, outcome) = artifact.into_parts();
-    let StorageRemoteCallArtifactTargetParts {
-        target_id,
-        subject_type,
-        subject_id,
-        method,
-        rendered_url,
-    } = target.into_parts();
+    let target = target.into_parts();
     let (response_status, response_headers, response_body_preview) = response.into_parts();
     let (duration_ms, success, error) = outcome.into_parts();
     NewRemoteCallResultRow {
         task_id,
-        target_id: target_id.map(|id| id.id()),
-        subject_type: subject_type.as_str().to_string(),
-        subject_id: subject_id.id(),
-        method: method.map_or_else(
+        target_id: target.target_id().map(|id| id.id()),
+        subject_type: target.subject_type().as_str().to_string(),
+        subject_id: target.subject_id().id(),
+        method: target.method().map_or_else(
             || "unknown".to_string(),
             |method| method.as_str().to_string(),
         ),
-        rendered_url,
+        rendered_url: target.rendered_url().to_owned(),
         response_status,
         response_headers,
         response_body_preview,

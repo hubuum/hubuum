@@ -14,9 +14,8 @@ use hubuum_storage_core::{
     StorageBackupStateSection, StorageBackupStateSections, StorageCallSite, StorageRestoreApply,
     StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
     StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
-    StorageRestoreInitiatorParts, StorageRestoreInstance, StorageRestoreJob,
-    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageRestoreTimestamps,
+    StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreStageCreate, StorageRestoreStatus, StorageRestoreTimestamps,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -282,13 +281,13 @@ pub async fn stage_restore(
 ) -> Result<StorageRestoreJob, PostgresStorageError> {
     let (initiator, document, artifact, capability_hash, validation_summary, expires_at) =
         request.into_parts();
-    let StorageRestoreInitiatorParts {
-        principal_id: requested_by,
-        identity_scope: requested_by_identity_scope,
-        name: requested_by_name,
-    } = initiator.into_parts();
-    let hubuum_storage_core::StorageRestoreArtifactSummaryParts { byte_size, sha256 } =
-        artifact.into_parts();
+    let initiator = initiator.into_parts();
+    let requested_by = initiator.principal_id();
+    let requested_by_identity_scope = initiator.identity_scope().to_owned();
+    let requested_by_name = initiator.name().to_owned();
+    let artifact = artifact.into_parts();
+    let byte_size = artifact.byte_size();
+    let sha256 = artifact.sha256().to_owned();
     let input = NewRestoreJobRow {
         status: StorageRestoreJobStatus::Validated.as_str().to_string(),
         requested_by: requested_by.map(|principal_id| principal_id.id()),

@@ -16,7 +16,7 @@ use crate::storage::{
     StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
     StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
     StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
-    StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate, storage_handle,
+    StorageRemoteTargetUpdate, storage_handle,
 };
 
 pub(crate) async fn get_remote_target(
@@ -241,14 +241,13 @@ fn subject_types_to_storage(
 fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiError> {
     let (metadata, collection_id, name, definition) = target.into_parts();
     let (description, transport, policy) = definition.into_parts();
-    let StorageRemoteTargetTransportParts {
-        method,
-        url_template,
-        headers_template,
-        body_template,
-        auth_config,
-        timeout_ms,
-    } = transport.into_parts();
+    let transport = transport.into_parts();
+    let method = transport.method();
+    let url_template = transport.url_template().to_owned();
+    let headers_template = transport.headers_template().clone();
+    let body_template = transport.body_template().map(str::to_owned);
+    let auth_config = transport.auth_config().clone();
+    let timeout_ms = transport.timeout_ms();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     Ok(RemoteTarget {
         id: metadata.id().id(),

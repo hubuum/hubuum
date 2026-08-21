@@ -2,8 +2,25 @@ use crate::StorageError;
 
 /// Named components of a backend-selected page.
 pub struct StoragePageParts<T> {
-    pub rows: Vec<T>,
-    pub total: Option<i64>,
+    rows: Vec<T>,
+    total: Option<i64>,
+}
+
+impl<T> StoragePageParts<T> {
+    #[must_use]
+    pub fn rows(&self) -> &[T] {
+        &self.rows
+    }
+
+    #[must_use]
+    pub const fn total(&self) -> Option<i64> {
+        self.total
+    }
+
+    #[must_use]
+    pub fn into_rows(self) -> Vec<T> {
+        self.rows
+    }
 }
 
 /// One backend-selected page and an optional exact total computed from the
@@ -60,8 +77,9 @@ mod tests {
         assert_eq!(page.total(), Some(7));
         assert_eq!(page.clone().into_parts(), (vec![1, 2], Some(7)));
         let parts = page.into_named_parts();
-        assert_eq!(parts.rows, vec![1, 2]);
-        assert_eq!(parts.total, Some(7));
+        assert_eq!(parts.rows(), &[1, 2]);
+        assert_eq!(parts.total(), Some(7));
+        assert_eq!(parts.into_rows(), vec![1, 2]);
     }
 
     #[test]

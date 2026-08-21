@@ -507,11 +507,38 @@ pub struct StorageRemoteCallArtifactTarget {
 
 /// Named remote-call target components consumed by persistence adapters.
 pub struct StorageRemoteCallArtifactTargetParts {
-    pub target_id: Option<RemoteTargetId>,
-    pub subject_type: StorageRemoteTargetSubjectType,
-    pub subject_id: ResourceId,
-    pub method: Option<StorageRemoteHttpMethod>,
-    pub rendered_url: String,
+    target_id: Option<RemoteTargetId>,
+    subject_type: StorageRemoteTargetSubjectType,
+    subject_id: ResourceId,
+    method: Option<StorageRemoteHttpMethod>,
+    rendered_url: String,
+}
+
+impl StorageRemoteCallArtifactTargetParts {
+    #[must_use]
+    pub const fn target_id(&self) -> Option<RemoteTargetId> {
+        self.target_id
+    }
+
+    #[must_use]
+    pub const fn subject_type(&self) -> StorageRemoteTargetSubjectType {
+        self.subject_type
+    }
+
+    #[must_use]
+    pub const fn subject_id(&self) -> ResourceId {
+        self.subject_id
+    }
+
+    #[must_use]
+    pub const fn method(&self) -> Option<StorageRemoteHttpMethod> {
+        self.method
+    }
+
+    #[must_use]
+    pub fn rendered_url(&self) -> &str {
+        &self.rendered_url
+    }
 }
 
 impl StorageRemoteCallArtifactTarget {

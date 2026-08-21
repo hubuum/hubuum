@@ -26,9 +26,8 @@ use crate::storage::{
     StorageBackupSnapshot, StorageBackupStateSection, StorageContext, StorageRestoreApply,
     StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
     StorageRestoreDocument, StorageRestoreDocumentMetadata, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreInitiatorParts, StorageRestoreJob,
-    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageRestoreTimestampParts,
+    StorageRestoreInitiator, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreStageCreate, StorageRestoreStatus,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
@@ -81,20 +80,19 @@ fn restore_status_from_storage(status: StorageRestoreJobStatus) -> RestoreJobSta
 
 fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJobSummaryData {
     let (id, status, initiator, artifact, error, timestamps) = summary.into_parts();
-    let StorageRestoreInitiatorParts {
-        principal_id: requested_by,
-        identity_scope: requested_by_identity_scope,
-        name: requested_by_name,
-    } = initiator.into_parts();
-    let crate::storage::StorageRestoreArtifactSummaryParts { byte_size, sha256 } =
-        artifact.into_parts();
-    let StorageRestoreTimestampParts {
-        expires_at,
-        confirmed_at,
-        finished_at,
-        created_at,
-        updated_at,
-    } = timestamps.into_parts();
+    let initiator = initiator.into_parts();
+    let requested_by = initiator.principal_id();
+    let requested_by_identity_scope = initiator.identity_scope().to_owned();
+    let requested_by_name = initiator.name().to_owned();
+    let artifact = artifact.into_parts();
+    let byte_size = artifact.byte_size();
+    let sha256 = artifact.sha256().to_owned();
+    let timestamps = timestamps.into_parts();
+    let expires_at = timestamps.expires_at();
+    let confirmed_at = timestamps.confirmed_at();
+    let finished_at = timestamps.finished_at();
+    let created_at = timestamps.created_at();
+    let updated_at = timestamps.updated_at();
     RestoreJobSummaryData {
         id: id.id(),
         status: restore_status_from_storage(status),

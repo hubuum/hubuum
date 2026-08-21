@@ -381,6 +381,31 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
     }
 }
 
+#[test]
+fn storage_contract_struct_representations_remain_private() {
+    let source_dir = repository_root().join("crates/hubuum-storage-core/src");
+    for path in rust_files(&source_dir) {
+        let source = read_source(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for (index, line) in source.lines().enumerate() {
+            let Some((field, _)) = line.trim_start().strip_prefix("pub ").and_then(|line| {
+                line.split_once(':').filter(|(field, _)| {
+                    field
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                })
+            }) else {
+                continue;
+            };
+            panic!(
+                "storage contract field {field} must remain private at {}:{}",
+                path.display(),
+                index + 1
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 fn rust_files(directory: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
