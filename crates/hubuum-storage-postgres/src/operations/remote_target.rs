@@ -90,12 +90,18 @@ impl RemoteTargetRow {
                     self.body_template,
                     self.auth_config,
                     self.timeout_ms,
-                )?,
+                )
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value("remote target transport", error)
+                })?,
                 StorageRemoteTargetPolicy::try_new(
                     self.class_id.map(ClassId::new).transpose()?,
                     allowed_subject_types,
                     self.enabled,
-                )?,
+                )
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value("remote target policy", error)
+                })?,
             ),
         ))
     }
@@ -675,17 +681,13 @@ fn decode_subject_types(
     subject_types: Value,
 ) -> Result<Vec<StorageRemoteTargetSubjectType>, PostgresStorageError> {
     let subject_types = serde_json::from_value::<Vec<String>>(subject_types).map_err(|error| {
-        PostgresStorageError::database(format!(
-            "Could not deserialize remote target subject types: {error}"
-        ))
+        PostgresStorageError::invalid_persisted_value("remote target subject types", error)
     })?;
     subject_types
         .into_iter()
         .map(|subject_type| {
             subject_type.parse().map_err(|error| {
-                PostgresStorageError::database(format!(
-                    "Invalid persisted remote target subject type: {error}"
-                ))
+                PostgresStorageError::invalid_persisted_value("remote target subject type", error)
             })
         })
         .collect()
@@ -693,14 +695,14 @@ fn decode_subject_types(
 
 fn decode_http_method(method: &str) -> Result<StorageRemoteHttpMethod, PostgresStorageError> {
     method.parse().map_err(|error| {
-        PostgresStorageError::database(format!(
-            "Invalid persisted remote target HTTP method: {error}"
-        ))
+        PostgresStorageError::invalid_persisted_value("remote target HTTP method", error)
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use hubuum_storage_core::{StorageError, StorageErrorKind};
+
     use super::*;
 
     #[test]
@@ -755,5 +757,38 @@ mod tests {
 
         assert_eq!(snapshot["auth_config"], "<redacted>");
         assert!(!snapshot.to_string().contains("secret-ref"));
+    }
+
+    #[test]
+    fn invalid_persisted_remote_target_is_a_backend_failure() {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let row = RemoteTargetRow {
+            id: 1,
+            collection_id: 2,
+            class_id: None,
+            name: "target".to_string(),
+            description: "description".to_string(),
+            method: "post".to_string(),
+            url_template: "https://secret.invalid".to_string(),
+            headers_template: json!({}),
+            body_template: None,
+            auth_config: json!({"secret": "secret-ref"}),
+            allowed_subject_types: json!(["collection"]),
+            timeout_ms: 0,
+            enabled: true,
+            created_at: timestamp,
+            updated_at: timestamp,
+            revision: PostgresRevision::INITIAL,
+        };
+
+        let error = row.into_storage().unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+        assert_eq!(
+            StorageError::from(error).message(),
+            "PostgreSQL persisted remote target transport failed contract validation"
+        );
     }
 }

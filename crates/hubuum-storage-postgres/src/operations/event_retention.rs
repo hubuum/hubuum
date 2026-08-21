@@ -295,7 +295,9 @@ fn retention_batch(row: RetentionBatchRow) -> Result<EventRetentionBatch, Postgr
                     "Failed to serialize claimed PostgreSQL event: {error}"
                 ))
             })?;
-            RetainedEvent::try_new(sequence, json).map_err(PostgresStorageError::from)
+            RetainedEvent::try_new(sequence, json).map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("retained event", error)
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(EventRetentionBatch::new(

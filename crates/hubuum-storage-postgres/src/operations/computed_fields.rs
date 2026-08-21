@@ -82,9 +82,7 @@ impl ComputationStateRow {
             .rebuild_status
             .parse::<StorageComputationRebuildStatus>()
             .map_err(|error| {
-                PostgresStorageError::database(format!(
-                    "Invalid persisted computation rebuild status: {error}"
-                ))
+                PostgresStorageError::invalid_persisted_value("computation rebuild status", error)
             })?;
         StorageClassComputationState::builder(
             ClassId::new(self.class_id)?,
@@ -96,9 +94,7 @@ impl ComputationStateRow {
         .active_task(self.active_task_id.map(TaskId::new).transpose()?)
         .last_error(self.last_error)
         .try_build()
-        .map_err(|error| {
-            PostgresStorageError::database(format!("Invalid persisted computation state: {error}"))
-        })
+        .map_err(|error| PostgresStorageError::invalid_persisted_value("computation state", error))
     }
 }
 

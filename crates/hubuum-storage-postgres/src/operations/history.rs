@@ -167,9 +167,10 @@ fn history_operation(value: &str) -> Result<StorageHistoryOperation, PostgresSto
         "I" => Ok(StorageHistoryOperation::Create),
         "U" => Ok(StorageHistoryOperation::Update),
         "D" => Ok(StorageHistoryOperation::Delete),
-        _ => Err(PostgresStorageError::database(format!(
-            "Invalid persisted history operation '{value}'"
-        ))),
+        _ => Err(PostgresStorageError::invalid_persisted_value(
+            "history operation",
+            value,
+        )),
     }
 }
 
@@ -260,18 +261,20 @@ impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
         let allowed_subject_types =
             serde_json::from_value::<Vec<String>>(row.allowed_subject_types)
                 .map_err(|error| {
-                    PostgresStorageError::database(format!(
-                        "Invalid persisted remote-target subject policy: {error}"
-                    ))
+                    PostgresStorageError::invalid_persisted_value(
+                        "remote target history subject policy",
+                        error,
+                    )
                 })?
                 .into_iter()
                 .map(|subject_type| {
                     subject_type
                         .parse::<StorageRemoteTargetSubjectType>()
                         .map_err(|error| {
-                            PostgresStorageError::database(format!(
-                                "Invalid persisted remote-target subject policy: {error}"
-                            ))
+                            PostgresStorageError::invalid_persisted_value(
+                                "remote target history subject type",
+                                error,
+                            )
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -281,21 +284,31 @@ impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
                 row.method
                     .parse::<StorageRemoteHttpMethod>()
                     .map_err(|error| {
-                        PostgresStorageError::database(format!(
-                            "Invalid persisted remote-target HTTP method: {error}"
-                        ))
+                        PostgresStorageError::invalid_persisted_value(
+                            "remote target history HTTP method",
+                            error,
+                        )
                     })?,
                 row.url_template,
                 row.headers_template,
                 row.body_template,
                 row.auth_config,
                 row.timeout_ms,
-            )?,
+            )
+            .map_err(|error| {
+                PostgresStorageError::invalid_persisted_value(
+                    "remote target history transport",
+                    error,
+                )
+            })?,
             StorageRemoteTargetPolicy::try_new(
                 row.class_id.map(ClassId::new).transpose()?,
                 allowed_subject_types,
                 row.enabled,
-            )?,
+            )
+            .map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("remote target history policy", error)
+            })?,
         );
         let record = StorageRemoteTarget::new(
             record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,

@@ -198,23 +198,33 @@ struct RestoreSummaryParts {
 fn summary_from_parts(
     parts: RestoreSummaryParts,
 ) -> Result<StorageRestoreJobSummary, PostgresStorageError> {
+    let status = StorageRestoreJobStatus::from_stored(&parts.status)
+        .map_err(|error| PostgresStorageError::invalid_persisted_value("restore status", error))?;
+    let initiator = StorageRestoreInitiator::try_new(
+        parts.requested_by.map(PrincipalId::new).transpose()?,
+        parts.requested_by_identity_scope,
+        parts.requested_by_name,
+    )
+    .map_err(|error| PostgresStorageError::invalid_persisted_value("restore initiator", error))?;
+    let artifact =
+        StorageRestoreArtifactSummary::try_new(parts.byte_size, parts.sha256).map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("restore artifact", error)
+        })?;
+    let timestamps = StorageRestoreTimestamps::try_new(
+        parts.expires_at.and_utc(),
+        parts.confirmed_at.map(|value| value.and_utc()),
+        parts.finished_at.map(|value| value.and_utc()),
+        parts.created_at.and_utc(),
+        parts.updated_at.and_utc(),
+    )
+    .map_err(|error| PostgresStorageError::invalid_persisted_value("restore timestamps", error))?;
     Ok(StorageRestoreJobSummary::new(
         RestoreJobId::new(parts.id)?,
-        StorageRestoreJobStatus::from_stored(&parts.status)?,
-        StorageRestoreInitiator::try_new(
-            parts.requested_by.map(PrincipalId::new).transpose()?,
-            parts.requested_by_identity_scope,
-            parts.requested_by_name,
-        )?,
-        StorageRestoreArtifactSummary::try_new(parts.byte_size, parts.sha256)?,
+        status,
+        initiator,
+        artifact,
         parts.error,
-        StorageRestoreTimestamps::try_new(
-            parts.expires_at.and_utc(),
-            parts.confirmed_at.map(|value| value.and_utc()),
-            parts.finished_at.map(|value| value.and_utc()),
-            parts.created_at.and_utc(),
-            parts.updated_at.and_utc(),
-        )?,
+        timestamps,
     ))
 }
 

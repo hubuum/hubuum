@@ -56,6 +56,22 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub(crate) fn invalid_persisted_value(
+        projection: &'static str,
+        error: impl fmt::Debug,
+    ) -> Self {
+        error!(
+            message = "PostgreSQL persisted value failed storage contract validation",
+            backend = "postgresql",
+            projection,
+            error = ?error,
+        );
+        Self::database(format!(
+            "PostgreSQL persisted {projection} failed contract validation"
+        ))
+    }
+
+    #[must_use]
     pub fn authorization_unavailable(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::AuthorizationUnavailable, message, None)
     }
@@ -321,6 +337,21 @@ mod tests {
         assert_eq!(portable.kind(), StorageErrorKind::Backend);
         assert_eq!(portable.message(), "PostgreSQL query failed");
         assert!(!portable.message().contains(native_detail));
+    }
+
+    #[test]
+    fn persisted_contract_details_do_not_cross_the_storage_boundary() {
+        let portable = StorageError::from(PostgresStorageError::invalid_persisted_value(
+            "remote target",
+            StorageError::invalid_input("secret persisted value"),
+        ));
+
+        assert_eq!(portable.kind(), StorageErrorKind::Backend);
+        assert_eq!(
+            portable.message(),
+            "PostgreSQL persisted remote target failed contract validation"
+        );
+        assert!(!portable.message().contains("secret persisted value"));
     }
 
     #[derive(Debug)]
