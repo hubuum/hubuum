@@ -6,8 +6,8 @@ use hubuum_query::QueryOptions;
 
 use crate::{
     AuthenticationTokenScope, AuthorizationCollection, AuthorizationCollectionGrantListQuery,
-    AuthorizationGrant, AuthorizationGroup, AuthorizationGroupGrant, AuthorizationGroupGrantPage,
-    AuthorizationPermission, AuthorizationPolicySnapshotRow, StorageError,
+    AuthorizationGrant, AuthorizationGroup, AuthorizationGroupGrant, AuthorizationPermission,
+    AuthorizationPolicySnapshotRow, StorageCountedPage, StorageError,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -267,27 +267,6 @@ impl fmt::Debug for AuthorizationCollectionGroupsPageQuery {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthorizationGroupPage {
-    groups: Vec<AuthorizationGroup>,
-    total_count: i64,
-}
-
-impl AuthorizationGroupPage {
-    #[must_use]
-    pub const fn new(groups: Vec<AuthorizationGroup>, total_count: i64) -> Self {
-        Self {
-            groups,
-            total_count,
-        }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<AuthorizationGroup>, i64) {
-        (self.groups, self.total_count)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthorizationEffectiveGroupGrant {
     target_collection: AuthorizationCollection,
     source_collection: AuthorizationCollection,
@@ -343,22 +322,22 @@ impl AuthorizationEffectiveGroupGrant {
 /// administration APIs. Policy decisions remain outside this data contract.
 #[async_trait]
 pub trait CollectionAuthorizationStorage: Send + Sync {
-    async fn principal_collection_permissions(
+    async fn list_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError>;
 
-    async fn principal_all_collection_permissions(
+    async fn list_all_principal_collection_permissions(
         &self,
         principal_id: PrincipalId,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError>;
 
-    async fn principal_collection_permissions_page(
+    async fn list_principal_collection_permissions_page(
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
-    ) -> Result<AuthorizationGroupGrantPage, StorageError>;
+    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError>;
 
-    async fn effective_principal_collection_permissions(
+    async fn list_effective_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError>;
@@ -368,26 +347,26 @@ pub trait CollectionAuthorizationStorage: Send + Sync {
         query: AuthorizationCollectionVisibilityQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError>;
 
-    async fn group_has_collection_permission(
+    async fn has_group_collection_permission(
         &self,
         query: AuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError>;
 
-    async fn effective_group_collection_permissions(
+    async fn list_effective_group_collection_permissions(
         &self,
         collection_id: CollectionId,
         group_id: GroupId,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError>;
 
-    async fn groups_with_collection_permission(
+    async fn list_groups_with_collection_permission(
         &self,
         query: AuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError>;
 
-    async fn groups_with_collection_permission_page(
+    async fn list_groups_with_collection_permission_page(
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<AuthorizationGroupPage, StorageError>;
+    ) -> Result<StorageCountedPage<AuthorizationGroup>, StorageError>;
 
     async fn list_collection_group_permissions(
         &self,
@@ -397,9 +376,9 @@ pub trait CollectionAuthorizationStorage: Send + Sync {
     async fn list_collection_group_permissions_page(
         &self,
         query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<AuthorizationGroupGrantPage, StorageError>;
+    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError>;
 
-    async fn collection_group_permission(
+    async fn get_collection_group_permission(
         &self,
         collection_id: CollectionId,
         group_id: GroupId,

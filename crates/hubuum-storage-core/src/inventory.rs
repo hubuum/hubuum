@@ -81,5 +81,5 @@ impl StorageInventoryCounts {
 /// Administrative inventory queries every selectable backend must provide.
 #[async_trait]
 pub trait InventoryStorage: Send + Sync {
-    async fn inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError>;
+    async fn get_inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError>;
 }

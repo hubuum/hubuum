@@ -13,11 +13,10 @@ use hubuum_storage_core::{
     AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery,
     AuthorizationEffectiveGroupGrant, AuthorizationGrant, AuthorizationGrantKey,
     AuthorizationGroup, AuthorizationGroupCollectionQuery, AuthorizationGroupGrant,
-    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationGroupPage,
-    AuthorizationObjectResource, AuthorizationPermission, AuthorizationPermissionSet,
-    AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
-    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
-    AuthorizationResourceIds,
+    AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPermission,
+    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
+    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, StorageCountedPage,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -52,7 +51,7 @@ pub async fn get_authorization_principal(
         .await
 }
 
-pub async fn authorization_principal_is_group_member(
+pub async fn is_authorization_principal_group_member(
     runtime: &PostgresRuntime,
     query: AuthorizationGroupMembershipQuery,
 ) -> Result<bool, PostgresStorageError> {
@@ -212,7 +211,7 @@ pub async fn authorize_local_collections(
     Ok(matching as usize == query.collection_ids().len())
 }
 
-pub async fn local_authorized_collections(
+pub async fn list_local_authorized_collections(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionsQuery,
 ) -> Result<Vec<AuthorizationCollection>, PostgresStorageError> {
@@ -348,7 +347,7 @@ pub async fn list_authorization_group_candidates(
         .await
 }
 
-pub async fn authorization_policy_snapshot(
+pub async fn get_authorization_policy_snapshot(
     runtime: &PostgresRuntime,
 ) -> Result<Vec<AuthorizationPolicySnapshotRow>, PostgresStorageError> {
     runtime
@@ -383,7 +382,7 @@ pub async fn authorization_policy_snapshot(
 }
 
 /// Return the direct grants held by a principal's groups on one collection.
-pub async fn principal_collection_permissions(
+pub async fn list_principal_collection_permissions(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionQuery,
 ) -> Result<Vec<AuthorizationGroupGrant>, PostgresStorageError> {
@@ -408,7 +407,7 @@ pub async fn principal_collection_permissions(
 }
 
 /// Return every direct policy row held by a principal's groups.
-pub async fn principal_all_collection_permissions(
+pub async fn list_all_principal_collection_permissions(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<Vec<AuthorizationPolicySnapshotRow>, PostgresStorageError> {
@@ -448,10 +447,10 @@ pub async fn principal_all_collection_permissions(
 }
 
 /// Return a stable cursor page of a principal's direct grants.
-pub async fn principal_collection_permissions_page(
+pub async fn list_principal_collection_permissions_page(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionPageQuery,
-) -> Result<AuthorizationGroupGrantPage, PostgresStorageError> {
+) -> Result<StorageCountedPage<AuthorizationGroupGrant>, PostgresStorageError> {
     if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
@@ -460,24 +459,21 @@ pub async fn principal_collection_permissions_page(
                     .get_result::<i64>(connection)
                     .await?;
                 let items = load_principal_grants(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(AuthorizationGroupGrantPage::new(items, total))
+                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, total))
             })
             .await
     } else {
         runtime
             .with_connection(async move |connection| {
                 let items = load_principal_grants(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(AuthorizationGroupGrantPage::new(
-                    items,
-                    SKIPPED_TOTAL_COUNT,
-                ))
+                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, SKIPPED_TOTAL_COUNT))
             })
             .await
     }
 }
 
 /// Return direct and inherited grants held by a principal's groups.
-pub async fn effective_principal_collection_permissions(
+pub async fn list_effective_principal_collection_permissions(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionQuery,
 ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, PostgresStorageError> {
@@ -578,7 +574,7 @@ pub async fn list_visible_collections(
 }
 
 /// Return whether a group's direct or inherited grant contains one permission.
-pub async fn group_has_collection_permission(
+pub async fn has_group_collection_permission(
     runtime: &PostgresRuntime,
     query: AuthorizationGroupCollectionQuery,
 ) -> Result<bool, PostgresStorageError> {
@@ -606,7 +602,7 @@ pub async fn group_has_collection_permission(
 }
 
 /// Return direct and inherited grants for one group on one collection.
-pub async fn effective_group_collection_permissions(
+pub async fn list_effective_group_collection_permissions(
     runtime: &PostgresRuntime,
     collection_id: i32,
     group_id: i32,
@@ -642,7 +638,7 @@ pub async fn effective_group_collection_permissions(
 }
 
 /// Return every group with one direct or inherited permission.
-pub async fn groups_with_collection_permission(
+pub async fn list_groups_with_collection_permission(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGroupsQuery,
 ) -> Result<Vec<AuthorizationGroup>, PostgresStorageError> {
@@ -658,10 +654,10 @@ pub async fn groups_with_collection_permission(
 }
 
 /// Return a stable cursor page of groups with one effective permission.
-pub async fn groups_with_collection_permission_page(
+pub async fn list_groups_with_collection_permission_page(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGroupsPageQuery,
-) -> Result<AuthorizationGroupPage, PostgresStorageError> {
+) -> Result<StorageCountedPage<AuthorizationGroup>, PostgresStorageError> {
     if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
@@ -670,17 +666,14 @@ pub async fn groups_with_collection_permission_page(
                     .get_result::<i64>(connection)
                     .await?;
                 let groups = load_groups_page(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(AuthorizationGroupPage::new(groups, total))
+                Ok::<_, PostgresStorageError>(StorageCountedPage::new(groups, total))
             })
             .await
     } else {
         runtime
             .with_connection(async move |connection| {
                 let groups = load_groups_page(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(AuthorizationGroupPage::new(
-                    groups,
-                    SKIPPED_TOTAL_COUNT,
-                ))
+                Ok::<_, PostgresStorageError>(StorageCountedPage::new(groups, SKIPPED_TOTAL_COUNT))
             })
             .await
     }
@@ -920,7 +913,7 @@ fn group_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSto
 pub async fn list_local_collection_grants(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGrantListQuery,
-) -> Result<AuthorizationGroupGrantPage, PostgresStorageError> {
+) -> Result<StorageCountedPage<AuthorizationGroupGrant>, PostgresStorageError> {
     let permissions = grant_query_permissions(&query)?;
     if query.query_options().include_total() {
         runtime
@@ -930,17 +923,14 @@ pub async fn list_local_collection_grants(
                     .get_result::<i64>(connection)
                     .await?;
                 let items = load_group_grants(connection, &query, &permissions).await?;
-                Ok::<_, PostgresStorageError>(AuthorizationGroupGrantPage::new(items, total))
+                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, total))
             })
             .await
     } else {
         runtime
             .with_connection(async |connection| {
                 let items = load_group_grants(connection, &query, &permissions).await?;
-                Ok::<_, PostgresStorageError>(AuthorizationGroupGrantPage::new(
-                    items,
-                    SKIPPED_TOTAL_COUNT,
-                ))
+                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, SKIPPED_TOTAL_COUNT))
             })
             .await
     }
@@ -1078,7 +1068,7 @@ pub async fn get_local_collection_grant(
         .await
 }
 
-pub async fn collection_group_permission(
+pub async fn get_collection_group_permission(
     runtime: &PostgresRuntime,
     collection_id: i32,
     group_id: i32,

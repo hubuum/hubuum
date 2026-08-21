@@ -110,7 +110,7 @@ impl fmt::Debug for StorageBackupSnapshot {
 /// Mandatory full-system snapshot behavior for every selectable backend.
 #[async_trait]
 pub trait BackupSnapshotStorage: Send + Sync {
-    async fn snapshot_backup(
+    async fn create_backup_snapshot(
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError>;

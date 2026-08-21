@@ -26,29 +26,22 @@ impl ExecutionStorage for StorageHandle {
     }
 }
 
-impl WorkerNotificationStorage for StorageHandle {
-    fn listen_for_worker_notifications(
+impl StorageHandle {
+    pub(crate) fn has_worker_notification_provider(&self) -> bool {
+        self.inner.worker_notification_provider.is_some()
+    }
+
+    pub(crate) fn create_worker_notification_listener(
         &self,
         topic: StorageNotification,
         on_notification: fn(),
         shutdown: StorageNotificationShutdown,
-    ) -> StorageNotificationListener {
-        let backend_name = self.backend_name();
-        self.observe_infallible_storage_call(
-            backend_name,
-            "worker_notifications",
-            "create_listener",
-            || {
-                debug!(
-                    message = "storage worker notification listener created",
-                    topic = topic.as_str(),
-                );
-                dispatch_backend!(self, |backend| backend.listen_for_worker_notifications(
-                    topic,
-                    on_notification,
-                    shutdown,
-                ))
-            },
-        )
+    ) -> Option<StorageNotificationListener> {
+        let provider = self.inner.worker_notification_provider.clone()?;
+        debug!(
+            message = "storage worker notification listener created",
+            topic = topic.as_str(),
+        );
+        Some(provider.listen_for_worker_notifications(topic, on_notification, shutdown))
     }
 }

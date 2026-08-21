@@ -890,22 +890,22 @@ pub trait RelationQueryStorage: Send + Sync {
         query: RelationTouchingQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError>;
 
-    async fn class_relations_touching_ids(
+    async fn list_class_relations_touching_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError>;
 
-    async fn class_relations_between_ids(
+    async fn list_class_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError>;
 
-    async fn object_relations_touching_ids(
+    async fn list_object_relations_touching_ids(
         &self,
         query: ObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError>;
 
-    async fn object_relations_between_ids(
+    async fn list_object_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError>;

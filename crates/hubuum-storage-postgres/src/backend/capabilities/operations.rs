@@ -2,19 +2,19 @@ use super::super::*;
 
 #[async_trait]
 impl MetricsStorage for PostgresStorage {
-    async fn inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+    async fn get_inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
         crate::operations::metrics::load_inventory_gauge_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+    async fn get_task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
         crate::operations::metrics::load_task_gauge_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+    async fn get_event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
         crate::operations::event_observability::load_event_metrics_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -23,7 +23,7 @@ impl MetricsStorage for PostgresStorage {
 
 #[async_trait]
 impl InventoryStorage for PostgresStorage {
-    async fn inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
+    async fn get_inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
         crate::operations::inventory::load_inventory_counts(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -32,7 +32,7 @@ impl InventoryStorage for PostgresStorage {
 
 #[async_trait]
 impl OperationalStateStorage for PostgresStorage {
-    async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+    async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
         crate::operations::probe::load_readiness_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -44,13 +44,13 @@ impl OperationalStateStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+    async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
         crate::operations::meta::load_task_queue_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn export_template_health(
+    async fn get_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
         crate::operations::meta::load_export_template_health(self.runtime())
@@ -58,7 +58,7 @@ impl OperationalStateStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn export_templates_for_audit(
+    async fn list_export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
         crate::operations::meta::load_export_templates_for_audit(self.runtime())
@@ -69,7 +69,7 @@ impl OperationalStateStorage for PostgresStorage {
 
 #[async_trait]
 impl EventHealthStorage for PostgresStorage {
-    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
+    async fn get_event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
         crate::operations::event_observability::load_event_delivery_health(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -90,8 +90,8 @@ impl AuditEventStorage for PostgresStorage {
 
 #[async_trait]
 impl EventSubscriptionStorage for PostgresStorage {
-    async fn enabled_event_sink_count(&self) -> Result<i64, StorageError> {
-        crate::operations::event_subscription::enabled_event_sink_count(self.runtime())
+    async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
+        crate::operations::event_subscription::count_enabled_event_sinks(self.runtime())
             .await
             .map_err(StorageError::from)
     }

@@ -92,7 +92,7 @@ struct DatabaseTimeRow {
     now: NaiveDateTime,
 }
 
-pub async fn external_principal_state(
+pub async fn get_external_principal_state(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<Option<StorageExternalPrincipalState>, PostgresStorageError> {

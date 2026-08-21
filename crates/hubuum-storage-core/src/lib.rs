@@ -48,11 +48,10 @@ pub use authorization::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
     AuthorizationCollectionsQuery, AuthorizationGrant, AuthorizationGrantDelete,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
-    AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
-    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationObjectResource,
-    AuthorizationPermission, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
-    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationResourceIds,
-    AuthorizationStorage,
+    AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery, AuthorizationGroupProfile,
+    AuthorizationGroupSyncState, AuthorizationObjectResource, AuthorizationPermission,
+    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationResourceIds, AuthorizationStorage,
 };
 pub use backend::StorageBackend;
 pub use backup_snapshot::{
@@ -63,9 +62,8 @@ pub use catalog::{CatalogListQuery, CatalogStorage};
 pub use collection_authorization::{
     AuthorizationCollectionGroupsPageQuery, AuthorizationCollectionGroupsQuery,
     AuthorizationCollectionVisibilityQuery, AuthorizationEffectiveGroupGrant,
-    AuthorizationGroupCollectionQuery, AuthorizationGroupPage,
-    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
-    CollectionAuthorizationStorage,
+    AuthorizationGroupCollectionQuery, AuthorizationPrincipalCollectionPageQuery,
+    AuthorizationPrincipalCollectionQuery, CollectionAuthorizationStorage,
 };
 pub use computed_field_lifecycle::{
     ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputationRevision,
@@ -112,7 +110,7 @@ pub use export_template_lifecycle::{
 };
 pub use history::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
+    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPrincipalName,
     HistoryStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
     RemoteTargetHistoryRecord,
 };
@@ -199,7 +197,7 @@ pub use operational::{
     OperationalTaskKindCounts, OperationalTaskQueueSnapshot, OperationalTaskStatusCounts,
     OperationalTaskTerminalCounts, ReadinessSnapshot, TokenRetentionStorage,
 };
-pub use page::StoragePage;
+pub use page::{StorageCountedPage, StoragePage};
 pub use record::StorageRecordMetadata;
 pub use relation_lifecycle::{
     ClassRelationStorage, ObjectRelationStorage, StorageClassRelationCreate,
@@ -249,12 +247,11 @@ pub use task_execution::{
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
     StorageExportOutputBuilder, StorageExportOutputSummary, StorageImportTaskResult,
-    StorageImportTaskResultBuilder, StorageImportTaskResultPage, StorageTask, StorageTaskAccess,
-    StorageTaskBuilder, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
-    StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskEventPage,
-    StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
-    StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
-    TaskQueueStorage,
+    StorageImportTaskResultBuilder, StorageTask, StorageTaskAccess, StorageTaskBuilder,
+    StorageTaskCreateRequest, StorageTaskCreateRequestBuilder, StorageTaskDurations,
+    StorageTaskEvent, StorageTaskEventBuilder, StorageTaskKind, StorageTaskListQuery,
+    StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot,
+    StorageTaskStatus, TaskQueueStorage,
 };
 pub use telemetry::{StorageObservation, StorageObserver};
 pub use transaction::{
@@ -268,7 +265,7 @@ pub use unified_search::{
 };
 pub use worker_notifications::{
     StorageNotification, StorageNotificationListener, StorageNotificationShutdown,
-    WorkerNotificationStorage,
+    WorkerNotificationProvider,
 };
 
 use hubuum_domain::ResourceRevision;

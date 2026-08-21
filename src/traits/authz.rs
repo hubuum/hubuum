@@ -99,7 +99,7 @@ pub trait AuthzSubject: PrincipalIdAccessor {
             self.admin_identity_scope().await?,
         );
         Ok(storage_handle(backend)
-            .authorization_principal_is_group_member(query)
+            .is_authorization_principal_group_member(query)
             .await?)
     }
 

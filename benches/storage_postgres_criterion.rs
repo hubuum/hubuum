@@ -354,7 +354,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 );
                 let started = Instant::now();
                 let collection = runtime
-                    .block_on(fixture.storage.transaction(
+                    .block_on(fixture.storage.with_transaction(
                         EventContext::system(),
                         move |transaction| {
                             Box::pin(async move { transaction.collections().create(command).await })

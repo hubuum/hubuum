@@ -315,12 +315,14 @@ Required traits:
 - `MetricsStorage` and `OperationalStateStorage`;
 - `EventDeliveryStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
   `EventRetentionStorage`;
-- `TokenRetentionStorage` and `WorkerNotificationStorage`; and
+- `TokenRetentionStorage`; and
 - `ExecutionStorage`.
 
 This family owns probes and administrative snapshots, logical metrics inputs,
-retention, worker claims and acknowledgements, native wake-up integration, and
-the execution context applied across requests and workers.
+retention, worker claims and acknowledgements, and the execution context
+applied across requests and workers. `WorkerNotificationProvider` is an
+optional application-composition provider: adapters may implement it for
+lower-latency wake-ups, but it is not part of `StorageBackend`.
 
 Common logical observation is reported through application-owned
 `StorageObserver`. An adapter may also define native telemetry for pool,
@@ -339,7 +341,7 @@ EventFanoutStorage -> durable deliveries -> EventDeliveryStorage
                                       external transport
 
 execute_event_retention_batch -> EventRetentionStorage claim/complete + EventArchiveSink
-WorkerNotificationStorage wakes workers without exposing native listeners
+optional WorkerNotificationProvider wakes workers without exposing native listeners
 ```
 
 `ExecutionStorage` is cross-cutting. One composable `StorageExecutionScope`

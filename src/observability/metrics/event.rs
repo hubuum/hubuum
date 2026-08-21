@@ -28,7 +28,7 @@ pub(super) async fn refresh_event_gauges(
     }
 
     let refresh_started_at = Instant::now();
-    match backend.event_metrics_snapshot().await {
+    match backend.get_event_metrics_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,

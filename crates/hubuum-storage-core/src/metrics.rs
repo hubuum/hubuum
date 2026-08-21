@@ -319,9 +319,9 @@ impl EventMetricsSnapshot {
 /// selects a database nor knows how its queries and pool are implemented.
 #[async_trait]
 pub trait MetricsStorage: Send + Sync {
-    async fn inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError>;
+    async fn get_inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError>;
 
-    async fn task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError>;
+    async fn get_task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError>;
 
-    async fn event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError>;
+    async fn get_event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError>;
 }

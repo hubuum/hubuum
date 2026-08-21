@@ -305,10 +305,12 @@ pub trait GroupStorage: Send + Sync {
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<usize>, StorageError>;
 
-    async fn group_members(&self, group_id: GroupId)
-    -> Result<Vec<StoragePrincipal>, StorageError>;
+    async fn list_group_members(
+        &self,
+        group_id: GroupId,
+    ) -> Result<Vec<StoragePrincipal>, StorageError>;
 
-    async fn group_members_page(
+    async fn list_group_members_page(
         &self,
         group_id: GroupId,
         query_options: QueryOptions,
@@ -320,7 +322,7 @@ pub trait GroupStorage: Send + Sync {
         query_options: QueryOptions,
     ) -> Result<i64, StorageError>;
 
-    async fn group_member_principal(
+    async fn get_group_member_principal(
         &self,
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipal, StorageError>;

@@ -199,10 +199,10 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-pub(crate) async fn enabled_event_sink_count(
+pub(crate) async fn count_enabled_event_sinks(
     backend: &impl StorageContext,
 ) -> Result<i64, ApiError> {
-    Ok(storage_handle(backend).enabled_event_sink_count().await?)
+    Ok(storage_handle(backend).count_enabled_event_sinks().await?)
 }
 
 pub(crate) async fn list_event_sinks(

@@ -724,7 +724,7 @@ where
         class_ids: &[i32],
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return relation_queries::class_relations_touching_ids(
+            return relation_queries::list_class_relations_touching_ids(
                 self.pool(),
                 relation_queries::RelationAccess::new(
                     self.subject.principal_id(),
@@ -735,7 +735,7 @@ where
             )
             .await;
         }
-        let candidates = relation_queries::class_relations_touching_ids(
+        let candidates = relation_queries::list_class_relations_touching_ids(
             self.pool(),
             relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
             class_ids,
@@ -913,7 +913,7 @@ where
         ))
     }
 
-    async fn object_relations_between_ids(
+    async fn list_object_relations_between_ids(
         &self,
         object_ids: &[i32],
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
@@ -930,7 +930,7 @@ where
         permissions: PermissionsList,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return relation_queries::object_relations_between_ids(
+            return relation_queries::list_object_relations_between_ids(
                 self.pool(),
                 relation_queries::RelationAccess::new(
                     self.subject.principal_id(),
@@ -941,7 +941,7 @@ where
             )
             .await;
         }
-        let candidates = relation_queries::object_relations_between_ids(
+        let candidates = relation_queries::list_object_relations_between_ids(
             self.pool(),
             relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
             object_ids,
@@ -1780,7 +1780,7 @@ where
             all_object_ids.sort_unstable();
             all_object_ids.dedup();
             let all_relations = exporter
-                .object_relations_between_ids(&all_object_ids)
+                .list_object_relations_between_ids(&all_object_ids)
                 .await?;
 
             // One class-metadata fetch over every object in the export.
@@ -1879,7 +1879,9 @@ where
     let object_ids = std::iter::once(source.id)
         .chain(related_objects.iter().map(|object| object.id))
         .collect::<Vec<_>>();
-    let relations = exporter.object_relations_between_ids(&object_ids).await?;
+    let relations = exporter
+        .list_object_relations_between_ids(&object_ids)
+        .await?;
 
     let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
     all_objects.insert(source.id, source.clone());

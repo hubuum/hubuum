@@ -174,7 +174,6 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "RestoreStorage",
     "ImportStorage",
     "ExportTemplateStorage",
-    "WorkerNotificationStorage",
     "ExecutionStorage",
     "TransactionStorage",
 ];
@@ -1511,7 +1510,7 @@ fn export_template_lifecycle_is_owned_by_the_postgres_adapter() {
         "get_export_template",
         "list_export_templates",
         "list_export_templates_in_collection",
-        "export_template_class_collection_id",
+        "get_export_template_class_collection_id",
         "create_export_template",
         "replace_export_template",
         "delete_export_template",
@@ -2092,18 +2091,18 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
         "CollectionAuthorizationStorage for PostgresStorage",
     );
     for method in [
-        "principal_collection_permissions",
-        "principal_all_collection_permissions",
-        "principal_collection_permissions_page",
-        "effective_principal_collection_permissions",
+        "list_principal_collection_permissions",
+        "list_all_principal_collection_permissions",
+        "list_principal_collection_permissions_page",
+        "list_effective_principal_collection_permissions",
         "list_visible_collections",
-        "group_has_collection_permission",
-        "effective_group_collection_permissions",
-        "groups_with_collection_permission",
-        "groups_with_collection_permission_page",
+        "has_group_collection_permission",
+        "list_effective_group_collection_permissions",
+        "list_groups_with_collection_permission",
+        "list_groups_with_collection_permission_page",
         "list_collection_group_permissions",
         "list_collection_group_permissions_page",
-        "collection_group_permission",
+        "get_collection_group_permission",
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
@@ -2292,10 +2291,10 @@ fn relation_queries_are_owned_by_the_postgres_adapter() {
         "list_object_relations",
         "list_class_relations_touching",
         "list_object_relations_touching",
-        "class_relations_touching_ids",
-        "class_relations_between_ids",
-        "object_relations_touching_ids",
-        "object_relations_between_ids",
+        "list_class_relations_touching_ids",
+        "list_class_relations_between_ids",
+        "list_object_relations_touching_ids",
+        "list_object_relations_between_ids",
         "list_related_classes",
         "list_related_objects",
         "list_related_objects_for_roots",
@@ -2361,7 +2360,7 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
         "impl",
         "ServiceAccountStorage for PostgresStorage",
     );
-    let method = "principal_is_disabled";
+    let method = "is_principal_disabled";
     let method_body = item_body(service_accounts, "fn", method);
     assert!(
         method_body.contains("crate::operations::identity_principals"),
@@ -2454,7 +2453,7 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
         "ExternalIdentityStorage for PostgresStorage",
     );
     for method in [
-        "external_principal_state",
+        "get_external_principal_state",
         "mark_external_sync_attempted",
         "sync_external_user",
     ] {
@@ -2550,10 +2549,10 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         "create_group",
         "update_group",
         "delete_group",
-        "group_members",
-        "group_members_page",
+        "list_group_members",
+        "list_group_members_page",
         "count_group_members",
-        "group_member_principal",
+        "get_group_member_principal",
         "add_group_member",
         "remove_group_member",
     ] {

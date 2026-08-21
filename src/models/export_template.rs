@@ -935,7 +935,7 @@ async fn ensure_template_class_in_collection(
     target_class_id: i32,
 ) -> Result<(), ApiError> {
     let class_collection_id = storage_handle(pool)
-        .export_template_class_collection_id(class_id_to_storage(target_class_id))
+        .get_export_template_class_collection_id(class_id_to_storage(target_class_id))
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
 

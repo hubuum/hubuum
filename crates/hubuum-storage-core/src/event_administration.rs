@@ -1271,7 +1271,7 @@ impl fmt::Debug for StorageEventSubscriptionDelete {
 pub trait EventSubscriptionStorage: Send + Sync {
     /// Return the number of enabled sinks used to decide whether fan-out
     /// workers need to run.
-    async fn enabled_event_sink_count(&self) -> Result<i64, StorageError>;
+    async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError>;
 
     /// List sinks with backend filtering, stable cursor paging, and optional
     /// exact count.

@@ -459,7 +459,7 @@ pub trait ExportTemplateStorage: Send + Sync {
         exclude_template_id: Option<ExportTemplateId>,
     ) -> Result<Vec<StorageExportTemplate>, StorageError>;
 
-    async fn export_template_class_collection_id(
+    async fn get_export_template_class_collection_id(
         &self,
         class_id: ClassId,
     ) -> Result<Option<CollectionId>, StorageError>;

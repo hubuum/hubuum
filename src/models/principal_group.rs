@@ -73,7 +73,7 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .group_member_principal(principal_id_to_storage(self.principal_id))
+            .get_group_member_principal(principal_id_to_storage(self.principal_id))
             .await
             .map_err(ApiError::from)
             .and_then(principal_from_storage)

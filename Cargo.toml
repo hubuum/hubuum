@@ -151,7 +151,7 @@ postgres-bench = [
 # Enables the opt-in end-to-end runtime behavior validator. It starts real
 # server processes and enforces operational budgets rather than benchmarking a
 # library function, so it is intentionally a binary instead of a Cargo bench.
-runtime-behavior-check = []
+runtime-behavior-check = ["hubuum-storage-postgres/benchmark-support"]
 production-all = [
     "amqp",
     "email",

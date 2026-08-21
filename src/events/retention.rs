@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use actix_rt::time::sleep;
+use async_trait::async_trait;
 use serde::Serialize;
 use tracing::{error, info};
 
@@ -48,16 +49,22 @@ struct FileEventArchiveSink<'a> {
     path: Option<&'a Path>,
 }
 
+#[async_trait]
 impl EventArchiveSink for FileEventArchiveSink<'_> {
-    fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError> {
-        if let Some(path) = self.path
-            && !batch.is_empty()
-        {
-            archive_event_batch(path, batch).map_err(|error| {
+    async fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError> {
+        let Some(path) = self.path.filter(|_| !batch.is_empty()) else {
+            return Ok(());
+        };
+        let path = path.to_path_buf();
+        let batch = batch.clone();
+        tokio::task::spawn_blocking(move || archive_event_batch(&path, &batch))
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Event archive task failed to complete: {error}"))
+            })?
+            .map_err(|error| {
                 StorageError::internal(format!("Event archive output failed: {error}"))
-            })?;
-        }
-        Ok(())
+            })
     }
 }
 
@@ -229,7 +236,7 @@ fn archive_event_batch(path: &Path, batch: &EventRetentionBatch) -> Result<(), A
         let _ = fs::remove_file(&temporary_path);
         return Err(error);
     }
-    if let Err(error) = fs::rename(&temporary_path, &final_path) {
+    if let Err(error) = commit_event_archive_file(&temporary_path, &final_path, path) {
         let _ = fs::remove_file(&temporary_path);
         if final_path.try_exists().unwrap_or(false) {
             validate_existing_archive_batch(&final_path, batch)?;
@@ -239,26 +246,64 @@ fn archive_event_batch(path: &Path, batch: &EventRetentionBatch) -> Result<(), A
             "Failed to commit event archive batch: {error}"
         )));
     }
-    sync_event_archive_directory(path).map_err(|error| {
-        ApiError::InternalServerError(format!("Failed to sync event archive directory: {error}"))
-    })
+    Ok(())
 }
 
 #[cfg(not(windows))]
-fn sync_event_archive_directory(path: &Path) -> std::io::Result<()> {
-    File::open(path)?.sync_all()
+fn commit_event_archive_file(
+    temporary_path: &Path,
+    final_path: &Path,
+    directory: &Path,
+) -> std::io::Result<()> {
+    fs::rename(temporary_path, final_path)?;
+    File::open(directory)?.sync_all()
 }
 
 #[cfg(windows)]
-fn sync_event_archive_directory(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::fs::OpenOptionsExt as _;
+fn commit_event_archive_file(
+    temporary_path: &Path,
+    final_path: &Path,
+    _directory: &Path,
+) -> std::io::Result<()> {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
 
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)?
-        .sync_all()
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "MoveFileExW"]
+        fn move_file_ex_w(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let temporary_path: Vec<u16> = temporary_path
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect();
+    let final_path: Vec<u16> = final_path
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect();
+    // SAFETY: Both paths are valid, nul-terminated UTF-16 buffers that remain
+    // alive for the duration of the call.
+    let result = unsafe {
+        move_file_ex_w(
+            temporary_path.as_ptr(),
+            final_path.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn secure_event_archive_directory(path: &Path) -> Result<(), ApiError> {

@@ -74,13 +74,14 @@ grouped into 20 documented capability families covering:
   reads;
 - tasks, imports, exports, backups, restores, and remote targets;
 - audit reads, subscriptions, fan-out, delivery, and retention; and
-- readiness, metrics snapshots, notifications, execution context, and other
-  operational state.
+- readiness, metrics snapshots, execution context, and other operational
+  state.
 
 A missing method is a compile error. Dummy success, empty-result, and generic
 unsupported implementations do not satisfy the semantic contract. Truly
-optional or best-effort behavior must be stated on its narrow operation, with
-a durable correctness path where applicable.
+optional behavior is composed outside the aggregate. In particular,
+`WorkerNotificationProvider` may be attached for low-latency wake-ups because
+durable polling remains the correctness path.
 
 ## Six-Part Audited Storage Contract
 
@@ -122,7 +123,7 @@ The state mutation and canonical audit append share one backend-native commit
 boundary. On failure or rollback, neither may remain visible. Transactional
 notifications may become visible only after the same commit.
 
-`TransactionStorage::transaction` accepts one required `EventContext` and
+`TransactionStorage::with_transaction` accepts one required `EventContext` and
 passes it to every transaction-scoped lifecycle mutation. A callback returning
 `Err`, a native operation failure, or a failed commit rolls back the complete
 unit of work, including its audit events.

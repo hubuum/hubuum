@@ -12,7 +12,7 @@ semantics.
 ## The Shape
 
 ```text
-TransactionStorage::transaction(EventContext, callback)
+TransactionStorage::with_transaction(EventContext, callback)
                             |
                             v
                   opaque StorageTransaction
@@ -77,7 +77,7 @@ preventing application code from rebuilding backend state machines.
 
 ## Audit and Event Guarantee
 
-`TransactionStorage::transaction` requires one `EventContext`. Callers do
+`TransactionStorage::with_transaction` requires one `EventContext`. Callers do
 not pass an optional event context to individual transactional mutations.
 `TransactionalCollections`, `TransactionalClasses`,
 `TransactionalClassRelations`, `TransactionalObjects`, and
@@ -122,7 +122,7 @@ use hubuum_storage_core::{
 };
 
 storage
-    .transaction(EventContext::system(), |transaction| {
+    .with_transaction(EventContext::system(), |transaction| {
         Box::pin(async move {
             let left = transaction
                 .objects()

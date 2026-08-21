@@ -7,8 +7,8 @@ use hubuum_domain::{
 use hubuum_query::QueryOptions;
 
 use crate::{
-    StorageClassRecord, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
-    StorageRemoteTarget,
+    StorageClassRecord, StorageCollection, StorageCountedPage, StorageError, StorageExportTemplate,
+    StorageObject, StorageRemoteTarget,
 };
 
 /// Collection visibility applied by the adapter before counting or paging.
@@ -249,25 +249,6 @@ impl HistoryPrincipalName {
     }
 }
 
-/// Backend-neutral page with the total computed under the same visibility.
-#[derive(Clone, PartialEq, Eq)]
-pub struct HistoryPage<T> {
-    items: Vec<T>,
-    total_count: i64,
-}
-
-impl<T> HistoryPage<T> {
-    #[must_use]
-    pub const fn new(items: Vec<T>, total_count: i64) -> Self {
-        Self { items, total_count }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<T>, i64) {
-        (self.items, self.total_count)
-    }
-}
-
 /// One collection revision returned by [`HistoryStorage`].
 #[derive(Clone, PartialEq, Eq)]
 pub struct CollectionHistoryRecord {
@@ -377,9 +358,9 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_collection_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<CollectionHistoryRecord>, StorageError>;
+    ) -> Result<StorageCountedPage<CollectionHistoryRecord>, StorageError>;
 
-    async fn collection_history_as_of(
+    async fn get_collection_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<CollectionHistoryRecord>, StorageError>;
@@ -387,9 +368,9 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_class_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<ClassHistoryRecord>, StorageError>;
+    ) -> Result<StorageCountedPage<ClassHistoryRecord>, StorageError>;
 
-    async fn class_history_as_of(
+    async fn get_class_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ClassHistoryRecord>, StorageError>;
@@ -397,9 +378,9 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_object_history(
         &self,
         query: ObjectHistoryListQuery,
-    ) -> Result<HistoryPage<ObjectHistoryRecord>, StorageError>;
+    ) -> Result<StorageCountedPage<ObjectHistoryRecord>, StorageError>;
 
-    async fn object_history_as_of(
+    async fn get_object_history_as_of(
         &self,
         query: ObjectHistoryAsOfQuery,
     ) -> Result<Option<ObjectHistoryRecord>, StorageError>;
@@ -407,9 +388,9 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_export_template_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<ExportTemplateHistoryRecord>, StorageError>;
+    ) -> Result<StorageCountedPage<ExportTemplateHistoryRecord>, StorageError>;
 
-    async fn export_template_history_as_of(
+    async fn get_export_template_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError>;
@@ -417,9 +398,9 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_remote_target_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<RemoteTargetHistoryRecord>, StorageError>;
+    ) -> Result<StorageCountedPage<RemoteTargetHistoryRecord>, StorageError>;
 
-    async fn remote_target_history_as_of(
+    async fn get_remote_target_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError>;

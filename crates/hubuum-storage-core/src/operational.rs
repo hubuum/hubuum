@@ -712,21 +712,21 @@ impl EventDeliveryHealthSnapshot {
 /// Operational state every selectable storage backend must expose.
 #[async_trait]
 pub trait OperationalStateStorage: Send + Sync {
-    async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError>;
+    async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError>;
 
     async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError>;
 
-    async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError>;
+    async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError>;
 
     /// Return one backend-aggregated row per stored export-template identity.
     /// Implementations must not return individual export outputs.
-    async fn export_template_health(
+    async fn get_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError>;
 
     /// Load the complete stored template set required for an explicit
     /// administrator validation pass.
-    async fn export_templates_for_audit(
+    async fn list_export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError>;
 }
@@ -743,7 +743,7 @@ pub trait TokenRetentionStorage: Send + Sync {
 /// Event-pipeline persistence health required from every selectable backend.
 #[async_trait]
 pub trait EventHealthStorage: Send + Sync {
-    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError>;
+    async fn get_event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError>;
 }
 
 #[cfg(test)]

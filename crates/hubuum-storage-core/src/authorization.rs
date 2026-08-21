@@ -9,7 +9,7 @@ use hubuum_domain::{
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{MutationOutcome, StorageError};
+use crate::{MutationOutcome, StorageCountedPage, StorageError};
 
 /// Permission vocabulary persisted by a local authorization store.
 ///
@@ -720,12 +720,6 @@ impl AuthorizationGroupGrant {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthorizationGroupGrantPage {
-    items: Vec<AuthorizationGroupGrant>,
-    total_count: i64,
-}
-
 /// One complete local-policy row for backend-neutral policy export.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthorizationPolicySnapshotRow {
@@ -757,18 +751,6 @@ impl AuthorizationPolicySnapshotRow {
         AuthorizationCollection,
     ) {
         (self.grant, self.group, self.collection)
-    }
-}
-
-impl AuthorizationGroupGrantPage {
-    #[must_use]
-    pub const fn new(items: Vec<AuthorizationGroupGrant>, total_count: i64) -> Self {
-        Self { items, total_count }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<AuthorizationGroupGrant>, i64) {
-        (self.items, self.total_count)
     }
 }
 
@@ -1171,7 +1153,7 @@ pub trait AuthorizationStorage: Send + Sync {
         principal_id: PrincipalId,
     ) -> Result<AuthorizationPrincipal, StorageError>;
 
-    async fn authorization_principal_is_group_member(
+    async fn is_authorization_principal_group_member(
         &self,
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError>;
@@ -1196,7 +1178,7 @@ pub trait AuthorizationStorage: Send + Sync {
         query: AuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError>;
 
-    async fn local_authorized_collections(
+    async fn list_local_authorized_collections(
         &self,
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError>;
@@ -1210,14 +1192,14 @@ pub trait AuthorizationStorage: Send + Sync {
         query_options: QueryOptions,
     ) -> Result<Vec<AuthorizationGroup>, StorageError>;
 
-    async fn authorization_policy_snapshot(
+    async fn get_authorization_policy_snapshot(
         &self,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError>;
 
     async fn list_local_collection_grants(
         &self,
         query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<AuthorizationGroupGrantPage, StorageError>;
+    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError>;
 
     async fn get_local_collection_grant(
         &self,

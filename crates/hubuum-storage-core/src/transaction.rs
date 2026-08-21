@@ -415,7 +415,7 @@ pub type StorageTransactionFuture<'transaction, R> =
 /// object-safe transaction runners.
 #[async_trait]
 pub trait TransactionStorage: Send + Sync {
-    async fn transaction<F, R>(
+    async fn with_transaction<F, R>(
         &self,
         event_context: EventContext,
         operation: F,

@@ -2,12 +2,12 @@ use super::*;
 
 #[async_trait]
 impl OperationalStateStorage for StorageHandle {
-    async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+    async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "operational_state",
-            "readiness_snapshot",
-            async { dispatch_backend!(self, |backend| { backend.readiness_snapshot().await }) },
+            "get_readiness_snapshot",
+            async { dispatch_backend!(self, |backend| { backend.get_readiness_snapshot().await }) },
         )
         .await
     }
@@ -22,38 +22,44 @@ impl OperationalStateStorage for StorageHandle {
         .await
     }
 
-    async fn task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+    async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "operational_state",
-            "task_queue_snapshot",
-            async { dispatch_backend!(self, |backend| { backend.task_queue_snapshot().await }) },
+            "get_task_queue_snapshot",
+            async {
+                dispatch_backend!(self, |backend| { backend.get_task_queue_snapshot().await })
+            },
         )
         .await
     }
 
-    async fn export_template_health(
+    async fn get_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "operational_state",
-            "export_template_health",
-            async { dispatch_backend!(self, |backend| { backend.export_template_health().await }) },
+            "get_export_template_health",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_export_template_health().await
+                })
+            },
         )
         .await
     }
 
-    async fn export_templates_for_audit(
+    async fn list_export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "operational_state",
-            "export_templates_for_audit",
+            "list_export_templates_for_audit",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.export_templates_for_audit().await
+                    backend.list_export_templates_for_audit().await
                 })
             },
         )
@@ -63,12 +69,16 @@ impl OperationalStateStorage for StorageHandle {
 
 #[async_trait]
 impl EventHealthStorage for StorageHandle {
-    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
+    async fn get_event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "event_health",
             "delivery_health",
-            async { dispatch_backend!(self, |backend| { backend.event_delivery_health().await }) },
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_event_delivery_health().await
+                })
+            },
         )
         .await
     }
@@ -89,13 +99,15 @@ impl AuditEventStorage for StorageHandle {
 
 #[async_trait]
 impl EventSubscriptionStorage for StorageHandle {
-    async fn enabled_event_sink_count(&self) -> Result<i64, StorageError> {
+    async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "event_subscriptions",
             "count_enabled_sinks",
             async {
-                dispatch_backend!(self, |backend| { backend.enabled_event_sink_count().await })
+                dispatch_backend!(self, |backend| {
+                    backend.count_enabled_event_sinks().await
+                })
             },
         )
         .await

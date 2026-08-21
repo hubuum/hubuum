@@ -190,7 +190,7 @@ pub async fn get_task_queue_state(
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let config = get_config()?.clone();
-    let state = operational_service::task_queue_snapshot(context.backend()).await?;
+    let state = operational_service::get_task_queue_snapshot(context.backend()).await?;
 
     debug!(
         message = "Task queue state requested",

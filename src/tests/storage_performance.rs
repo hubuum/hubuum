@@ -708,7 +708,7 @@ async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
         description: "object transaction query budget".to_string(),
     });
 
-    let (created, queries) = capture_queries(storage.transaction(
+    let (created, queries) = capture_queries(storage.with_transaction(
         EventContext::system(),
         move |transaction| {
             Box::pin(async move { transaction.objects().create(&storage_class, command).await })

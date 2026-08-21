@@ -280,7 +280,7 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .group_members(group_id_to_storage(self.id))
+            .list_group_members(group_id_to_storage(self.id))
             .await
             .map_err(ApiError::from)
             .and_then(|members| members.into_iter().map(principal_from_storage).collect())
@@ -295,7 +295,7 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .group_members_page(group_id_to_storage(self.id), query_options.clone())
+            .list_group_members_page(group_id_to_storage(self.id), query_options.clone())
             .await
             .map_err(ApiError::from)
             .and_then(|members| {

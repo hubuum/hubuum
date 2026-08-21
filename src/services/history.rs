@@ -300,7 +300,7 @@ history_service!(
     collection_history_paginated_with_total_count,
     collection_as_of,
     list_collection_history,
-    collection_history_as_of,
+    get_collection_history_as_of,
     collection_from_storage,
     CollectionHistory
 );
@@ -308,7 +308,7 @@ history_service!(
     class_history_paginated_with_total_count,
     class_as_of,
     list_class_history,
-    class_history_as_of,
+    get_class_history_as_of,
     class_from_storage,
     HubuumClassHistory
 );
@@ -316,7 +316,7 @@ history_service!(
     export_template_history_paginated_with_total_count,
     export_template_as_of,
     list_export_template_history,
-    export_template_history_as_of,
+    get_export_template_history_as_of,
     export_template_from_storage,
     ExportTemplateHistory
 );
@@ -324,7 +324,7 @@ history_service!(
     remote_target_history_paginated_with_total_count,
     remote_target_as_of,
     list_remote_target_history,
-    remote_target_history_as_of,
+    get_remote_target_history_as_of,
     remote_target_from_storage,
     RemoteTargetHistory
 );
@@ -360,7 +360,7 @@ pub async fn object_as_of(
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumObjectHistory>, ApiError> {
     storage_handle(backend)
-        .object_history_as_of(ObjectHistoryAsOfQuery::new(
+        .get_object_history_as_of(ObjectHistoryAsOfQuery::new(
             ObjectId::new(object_id)?,
             ClassId::new(class_id)?,
             at,

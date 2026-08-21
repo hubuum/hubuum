@@ -18,7 +18,7 @@ use crate::models::user::{LoginUser, User, auth_failure};
 use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::services::identity::ensure_identity_scope;
 use crate::services::identity::{
-    ExternalPrincipalState, external_principal_state, mark_external_sync_attempted,
+    ExternalPrincipalState, get_external_principal_state, mark_external_sync_attempted,
     sync_external_user as sync_external_user_from_backend,
 };
 
@@ -705,7 +705,7 @@ async fn external_user_state(
     pool: &impl crate::storage::StorageContext,
     principal_id_value: i32,
 ) -> Result<Option<ExternalUserState>, ApiError> {
-    let Some(state) = external_principal_state(pool, principal_id_value).await? else {
+    let Some(state) = get_external_principal_state(pool, principal_id_value).await? else {
         return Ok(None);
     };
     let configured = auth_provider_registry()?.provider(&state.identity_scope)?;

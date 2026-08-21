@@ -179,7 +179,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         )
         .await?;
     } else if admin_cli.export_template_health {
-        export_template_health(&storage).await?;
+        get_export_template_health(&storage).await?;
     } else if admin_cli.database_ready {
         storage_ready(&storage).await?;
     } else {
@@ -458,7 +458,7 @@ fn destructive_confirmation_error() -> ApiError {
 }
 
 async fn storage_ready(storage: &StorageHandle) -> Result<(), ApiError> {
-    let readiness = storage.readiness_snapshot().await?;
+    let readiness = storage.get_readiness_snapshot().await?;
     if !readiness.storage_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Storage backend schema is not ready".to_string(),
@@ -480,7 +480,7 @@ async fn audit_templates(
     export_template_recursion_limit: usize,
     export_template_fuel: u64,
 ) -> Result<(), ApiError> {
-    let templates = operational_service::export_templates_for_audit(storage).await?;
+    let templates = operational_service::list_export_templates_for_audit(storage).await?;
     let mut failures = Vec::new();
 
     for template in &templates {
@@ -529,8 +529,8 @@ async fn audit_templates(
     )))
 }
 
-async fn export_template_health(storage: &StorageHandle) -> Result<(), ApiError> {
-    let health = operational_service::export_template_health(storage).await?;
+async fn get_export_template_health(storage: &StorageHandle) -> Result<(), ApiError> {
+    let health = operational_service::get_export_template_health(storage).await?;
     if health.is_empty() {
         println!("No stored export outputs found.");
         return Ok(());

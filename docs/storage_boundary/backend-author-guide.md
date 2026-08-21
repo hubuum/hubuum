@@ -220,7 +220,7 @@ observation. Its production constructor must accept an application-owned
 telemetry implementation. Any no-op observer must be an explicit opt-out for
 tests, benchmarks, or one-shot tools.
 
-`TransactionStorage::transaction` is one logical observed entrypoint. Calls
+`TransactionStorage::with_transaction` is one logical observed entrypoint. Calls
 made through its operation accessors are constituent steps rather than new
 composition entrypoints. Native transaction and query instrumentation supplies
 the implementation-level detail without multiplying logical metrics.
@@ -290,9 +290,10 @@ these edits:
    owns settings translation, native observer wiring, initialization errors,
    operational resources and migrations. If the adapter is database-backed
    and can support the legacy database endpoint, attach the optional root-owned
-   `DatabaseDiagnosticsProvider` projection. Registration itself must not
-   require database diagnostics. Native diagnostics do not become core
-   capability traits.
+   `DatabaseDiagnosticsProvider` projection. If it supports native wake-ups,
+   attach its `WorkerNotificationProvider` separately as a latency
+   optimization. Registration itself must require neither provider. Native
+   diagnostics and notifications do not become required storage traits.
 7. Add one `BackendTestEnvironment` variant. Keep its native client or pool
    inside that variant while provisioning the reusable audit, service, and
    HTTP fixtures.

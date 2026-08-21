@@ -10,7 +10,6 @@ use crate::{
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
     RestoreStorage, ServiceAccountStorage, TaskExecutionStorage, TaskQueueStorage,
     TokenRetentionStorage, TokenStorage, TransactionStorage, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationStorage,
 };
 
 /// Complete storage contract accepted by an application composition root.
@@ -65,7 +64,6 @@ pub trait StorageBackend:
     + ImportStorage
     + RestoreStorage
     + ExportTemplateStorage
-    + WorkerNotificationStorage
     + ExecutionStorage
     + TransactionStorage
 {

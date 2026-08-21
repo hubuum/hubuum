@@ -707,7 +707,7 @@ pub trait RestoreStorage: Send + Sync {
     ) -> Result<(), StorageError>;
 
     /// Read maintenance ownership and backend time from one consistent snapshot.
-    async fn restore_coordinator_snapshot(
+    async fn get_restore_coordinator_snapshot(
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError>;
 
@@ -732,7 +732,7 @@ pub trait RestoreStorage: Send + Sync {
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError>;
 
     /// Return the current generation and live instances newer than the cutoff.
-    async fn restore_drain_state(
+    async fn get_restore_drain_state(
         &self,
         heartbeat_cutoff: NaiveDateTime,
     ) -> Result<StorageRestoreDrainState, StorageError>;

@@ -401,7 +401,7 @@ pub(crate) async fn list_object_relations_touching(
     ))
 }
 
-pub(crate) async fn class_relations_touching_ids(
+pub(crate) async fn list_class_relations_touching_ids(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     class_ids: &[i32],
@@ -411,14 +411,14 @@ pub(crate) async fn class_relations_touching_ids(
         access.visibility()?,
     );
     storage_handle(backend)
-        .class_relations_touching_ids(query)
+        .list_class_relations_touching_ids(query)
         .await?
         .into_iter()
         .map(class_relation_from_storage)
         .collect()
 }
 
-pub(crate) async fn class_relations_between_ids(
+pub(crate) async fn list_class_relations_between_ids(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     class_ids: &[i32],
@@ -428,14 +428,14 @@ pub(crate) async fn class_relations_between_ids(
         access.visibility()?,
     );
     storage_handle(backend)
-        .class_relations_between_ids(query)
+        .list_class_relations_between_ids(query)
         .await?
         .into_iter()
         .map(class_relation_from_storage)
         .collect()
 }
 
-pub(crate) async fn object_relations_between_ids(
+pub(crate) async fn list_object_relations_between_ids(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     object_ids: &[i32],
@@ -445,14 +445,14 @@ pub(crate) async fn object_relations_between_ids(
         access.visibility()?,
     );
     storage_handle(backend)
-        .object_relations_between_ids(query)
+        .list_object_relations_between_ids(query)
         .await?
         .into_iter()
         .map(object_relation_from_storage)
         .collect()
 }
 
-pub(crate) async fn object_relations_touching_ids(
+pub(crate) async fn list_object_relations_touching_ids(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     object_ids: &[i32],
@@ -471,7 +471,7 @@ pub(crate) async fn object_relations_touching_ids(
             .map(object_relation_id_to_storage),
     );
     storage_handle(backend)
-        .object_relations_touching_ids(query)
+        .list_object_relations_touching_ids(query)
         .await?
         .into_iter()
         .map(object_relation_from_storage)

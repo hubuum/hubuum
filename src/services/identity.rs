@@ -683,12 +683,12 @@ pub async fn is_human_owner_group_member(
         .await?)
 }
 
-pub async fn principal_is_disabled(
+pub async fn is_principal_disabled(
     context: &impl StorageContext,
     principal_id: i32,
 ) -> Result<bool, ApiError> {
     Ok(storage_handle(context)
-        .principal_is_disabled(principal_id_to_storage(principal_id))
+        .is_principal_disabled(principal_id_to_storage(principal_id))
         .await?)
 }
 
@@ -867,12 +867,12 @@ fn external_state_from_storage(state: StorageExternalPrincipalState) -> External
     }
 }
 
-pub async fn external_principal_state(
+pub async fn get_external_principal_state(
     context: &impl StorageContext,
     principal_id: i32,
 ) -> Result<Option<ExternalPrincipalState>, ApiError> {
     Ok(storage_handle(context)
-        .external_principal_state(principal_id_to_storage(principal_id))
+        .get_external_principal_state(principal_id_to_storage(principal_id))
         .await?
         .map(external_state_from_storage))
 }

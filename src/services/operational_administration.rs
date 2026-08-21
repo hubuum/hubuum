@@ -12,20 +12,20 @@ pub(crate) async fn storage_snapshot(
     Ok(storage.database_storage_snapshot().await?)
 }
 
-pub(crate) async fn task_queue_snapshot(
+pub(crate) async fn get_task_queue_snapshot(
     storage: &StorageHandle,
 ) -> Result<OperationalTaskQueueSnapshot, ApiError> {
-    Ok(storage.task_queue_snapshot().await?)
+    Ok(storage.get_task_queue_snapshot().await?)
 }
 
-pub(crate) async fn export_template_health(
+pub(crate) async fn get_export_template_health(
     storage: &StorageHandle,
 ) -> Result<Vec<OperationalExportTemplateHealth>, ApiError> {
-    Ok(storage.export_template_health().await?)
+    Ok(storage.get_export_template_health().await?)
 }
 
-pub(crate) async fn export_templates_for_audit(
+pub(crate) async fn list_export_templates_for_audit(
     storage: &StorageHandle,
 ) -> Result<Vec<OperationalExportTemplateAuditEntry>, ApiError> {
-    Ok(storage.export_templates_for_audit().await?)
+    Ok(storage.list_export_templates_for_audit().await?)
 }

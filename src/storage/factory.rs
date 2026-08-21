@@ -258,9 +258,7 @@ impl PostgresAdapterFactory {
         let backend = compose_postgres(pool)
             .with_task_lease_pool(task_lease_pool)
             .with_notification_listener_pool(notification_listener_pool);
-        let database_diagnostics = postgres_database_diagnostics(backend.clone());
-        Ok(StorageHandle::from_registered_backend(backend)
-            .with_database_diagnostics(database_diagnostics))
+        Ok(StorageHandle::from_postgres_backend(backend))
     }
 
     fn initialization_error(error: PostgresPoolBuildError) -> StorageError {

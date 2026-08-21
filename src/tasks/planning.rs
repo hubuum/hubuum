@@ -320,7 +320,7 @@ async fn class_relation_exists_cached(
     }
 
     let exists = storage_handle(pool)
-        .import_class_relation_exists(class_id_to_storage(pair.0), class_id_to_storage(pair.1))
+        .has_import_class_relation(class_id_to_storage(pair.0), class_id_to_storage(pair.1))
         .await
         .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.class_relation_exists_cache.insert(pair, exists);
@@ -347,7 +347,7 @@ async fn object_relation_exists_cached(
     }
 
     let exists = storage_handle(pool)
-        .import_object_relation_exists(object_id_to_storage(pair.0), object_id_to_storage(pair.1))
+        .has_import_object_relation(object_id_to_storage(pair.0), object_id_to_storage(pair.1))
         .await
         .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.object_relation_exists_cache.insert(pair, exists);
@@ -984,7 +984,10 @@ where
             })
         } else {
             storage_handle(pool)
-                .import_collection_child_by_name(collection_id_to_storage(parent.id), &input.name)
+                .get_import_collection_child_by_name(
+                    collection_id_to_storage(parent.id),
+                    &input.name,
+                )
                 .await
                 .map_err(|message| PlanningFailure {
                     kind: FailureKind::Runtime,
@@ -1213,7 +1216,7 @@ where
         None
     } else {
         storage_handle(pool)
-            .import_class_by_name(collection_id_to_storage(collection.id), &input.name)
+            .get_import_class_by_name(collection_id_to_storage(collection.id), &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1441,7 +1444,7 @@ where
         None
     } else {
         storage_handle(pool)
-            .import_object_by_name(class_id_to_storage(class.id), &input.name)
+            .get_import_object_by_name(class_id_to_storage(class.id), &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1937,7 +1940,7 @@ where
 
     let identity_scope = input.group_key.resolve_identity_scope_name();
     let group_exists = storage_handle(pool)
-        .import_group_exists(identity_scope, &input.group_key.groupname)
+        .has_import_group(identity_scope, &input.group_key.groupname)
         .await
         .map_err(|err| PlanningFailure {
             kind: FailureKind::Runtime,

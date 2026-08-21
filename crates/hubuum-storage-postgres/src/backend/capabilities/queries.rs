@@ -14,17 +14,17 @@ impl HistoryStorage for PostgresStorage {
     async fn list_collection_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<CollectionHistoryRecord>, StorageError> {
+    ) -> Result<StorageCountedPage<CollectionHistoryRecord>, StorageError> {
         crate::operations::history::list_collection_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn collection_history_as_of(
+    async fn get_collection_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
-        crate::operations::history::collection_history_as_of(self.runtime(), query)
+        crate::operations::history::get_collection_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -32,17 +32,17 @@ impl HistoryStorage for PostgresStorage {
     async fn list_class_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<ClassHistoryRecord>, StorageError> {
+    ) -> Result<StorageCountedPage<ClassHistoryRecord>, StorageError> {
         crate::operations::history::list_class_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn class_history_as_of(
+    async fn get_class_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ClassHistoryRecord>, StorageError> {
-        crate::operations::history::class_history_as_of(self.runtime(), query)
+        crate::operations::history::get_class_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -50,17 +50,17 @@ impl HistoryStorage for PostgresStorage {
     async fn list_object_history(
         &self,
         query: ObjectHistoryListQuery,
-    ) -> Result<HistoryPage<ObjectHistoryRecord>, StorageError> {
+    ) -> Result<StorageCountedPage<ObjectHistoryRecord>, StorageError> {
         crate::operations::history::list_object_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn object_history_as_of(
+    async fn get_object_history_as_of(
         &self,
         query: ObjectHistoryAsOfQuery,
     ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
-        crate::operations::history::object_history_as_of(self.runtime(), query)
+        crate::operations::history::get_object_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -68,17 +68,17 @@ impl HistoryStorage for PostgresStorage {
     async fn list_export_template_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<ExportTemplateHistoryRecord>, StorageError> {
+    ) -> Result<StorageCountedPage<ExportTemplateHistoryRecord>, StorageError> {
         crate::operations::history::list_export_template_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn export_template_history_as_of(
+    async fn get_export_template_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
-        crate::operations::history::export_template_history_as_of(self.runtime(), query)
+        crate::operations::history::get_export_template_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -86,17 +86,17 @@ impl HistoryStorage for PostgresStorage {
     async fn list_remote_target_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<HistoryPage<RemoteTargetHistoryRecord>, StorageError> {
+    ) -> Result<StorageCountedPage<RemoteTargetHistoryRecord>, StorageError> {
         crate::operations::history::list_remote_target_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn remote_target_history_as_of(
+    async fn get_remote_target_history_as_of(
         &self,
         query: HistoryAsOfQuery,
     ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError> {
-        crate::operations::history::remote_target_history_as_of(self.runtime(), query)
+        crate::operations::history::get_remote_target_history_as_of(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -204,38 +204,38 @@ impl RelationQueryStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn class_relations_touching_ids(
+    async fn list_class_relations_touching_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
-        crate::operations::relation_query::class_relations_touching_ids(self.runtime(), query)
+        crate::operations::relation_query::list_class_relations_touching_ids(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn class_relations_between_ids(
+    async fn list_class_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
-        crate::operations::relation_query::class_relations_between_ids(self.runtime(), query)
+        crate::operations::relation_query::list_class_relations_between_ids(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn object_relations_between_ids(
+    async fn list_object_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
-        crate::operations::relation_query::object_relations_between_ids(self.runtime(), query)
+        crate::operations::relation_query::list_object_relations_between_ids(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn object_relations_touching_ids(
+    async fn list_object_relations_touching_ids(
         &self,
         query: ObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
-        crate::operations::relation_query::object_relations_touching_ids(self.runtime(), query)
+        crate::operations::relation_query::list_object_relations_touching_ids(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }

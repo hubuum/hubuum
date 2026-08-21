@@ -553,7 +553,7 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
     .unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
-        .import_collection_child_by_name(
+        .get_import_collection_child_by_name(
             hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
             &imported_name,
         )
@@ -822,7 +822,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
 
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
-        .import_collection_child_by_name(
+        .get_import_collection_child_by_name(
             hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
             &collection_input.name,
         )
@@ -831,24 +831,24 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         .expect("imported collection should exist");
     let classes = [
         backend
-            .import_class_by_name(collection.id(), &class_inputs[0].name)
+            .get_import_class_by_name(collection.id(), &class_inputs[0].name)
             .await
             .unwrap()
             .expect("first imported class should exist"),
         backend
-            .import_class_by_name(collection.id(), &class_inputs[1].name)
+            .get_import_class_by_name(collection.id(), &class_inputs[1].name)
             .await
             .unwrap()
             .expect("second imported class should exist"),
     ];
     let objects = [
         backend
-            .import_object_by_name(classes[0].id(), &object_inputs[0].name)
+            .get_import_object_by_name(classes[0].id(), &object_inputs[0].name)
             .await
             .unwrap()
             .expect("first imported object should exist"),
         backend
-            .import_object_by_name(classes[1].id(), &object_inputs[1].name)
+            .get_import_object_by_name(classes[1].id(), &object_inputs[1].name)
             .await
             .unwrap()
             .expect("second imported object should exist"),
@@ -1066,7 +1066,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
     .unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let collection = backend
-        .import_collection_child_by_name(
+        .get_import_collection_child_by_name(
             hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
             &imported_collection_name,
         )
@@ -1075,24 +1075,24 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         .expect("imported collection should exist");
     let classes = [
         backend
-            .import_class_by_name(collection.id(), &resolve_class_names[0])
+            .get_import_class_by_name(collection.id(), &resolve_class_names[0])
             .await
             .unwrap()
             .expect("first imported class should exist"),
         backend
-            .import_class_by_name(collection.id(), &resolve_class_names[1])
+            .get_import_class_by_name(collection.id(), &resolve_class_names[1])
             .await
             .unwrap()
             .expect("second imported class should exist"),
     ];
     let objects = [
         backend
-            .import_object_by_name(classes[0].id(), &object_names[0])
+            .get_import_object_by_name(classes[0].id(), &object_names[0])
             .await
             .unwrap()
             .expect("first imported object should exist"),
         backend
-            .import_object_by_name(classes[1].id(), &object_names[1])
+            .get_import_object_by_name(classes[1].id(), &object_names[1])
             .await
             .unwrap()
             .expect("second imported object should exist"),
@@ -2564,7 +2564,9 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let collection = backend
-        .import_collection_by_id(hubuum_domain::CollectionId::new(fixture.collection.id).unwrap())
+        .get_import_collection_by_id(
+            hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+        )
         .await
         .unwrap();
 
@@ -2631,7 +2633,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let updated = backend
-        .import_class_by_name(
+        .get_import_class_by_name(
             hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
             &class.name,
         )
@@ -2783,7 +2785,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(plan).await.unwrap();
     let resolved = backend
-        .import_object_by_name(hubuum_domain::ClassId::new(class.id).unwrap(), &object.name)
+        .get_import_object_by_name(hubuum_domain::ClassId::new(class.id).unwrap(), &object.name)
         .await
         .unwrap()
         .expect("updated object should remain addressable by name");

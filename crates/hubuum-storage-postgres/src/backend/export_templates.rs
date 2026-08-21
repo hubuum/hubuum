@@ -43,11 +43,11 @@ impl ExportTemplateStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn export_template_class_collection_id(
+    async fn get_export_template_class_collection_id(
         &self,
         class_id: ClassId,
     ) -> Result<Option<CollectionId>, StorageError> {
-        crate::operations::export_template::export_template_class_collection_id(
+        crate::operations::export_template::get_export_template_class_collection_id(
             self.runtime(),
             class_id.id(),
         )

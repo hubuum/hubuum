@@ -35,8 +35,8 @@ impl AuthenticationStorage for PostgresStorage {
 
 #[async_trait]
 impl BootstrapStorage for PostgresStorage {
-    async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
-        crate::operations::bootstrap::default_admin_bootstrap_required(self.runtime())
+    async fn is_default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
+        crate::operations::bootstrap::is_default_admin_bootstrap_required(self.runtime())
             .await
             .map_err(StorageError::from)
     }
@@ -160,8 +160,8 @@ impl IdentityMembershipStorage for PostgresStorage {
 
 #[async_trait]
 impl ServiceAccountStorage for PostgresStorage {
-    async fn principal_is_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError> {
-        crate::operations::identity_principals::principal_is_disabled(
+    async fn is_principal_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError> {
+        crate::operations::identity_principals::is_principal_disabled(
             self.runtime(),
             principal_id.id(),
         )
@@ -241,11 +241,11 @@ impl ServiceAccountStorage for PostgresStorage {
 
 #[async_trait]
 impl ExternalIdentityStorage for PostgresStorage {
-    async fn external_principal_state(
+    async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
-        crate::operations::external_identity::external_principal_state(
+        crate::operations::external_identity::get_external_principal_state(
             self.runtime(),
             principal_id.id(),
         )
@@ -443,11 +443,11 @@ impl AuthorizationStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn authorization_principal_is_group_member(
+    async fn is_authorization_principal_group_member(
         &self,
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
-        crate::operations::authorization::authorization_principal_is_group_member(
+        crate::operations::authorization::is_authorization_principal_group_member(
             self.runtime(),
             query,
         )
@@ -491,11 +491,11 @@ impl AuthorizationStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn local_authorized_collections(
+    async fn list_local_authorized_collections(
         &self,
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
-        crate::operations::authorization::local_authorized_collections(self.runtime(), query)
+        crate::operations::authorization::list_local_authorized_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -520,10 +520,10 @@ impl AuthorizationStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn authorization_policy_snapshot(
+    async fn get_authorization_policy_snapshot(
         &self,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
-        crate::operations::authorization::authorization_policy_snapshot(self.runtime())
+        crate::operations::authorization::get_authorization_policy_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
@@ -531,7 +531,7 @@ impl AuthorizationStorage for PostgresStorage {
     async fn list_local_collection_grants(
         &self,
         query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<AuthorizationGroupGrantPage, StorageError> {
+    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError> {
         crate::operations::authorization::list_local_collection_grants(self.runtime(), query)
             .await
             .map_err(StorageError::from)

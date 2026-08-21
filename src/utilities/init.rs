@@ -67,7 +67,7 @@ where
     Fut: std::future::Future<Output = Result<String, InitError>>,
 {
     let required = storage
-        .default_admin_bootstrap_required()
+        .is_default_admin_bootstrap_required()
         .await
         .map_err(|error| format!("Failed to inspect administrator bootstrap state: {error}"))?;
     if !required {

@@ -225,7 +225,7 @@ pub async fn list_object_relations_touching(
 }
 
 /// Return visible class relations touching any supplied class id.
-pub async fn class_relations_touching_ids(
+pub async fn list_class_relations_touching_ids(
     runtime: &PostgresRuntime,
     query: RelationIdsQuery,
 ) -> Result<Vec<StorageClassRelation>, PostgresStorageError> {
@@ -233,7 +233,7 @@ pub async fn class_relations_touching_ids(
 }
 
 /// Return visible class relations whose endpoints are both supplied ids.
-pub async fn class_relations_between_ids(
+pub async fn list_class_relations_between_ids(
     runtime: &PostgresRuntime,
     query: RelationIdsQuery,
 ) -> Result<Vec<StorageClassRelation>, PostgresStorageError> {
@@ -241,7 +241,7 @@ pub async fn class_relations_between_ids(
 }
 
 /// Return visible object relations whose endpoints are both supplied ids.
-pub async fn object_relations_between_ids(
+pub async fn list_object_relations_between_ids(
     runtime: &PostgresRuntime,
     query: RelationIdsQuery,
 ) -> Result<Vec<StorageObjectRelation>, PostgresStorageError> {
@@ -271,7 +271,7 @@ pub async fn object_relations_between_ids(
 }
 
 /// Return a bounded set of visible object relations touching supplied ids.
-pub async fn object_relations_touching_ids(
+pub async fn list_object_relations_touching_ids(
     runtime: &PostgresRuntime,
     query: ObjectRelationsTouchingIdsQuery,
 ) -> Result<Vec<StorageObjectRelation>, PostgresStorageError> {

@@ -5,11 +5,11 @@ use hubuum_domain::{ClassId, CollectionId, HistoryRecordId, PrincipalId, TaskId}
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
+    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPrincipalName,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    StorageClassRecord, StorageCollection, StorageExportTemplate, StorageExportTemplateDefinition,
-    StorageObject, StorageRemoteTarget, StorageRemoteTargetDefinition, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport,
+    StorageClassRecord, StorageCollection, StorageCountedPage, StorageExportTemplate,
+    StorageExportTemplateDefinition, StorageObject, StorageRemoteTarget,
+    StorageRemoteTargetDefinition, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
 
@@ -374,7 +374,7 @@ macro_rules! history_operations {
         pub async fn $list_fn(
             runtime: &PostgresRuntime,
             query: HistoryListQuery,
-        ) -> Result<HistoryPage<$record>, PostgresStorageError> {
+        ) -> Result<StorageCountedPage<$record>, PostgresStorageError> {
             let (entity_id, options, scope) = query.into_parts();
             let visible_collection_ids = visible_collection_ids(&scope);
             validate_history_filters(&options)?;
@@ -414,7 +414,7 @@ macro_rules! history_operations {
                         .into_iter()
                         .map(<$record>::try_from)
                         .collect::<Result<Vec<_>, _>>()?;
-                    Ok::<_, PostgresStorageError>(HistoryPage::new(rows, total))
+                    Ok::<_, PostgresStorageError>(StorageCountedPage::new(rows, total))
                 })
                 .await
         }
@@ -447,7 +447,7 @@ macro_rules! history_operations {
 
 history_operations!(
     list_collection_history,
-    collection_history_as_of,
+    get_collection_history_as_of,
     collections_history,
     "collections_history",
     CollectionHistoryRow,
@@ -457,7 +457,7 @@ history_operations!(
 
 history_operations!(
     list_class_history,
-    class_history_as_of,
+    get_class_history_as_of,
     hubuumclass_history,
     "hubuumclass_history",
     ClassHistoryRow,
@@ -467,7 +467,7 @@ history_operations!(
 
 history_operations!(
     list_export_template_history,
-    export_template_history_as_of,
+    get_export_template_history_as_of,
     export_templates_history,
     "export_templates_history",
     ExportTemplateHistoryRow,
@@ -477,7 +477,7 @@ history_operations!(
 
 history_operations!(
     list_remote_target_history,
-    remote_target_history_as_of,
+    get_remote_target_history_as_of,
     remote_targets_history,
     "remote_targets_history",
     RemoteTargetHistoryRow,
@@ -488,7 +488,7 @@ history_operations!(
 pub async fn list_object_history(
     runtime: &PostgresRuntime,
     query: ObjectHistoryListQuery,
-) -> Result<HistoryPage<ObjectHistoryRecord>, PostgresStorageError> {
+) -> Result<StorageCountedPage<ObjectHistoryRecord>, PostgresStorageError> {
     let (object_id, class_id, options, scope) = query.into_parts();
     let visible_collection_ids = visible_collection_ids(&scope);
     validate_history_filters(&options)?;
@@ -530,12 +530,12 @@ pub async fn list_object_history(
                 .into_iter()
                 .map(ObjectHistoryRecord::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(HistoryPage::new(rows, total))
+            Ok::<_, PostgresStorageError>(StorageCountedPage::new(rows, total))
         })
         .await
 }
 
-pub async fn object_history_as_of(
+pub async fn get_object_history_as_of(
     runtime: &PostgresRuntime,
     query: ObjectHistoryAsOfQuery,
 ) -> Result<Option<ObjectHistoryRecord>, PostgresStorageError> {

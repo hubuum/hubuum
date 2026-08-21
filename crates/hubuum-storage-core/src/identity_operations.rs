@@ -1548,7 +1548,7 @@ pub trait BootstrapStorage: Send + Sync {
     /// Return whether the backend is empty enough to require its initial local
     /// administrator. This is an optimization; the atomic bootstrap operation
     /// must repeat the check under its backend-native coordination primitive.
-    async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError>;
+    async fn is_default_admin_bootstrap_required(&self) -> Result<bool, StorageError>;
 
     /// Atomically create the initial local administrator when still required.
     /// Concurrent callers must produce at most one administrator and all later
@@ -1640,7 +1640,7 @@ pub trait ServiceAccountStorage: Send + Sync {
     /// Return `true` only for a disabled service-account principal.
     ///
     /// Human principals and IDs without a service-account row return `false`.
-    async fn principal_is_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError>;
+    async fn is_principal_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError>;
 
     /// Load the service-account row for one principal ID.
     async fn get_service_account(
@@ -1699,7 +1699,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
     ///
     /// Missing, local, and unmanaged principals return `None`; inconsistent
     /// external records fail closed.
-    async fn external_principal_state(
+    async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError>;

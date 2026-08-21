@@ -4,7 +4,7 @@ use super::*;
 
 #[async_trait]
 impl TransactionStorage for StorageHandle {
-    async fn transaction<F, R>(
+    async fn with_transaction<F, R>(
         &self,
         event_context: EventContext,
         operation: F,
@@ -18,7 +18,7 @@ impl TransactionStorage for StorageHandle {
     {
         self.observe_storage_call(self.backend_name(), "transactions", "run", async {
             dispatch_backend!(self, |backend| {
-                backend.transaction(event_context, operation).await
+                backend.with_transaction(event_context, operation).await
             })
         })
         .await

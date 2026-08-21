@@ -160,15 +160,15 @@ The suite covers these family-level behaviors:
 | `export_queries` | Mandatory logical budget scope |
 | `export_template_lifecycle` | Point/scoped reads, bindings, and audited lifecycle |
 | `event_administration` | Audit visibility, sink/subscription lifecycle, fan-out delivery creation, retry, and dead-letter actions |
-| `operations` | Metrics, readiness and diagnostics, event health/fan-out/retention, token retention, and compile-time worker notification composition |
+| `operations` | Metrics, readiness and diagnostics, event health/fan-out/retention, token retention, and execution context |
 
 The aggregate trait guarantees that every method exists. The semantic coverage
 inventory guarantees that the method and tracked input-variant lists cannot
 drift unnoticed. The compatibility suite supplies representative semantics by
 family and directly invokes most methods. Some native worker operations—most
-notably delivery claims and notification listeners—still receive their deepest
-coverage in PostgreSQL-specific tests, and the inventory records that evidence
-as native rather than pretending it is portable.
+notably delivery claims—still receive their deepest coverage in
+PostgreSQL-specific tests. Optional notification providers are tested beside
+their adapter rather than inventoried as complete-backend traits.
 
 `hubuum-storage-conformance` owns the reusable, workspace-internal,
 backend-independent six-part audit verifier. Each adapter supplies an isolated

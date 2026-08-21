@@ -49,7 +49,7 @@ pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
     let snapshot = with_storage_call_site(
         &context,
         StorageCallSite::Readiness,
-        context.backend().readiness_snapshot(),
+        context.backend().get_readiness_snapshot(),
     )
     .await
     .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;

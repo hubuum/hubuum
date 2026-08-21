@@ -46,7 +46,7 @@ impl ExportTemplateStorage for StorageHandle {
         .await
     }
 
-    async fn export_template_class_collection_id(
+    async fn get_export_template_class_collection_id(
         &self,
         class_id: ClassId,
     ) -> Result<Option<CollectionId>, StorageError> {
@@ -56,7 +56,9 @@ impl ExportTemplateStorage for StorageHandle {
             "class_collection",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.export_template_class_collection_id(class_id).await
+                    backend
+                        .get_export_template_class_collection_id(class_id)
+                        .await
                 })
             },
         )
@@ -180,38 +182,40 @@ impl RemoteTargetStorage for StorageHandle {
 
 #[async_trait]
 impl ImportStorage for StorageHandle {
-    async fn import_root_collection(&self) -> Result<StorageCollection, StorageError> {
+    async fn get_import_root_collection(&self) -> Result<StorageCollection, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "root_collection", async {
-            dispatch_backend!(self, |backend| { backend.import_root_collection().await })
+            dispatch_backend!(self, |backend| {
+                backend.get_import_root_collection().await
+            })
         })
         .await
     }
 
-    async fn import_collection_by_id(
+    async fn get_import_collection_by_id(
         &self,
         collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "collection_by_id", async {
             dispatch_backend!(self, |backend| {
-                backend.import_collection_by_id(collection_id).await
+                backend.get_import_collection_by_id(collection_id).await
             })
         })
         .await
     }
 
-    async fn import_collection_by_key(
+    async fn get_import_collection_by_key(
         &self,
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "collection_by_key", async {
             dispatch_backend!(self, |backend| {
-                backend.import_collection_by_key(key).await
+                backend.get_import_collection_by_key(key).await
             })
         })
         .await
     }
 
-    async fn import_collections_by_name(
+    async fn list_import_collections_by_name(
         &self,
         name: &str,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -221,14 +225,14 @@ impl ImportStorage for StorageHandle {
             "collections_by_name",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.import_collections_by_name(name).await
+                    backend.list_import_collections_by_name(name).await
                 })
             },
         )
         .await
     }
 
-    async fn import_collection_child_by_name(
+    async fn get_import_collection_child_by_name(
         &self,
         parent_collection_id: CollectionId,
         name: &str,
@@ -240,7 +244,7 @@ impl ImportStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend
-                        .import_collection_child_by_name(parent_collection_id, name)
+                        .get_import_collection_child_by_name(parent_collection_id, name)
                         .await
                 })
             },
@@ -248,59 +252,61 @@ impl ImportStorage for StorageHandle {
         .await
     }
 
-    async fn import_class_by_name(
+    async fn get_import_class_by_name(
         &self,
         collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "class_by_name", async {
             dispatch_backend!(self, |backend| {
-                backend.import_class_by_name(collection_id, name).await
+                backend.get_import_class_by_name(collection_id, name).await
             })
         })
         .await
     }
 
-    async fn import_classes_by_names(
+    async fn list_import_classes_by_names(
         &self,
         collection_id: CollectionId,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "classes_by_names", async {
             dispatch_backend!(self, |backend| {
-                backend.import_classes_by_names(collection_id, names).await
+                backend
+                    .list_import_classes_by_names(collection_id, names)
+                    .await
             })
         })
         .await
     }
 
-    async fn import_object_by_name(
+    async fn get_import_object_by_name(
         &self,
         class_id: ClassId,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "object_by_name", async {
             dispatch_backend!(self, |backend| {
-                backend.import_object_by_name(class_id, name).await
+                backend.get_import_object_by_name(class_id, name).await
             })
         })
         .await
     }
 
-    async fn import_objects_by_names(
+    async fn list_import_objects_by_names(
         &self,
         class_id: ClassId,
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "objects_by_names", async {
             dispatch_backend!(self, |backend| {
-                backend.import_objects_by_names(class_id, names).await
+                backend.list_import_objects_by_names(class_id, names).await
             })
         })
         .await
     }
 
-    async fn import_class_relation_exists(
+    async fn has_import_class_relation(
         &self,
         left_class_id: ClassId,
         right_class_id: ClassId,
@@ -312,7 +318,7 @@ impl ImportStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend
-                        .import_class_relation_exists(left_class_id, right_class_id)
+                        .has_import_class_relation(left_class_id, right_class_id)
                         .await
                 })
             },
@@ -320,7 +326,7 @@ impl ImportStorage for StorageHandle {
         .await
     }
 
-    async fn import_object_relation_exists(
+    async fn has_import_object_relation(
         &self,
         left_object_id: ObjectId,
         right_object_id: ObjectId,
@@ -332,7 +338,7 @@ impl ImportStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend
-                        .import_object_relation_exists(left_object_id, right_object_id)
+                        .has_import_object_relation(left_object_id, right_object_id)
                         .await
                 })
             },
@@ -340,16 +346,14 @@ impl ImportStorage for StorageHandle {
         .await
     }
 
-    async fn import_group_exists(
+    async fn has_import_group(
         &self,
         identity_scope: &str,
         group_name: &str,
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(self.backend_name(), "imports", "group_exists", async {
             dispatch_backend!(self, |backend| {
-                backend
-                    .import_group_exists(identity_scope, group_name)
-                    .await
+                backend.has_import_group(identity_scope, group_name).await
             })
         })
         .await
@@ -476,7 +480,7 @@ impl RestoreStorage for StorageHandle {
         .await
     }
 
-    async fn restore_coordinator_snapshot(
+    async fn get_restore_coordinator_snapshot(
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         self.observe_storage_call(
@@ -485,7 +489,7 @@ impl RestoreStorage for StorageHandle {
             "coordinator_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.restore_coordinator_snapshot().await
+                    backend.get_restore_coordinator_snapshot().await
                 })
             },
         )
@@ -535,13 +539,13 @@ impl RestoreStorage for StorageHandle {
         .await
     }
 
-    async fn restore_drain_state(
+    async fn get_restore_drain_state(
         &self,
         heartbeat_cutoff: NaiveDateTime,
     ) -> Result<StorageRestoreDrainState, StorageError> {
         self.observe_storage_call(self.backend_name(), "restores", "drain_state", async {
             dispatch_backend!(self, |backend| {
-                backend.restore_drain_state(heartbeat_cutoff).await
+                backend.get_restore_drain_state(heartbeat_cutoff).await
             })
         })
         .await

@@ -327,7 +327,7 @@ pub async fn list_export_templates_in_collection(
         .await
 }
 
-pub async fn export_template_class_collection_id(
+pub async fn get_export_template_class_collection_id(
     runtime: &PostgresRuntime,
     class_id: i32,
 ) -> Result<Option<i32>, PostgresStorageError> {

@@ -18,10 +18,10 @@ use hubuum_events_core::{
 use hubuum_query::{CursorValue, FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
-    StorageExportOutputSummary, StorageImportTaskResult, StorageImportTaskResultPage, StorageTask,
+    StorageExportOutputSummary, StorageImportTaskResult, StoragePage, StorageTask,
     StorageTaskAccess, StorageTaskCreateRequest, StorageTaskDurations, StorageTaskEvent,
-    StorageTaskEventPage, StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPage, StorageTaskPageQuery, StorageTaskStatus,
+    StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
+    StorageTaskStatus,
 };
 use serde_json::{Value, json};
 
@@ -377,7 +377,7 @@ pub async fn get_task_access(
 pub async fn list_tasks(
     runtime: &PostgresRuntime,
     query: StorageTaskListQuery,
-) -> Result<StorageTaskPage, PostgresStorageError> {
+) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
     let (submitted_by, kind, status, options) = query.into_parts();
     let submitted_by = submitted_by.map(PrincipalId::id);
     let total = if options.include_total() {
@@ -407,13 +407,13 @@ pub async fn list_tasks(
         .into_iter()
         .map(TaskRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StorageTaskPage::new(tasks, total))
+    Ok(StoragePage::new(tasks, total))
 }
 
 pub async fn list_task_events(
     runtime: &PostgresRuntime,
     query: StorageTaskPageQuery,
-) -> Result<StorageTaskEventPage, PostgresStorageError> {
+) -> Result<StoragePage<StorageTaskEvent>, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     let task_id = task_id.id();
     let total = if options.include_total() {
@@ -427,13 +427,13 @@ pub async fn list_task_events(
         .into_iter()
         .map(TaskEventRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StorageTaskEventPage::new(events, total))
+    Ok(StoragePage::new(events, total))
 }
 
 pub async fn list_import_task_results(
     runtime: &PostgresRuntime,
     query: StorageTaskPageQuery,
-) -> Result<StorageImportTaskResultPage, PostgresStorageError> {
+) -> Result<StoragePage<StorageImportTaskResult>, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     let task_id = task_id.id();
     let total = if options.include_total() {
@@ -488,7 +488,7 @@ pub async fn list_import_task_results(
         .into_iter()
         .map(ImportTaskResultRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StorageImportTaskResultPage::new(results, total))
+    Ok(StoragePage::new(results, total))
 }
 
 pub async fn list_export_output_summaries(

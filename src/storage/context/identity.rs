@@ -56,14 +56,14 @@ impl AuthenticationStorage for StorageHandle {
 
 #[async_trait]
 impl BootstrapStorage for StorageHandle {
-    async fn default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
+    async fn is_default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "identity",
-            "default_admin_bootstrap_required",
+            "is_default_admin_bootstrap_required",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.default_admin_bootstrap_required().await
+                    backend.is_default_admin_bootstrap_required().await
                 })
             },
         )
@@ -231,14 +231,14 @@ impl IdentityMembershipStorage for StorageHandle {
 
 #[async_trait]
 impl ServiceAccountStorage for StorageHandle {
-    async fn principal_is_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError> {
+    async fn is_principal_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "identity",
-            "principal_is_disabled",
+            "is_principal_disabled",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.principal_is_disabled(principal_id).await
+                    backend.is_principal_disabled(principal_id).await
                 })
             },
         )
@@ -367,7 +367,7 @@ impl ServiceAccountStorage for StorageHandle {
 
 #[async_trait]
 impl ExternalIdentityStorage for StorageHandle {
-    async fn external_principal_state(
+    async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
@@ -377,7 +377,7 @@ impl ExternalIdentityStorage for StorageHandle {
             "get_external_state",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.external_principal_state(principal_id).await
+                    backend.get_external_principal_state(principal_id).await
                 })
             },
         )
@@ -616,7 +616,7 @@ impl AuthorizationStorage for StorageHandle {
         .await
     }
 
-    async fn authorization_principal_is_group_member(
+    async fn is_authorization_principal_group_member(
         &self,
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
@@ -626,7 +626,7 @@ impl AuthorizationStorage for StorageHandle {
             "principal_is_group_member",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.authorization_principal_is_group_member(query).await
+                    backend.is_authorization_principal_group_member(query).await
                 })
             },
         )
@@ -691,17 +691,17 @@ impl AuthorizationStorage for StorageHandle {
         .await
     }
 
-    async fn local_authorized_collections(
+    async fn list_local_authorized_collections(
         &self,
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "authorization",
-            "local_authorized_collections",
+            "list_local_authorized_collections",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.local_authorized_collections(query).await
+                    backend.list_local_authorized_collections(query).await
                 })
             },
         )
@@ -743,7 +743,7 @@ impl AuthorizationStorage for StorageHandle {
         .await
     }
 
-    async fn authorization_policy_snapshot(
+    async fn get_authorization_policy_snapshot(
         &self,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
         self.observe_storage_call(
@@ -752,7 +752,7 @@ impl AuthorizationStorage for StorageHandle {
             "policy_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.authorization_policy_snapshot().await
+                    backend.get_authorization_policy_snapshot().await
                 })
             },
         )
@@ -762,7 +762,7 @@ impl AuthorizationStorage for StorageHandle {
     async fn list_local_collection_grants(
         &self,
         query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<AuthorizationGroupGrantPage, StorageError> {
+    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             "authorization",

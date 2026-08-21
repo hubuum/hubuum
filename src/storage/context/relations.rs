@@ -81,7 +81,7 @@ impl RelationQueryStorage for StorageHandle {
         .await
     }
 
-    async fn class_relations_touching_ids(
+    async fn list_class_relations_touching_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
@@ -91,14 +91,14 @@ impl RelationQueryStorage for StorageHandle {
             "classes_touching_ids",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.class_relations_touching_ids(query).await
+                    backend.list_class_relations_touching_ids(query).await
                 })
             },
         )
         .await
     }
 
-    async fn class_relations_between_ids(
+    async fn list_class_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
@@ -108,14 +108,14 @@ impl RelationQueryStorage for StorageHandle {
             "classes_between_ids",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.class_relations_between_ids(query).await
+                    backend.list_class_relations_between_ids(query).await
                 })
             },
         )
         .await
     }
 
-    async fn object_relations_between_ids(
+    async fn list_object_relations_between_ids(
         &self,
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
@@ -125,14 +125,14 @@ impl RelationQueryStorage for StorageHandle {
             "objects_between_ids",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.object_relations_between_ids(query).await
+                    backend.list_object_relations_between_ids(query).await
                 })
             },
         )
         .await
     }
 
-    async fn object_relations_touching_ids(
+    async fn list_object_relations_touching_ids(
         &self,
         query: ObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
@@ -142,7 +142,7 @@ impl RelationQueryStorage for StorageHandle {
             "objects_touching_ids",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.object_relations_touching_ids(query).await
+                    backend.list_object_relations_touching_ids(query).await
                 })
             },
         )

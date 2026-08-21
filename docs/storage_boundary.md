@@ -73,7 +73,7 @@ The documentation groups those traits into 20 capability families:
 - relations, history, inventory, and search;
 - tasks and long-running workflows;
 - event administration and event workers; and
-- operational state, retention, notifications, and execution context.
+- operational state, retention, and execution context.
 
 These families are a documentation map over one indivisible contract. They are neither a second runtime contract nor feature flags. The [capability family map](storage_boundary/capability-families.md) names every family, maps it to its required traits, and explains its relationships.
 

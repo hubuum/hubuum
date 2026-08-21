@@ -189,7 +189,7 @@ async fn snapshot_history(
     Ok(sections)
 }
 
-pub async fn snapshot_backup(
+pub async fn create_backup_snapshot(
     runtime: &PostgresRuntime,
     include_history: bool,
 ) -> Result<StorageBackupSnapshot, PostgresStorageError> {

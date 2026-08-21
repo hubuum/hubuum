@@ -67,7 +67,7 @@ pub async fn get_event_delivery_health(
     context: AppContext,
     _admin: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let snapshot = context.backend().event_delivery_health().await?;
+    let snapshot = context.backend().get_event_delivery_health().await?;
     Ok(ApiResponse::new(
         EventDeliveryHealthResponse::from_storage(
             snapshot,

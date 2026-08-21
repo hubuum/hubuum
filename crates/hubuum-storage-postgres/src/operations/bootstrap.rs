@@ -42,7 +42,7 @@ async fn default_admin_bootstrap_required_conn(
 /// This is an optimization only. [`bootstrap_default_admin`] repeats the check
 /// while holding the bootstrap advisory lock so concurrent replicas remain
 /// correct.
-pub async fn default_admin_bootstrap_required(
+pub async fn is_default_admin_bootstrap_required(
     runtime: &PostgresRuntime,
 ) -> Result<bool, PostgresStorageError> {
     runtime

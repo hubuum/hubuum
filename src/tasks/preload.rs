@@ -93,7 +93,7 @@ async fn preload_collections_for_class_keys(
 
     for name in names {
         let collections = storage_handle(pool)
-            .import_collections_by_name(&name)
+            .list_import_collections_by_name(&name)
             .await
             .map_err(|err| err.to_string())?;
         if collections.is_empty() {
@@ -157,7 +157,7 @@ pub(super) async fn preload_existing_classes(
     for (collection_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
         let classes = storage_handle(pool)
-            .import_classes_by_names(collection_id_to_storage(collection_id), &names)
+            .list_import_classes_by_names(collection_id_to_storage(collection_id), &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
@@ -240,7 +240,7 @@ pub(super) async fn preload_existing_objects(
     for (class_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
         let objects = storage_handle(pool)
-            .import_objects_by_names(class_id_to_storage(class_id), &names)
+            .list_import_objects_by_names(class_id_to_storage(class_id), &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = objects

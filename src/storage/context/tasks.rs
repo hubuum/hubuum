@@ -22,7 +22,7 @@ impl TaskQueueStorage for StorageHandle {
     async fn list_tasks(
         &self,
         query: StorageTaskListQuery,
-    ) -> Result<StorageTaskPage, StorageError> {
+    ) -> Result<StoragePage<StorageTask>, StorageError> {
         self.observe_storage_call(self.backend_name(), "tasks", "list", async {
             dispatch_backend!(self, |backend| backend.list_tasks(query).await)
         })
@@ -32,7 +32,7 @@ impl TaskQueueStorage for StorageHandle {
     async fn list_task_events(
         &self,
         query: StorageTaskPageQuery,
-    ) -> Result<StorageTaskEventPage, StorageError> {
+    ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         self.observe_storage_call(self.backend_name(), "tasks", "list_events", async {
             dispatch_backend!(self, |backend| backend.list_task_events(query).await)
         })
@@ -42,7 +42,7 @@ impl TaskQueueStorage for StorageHandle {
     async fn list_import_task_results(
         &self,
         query: StorageTaskPageQuery,
-    ) -> Result<StorageImportTaskResultPage, StorageError> {
+    ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         self.observe_storage_call(self.backend_name(), "tasks", "list_import_results", async {
             dispatch_backend!(self, |backend| {
                 backend.list_import_task_results(query).await
@@ -242,13 +242,13 @@ impl TaskExecutionStorage for StorageHandle {
 
 #[async_trait]
 impl BackupSnapshotStorage for StorageHandle {
-    async fn snapshot_backup(
+    async fn create_backup_snapshot(
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         self.observe_storage_call(self.backend_name(), "backup_snapshots", "snapshot", async {
             dispatch_backend!(self, |backend| {
-                backend.snapshot_backup(include_history).await
+                backend.create_backup_snapshot(include_history).await
             })
         })
         .await

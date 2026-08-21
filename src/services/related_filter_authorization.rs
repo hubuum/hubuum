@@ -361,7 +361,7 @@ async fn externally_authorized_related_group_ids(
         }
         let frontier_ids = sorted_ids(&frontier);
         let excluded_relation_ids = sorted_ids(&seen_relation_ids);
-        let mut relation_candidates = relation_queries::object_relations_touching_ids(
+        let mut relation_candidates = relation_queries::list_object_relations_touching_ids(
             storage,
             RelationAccess::new(principal.user_id, true, None),
             &frontier_ids,

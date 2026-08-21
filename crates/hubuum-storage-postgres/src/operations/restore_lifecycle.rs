@@ -701,7 +701,7 @@ pub async fn fail_restore_and_resume(
 }
 
 /// Read maintenance ownership and backend time from one snapshot.
-pub async fn restore_coordinator_snapshot(
+pub async fn get_restore_coordinator_snapshot(
     runtime: &PostgresRuntime,
 ) -> Result<StorageRestoreCoordinatorSnapshot, PostgresStorageError> {
     runtime
@@ -848,7 +848,7 @@ pub async fn tick_restore_coordinator(
 }
 
 /// Return the current generation and live coordinator instances.
-pub async fn restore_drain_state(
+pub async fn get_restore_drain_state(
     runtime: &PostgresRuntime,
     heartbeat_cutoff: NaiveDateTime,
 ) -> Result<StorageRestoreDrainState, PostgresStorageError> {

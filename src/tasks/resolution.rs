@@ -41,7 +41,7 @@ async fn find_collection_by_key_planning(
     if key.path.is_some() {
         let storage_key = crate::services::import_boundary::collection_key_to_storage(key.clone());
         let collection = storage_handle(pool)
-            .import_collection_by_key(&storage_key)
+            .get_import_collection_by_key(&storage_key)
             .await
             .map_err(|err| err.to_string())?
             .map(storage_collection_to_resolution);
@@ -61,7 +61,7 @@ async fn find_collection_by_key_planning(
         .cloned()
         .unwrap_or_default();
     for collection in storage_handle(pool)
-        .import_collections_by_name(&key.name)
+        .list_import_collections_by_name(&key.name)
         .await
         .map_err(|err| err.to_string())?
         .into_iter()
@@ -102,7 +102,7 @@ async fn resolve_root_collection_planning(
     }
 
     let collection = storage_handle(pool)
-        .import_root_collection()
+        .get_import_root_collection()
         .await
         .map_err(|err| err.to_string())
         .map(storage_collection_to_resolution)?;
@@ -162,7 +162,7 @@ pub(super) async fn resolve_collection_by_id_planning(
     }
 
     let collection = storage_handle(pool)
-        .import_collection_by_id(collection_id_to_storage(collection_id))
+        .get_import_collection_by_id(collection_id_to_storage(collection_id))
         .await
         .map_err(|err| err.to_string())?
         .map(storage_collection_to_resolution)
@@ -205,7 +205,7 @@ pub(super) async fn resolve_class_planning(
             }
 
             let class = storage_handle(pool)
-                .import_class_by_name(collection_id_to_storage(collection.id), &key.name)
+                .get_import_class_by_name(collection_id_to_storage(collection.id), &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(storage_class_to_resolution)
@@ -256,7 +256,7 @@ pub(super) async fn resolve_object_planning(
             }
 
             let object = storage_handle(pool)
-                .import_object_by_name(class_id_to_storage(class.id), &key.name)
+                .get_import_object_by_name(class_id_to_storage(class.id), &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(storage_object_to_resolution)

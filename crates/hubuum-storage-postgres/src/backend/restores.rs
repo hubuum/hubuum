@@ -73,10 +73,10 @@ impl RestoreStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn restore_coordinator_snapshot(
+    async fn get_restore_coordinator_snapshot(
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        crate::operations::restore_lifecycle::restore_coordinator_snapshot(self.runtime())
+        crate::operations::restore_lifecycle::get_restore_coordinator_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
@@ -109,13 +109,16 @@ impl RestoreStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn restore_drain_state(
+    async fn get_restore_drain_state(
         &self,
         heartbeat_cutoff: NaiveDateTime,
     ) -> Result<StorageRestoreDrainState, StorageError> {
-        crate::operations::restore_lifecycle::restore_drain_state(self.runtime(), heartbeat_cutoff)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::restore_lifecycle::get_restore_drain_state(
+            self.runtime(),
+            heartbeat_cutoff,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {

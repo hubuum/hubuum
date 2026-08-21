@@ -427,7 +427,7 @@ impl ObjectRelationStorage for PostgresTransaction<'_> {
 
 #[async_trait]
 impl TransactionStorage for PostgresStorage {
-    async fn transaction<F, R>(
+    async fn with_transaction<F, R>(
         &self,
         event_context: EventContext,
         operation: F,

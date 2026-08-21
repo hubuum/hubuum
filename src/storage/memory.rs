@@ -592,7 +592,7 @@ impl StorageTransaction for MemoryTransaction {
 
 #[async_trait]
 impl TransactionStorage for MemoryStorageModel {
-    async fn transaction<F, R>(
+    async fn with_transaction<F, R>(
         &self,
         event_context: EventContext,
         operation: F,

@@ -84,7 +84,7 @@ pub async fn is_human_owner_group_member(
 
 /// Service accounts are disabled when their subtype row carries a timestamp;
 /// human principals and unknown principal ids are not disabled.
-pub async fn principal_is_disabled(
+pub async fn is_principal_disabled(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<bool, PostgresStorageError> {

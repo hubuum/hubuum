@@ -344,6 +344,10 @@ pub trait BackendAuditFixture: Send + Sync {
     async fn observations(&self) -> Result<ObservationProbe, FixtureError>;
 
     async fn revision_conflict(&self) -> Result<RevisionConflictProbe, FixtureError>;
+
+    /// Remove every resource provisioned by this fixture. The conformance
+    /// runner invokes this even when an earlier probe fails.
+    async fn cleanup(&self) -> Result<(), FixtureError>;
 }
 
 /// One injected transactional failure and evidence that its state transition
@@ -685,13 +689,22 @@ impl From<FixtureError> for ContractViolation {
 pub async fn verify_backend_audit_contract(
     fixture: &impl BackendAuditFixture,
 ) -> Result<ContractReport, ContractViolation> {
-    verify_committed_mutation(fixture.committed_mutation().await?)?;
-    verify_unchanged_mutation(fixture.unchanged_mutation().await?)?;
-    verify_rollback(fixture.rolled_back_mutation().await?)?;
-    verify_fanout(fixture.fanout_to_recording_sink().await?)?;
-    verify_observations(fixture.observations().await?)?;
-    verify_revision_conflict(fixture.revision_conflict().await?)?;
-    Ok(ContractReport { checks: 6 })
+    let verification = async {
+        verify_committed_mutation(fixture.committed_mutation().await?)?;
+        verify_unchanged_mutation(fixture.unchanged_mutation().await?)?;
+        verify_rollback(fixture.rolled_back_mutation().await?)?;
+        verify_fanout(fixture.fanout_to_recording_sink().await?)?;
+        verify_observations(fixture.observations().await?)?;
+        verify_revision_conflict(fixture.revision_conflict().await?)?;
+        Ok(ContractReport { checks: 6 })
+    }
+    .await;
+    let cleanup = fixture.cleanup().await.map_err(ContractViolation::Fixture);
+
+    match (verification, cleanup) {
+        (Err(violation), _) | (Ok(_), Err(violation)) => Err(violation),
+        (Ok(report), Ok(())) => Ok(report),
+    }
 }
 
 /// Execute portable delivery claim, acknowledgement, and retry expectations.

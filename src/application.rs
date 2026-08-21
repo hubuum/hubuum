@@ -39,7 +39,7 @@ use crate::middlewares::rate_limit::{
 };
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
-use crate::services::event_administration::enabled_event_sink_count;
+use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageSettings, initialize_storage,
 };
@@ -113,12 +113,15 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     };
     let storage = initialize_storage(&storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
-    let readiness = storage.readiness_snapshot().await.unwrap_or_else(|error| {
-        fatal_error(
-            &format!("Storage backend is not ready: {error}"),
-            EXIT_CODE_DATABASE_ERROR,
-        )
-    });
+    let readiness = storage
+        .get_readiness_snapshot()
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Storage backend is not ready: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
     if !readiness.storage_is_ready() {
         fatal_error(
             "Storage backend schema is not ready",
@@ -174,7 +177,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     // heartbeat even though they do not run task or event workers.
     ensure_restore_coordinator_running(app_context.clone_backend());
 
-    let active_event_sinks = match enabled_event_sink_count(&app_context).await {
+    let active_event_sinks = match count_enabled_event_sinks(&app_context).await {
         Ok(count) => Some(count),
         Err(error) => {
             warn!(

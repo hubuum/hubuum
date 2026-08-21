@@ -12,13 +12,13 @@ use super::PostgresStorage;
 
 #[async_trait]
 impl ImportStorage for PostgresStorage {
-    async fn import_root_collection(&self) -> Result<StorageCollection, StorageError> {
+    async fn get_import_root_collection(&self) -> Result<StorageCollection, StorageError> {
         import_workflow::root_collection(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn import_collection_by_id(
+    async fn get_import_collection_by_id(
         &self,
         collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError> {
@@ -27,7 +27,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_collection_by_key(
+    async fn get_import_collection_by_key(
         &self,
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError> {
@@ -36,7 +36,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_collections_by_name(
+    async fn list_import_collections_by_name(
         &self,
         name: &str,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -45,7 +45,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_collection_child_by_name(
+    async fn get_import_collection_child_by_name(
         &self,
         parent_collection_id: CollectionId,
         name: &str,
@@ -55,7 +55,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_class_by_name(
+    async fn get_import_class_by_name(
         &self,
         collection_id: CollectionId,
         name: &str,
@@ -65,7 +65,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_classes_by_names(
+    async fn list_import_classes_by_names(
         &self,
         collection_id: CollectionId,
         names: &[String],
@@ -75,7 +75,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_object_by_name(
+    async fn get_import_object_by_name(
         &self,
         class_id: ClassId,
         name: &str,
@@ -85,7 +85,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_objects_by_names(
+    async fn list_import_objects_by_names(
         &self,
         class_id: ClassId,
         names: &[String],
@@ -95,7 +95,7 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn import_class_relation_exists(
+    async fn has_import_class_relation(
         &self,
         left_class_id: ClassId,
         right_class_id: ClassId,
@@ -109,7 +109,7 @@ impl ImportStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn import_object_relation_exists(
+    async fn has_import_object_relation(
         &self,
         left_object_id: ObjectId,
         right_object_id: ObjectId,
@@ -123,7 +123,7 @@ impl ImportStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn import_group_exists(
+    async fn has_import_group(
         &self,
         identity_scope: &str,
         group_name: &str,

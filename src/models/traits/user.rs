@@ -291,7 +291,7 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::class_relations_between_ids(
+        crate::services::relation_queries::list_class_relations_between_ids(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),
@@ -498,7 +498,7 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
     {
         let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::object_relations_between_ids(
+        crate::services::relation_queries::list_object_relations_between_ids(
             backend,
             crate::services::relation_queries::RelationAccess::new(
                 self.principal_id(),

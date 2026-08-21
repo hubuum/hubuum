@@ -989,7 +989,9 @@ pub async fn confirm_restore(
 pub async fn reconcile_interrupted_restore(
     pool: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
-    let snapshot = storage_handle(pool).restore_coordinator_snapshot().await?;
+    let snapshot = storage_handle(pool)
+        .get_restore_coordinator_snapshot()
+        .await?;
     reconcile_interrupted_restore_from_snapshot(pool, snapshot).await
 }
 
@@ -1098,7 +1100,7 @@ async fn wait_for_instances_drained(
     loop {
         let cutoff = Utc::now().naive_utc() - Duration::seconds(10);
         let (generation, instances) = storage_handle(pool)
-            .restore_drain_state(cutoff)
+            .get_restore_drain_state(cutoff)
             .await?
             .into_parts();
         if instances.iter().all(|instance| {

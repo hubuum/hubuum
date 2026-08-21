@@ -1404,48 +1404,48 @@ impl StorageImportResultBuilder {
 /// Complete import capability required from every selectable backend.
 #[async_trait]
 pub trait ImportStorage: Send + Sync {
-    async fn import_root_collection(&self) -> Result<StorageCollection, StorageError>;
+    async fn get_import_root_collection(&self) -> Result<StorageCollection, StorageError>;
 
-    async fn import_collection_by_id(
+    async fn get_import_collection_by_id(
         &self,
         collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError>;
 
-    async fn import_collection_by_key(
+    async fn get_import_collection_by_key(
         &self,
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError>;
 
-    async fn import_collections_by_name(
+    async fn list_import_collections_by_name(
         &self,
         name: &str,
     ) -> Result<Vec<StorageCollection>, StorageError>;
 
-    async fn import_collection_child_by_name(
+    async fn get_import_collection_child_by_name(
         &self,
         parent_collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageCollection>, StorageError>;
 
-    async fn import_class_by_name(
+    async fn get_import_class_by_name(
         &self,
         collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError>;
 
-    async fn import_classes_by_names(
+    async fn list_import_classes_by_names(
         &self,
         collection_id: CollectionId,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError>;
 
-    async fn import_object_by_name(
+    async fn get_import_object_by_name(
         &self,
         class_id: ClassId,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError>;
 
-    async fn import_objects_by_names(
+    async fn list_import_objects_by_names(
         &self,
         class_id: ClassId,
         names: &[String],
@@ -1455,7 +1455,7 @@ pub trait ImportStorage: Send + Sync {
     ///
     /// Both IDs are positive storage identifiers. Planner-local virtual IDs
     /// remain in the application layer and are never passed to a backend.
-    async fn import_class_relation_exists(
+    async fn has_import_class_relation(
         &self,
         left_class_id: ClassId,
         right_class_id: ClassId,
@@ -1465,13 +1465,13 @@ pub trait ImportStorage: Send + Sync {
     ///
     /// Both IDs are positive storage identifiers. Planner-local virtual IDs
     /// remain in the application layer and are never passed to a backend.
-    async fn import_object_relation_exists(
+    async fn has_import_object_relation(
         &self,
         left_object_id: ObjectId,
         right_object_id: ObjectId,
     ) -> Result<bool, StorageError>;
 
-    async fn import_group_exists(
+    async fn has_import_group(
         &self,
         identity_scope: &str,
         group_name: &str,

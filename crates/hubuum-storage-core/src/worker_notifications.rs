@@ -13,7 +13,7 @@ pub enum StorageNotification {
 }
 
 impl StorageNotification {
-    /// Every notification topic a complete backend must support.
+    /// Every topic an attached notification provider must support.
     pub const ALL: [Self; 3] = [Self::EventFanout, Self::EventDelivery, Self::TaskQueue];
 
     #[must_use]
@@ -32,13 +32,13 @@ pub type StorageNotificationShutdown = Pin<Box<dyn Future<Output = ()> + Send + 
 /// Boxed backend listener that runs until its shutdown signal resolves.
 pub type StorageNotificationListener = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
-/// Provides backend-native listeners for durable-worker wake-ups.
+/// Optional provider of backend-native listeners for durable-worker wake-ups.
 ///
-/// A selectable backend must implement every topic. Application workers do
-/// not need to know whether the adapter uses PostgreSQL LISTEN/NOTIFY or a
-/// different backend-native mechanism. Process and thread supervision remain
-/// application responsibilities.
-pub trait WorkerNotificationStorage: Send + Sync {
+/// A composed application may attach this provider when an adapter offers a
+/// lower-latency wake-up mechanism. Polling remains the correctness path, so
+/// implementing the storage aggregate never requires notifications. Process
+/// and thread supervision remain application responsibilities.
+pub trait WorkerNotificationProvider: Send + Sync {
     fn listen_for_worker_notifications(
         &self,
         topic: StorageNotification,

@@ -93,16 +93,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   operations use `get_*`, `list_*`, `resolve_*`, and `search_*`; observer hooks
   are `StorageObserver` and `PostgresObserver`; identity administration is
   split into focused bootstrap, scope, membership, service-account, and
-  external-identity traits; archive destinations implement `EventArchiveSink`;
-  and all paginated operations return `StoragePage<T>` without domain-specific
-  aliases. Long positional parts aliases are replaced by named private-field
-  types, token issuance policy construction validates its invariants, and
-  retention orchestration can no longer be overridden by adapters. Adapter
-  authors must update those names, provide an atomic callback runner and
-  transaction-scoped lifecycle accessors, and use the named `StorageError`
-  constructors. Static
-  application selection remains unchanged; there is no dynamic plugin
-  interface.
+  external-identity traits; `TransactionStorage::with_transaction` owns atomic
+  callbacks; archive destinations implement async `EventArchiveSink`; and
+  paginated operations use `StoragePage<T>` or `StorageCountedPage<T>`
+  instead of domain-specific wrappers. `WorkerNotificationProvider` is now an
+  optional application-composition provider rather than a required
+  `StorageBackend` supertrait. Long positional parts aliases are replaced by
+  named private-field types, token issuance policy construction validates its
+  invariants, and retention orchestration can no longer be overridden by
+  adapters. Adapter authors must update method names, await archive calls,
+  provide atomic transaction-scoped lifecycle accessors, attach notification
+  providers explicitly when supported, and use the named `StorageError`
+  constructors. Static application selection remains unchanged; there is no
+  dynamic plugin interface.
 - **Breaking (workspace storage API):** ordinary storage mutations now require
   `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
   non-empty set of durable `AuditReceipt` values for commits and no receipt for

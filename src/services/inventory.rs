@@ -10,7 +10,7 @@ pub(crate) struct InventoryCounts {
 }
 
 pub(crate) async fn counts(storage: &impl InventoryStorage) -> Result<InventoryCounts, ApiError> {
-    let counts = storage.inventory_counts().await?;
+    let counts = storage.get_inventory_counts().await?;
     let total_objects = counts.total_objects();
     let total_classes = counts.total_classes();
     let total_collections = counts.total_collections();

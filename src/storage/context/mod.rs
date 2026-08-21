@@ -23,8 +23,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::AppContext;
 use crate::storage::observed::{
-    ApplicationStorageObserver, ObservedStorage, observe_infallible_storage_call_with,
-    observe_storage_call_with,
+    ApplicationStorageObserver, ObservedStorage, observe_storage_call_with,
 };
 use crate::storage::{
     AuditEventStorage, AuthenticatedToken, AuthenticationAttempt, AuthenticationIdentity,
@@ -35,73 +34,73 @@ use crate::storage::{
     AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery,
     AuthorizationEffectiveGroupGrant, AuthorizationGrant, AuthorizationGrantDelete,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
-    AuthorizationGroupCollectionQuery, AuthorizationGroupGrant, AuthorizationGroupGrantPage,
-    AuthorizationGroupMembershipQuery, AuthorizationGroupPage, AuthorizationObjectResource,
-    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, AuthorizationStorage,
-    BackupSnapshotStorage, BidirectionalRelatedObjectsQuery, BootstrapStorage, CatalogListQuery,
-    CatalogStorage, CertifiedStorageBackend, ClassRelationStorage, ClassStorage,
-    CollectionAuthorizationStorage, CollectionStorage, ComputedFieldLifecycleStorage,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
-    ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionBatch, EventRetentionBatchId,
-    EventRetentionStorage, EventRetentionSummary, EventSubscriptionStorage, ExecutionStorage,
-    ExportTemplateHistoryRecord, ExportTemplateStorage, ExternalIdentityStorage, GroupStorage,
-    HistoryAsOfQuery, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    IdentityMembershipStorage, IdentityScopeStorage, ImportStorage, InventoryGaugeSnapshot,
-    InventoryStorage, MetricsStorage, MutationOutcome, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStorage,
-    ObjectRelationsTouchingIdsQuery, ObjectStorage, OperationalExportTemplateAuditEntry,
-    OperationalExportTemplateHealth, OperationalStateStorage, OperationalTaskQueueSnapshot,
-    PrincipalStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage, ServiceAccountStorage,
-    StorageAuditEvent, StorageAuditEventListQuery, StorageBackendDescriptor, StorageBackendKind,
-    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot, StorageClass,
-    StorageClassComputationState, StorageClassGraphRow, StorageClassRecord, StorageClassRelation,
-    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
-    StorageComputedFieldRebuildRequest, StorageComputedObject, StorageDefaultAdminBootstrap,
-    StorageError, StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventSink,
-    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscription, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportOutput,
-    StorageExportOutputSummary, StorageExportTemplate, StorageExportTemplateCreate,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageGroupCreate,
-    StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
-    StorageImportPlan, StorageImportPreflight, StorageImportResult, StorageImportTaskResultPage,
-    StorageInventoryCounts, StorageLocalPasswordReset, StorageNotification,
-    StorageNotificationListener, StorageNotificationShutdown, StorageObject,
-    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StorageObserver,
-    StoragePage, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePrincipal,
-    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetUpdate, StorageRestoreApply, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
-    StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    AuthorizationGroupCollectionQuery, AuthorizationGroupGrant, AuthorizationGroupMembershipQuery,
+    AuthorizationObjectResource, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    AuthorizationResourceIds, AuthorizationStorage, BackupSnapshotStorage,
+    BidirectionalRelatedObjectsQuery, BootstrapStorage, CatalogListQuery, CatalogStorage,
+    CertifiedStorageBackend, ClassRelationStorage, ClassStorage, CollectionAuthorizationStorage,
+    CollectionStorage, ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionBatch, EventRetentionBatchId, EventRetentionStorage,
+    EventRetentionSummary, EventSubscriptionStorage, ExecutionStorage, ExportTemplateHistoryRecord,
+    ExportTemplateStorage, ExternalIdentityStorage, GroupStorage, HistoryAsOfQuery,
+    HistoryListQuery, HistoryPrincipalName, HistoryStorage, IdentityMembershipStorage,
+    IdentityScopeStorage, ImportStorage, InventoryGaugeSnapshot, InventoryStorage, MetricsStorage,
+    MutationOutcome, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectHistoryRecord, ObjectRelationStorage, ObjectRelationsTouchingIdsQuery, ObjectStorage,
+    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth, OperationalStateStorage,
+    OperationalTaskQueueSnapshot, PrincipalStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, RemoteTargetHistoryRecord, RemoteTargetStorage, RestoreStorage,
+    ServiceAccountStorage, StorageAuditEvent, StorageAuditEventListQuery, StorageBackendDescriptor,
+    StorageBackendKind, StorageBackupOutput, StorageBackupOutputSummary, StorageBackupSnapshot,
+    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRecord,
+    StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldRebuildRequest, StorageComputedObject,
+    StorageCountedPage, StorageDefaultAdminBootstrap, StorageError, StorageEventDelivery,
+    StorageEventDeliveryListQuery, StorageEventSink, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
+    StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
+    StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
+    StorageExportTemplateReplace, StorageExternalPrincipalState, StorageExternalUserSync,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageImportApply,
+    StorageImportCollectionKey, StorageImportMode, StorageImportPlan, StorageImportPreflight,
+    StorageImportResult, StorageImportTaskResult, StorageInventoryCounts,
+    StorageLocalPasswordReset, StorageNotification, StorageNotificationListener,
+    StorageNotificationShutdown, StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow,
+    StorageObjectRelation, StorageObserver, StoragePage, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePrincipal, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    StoragePrincipalTokensRevoke, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRemoteTarget, StorageRemoteTargetCreate, StorageRemoteTargetDelete,
+    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetUpdate,
+    StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
     StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
-    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage, StorageTaskFailure,
+    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskFailure,
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate,
-    StorageTokenHashRevoke, StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation,
-    StorageTokenRenew, StorageTokenRevoke, StorageTransaction, StorageTransactionFuture,
-    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListItem,
+    StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
+    StorageTokenRevoke, StorageTransaction, StorageTransactionFuture, StorageUser,
+    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListItem,
     StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
     TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
     TransactionStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationStorage,
+    WorkerNotificationProvider,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use crate::storage::{DatabaseDiagnosticsProvider, DatabasePoolState, DatabaseStorageSnapshot};
@@ -130,6 +129,7 @@ struct StorageHandleInner {
     resource_ports: ResourceStoragePorts,
     observer: Arc<dyn StorageObserver>,
     database_diagnostics: Option<Arc<dyn DatabaseDiagnosticsProvider>>,
+    worker_notification_provider: Option<Arc<dyn WorkerNotificationProvider>>,
 }
 
 pub(crate) enum BackendImplementation {
@@ -236,10 +236,12 @@ impl StorageHandle {
         )
     }
 
-    #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
     pub(in crate::storage) fn from_postgres_backend(backend: PostgresStorage) -> Self {
         let database_diagnostics = super::factory::postgres_database_diagnostics(backend.clone());
-        Self::from_registered_backend(backend).with_database_diagnostics(database_diagnostics)
+        let worker_notification_provider = Arc::new(backend.clone());
+        Self::from_registered_backend(backend)
+            .with_database_diagnostics(database_diagnostics)
+            .with_worker_notification_provider(worker_notification_provider)
     }
 
     #[cfg(test)]
@@ -248,8 +250,10 @@ impl StorageHandle {
         observer: Arc<dyn StorageObserver>,
     ) -> Self {
         let database_diagnostics = super::factory::postgres_database_diagnostics(backend.clone());
+        let worker_notification_provider = Arc::new(backend.clone());
         Self::from_registered_backend_with_observer(backend, observer)
             .with_database_diagnostics(database_diagnostics)
+            .with_worker_notification_provider(worker_notification_provider)
     }
 
     pub(crate) fn from_registered_backend<S>(backend: S) -> Self
@@ -276,6 +280,7 @@ impl StorageHandle {
                 resource_ports,
                 observer,
                 database_diagnostics: None,
+                worker_notification_provider: None,
             }),
         }
     }
@@ -287,6 +292,16 @@ impl StorageHandle {
         Arc::get_mut(&mut self.inner)
             .expect("new storage handles have no other owners")
             .database_diagnostics = Some(database_diagnostics);
+        self
+    }
+
+    fn with_worker_notification_provider(
+        mut self,
+        provider: Arc<dyn WorkerNotificationProvider>,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("new storage handles have no other owners")
+            .worker_notification_provider = Some(provider);
         self
     }
 
@@ -313,22 +328,6 @@ impl StorageHandle {
             future,
         )
         .await
-    }
-
-    fn observe_infallible_storage_call<T>(
-        &self,
-        backend: &'static str,
-        capability: &'static str,
-        operation: &'static str,
-        call: impl FnOnce() -> T,
-    ) -> T {
-        observe_infallible_storage_call_with(
-            self.inner.observer.as_ref(),
-            backend,
-            capability,
-            operation,
-            call,
-        )
     }
 
     /// Return adapter-projected pool diagnostics for the legacy database endpoint.

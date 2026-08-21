@@ -9,7 +9,7 @@ use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::StorageError;
+use crate::{StorageError, StoragePage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StorageTaskKind {
@@ -713,24 +713,6 @@ impl fmt::Debug for StorageTaskListQuery {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct StorageTaskPage {
-    tasks: Vec<StorageTask>,
-    total: Option<i64>,
-}
-
-impl StorageTaskPage {
-    #[must_use]
-    pub const fn new(tasks: Vec<StorageTask>, total: Option<i64>) -> Self {
-        Self { tasks, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageTask>, Option<i64>) {
-        (self.tasks, self.total)
-    }
-}
-
-#[derive(Clone, PartialEq)]
 pub struct StorageTaskPageQuery {
     task_id: TaskId,
     options: QueryOptions,
@@ -874,24 +856,6 @@ impl StorageTaskEventBuilder {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct StorageTaskEventPage {
-    events: Vec<StorageTaskEvent>,
-    total: Option<i64>,
-}
-
-impl StorageTaskEventPage {
-    #[must_use]
-    pub const fn new(events: Vec<StorageTaskEvent>, total: Option<i64>) -> Self {
-        Self { events, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageTaskEvent>, Option<i64>) {
-        (self.events, self.total)
-    }
-}
-
-#[derive(Clone, PartialEq)]
 pub struct StorageImportTaskResult {
     id: ImportTaskResultId,
     task_id: TaskId,
@@ -1014,24 +978,6 @@ impl StorageImportTaskResultBuilder {
     #[must_use]
     pub fn build(self) -> StorageImportTaskResult {
         self.result
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub struct StorageImportTaskResultPage {
-    results: Vec<StorageImportTaskResult>,
-    total: Option<i64>,
-}
-
-impl StorageImportTaskResultPage {
-    #[must_use]
-    pub const fn new(results: Vec<StorageImportTaskResult>, total: Option<i64>) -> Self {
-        Self { results, total }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<StorageImportTaskResult>, Option<i64>) {
-        (self.results, self.total)
     }
 }
 
@@ -1372,17 +1318,17 @@ pub trait TaskQueueStorage: Send + Sync {
     async fn list_tasks(
         &self,
         query: StorageTaskListQuery,
-    ) -> Result<StorageTaskPage, StorageError>;
+    ) -> Result<StoragePage<StorageTask>, StorageError>;
 
     async fn list_task_events(
         &self,
         query: StorageTaskPageQuery,
-    ) -> Result<StorageTaskEventPage, StorageError>;
+    ) -> Result<StoragePage<StorageTaskEvent>, StorageError>;
 
     async fn list_import_task_results(
         &self,
         query: StorageTaskPageQuery,
-    ) -> Result<StorageImportTaskResultPage, StorageError>;
+    ) -> Result<StoragePage<StorageImportTaskResult>, StorageError>;
 
     async fn list_export_output_summaries(
         &self,

@@ -430,8 +430,9 @@ impl EventRetentionBatch {
 ///
 /// Implementations must be idempotent by [`EventRetentionBatch::id`]. A
 /// retry of the same batch must succeed without duplicating archived events.
+#[async_trait]
 pub trait EventArchiveSink: Send + Sync {
-    fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError>;
+    async fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError>;
 }
 
 /// Counts produced by one bounded retention operation.
@@ -501,7 +502,7 @@ where
         return Ok(EventRetentionSummary::default());
     };
     if !batch.is_empty() {
-        archive.archive(&batch)?;
+        archive.archive(&batch).await?;
     }
     storage.complete_event_retention_batch(batch.id()).await
 }

@@ -34,7 +34,7 @@ pub async fn export_cedar_to<W: Write>(
     writer: &mut W,
 ) -> Result<(), ApiError> {
     let rows = storage_handle(backend)
-        .authorization_policy_snapshot()
+        .get_authorization_policy_snapshot()
         .await?
         .into_iter()
         .map(|row| {

@@ -417,7 +417,7 @@ pub async fn delete_group(
         .await
 }
 
-pub async fn group_members(
+pub async fn list_group_members(
     runtime: &PostgresRuntime,
     group_id: i32,
 ) -> Result<Vec<StoragePrincipal>, PostgresStorageError> {
@@ -435,7 +435,7 @@ pub async fn group_members(
         .await
 }
 
-pub async fn group_members_page(
+pub async fn list_group_members_page(
     runtime: &PostgresRuntime,
     group_id: i32,
     options: QueryOptions,
@@ -492,7 +492,7 @@ pub async fn count_group_members(
         .await
 }
 
-pub async fn group_member_principal(
+pub async fn get_group_member_principal(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<StoragePrincipal, PostgresStorageError> {

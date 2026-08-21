@@ -1,6 +1,6 @@
 use super::*;
 
-impl WorkerNotificationStorage for PostgresStorage {
+impl WorkerNotificationProvider for PostgresStorage {
     fn listen_for_worker_notifications(
         &self,
         topic: StorageNotification,

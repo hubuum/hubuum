@@ -276,7 +276,7 @@ impl UpdateEventSubscriptionRow {
     }
 }
 
-pub async fn enabled_event_sink_count(
+pub async fn count_enabled_event_sinks(
     runtime: &PostgresRuntime,
 ) -> Result<i64, PostgresStorageError> {
     use crate::schema::event_sinks::dsl::{enabled, event_sinks};

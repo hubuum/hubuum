@@ -148,7 +148,7 @@ impl PermissionBackend for LocalPermissionBackend {
         );
         let rows = self
             .storage
-            .local_authorized_collections(query)
+            .list_local_authorized_collections(query)
             .await?
             .into_iter()
             .map(collection_from_storage)
@@ -302,7 +302,7 @@ impl PermissionBackend for LocalPermissionBackend {
         );
         let allowed = self
             .storage
-            .authorization_principal_is_group_member(query)
+            .is_authorization_principal_group_member(query)
             .await?;
         record_is_admin(BACKEND_KIND, allowed, start.elapsed());
         Ok(allowed)

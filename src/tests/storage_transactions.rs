@@ -85,7 +85,7 @@ where
     let transaction_from_name = from_object_name.clone();
     let (collection, from_class, to_class, class_relation, from_object, to_object, object_relation) =
         storage
-            .transaction(event_context.clone(), move |transaction| {
+            .with_transaction(event_context.clone(), move |transaction| {
                 Box::pin(async move {
                     let collection = transaction
                         .collections()
@@ -241,7 +241,7 @@ where
     let rollback_ids_from_work = rolled_back_ids.clone();
     let rollback_label = format!("{label}_rollback");
     let rollback = storage
-        .transaction(event_context.clone(), move |transaction| {
+        .with_transaction(event_context.clone(), move |transaction| {
             Box::pin(async move {
                 let rollback_collection = transaction
                     .collections()
