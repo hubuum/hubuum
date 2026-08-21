@@ -26,8 +26,8 @@ impl CollectionRow {
             CollectionId::new(self.id)?,
             self.name,
             self.description,
-            self.created_at,
-            self.updated_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
             self.parent_collection_id
                 .map(CollectionId::new)
                 .transpose()?,
@@ -64,13 +64,15 @@ impl GroupRow {
             ),
             AuthorizationGroupProfile::new(
                 self.description,
-                self.created_at,
-                self.updated_at,
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
                 self.revision.into_domain(),
             ),
             AuthorizationGroupSyncState::new(
-                self.last_sync_attempted_at,
-                self.last_sync_success_at,
+                self.last_sync_attempted_at
+                    .map(|timestamp| timestamp.and_utc()),
+                self.last_sync_success_at
+                    .map(|timestamp| timestamp.and_utc()),
             ),
         ))
     }
@@ -239,8 +241,8 @@ impl PermissionRow {
             CollectionId::new(self.collection_id)?,
             GroupId::new(self.group_id)?,
             self.permissions(),
-            self.created_at,
-            self.updated_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
         ))
     }
 }

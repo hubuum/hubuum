@@ -195,7 +195,7 @@ impl From<PoolError> for PostgresStorageError {
             backend = "postgresql",
             error = ?error,
         );
-        Self::database(error.to_string())
+        Self::database("PostgreSQL connection pool unavailable")
     }
 }
 
@@ -237,7 +237,7 @@ impl From<DieselError> for PostgresStorageError {
                     backend = "postgresql",
                     error = ?error,
                 );
-                Self::database(error.to_string())
+                Self::database("PostgreSQL query failed")
             }
             _ => {
                 error!(
@@ -245,7 +245,7 @@ impl From<DieselError> for PostgresStorageError {
                     backend = "postgresql",
                     error = ?error,
                 );
-                Self::database(error.to_string())
+                Self::database("PostgreSQL query failed")
             }
         }
     }
@@ -306,5 +306,53 @@ mod tests {
         let error = PostgresStorageError::from(DieselError::NotFound);
 
         assert_eq!(error.kind(), StorageErrorKind::NotFound);
+    }
+
+    #[test]
+    fn native_database_details_do_not_cross_the_storage_boundary() {
+        let native_detail = "secret native database detail";
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::Unknown,
+            Box::new(TestDatabaseErrorInformation(native_detail.to_string())),
+        );
+
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::Backend);
+        assert_eq!(portable.message(), "PostgreSQL query failed");
+        assert!(!portable.message().contains(native_detail));
+    }
+
+    #[derive(Debug)]
+    struct TestDatabaseErrorInformation(String);
+
+    impl diesel::result::DatabaseErrorInformation for TestDatabaseErrorInformation {
+        fn message(&self) -> &str {
+            &self.0
+        }
+
+        fn details(&self) -> Option<&str> {
+            None
+        }
+
+        fn hint(&self) -> Option<&str> {
+            None
+        }
+
+        fn table_name(&self) -> Option<&str> {
+            None
+        }
+
+        fn column_name(&self) -> Option<&str> {
+            None
+        }
+
+        fn constraint_name(&self) -> Option<&str> {
+            None
+        }
+
+        fn statement_position(&self) -> Option<i32> {
+            None
+        }
     }
 }

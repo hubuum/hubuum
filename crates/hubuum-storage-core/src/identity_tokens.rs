@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::EventContext;
 
@@ -16,7 +16,7 @@ pub struct StorageTokenCreateParts {
     token_hash: String,
     name: Option<String>,
     description: Option<String>,
-    expires_at: Option<NaiveDateTime>,
+    expires_at: Option<DateTime<Utc>>,
     scope: Option<AuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
@@ -44,7 +44,7 @@ impl StorageTokenCreateParts {
     }
 
     #[must_use]
-    pub const fn expires_at(&self) -> Option<NaiveDateTime> {
+    pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
         self.expires_at
     }
 
@@ -127,7 +127,7 @@ pub struct StorageTokenCreate {
     token_hash: String,
     name: Option<String>,
     description: Option<String>,
-    expires_at: Option<NaiveDateTime>,
+    expires_at: Option<DateTime<Utc>>,
     scope: Option<AuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
@@ -166,7 +166,7 @@ impl StorageTokenCreate {
     }
 
     #[must_use]
-    pub const fn expires_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn expires_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.expires_at = value;
         self
     }
@@ -214,7 +214,7 @@ pub struct StorageTokenRenew {
     source_token_id: TokenId,
     principal_id: PrincipalId,
     token_hash: String,
-    expires_at: Option<NaiveDateTime>,
+    expires_at: Option<DateTime<Utc>>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
 }
@@ -225,7 +225,7 @@ impl StorageTokenRenew {
         source_token_id: TokenId,
         principal_id: PrincipalId,
         token_hash: impl Into<String>,
-        expires_at: Option<NaiveDateTime>,
+        expires_at: Option<DateTime<Utc>>,
         policy: StorageTokenIssuancePolicy,
         event_context: EventContext,
     ) -> Self {
@@ -246,7 +246,7 @@ impl StorageTokenRenew {
         TokenId,
         PrincipalId,
         String,
-        Option<NaiveDateTime>,
+        Option<DateTime<Utc>>,
         StorageTokenIssuancePolicy,
         EventContext,
     ) {

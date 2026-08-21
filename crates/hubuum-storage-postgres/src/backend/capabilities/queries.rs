@@ -309,3 +309,12 @@ impl UnifiedSearchStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 }
+
+#[async_trait]
+impl InventoryStorage for PostgresStorage {
+    async fn get_inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
+        crate::operations::inventory::load_inventory_counts(self.runtime())
+            .await
+            .map_err(StorageError::from)
+    }
+}

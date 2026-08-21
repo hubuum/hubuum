@@ -85,8 +85,8 @@ pub(crate) fn collection_from_storage(
         id: collection.id().id(),
         name: collection.name().to_string(),
         description: collection.description().to_string(),
-        created_at: collection.created_at(),
-        updated_at: collection.updated_at(),
+        created_at: collection.created_at().naive_utc(),
+        updated_at: collection.updated_at().naive_utc(),
         parent_collection_id: collection.parent_collection_id().map(|id| id.id()),
         revision: collection.revision(),
     })
@@ -97,13 +97,17 @@ pub(crate) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, Api
         id: group.id().id(),
         groupname: group.group_name().to_string(),
         description: group.description().to_string(),
-        created_at: group.created_at(),
-        updated_at: group.updated_at(),
+        created_at: group.created_at().naive_utc(),
+        updated_at: group.updated_at().naive_utc(),
         identity_scope_id: group.identity_scope_id().id(),
         managed_by: group.managed_by().to_string(),
         external_key: group.external_key().map(str::to_owned),
-        last_sync_attempted_at: group.last_sync_attempted_at(),
-        last_sync_success_at: group.last_sync_success_at(),
+        last_sync_attempted_at: group
+            .last_sync_attempted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        last_sync_success_at: group
+            .last_sync_success_at()
+            .map(|timestamp| timestamp.naive_utc()),
         revision: group.revision(),
     })
 }
@@ -143,8 +147,8 @@ pub(crate) fn grant_from_storage(grant: AuthorizationGrant) -> Permission {
         has_update_remote_target: has(AuthorizationPermission::UpdateRemoteTarget),
         has_delete_remote_target: has(AuthorizationPermission::DeleteRemoteTarget),
         has_execute_remote_target: has(AuthorizationPermission::ExecuteRemoteTarget),
-        created_at: grant.created_at(),
-        updated_at: grant.updated_at(),
+        created_at: grant.created_at().naive_utc(),
+        updated_at: grant.updated_at().naive_utc(),
         has_read_audit: has(AuthorizationPermission::ReadAudit),
         has_manage_event_subscription: has(AuthorizationPermission::ManageEventSubscription),
     }

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId, ResourceRevision};
 use serde_json::Value;
 
@@ -268,8 +268,8 @@ pub struct StorageCollection {
     id: CollectionId,
     name: String,
     description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     parent_collection_id: Option<CollectionId>,
     revision: ResourceRevision,
 }
@@ -301,8 +301,8 @@ impl StorageCollection {
             id: CollectionId::from(metadata.id()),
             name: name.into(),
             description: description.into(),
-            created_at: metadata.created_at().naive_utc(),
-            updated_at: metadata.updated_at().naive_utc(),
+            created_at: metadata.created_at(),
+            updated_at: metadata.updated_at(),
             parent_collection_id,
             revision: metadata.revision(),
         }
@@ -315,8 +315,8 @@ impl StorageCollection {
         CollectionId,
         String,
         String,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         Option<CollectionId>,
         ResourceRevision,
     ) {
@@ -347,12 +347,12 @@ impl StorageCollection {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -376,8 +376,8 @@ pub struct StorageClass {
     json_schema: Option<Value>,
     validate_schema: bool,
     description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -427,8 +427,8 @@ impl StorageClass {
         Option<Value>,
         bool,
         String,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         ResourceRevision,
     ) {
         (
@@ -491,8 +491,8 @@ impl StorageClassBuilder {
             json_schema: self.json_schema,
             validate_schema: self.validate_schema,
             description: self.description,
-            created_at: self.metadata.created_at().naive_utc(),
-            updated_at: self.metadata.updated_at().naive_utc(),
+            created_at: self.metadata.created_at(),
+            updated_at: self.metadata.updated_at(),
             revision: self.metadata.revision(),
         }
     }
@@ -507,8 +507,8 @@ pub struct StorageObject {
     class_id: ClassId,
     data: Value,
     description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -546,8 +546,8 @@ impl StorageObject {
             class_id,
             data,
             description: description.into(),
-            created_at: metadata.created_at().naive_utc(),
-            updated_at: metadata.updated_at().naive_utc(),
+            created_at: metadata.created_at(),
+            updated_at: metadata.updated_at(),
             revision: metadata.revision(),
         }
     }
@@ -563,8 +563,8 @@ impl StorageObject {
         ClassId,
         Value,
         String,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         ResourceRevision,
     ) {
         (
@@ -611,12 +611,12 @@ impl StorageObject {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 

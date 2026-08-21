@@ -61,6 +61,8 @@ impl TokenRow {
             )));
         }
         let (observed_at, legacy_valid_after) = observation.into_parts();
+        let observed_at = observed_at.naive_utc();
+        let legacy_valid_after = legacy_valid_after.naive_utc();
         let expired = self
             .expires_at
             .map_or(self.issued <= legacy_valid_after, |expiry| {
@@ -69,14 +71,14 @@ impl TokenRow {
         Ok(StorageTokenMetadata::builder(
             hubuum_domain::TokenId::new(self.id)?,
             hubuum_domain::PrincipalId::new(self.principal_id)?,
-            self.issued,
+            self.issued.and_utc(),
             self.revision.into_domain(),
         )
         .name(self.name)
         .description(self.description)
-        .expires_at(self.expires_at)
-        .last_used_at(self.last_used_at)
-        .revoked_at(self.revoked_at)
+        .expires_at(self.expires_at.map(|timestamp| timestamp.and_utc()))
+        .last_used_at(self.last_used_at.map(|timestamp| timestamp.and_utc()))
+        .revoked_at(self.revoked_at.map(|timestamp| timestamp.and_utc()))
         .active(self.revoked_at.is_none() && !expired)
         .expired(expired)
         .scope(scope)
@@ -213,7 +215,7 @@ pub async fn create_token(
     let token_hash = parts.token_hash().to_string();
     let name = parts.name().map(str::to_string);
     let description = parts.description().map(str::to_string);
-    let expires_at = parts.expires_at();
+    let expires_at = parts.expires_at().map(|timestamp| timestamp.naive_utc());
     let scope = parts.scope().cloned();
     let policy = parts.policy();
     let event_context = parts.event_context().clone();
@@ -252,6 +254,7 @@ pub async fn renew_token(
 ) -> Result<MutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
     let (source_token_id, principal_id, token_hash, expires_at, policy, event_context) =
         request.into_parts();
+    let expires_at = expires_at.map(|timestamp| timestamp.naive_utc());
     let source_token_id = source_token_id.id();
     let principal_id = principal_id.id();
     validate_positive_id(source_token_id, "source token id")?;
@@ -1066,7 +1069,7 @@ fn created_metadata(
     scope: Option<AuthenticationTokenScope>,
 ) -> Result<StorageTokenMetadata, PostgresStorageError> {
     let observed_at = token.issued;
-    let observation = StorageTokenObservation::new(observed_at, observed_at)
+    let observation = StorageTokenObservation::new(observed_at.and_utc(), observed_at.and_utc())
         .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
     token.into_metadata(scope, observation)
 }
@@ -1078,6 +1081,8 @@ fn build_token_query<'query>(
     observation: StorageTokenObservation,
 ) -> Result<TokenQuery<'query>, PostgresStorageError> {
     let (observed_at, legacy_valid_after) = observation.into_parts();
+    let observed_at = observed_at.naive_utc();
+    let legacy_valid_after = legacy_valid_after.naive_utc();
     let mut records = crate::schema::tokens::table
         .filter(crate::schema::tokens::principal_id.eq(principal_id))
         .into_boxed();

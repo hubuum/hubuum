@@ -27,8 +27,8 @@ impl TryFrom<IdentityScopeRow> for StorageIdentityScope {
             IdentityScopeId::new(row.id)?,
             row.name,
             row.provider_kind,
-            row.created_at,
-            row.updated_at,
+            row.created_at.and_utc(),
+            row.updated_at.and_utc(),
             row.revision.into_domain(),
         ))
     }

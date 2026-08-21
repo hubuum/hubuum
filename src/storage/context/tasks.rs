@@ -9,7 +9,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "create",
+            "create_task",
             async { dispatch_backend!(self, |backend| backend.create_task(request).await) },
         )
         .await
@@ -19,7 +19,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "get_access",
+            "get_task_access",
             async { dispatch_backend!(self, |backend| { backend.get_task_access(task_id).await }) },
         )
         .await
@@ -32,7 +32,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "list",
+            "list_tasks",
             async { dispatch_backend!(self, |backend| backend.list_tasks(query).await) },
         )
         .await
@@ -45,7 +45,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "list_events",
+            "list_task_events",
             async { dispatch_backend!(self, |backend| backend.list_task_events(query).await) },
         )
         .await
@@ -58,7 +58,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "list_import_results",
+            "list_import_task_results",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_import_task_results(query).await
@@ -75,7 +75,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "list_export_outputs",
+            "list_export_output_summaries",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_export_output_summaries(task_ids).await
@@ -92,7 +92,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "list_backup_outputs",
+            "list_backup_output_summaries",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_backup_output_summaries(task_ids).await
@@ -109,7 +109,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "get_export_summary",
+            "get_export_output_summary",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_export_output_summary(task_id).await
@@ -126,7 +126,7 @@ impl TaskQueueStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Tasks,
-            "get_backup_summary",
+            "get_backup_output_summary",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_backup_output_summary(task_id).await
@@ -176,7 +176,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "claim",
+            "claim_next_task",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.claim_next_task(lease_duration).await
@@ -194,7 +194,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "renew_lease",
+            "renew_task_lease",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.renew_task_lease(lease, lease_duration).await
@@ -211,7 +211,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "recover_leases",
+            "recover_expired_task_leases",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.recover_expired_task_leases(batch_size).await
@@ -225,7 +225,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "append_event",
+            "append_task_event",
             async { dispatch_backend!(self, |backend| { backend.append_task_event(event).await }) },
         )
         .await
@@ -238,7 +238,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "update_state",
+            "update_task_state",
             async {
                 dispatch_backend!(self, |backend| { backend.update_task_state(update).await })
             },
@@ -253,7 +253,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "complete",
+            "complete_task",
             async {
                 dispatch_backend!(self, |backend| { backend.complete_task(completion).await })
             },
@@ -265,7 +265,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "fail",
+            "fail_task",
             async { dispatch_backend!(self, |backend| backend.fail_task(failure).await) },
         )
         .await
@@ -275,7 +275,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "purge_export_outputs",
+            "purge_expired_export_outputs",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.purge_expired_export_outputs().await
@@ -289,7 +289,7 @@ impl TaskExecutionStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
-            "purge_backup_outputs",
+            "purge_expired_backup_outputs",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.purge_expired_backup_outputs().await
@@ -309,7 +309,7 @@ impl BackupSnapshotStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::BackupSnapshots,
-            "snapshot",
+            "create_backup_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.create_backup_snapshot(include_history).await

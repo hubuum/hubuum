@@ -26,13 +26,13 @@ use crate::storage::{
     StorageExternalUserSync, StorageIdentityGroup, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
     StoragePrincipalGroupListQuery, StoragePrincipalTokensRevoke, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountListItem, StorageServiceAccountListQuery,
-    StorageServiceAccountMutation, StorageServiceAccountPoint, StorageServiceAccountUpdate,
+    StorageServiceAccountCreate, StorageServiceAccountDetails, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
     StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy,
     StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
     StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
+    StorageUserDelete, StorageUserDetails, StorageUserListItem, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -56,8 +56,8 @@ fn identity_scope_from_storage(scope: StorageIdentityScope) -> Result<IdentitySc
         id: scope.id().id(),
         name: scope.name().to_string(),
         provider_kind: scope.provider_kind().to_string(),
-        created_at: scope.created_at(),
-        updated_at: scope.updated_at(),
+        created_at: scope.created_at().naive_utc(),
+        updated_at: scope.updated_at().naive_utc(),
         revision: scope.revision(),
     })
 }
@@ -66,8 +66,8 @@ fn principal_group_from_storage(group: StoragePrincipalGroup) -> Result<Principa
     Ok(PrincipalGroup {
         principal_id: group.principal_id().id(),
         group_id: group.group_id().id(),
-        created_at: group.created_at(),
-        updated_at: group.updated_at(),
+        created_at: group.created_at().naive_utc(),
+        updated_at: group.updated_at().naive_utc(),
         revision: group.revision(),
     })
 }
@@ -77,13 +77,17 @@ pub(super) fn identity_group_from_storage(group: StorageIdentityGroup) -> Result
         id: group.id().id(),
         groupname: group.name().to_string(),
         description: group.description().to_string(),
-        created_at: group.created_at(),
-        updated_at: group.updated_at(),
+        created_at: group.created_at().naive_utc(),
+        updated_at: group.updated_at().naive_utc(),
         identity_scope_id: group.identity_scope_id().id(),
         managed_by: group.managed_by().to_string(),
         external_key: group.external_key().map(ToString::to_string),
-        last_sync_attempted_at: group.last_sync_attempted_at(),
-        last_sync_success_at: group.last_sync_success_at(),
+        last_sync_attempted_at: group
+            .last_sync_attempted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        last_sync_success_at: group
+            .last_sync_success_at()
+            .map(|timestamp| timestamp.naive_utc()),
         revision: group.revision(),
     })
 }
@@ -97,9 +101,9 @@ fn service_account_from_storage(account: StorageServiceAccount) -> ServiceAccoun
         description: account.description().to_string(),
         owner_group_id: account.owner_group_id().id(),
         created_by: account.created_by().map(|id| id.id()),
-        disabled_at: account.disabled_at(),
-        created_at: account.created_at(),
-        updated_at: account.updated_at(),
+        disabled_at: account.disabled_at().map(|timestamp| timestamp.naive_utc()),
+        created_at: account.created_at().naive_utc(),
+        updated_at: account.updated_at().naive_utc(),
     }
 }
 
@@ -171,10 +175,12 @@ fn token_metadata_from_storage(
         principal_id: crate::models::PrincipalID::new(metadata.principal_id().id())?,
         name: metadata.name().map(str::to_string),
         description: metadata.description().map(str::to_string),
-        issued: metadata.issued(),
-        expires_at: metadata.expires_at(),
-        last_used_at: metadata.last_used_at(),
-        revoked_at: metadata.revoked_at(),
+        issued: metadata.issued().naive_utc(),
+        expires_at: metadata.expires_at().map(|timestamp| timestamp.naive_utc()),
+        last_used_at: metadata
+            .last_used_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        revoked_at: metadata.revoked_at().map(|timestamp| timestamp.naive_utc()),
         active: metadata.is_active(),
         expired: metadata.is_expired(),
         scope,
@@ -190,9 +196,9 @@ fn user_from_storage(user: StorageUser) -> User {
         password: user.password_hash().map(str::to_string),
         proper_name: user.proper_name().map(str::to_string),
         email: user.email().map(str::to_string),
-        created_at: user.created_at(),
-        updated_at: user.updated_at(),
-        anonymized_at: user.anonymized_at(),
+        created_at: user.created_at().naive_utc(),
+        updated_at: user.updated_at().naive_utc(),
+        anonymized_at: user.anonymized_at().map(|timestamp| timestamp.naive_utc()),
     }
 }
 
@@ -204,13 +210,15 @@ fn user_list_item_from_storage(item: StorageUserListItem) -> Result<UserWithName
         item.provider_kind().to_string(),
         item.name().to_string(),
         item.provider_managed(),
-        item.last_sync_attempted_at(),
-        item.last_sync_success_at(),
+        item.last_sync_attempted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        item.last_sync_success_at()
+            .map(|timestamp| timestamp.naive_utc()),
         item.revision(),
     )))
 }
 
-fn user_point_from_storage(point: StorageUserPoint) -> Result<UserPointResponse, ApiError> {
+fn user_point_from_storage(point: StorageUserDetails) -> Result<UserPointResponse, ApiError> {
     let point = point.into_parts();
     Ok(UserPointResponse {
         id: point.id().id(),
@@ -219,8 +227,8 @@ fn user_point_from_storage(point: StorageUserPoint) -> Result<UserPointResponse,
         name: point.name().to_string(),
         proper_name: point.proper_name().map(str::to_string),
         email: point.email().map(str::to_string),
-        created_at: point.created_at(),
-        updated_at: point.updated_at(),
+        created_at: point.created_at().naive_utc(),
+        updated_at: point.updated_at().naive_utc(),
         revision: point.revision(),
     })
 }
@@ -268,7 +276,7 @@ fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssua
 fn token_observation() -> Result<StorageTokenObservation, ApiError> {
     let observed_at = chrono::Utc::now().naive_utc().trunc_subsecs(6);
     let legacy_valid_after = configured_token_lifetime()?.cutoff_from(observed_at)?;
-    StorageTokenObservation::new(observed_at, legacy_valid_after)
+    StorageTokenObservation::new(observed_at.and_utc(), legacy_valid_after.and_utc())
         .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
@@ -298,7 +306,7 @@ pub async fn get_user_point(
 ) -> Result<UserPointResponse, ApiError> {
     user_point_from_storage(
         storage_handle(context)
-            .get_user_point(
+            .get_user_details(
                 hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
             )
             .await?,
@@ -434,7 +442,7 @@ pub async fn create_token(
     )
     .name(parts.name)
     .description(parts.description)
-    .expires_at(parts.expires_at)
+    .expires_at(parts.expires_at.map(|timestamp| timestamp.and_utc()))
     .scope(parts.scope.as_ref().map(token_scope_to_storage));
     let metadata = token_metadata_from_storage(
         storage_handle(context)
@@ -464,7 +472,7 @@ pub async fn renew_token(
             .expect("validated source token id must be positive"),
         principal_id_to_storage(principal_id),
         raw.storage_hash(),
-        expires_at,
+        expires_at.map(|timestamp| timestamp.and_utc()),
         token_policy(issuance_policy),
         event_context.clone(),
     );
@@ -707,7 +715,7 @@ pub async fn get_service_account(
 }
 
 fn service_account_point_from_storage(
-    point: StorageServiceAccountPoint,
+    point: StorageServiceAccountDetails,
 ) -> Result<crate::models::ServiceAccountPointResponse, ApiError> {
     let (account, identity_scope_id, name, point_revision) = point.into_parts();
     Ok(crate::models::ServiceAccountPointResponse::from_parts(
@@ -724,7 +732,7 @@ pub async fn get_service_account_point(
 ) -> Result<crate::models::ServiceAccountPointResponse, ApiError> {
     service_account_point_from_storage(
         storage_handle(context)
-            .get_service_account_point(
+            .get_service_account_details(
                 hubuum_domain::ServiceAccountId::new(service_account_id)
                     .expect("validated service account id must be positive"),
             )
@@ -862,8 +870,12 @@ fn external_state_from_storage(state: StorageExternalPrincipalState) -> External
         identity_scope: state.identity_scope().to_string(),
         username: state.username().to_string(),
         external_subject: state.external_subject().to_string(),
-        last_sync_attempted_at: state.last_sync_attempted_at(),
-        last_sync_success_at: state.last_sync_success_at(),
+        last_sync_attempted_at: state
+            .last_sync_attempted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        last_sync_success_at: state
+            .last_sync_success_at()
+            .map(|timestamp| timestamp.naive_utc()),
     }
 }
 
@@ -906,16 +918,15 @@ fn external_sync_request(
 }
 
 fn synced_human_from_storage(human: StorageSyncedHuman) -> crate::models::User {
-    let (id, proper_name, email, created_at, updated_at, anonymized_at) = human.into_parts();
     crate::models::User {
-        id: id.id(),
+        id: human.id().id(),
         kind: crate::models::PrincipalKind::Human.as_str().to_string(),
         password: None,
-        proper_name,
-        email,
-        created_at,
-        updated_at,
-        anonymized_at,
+        proper_name: human.proper_name().map(str::to_string),
+        email: human.email().map(str::to_string),
+        created_at: human.created_at().naive_utc(),
+        updated_at: human.updated_at().naive_utc(),
+        anonymized_at: human.anonymized_at().map(|timestamp| timestamp.naive_utc()),
     }
 }
 

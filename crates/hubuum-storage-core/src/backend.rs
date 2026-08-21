@@ -1,15 +1,6 @@
 use crate::{
-    AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage,
-    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, EventConfigurationStorage,
-    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
-    ExternalIdentityStorage, GroupStorage, HistoryStorage, IdentityMembershipStorage,
-    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
-    MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
-    OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
-    RestoreStorage, ServiceAccountStorage, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, TransactionStorage, UnifiedSearchStorage, UserStorage,
+    EventStorage, IdentityStorage, OperationalStorage, QueryStorage, ResourceStorage,
+    WorkflowStorage,
 };
 
 /// Complete storage contract accepted by an application composition root.
@@ -22,49 +13,11 @@ use crate::{
 /// This trait describes static Rust composition. It is not a dynamic plugin
 /// interface and does not define runtime discovery or contract versioning.
 pub trait StorageBackend:
-    CollectionStorage
-    + ClassStorage
-    + ObjectStorage
-    + ClassRelationStorage
-    + ObjectRelationStorage
-    + AuthenticationStorage
-    + LocalIdentityCredentialStorage
-    + IdentityScopeStorage
-    + IdentityMembershipStorage
-    + ServiceAccountStorage
-    + ExternalIdentityStorage
-    + UserStorage
-    + TokenStorage
-    + AuthorizationDataStorage
-    + CatalogStorage
-    + ComputedFieldStorage
-    + ComputedObjectStorage
-    + ObjectAggregateStorage
-    + RelationQueryStorage
-    + AuditEventStorage
-    + EventConfigurationStorage
-    + EventDeliveryAdministrationStorage
-    + EventDeliveryWorkerStorage
-    + EventFanoutStorage
-    + EventHealthStorage
-    + EventRetentionStorage
-    + HistoryStorage
-    + InventoryStorage
-    + MetricsStorage
-    + OperationalStateStorage
-    + TokenRetentionStorage
-    + UnifiedSearchStorage
-    + GroupStorage
-    + PrincipalStorage
-    + CollectionAuthorizationQueryStorage
-    + RemoteTargetStorage
-    + TaskQueueStorage
-    + TaskExecutionStorage
-    + BackupSnapshotStorage
-    + ImportStorage
-    + RestoreStorage
-    + ExportTemplateStorage
-    + ExecutionStorage
-    + TransactionStorage
+    ResourceStorage
+    + IdentityStorage
+    + QueryStorage
+    + WorkflowStorage
+    + EventStorage
+    + OperationalStorage
 {
 }

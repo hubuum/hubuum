@@ -47,6 +47,8 @@ pub async fn authenticate_bearer_token(
     };
 
     let (credential, observed_at, legacy_valid_after) = attempt.into_parts();
+    let observed_at = observed_at.naive_utc();
+    let legacy_valid_after = legacy_valid_after.naive_utc();
     let lookup_value = credential.lookup_value().to_string();
     let row = runtime
         .with_connection(async move |conn| {
@@ -127,13 +129,13 @@ pub async fn authenticate_bearer_token(
     Ok(AuthenticatedToken::builder(
         hubuum_domain::TokenId::new(id)?,
         hubuum_domain::PrincipalId::new(principal_id_value)?,
-        token_issued,
+        token_issued.and_utc(),
         token_revision.into_domain(),
     )
     .name(token_name)
     .description(token_description)
-    .expires_at(token_expires_at)
-    .last_used_at(observed_last_used)
+    .expires_at(token_expires_at.map(|timestamp| timestamp.and_utc()))
+    .last_used_at(observed_last_used.map(|timestamp| timestamp.and_utc()))
     .permission_scoped(is_permission_scoped)
     .resource_scoped(is_resource_scoped)
     .build())
@@ -234,9 +236,9 @@ fn authentication_identity_from_row(
                 UserId::new(human_id)?,
                 proper_name,
                 email,
-                created_at,
-                updated_at,
-                anonymized_at,
+                created_at.and_utc(),
+                updated_at.and_utc(),
+                anonymized_at.map(|timestamp| timestamp.and_utc()),
             ))
         })
         .transpose()?;

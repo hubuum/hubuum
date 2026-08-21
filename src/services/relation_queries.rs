@@ -38,8 +38,8 @@ fn class_relation_from_storage(row: StorageClassRelation) -> Result<HubuumClassR
         to_hubuum_class_id: to_hubuum_class_id.id(),
         forward_template_alias,
         reverse_template_alias,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         from_max_relations: from_max_relations
             .map(ObjectRelationLimit::new)
             .transpose()?,
@@ -65,8 +65,8 @@ fn object_relation_from_storage(
         from_hubuum_object_id: from_hubuum_object_id.id(),
         to_hubuum_object_id: to_hubuum_object_id.id(),
         class_relation_id: class_relation_id.id(),
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         revision,
     })
 }
@@ -97,8 +97,8 @@ fn class_parts(
         schema,
         validate,
         description,
-        created,
-        updated,
+        created.naive_utc(),
+        updated.naive_utc(),
         revision,
     ))
 }
@@ -177,8 +177,8 @@ fn object_parts(
         class_id.id(),
         description,
         data,
-        created,
-        updated,
+        created.naive_utc(),
+        updated.naive_utc(),
         revision,
     ))
 }

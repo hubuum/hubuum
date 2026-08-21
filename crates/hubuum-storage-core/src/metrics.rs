@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::ExportTemplateId;
 
 use crate::{
@@ -181,16 +181,16 @@ impl TaskGaugeCount {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskGaugeAge {
     kind: StorageTaskKind,
-    oldest_queued_at: Option<NaiveDateTime>,
-    oldest_active_at: Option<NaiveDateTime>,
+    oldest_queued_at: Option<DateTime<Utc>>,
+    oldest_active_at: Option<DateTime<Utc>>,
 }
 
 impl TaskGaugeAge {
     #[must_use]
     pub const fn new(
         kind: StorageTaskKind,
-        oldest_queued_at: Option<NaiveDateTime>,
-        oldest_active_at: Option<NaiveDateTime>,
+        oldest_queued_at: Option<DateTime<Utc>>,
+        oldest_active_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             kind,
@@ -205,12 +205,12 @@ impl TaskGaugeAge {
     }
 
     #[must_use]
-    pub const fn oldest_queued_at(self) -> Option<NaiveDateTime> {
+    pub const fn oldest_queued_at(self) -> Option<DateTime<Utc>> {
         self.oldest_queued_at
     }
 
     #[must_use]
-    pub const fn oldest_active_at(self) -> Option<NaiveDateTime> {
+    pub const fn oldest_active_at(self) -> Option<DateTime<Utc>> {
         self.oldest_active_at
     }
 }
@@ -219,7 +219,7 @@ impl TaskGaugeAge {
 pub struct TaskGaugeLastTerminal {
     kind: StorageTaskKind,
     status: StorageTaskStatus,
-    finished_at: Option<NaiveDateTime>,
+    finished_at: Option<DateTime<Utc>>,
 }
 
 impl TaskGaugeLastTerminal {
@@ -227,7 +227,7 @@ impl TaskGaugeLastTerminal {
     pub const fn new(
         kind: StorageTaskKind,
         status: StorageTaskStatus,
-        finished_at: Option<NaiveDateTime>,
+        finished_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             kind,
@@ -247,7 +247,7 @@ impl TaskGaugeLastTerminal {
     }
 
     #[must_use]
-    pub const fn finished_at(self) -> Option<NaiveDateTime> {
+    pub const fn finished_at(self) -> Option<DateTime<Utc>> {
         self.finished_at
     }
 }

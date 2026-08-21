@@ -1,7 +1,7 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{ClassId, CollectionId, ComputedFieldDefinitionId, PrincipalId, TaskId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
@@ -378,27 +378,67 @@ impl fmt::Debug for StorageComputedFieldDefinition {
     }
 }
 
+/// Durable computed-field rebuild lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageComputationRebuildStatus {
+    Ready,
+    Rebuilding,
+    Failed,
+}
+
+impl StorageComputationRebuildStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Rebuilding => "rebuilding",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl fmt::Display for StorageComputationRebuildStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for StorageComputationRebuildStatus {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "ready" => Ok(Self::Ready),
+            "rebuilding" => Ok(Self::Rebuilding),
+            "failed" => Ok(Self::Failed),
+            _ => Err(StorageError::invalid_input(format!(
+                "Unsupported computation rebuild status '{value}'"
+            ))),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageClassComputationState {
     class_id: ClassId,
     evaluation_revision: StorageComputationRevision,
-    rebuild_status: String,
+    rebuild_status: StorageComputationRebuildStatus,
     active_task_id: Option<TaskId>,
     last_error: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl StorageClassComputationState {
     #[must_use]
-    pub fn new(
+    pub fn builder(
         class_id: ClassId,
         evaluation_revision: StorageComputationRevision,
-        rebuild_status: String,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-    ) -> Self {
-        Self {
+        rebuild_status: StorageComputationRebuildStatus,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> StorageClassComputationStateBuilder {
+        StorageClassComputationStateBuilder {
             class_id,
             evaluation_revision,
             rebuild_status,
@@ -407,18 +447,6 @@ impl StorageClassComputationState {
             created_at,
             updated_at,
         }
-    }
-
-    #[must_use]
-    pub const fn active_task(mut self, active_task_id: Option<TaskId>) -> Self {
-        self.active_task_id = active_task_id;
-        self
-    }
-
-    #[must_use]
-    pub fn last_error(mut self, last_error: Option<String>) -> Self {
-        self.last_error = last_error;
-        self
     }
 
     #[must_use]
@@ -432,8 +460,8 @@ impl StorageClassComputationState {
     }
 
     #[must_use]
-    pub fn rebuild_status(&self) -> &str {
-        &self.rebuild_status
+    pub const fn rebuild_status(&self) -> StorageComputationRebuildStatus {
+        self.rebuild_status
     }
 
     #[must_use]
@@ -447,13 +475,71 @@ impl StorageClassComputationState {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
+    }
+}
+
+/// Builder that validates correlated computation-state fields at its terminal.
+pub struct StorageClassComputationStateBuilder {
+    class_id: ClassId,
+    evaluation_revision: StorageComputationRevision,
+    rebuild_status: StorageComputationRebuildStatus,
+    active_task_id: Option<TaskId>,
+    last_error: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl StorageClassComputationStateBuilder {
+    #[must_use]
+    pub const fn active_task(mut self, active_task_id: Option<TaskId>) -> Self {
+        self.active_task_id = active_task_id;
+        self
+    }
+
+    #[must_use]
+    pub fn last_error(mut self, last_error: Option<String>) -> Self {
+        self.last_error = last_error;
+        self
+    }
+
+    pub fn try_build(self) -> Result<StorageClassComputationState, StorageError> {
+        if self.updated_at < self.created_at {
+            return Err(StorageError::invalid_input(
+                "Computation state updated_at must not precede created_at",
+            ));
+        }
+        let valid_correlated_state = match self.rebuild_status {
+            StorageComputationRebuildStatus::Ready => {
+                self.active_task_id.is_none() && self.last_error.is_none()
+            }
+            StorageComputationRebuildStatus::Rebuilding => {
+                self.active_task_id.is_some() && self.last_error.is_none()
+            }
+            StorageComputationRebuildStatus::Failed => {
+                self.active_task_id.is_none() && self.last_error.is_some()
+            }
+        };
+        if !valid_correlated_state {
+            return Err(StorageError::invalid_input(
+                "Computation rebuild status, active task, and last error are inconsistent",
+            ));
+        }
+        Ok(StorageClassComputationState {
+            class_id: self.class_id,
+            evaluation_revision: self.evaluation_revision,
+            rebuild_status: self.rebuild_status,
+            active_task_id: self.active_task_id,
+            last_error: self.last_error,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
     }
 }
 
@@ -462,7 +548,7 @@ impl fmt::Debug for StorageClassComputationState {
         formatter
             .debug_struct("StorageClassComputationState")
             .field("evaluation_revision", &self.evaluation_revision)
-            .field("rebuild_status", &self.rebuild_status)
+            .field("rebuild_status", &self.rebuild_status.as_str())
             .field("has_active_task", &self.active_task_id.is_some())
             .field("has_last_error", &self.last_error.is_some())
             .finish_non_exhaustive()
@@ -857,12 +943,12 @@ mod tests {
 
     #[test]
     fn definition_debug_redacts_identifiers_and_expression_content() {
-        let now = chrono::Utc::now().naive_utc();
+        let now = chrono::Utc::now();
         let definition = StorageComputedFieldDefinition::new(
             StorageRecordMetadata::try_new(
                 hubuum_domain::ResourceId::new(71).unwrap(),
-                now.and_utc(),
-                now.and_utc(),
+                now,
+                now,
                 hubuum_domain::ResourceRevision::new(5).unwrap(),
             )
             .unwrap(),
@@ -905,18 +991,29 @@ mod tests {
 
     #[test]
     fn computation_state_debug_redacts_resource_task_and_error_details() {
-        let now = chrono::Utc::now().naive_utc();
-        let state = StorageClassComputationState::new(
+        let now = chrono::Utc::now();
+        let failed_state = StorageClassComputationState::builder(
             ClassId::new(98_765).unwrap(),
             StorageComputationRevision::new(7).unwrap(),
-            "failed".to_string(),
+            StorageComputationRebuildStatus::Failed,
+            now,
+            now,
+        )
+        .last_error(Some("secret database detail".to_string()))
+        .try_build()
+        .unwrap();
+        let rebuilding_state = StorageClassComputationState::builder(
+            ClassId::new(98_765).unwrap(),
+            StorageComputationRevision::new(7).unwrap(),
+            StorageComputationRebuildStatus::Rebuilding,
             now,
             now,
         )
         .active_task(TaskId::new(87_654).ok())
-        .last_error(Some("secret database detail".to_string()));
+        .try_build()
+        .unwrap();
 
-        let debug = format!("{state:?}");
+        let debug = format!("{failed_state:?} {rebuilding_state:?}");
 
         assert!(!debug.contains("98765"));
         assert!(!debug.contains("87654"));

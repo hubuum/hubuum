@@ -25,8 +25,8 @@ impl PrincipalGroupRow {
         Ok(StoragePrincipalGroup::new(
             PrincipalId::new(self.principal_id)?,
             GroupId::new(self.group_id)?,
-            self.created_at,
-            self.updated_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
             self.revision.into_domain(),
         ))
     }

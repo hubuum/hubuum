@@ -6,7 +6,7 @@ use hubuum_domain::{
 use hubuum_events_core::EventContext;
 use serde_json::Value;
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 
 use crate::{
     MutationOutcome, StorageCollection, StorageError, StorageObject, StorageRecordMetadata,
@@ -25,8 +25,8 @@ pub struct StorageClassRecord {
     json_schema: Option<Value>,
     validate_schema: bool,
     description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -79,12 +79,12 @@ impl StorageClassRecord {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -104,8 +104,8 @@ impl StorageClassRecord {
         Option<Value>,
         bool,
         String,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         ResourceRevision,
     ) {
         (
@@ -153,8 +153,8 @@ impl StorageClassRecordBuilder {
             json_schema: self.json_schema,
             validate_schema: self.validate_schema,
             description: self.description,
-            created_at: self.metadata.created_at().naive_utc(),
-            updated_at: self.metadata.updated_at().naive_utc(),
+            created_at: self.metadata.created_at(),
+            updated_at: self.metadata.updated_at(),
             revision: self.metadata.revision(),
         }
     }

@@ -113,7 +113,7 @@ impl TaskEventRow {
             TaskId::new(task_id)?,
             self.action,
             self.summary,
-            self.occurred_at,
+            self.occurred_at.and_utc(),
             self.actor_kind,
         )
         .data(data)
@@ -152,7 +152,7 @@ impl ImportTaskResultRow {
             self.entity_kind,
             self.action,
             self.outcome,
-            self.created_at,
+            self.created_at.and_utc(),
         )
         .item_ref(self.item_ref)
         .identifier(self.identifier)
@@ -189,8 +189,8 @@ impl ExportOutputRow {
             self.content_type,
             self.meta_json,
             self.warnings_json,
-            self.output_expires_at,
-            self.created_at,
+            self.output_expires_at.and_utc(),
+            self.created_at.and_utc(),
         )
         .template_name(self.template_name)
         .output(self.json_output, self.text_output)
@@ -228,7 +228,7 @@ impl ExportOutputSummaryRow {
             self.content_type,
             self.warning_count,
             self.truncated,
-            self.output_expires_at,
+            self.output_expires_at.and_utc(),
             StorageTaskDurations::new(
                 self.total_duration_ms,
                 self.query_duration_ms,
@@ -257,8 +257,8 @@ impl BackupOutputRow {
             self.document,
             self.byte_size,
             self.sha256,
-            self.output_expires_at,
-            self.created_at,
+            self.output_expires_at.and_utc(),
+            self.created_at.and_utc(),
         ))
     }
 }
@@ -278,7 +278,7 @@ impl BackupOutputSummaryRow {
             TaskId::new(self.task_id)?,
             self.byte_size,
             self.sha256,
-            self.output_expires_at,
+            self.output_expires_at.and_utc(),
         ))
     }
 }
@@ -987,7 +987,9 @@ fn classify_output<T, U>(
             if expires_at > Utc::now().naive_utc() {
                 StorageTaskOutputLookup::Available(convert(row)?)
             } else {
-                StorageTaskOutputLookup::Expired { expires_at }
+                StorageTaskOutputLookup::Expired {
+                    expires_at: expires_at.and_utc(),
+                }
             }
         }
         None => StorageTaskOutputLookup::Missing,

@@ -1202,7 +1202,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             StorageRemoteTargetDefinition::new(
                 "before",
                 StorageRemoteTargetTransport::try_new(
-                    "get",
+                    crate::storage::StorageRemoteHttpMethod::Get,
                     "https://example.invalid/{{ subject.id }}",
                     serde_json::json!({}),
                     None,
@@ -1214,8 +1214,12 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
                     1000,
                 )
                 .unwrap(),
-                StorageRemoteTargetPolicy::try_new(None, vec!["collection".to_string()], true)
-                    .unwrap(),
+                StorageRemoteTargetPolicy::try_new(
+                    None,
+                    vec![crate::storage::StorageRemoteTargetSubjectType::Collection],
+                    true,
+                )
+                .unwrap(),
             ),
             context.clone(),
         ))
@@ -1273,7 +1277,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
             target_id,
             hubuum_domain::TaskId::new(12345).unwrap(),
-            "collection",
+            crate::storage::StorageRemoteTargetSubjectType::Collection,
             hubuum_domain::ResourceId::new(fixture.collection.id).unwrap(),
             context.clone(),
         ))

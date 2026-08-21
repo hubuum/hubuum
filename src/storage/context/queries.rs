@@ -11,7 +11,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "resolve_principal_names",
+            "resolve_history_principal_names",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.resolve_history_principal_names(principal_ids).await
@@ -28,7 +28,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "list_collections",
+            "list_collection_history",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_collection_history(query).await
@@ -45,7 +45,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "collection_as_of",
+            "get_collection_history_as_of",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_collection_history_as_of(query).await
@@ -62,7 +62,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "list_classes",
+            "list_class_history",
             async {
                 dispatch_backend!(self, |backend| { backend.list_class_history(query).await })
             },
@@ -77,7 +77,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "class_as_of",
+            "get_class_history_as_of",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_class_history_as_of(query).await
@@ -94,7 +94,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "list_objects",
+            "list_object_history",
             async {
                 dispatch_backend!(self, |backend| { backend.list_object_history(query).await })
             },
@@ -109,7 +109,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "object_as_of",
+            "get_object_history_as_of",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_object_history_as_of(query).await
@@ -126,7 +126,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "list_templates",
+            "list_export_template_history",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_export_template_history(query).await
@@ -143,7 +143,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "template_as_of",
+            "get_export_template_history_as_of",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_export_template_history_as_of(query).await
@@ -160,7 +160,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "list_remote_targets",
+            "list_remote_target_history",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_remote_target_history(query).await
@@ -177,7 +177,7 @@ impl HistoryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
-            "remote_target_as_of",
+            "get_remote_target_history_as_of",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_remote_target_history_as_of(query).await
@@ -197,7 +197,7 @@ impl CatalogStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Catalog,
-            "collections",
+            "list_collections",
             async { dispatch_backend!(self, |backend| backend.list_collections(query).await) },
         )
         .await
@@ -210,7 +210,7 @@ impl CatalogStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Catalog,
-            "classes",
+            "list_classes",
             async { dispatch_backend!(self, |backend| backend.list_classes(query).await) },
         )
         .await
@@ -223,7 +223,7 @@ impl CatalogStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Catalog,
-            "objects",
+            "list_objects",
             async { dispatch_backend!(self, |backend| backend.list_objects(query).await) },
         )
         .await
@@ -239,7 +239,7 @@ impl ComputedObjectStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedObjects,
-            "list",
+            "list_computed_objects",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_computed_objects(query).await
@@ -256,12 +256,25 @@ impl ComputedObjectStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedObjects,
-            "enrich",
+            "enrich_objects_with_computed",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.enrich_objects_with_computed(query).await
                 })
             },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl InventoryStorage for StorageHandle {
+    async fn get_inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Inventory,
+            "get_inventory_counts",
+            async { dispatch_backend!(self, |backend| backend.get_inventory_counts().await) },
         )
         .await
     }

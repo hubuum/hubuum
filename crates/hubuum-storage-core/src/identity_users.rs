@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{IdentityScopeId, ResourceRevision, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
@@ -14,9 +14,9 @@ pub struct StorageUserParts {
     password_hash: Option<String>,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    anonymized_at: Option<NaiveDateTime>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    anonymized_at: Option<DateTime<Utc>>,
 }
 
 impl StorageUserParts {
@@ -37,15 +37,15 @@ impl StorageUserParts {
         self.email.as_deref()
     }
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
     #[must_use]
-    pub const fn anonymized_at(&self) -> Option<NaiveDateTime> {
+    pub const fn anonymized_at(&self) -> Option<DateTime<Utc>> {
         self.anonymized_at
     }
 }
@@ -57,8 +57,8 @@ pub struct StorageUserListItemParts {
     provider_kind: String,
     name: String,
     provider_managed: bool,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
     revision: ResourceRevision,
 }
 
@@ -84,11 +84,11 @@ impl StorageUserListItemParts {
         self.provider_managed
     }
     #[must_use]
-    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_attempted_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_attempted_at
     }
     #[must_use]
-    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_success_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_success_at
     }
     #[must_use]
@@ -98,19 +98,19 @@ impl StorageUserListItemParts {
 }
 
 /// Named fields returned when a point projection is consumed.
-pub struct StorageUserPointParts {
+pub struct StorageUserDetailsParts {
     id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     identity_scope_id: IdentityScopeId,
     provider_managed: bool,
     name: String,
     revision: ResourceRevision,
 }
 
-impl StorageUserPointParts {
+impl StorageUserDetailsParts {
     #[must_use]
     pub const fn id(&self) -> UserId {
         self.id
@@ -124,11 +124,11 @@ impl StorageUserPointParts {
         self.email.as_deref()
     }
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
     #[must_use]
@@ -156,9 +156,9 @@ pub struct StorageUser {
     password_hash: Option<String>,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    anonymized_at: Option<NaiveDateTime>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    anonymized_at: Option<DateTime<Utc>>,
 }
 
 impl StorageUser {
@@ -168,9 +168,9 @@ impl StorageUser {
         password_hash: Option<String>,
         proper_name: Option<String>,
         email: Option<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        anonymized_at: Option<NaiveDateTime>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        anonymized_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             id,
@@ -218,8 +218,8 @@ pub struct StorageUserListItem {
     provider_kind: String,
     name: String,
     provider_managed: bool,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
     revision: ResourceRevision,
 }
 
@@ -266,8 +266,8 @@ pub struct StorageUserListItemBuilder {
     provider_kind: String,
     name: String,
     provider_managed: bool,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
     revision: ResourceRevision,
 }
 
@@ -279,13 +279,13 @@ impl StorageUserListItemBuilder {
     }
 
     #[must_use]
-    pub const fn last_sync_attempted_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_sync_attempted_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_sync_attempted_at = value;
         self
     }
 
     #[must_use]
-    pub const fn last_sync_success_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_sync_success_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_sync_success_at = value;
         self
     }
@@ -320,29 +320,29 @@ impl fmt::Debug for StorageUserListItem {
 
 /// Strong point projection governed by the principal revision.
 #[derive(Clone, PartialEq, Eq)]
-pub struct StorageUserPoint {
+pub struct StorageUserDetails {
     id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     identity_scope_id: IdentityScopeId,
     provider_managed: bool,
     name: String,
     revision: ResourceRevision,
 }
 
-impl StorageUserPoint {
+impl StorageUserDetails {
     #[must_use]
     pub fn builder(
         id: UserId,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         identity_scope_id: IdentityScopeId,
         name: impl Into<String>,
         revision: ResourceRevision,
-    ) -> StorageUserPointBuilder {
-        StorageUserPointBuilder {
+    ) -> StorageUserDetailsBuilder {
+        StorageUserDetailsBuilder {
             id,
             proper_name: None,
             email: None,
@@ -356,8 +356,8 @@ impl StorageUserPoint {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> StorageUserPointParts {
-        StorageUserPointParts {
+    pub fn into_parts(self) -> StorageUserDetailsParts {
+        StorageUserDetailsParts {
             id: self.id,
             proper_name: self.proper_name,
             email: self.email,
@@ -372,19 +372,19 @@ impl StorageUserPoint {
 }
 
 /// Builder for the strongly versioned user point projection.
-pub struct StorageUserPointBuilder {
+pub struct StorageUserDetailsBuilder {
     id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     identity_scope_id: IdentityScopeId,
     provider_managed: bool,
     name: String,
     revision: ResourceRevision,
 }
 
-impl StorageUserPointBuilder {
+impl StorageUserDetailsBuilder {
     #[must_use]
     pub fn proper_name(mut self, value: Option<String>) -> Self {
         self.proper_name = value;
@@ -404,8 +404,8 @@ impl StorageUserPointBuilder {
     }
 
     #[must_use]
-    pub fn build(self) -> StorageUserPoint {
-        StorageUserPoint {
+    pub fn build(self) -> StorageUserDetails {
+        StorageUserDetails {
             id: self.id,
             proper_name: self.proper_name,
             email: self.email,
@@ -419,10 +419,10 @@ impl StorageUserPointBuilder {
     }
 }
 
-impl fmt::Debug for StorageUserPoint {
+impl fmt::Debug for StorageUserDetails {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("StorageUserPoint")
+            .debug_struct("StorageUserDetails")
             .field("id", &"<redacted>")
             .field("has_proper_name", &self.proper_name.is_some())
             .field("has_email", &self.email.is_some())
@@ -697,7 +697,7 @@ pub trait UserStorage: Send + Sync {
         name: String,
     ) -> Result<StorageUser, StorageError>;
 
-    async fn get_user_point(&self, id: UserId) -> Result<StorageUserPoint, StorageError>;
+    async fn get_user_details(&self, id: UserId) -> Result<StorageUserDetails, StorageError>;
 
     async fn list_users(
         &self,

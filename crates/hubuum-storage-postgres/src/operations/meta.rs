@@ -162,8 +162,8 @@ pub async fn load_task_queue_snapshot(
                 kinds,
                 row.total_task_events,
                 row.total_import_result_rows,
-                row.oldest_queued_at,
-                row.oldest_active_at,
+                row.oldest_queued_at.map(|timestamp| timestamp.and_utc()),
+                row.oldest_active_at.map(|timestamp| timestamp.and_utc()),
             )
         })
 }

@@ -8,8 +8,8 @@ use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    MutationOutcome, StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate,
-    StorageIdentityGroup, StoragePage, StoragePrincipal, StoragePrincipalGroup,
+    MutationOutcome, StorageGroupCreate, StorageGroupListQuery, StorageGroupMember,
+    StorageGroupUpdate, StorageIdentityGroup, StoragePage, StoragePrincipal, StoragePrincipalGroup,
     StoragePrincipalGroupListQuery,
 };
 use serde_json::{Value, json};
@@ -113,8 +113,14 @@ impl GroupRow {
             self.managed_by,
         )
         .external_key(self.external_key)
-        .last_sync_attempted_at(self.last_sync_attempted_at)
-        .last_sync_success_at(self.last_sync_success_at)
+        .last_sync_attempted_at(
+            self.last_sync_attempted_at
+                .map(|timestamp| timestamp.and_utc()),
+        )
+        .last_sync_success_at(
+            self.last_sync_success_at
+                .map(|timestamp| timestamp.and_utc()),
+        )
         .build())
     }
 
@@ -148,8 +154,8 @@ impl PrincipalGroupRow {
         Ok(StoragePrincipalGroup::new(
             PrincipalId::new(self.principal_id)?,
             GroupId::new(self.group_id)?,
-            self.created_at,
-            self.updated_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
             self.revision.into_domain(),
         ))
     }
@@ -417,7 +423,7 @@ pub async fn delete_group(
         .await
 }
 
-pub async fn list_group_members(
+pub async fn list_all_group_members(
     runtime: &PostgresRuntime,
     group_id: i32,
 ) -> Result<Vec<StoragePrincipal>, PostgresStorageError> {
@@ -439,15 +445,23 @@ pub async fn list_group_members_page(
     runtime: &PostgresRuntime,
     group_id: i32,
     options: QueryOptions,
-) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, PostgresStorageError> {
+) -> Result<StoragePage<StorageGroupMember>, PostgresStorageError> {
     validate_positive_id(group_id, "group id")?;
     runtime
-        .with_connection(async |connection| {
-            let mut query = crate::schema::group_memberships::table
-                .filter(crate::schema::group_memberships::group_id.eq(group_id))
-                .inner_join(crate::schema::principals::table)
-                .into_boxed();
-            query = apply_member_filters(query, &options)?;
+        .with_read_only_snapshot(async |connection| {
+            let build_query = || -> Result<_, PostgresStorageError> {
+                let query = crate::schema::group_memberships::table
+                    .filter(crate::schema::group_memberships::group_id.eq(group_id))
+                    .inner_join(crate::schema::principals::table)
+                    .into_boxed();
+                apply_member_filters(query, &options)
+            };
+            let total = if options.include_total() {
+                Some(build_query()?.count().get_result::<i64>(connection).await?)
+            } else {
+                None
+            };
+            let mut query = build_query()?;
             let fields = options
                 .sort()
                 .iter()
@@ -458,53 +472,16 @@ pub async fn list_group_members_page(
                 .select((PrincipalGroupRow::as_select(), PrincipalRow::as_select()))
                 .load::<(PrincipalGroupRow, PrincipalRow)>(connection)
                 .await?;
-            rows.into_iter()
+            let members = rows
+                .into_iter()
                 .map(|(membership, principal)| {
-                    Ok::<_, PostgresStorageError>((
+                    Ok::<_, PostgresStorageError>(StorageGroupMember::new(
                         membership.into_storage()?,
                         principal.into_storage()?,
                     ))
                 })
-                .collect()
-        })
-        .await
-}
-
-pub async fn count_group_members(
-    runtime: &PostgresRuntime,
-    group_id: i32,
-    options: QueryOptions,
-) -> Result<i64, PostgresStorageError> {
-    validate_positive_id(group_id, "group id")?;
-    runtime
-        .with_connection(async |connection| {
-            let mut query = crate::schema::group_memberships::table
-                .filter(crate::schema::group_memberships::group_id.eq(group_id))
-                .inner_join(crate::schema::principals::table)
-                .into_boxed();
-            query = apply_member_filters(query, &options)?;
-            query
-                .count()
-                .get_result::<i64>(connection)
-                .await
-                .map_err(PostgresStorageError::from)
-        })
-        .await
-}
-
-pub async fn get_group_member_principal(
-    runtime: &PostgresRuntime,
-    principal_id: i32,
-) -> Result<StoragePrincipal, PostgresStorageError> {
-    validate_positive_id(principal_id, "principal id")?;
-    runtime
-        .with_connection(async |connection| {
-            crate::schema::principals::table
-                .filter(crate::schema::principals::id.eq(principal_id))
-                .select(PrincipalRow::as_select())
-                .first::<PrincipalRow>(connection)
-                .await?
-                .into_storage()
+                .collect::<Result<Vec<_>, _>>()?;
+            StoragePage::try_new(members, total).map_err(PostgresStorageError::from)
         })
         .await
 }

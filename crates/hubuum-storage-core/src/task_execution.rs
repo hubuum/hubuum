@@ -1,11 +1,14 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{RemoteTargetId, ResourceId, TaskId};
 use serde_json::Value;
 
-use crate::{StorageError, StorageTask, StorageTaskDurations, StorageTaskStatus};
+use crate::{
+    StorageError, StorageRemoteHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
+    StorageTaskDurations, StorageTaskStatus,
+};
 
 /// Validated lease duration shared with a storage adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,7 +232,7 @@ pub struct StorageTaskStateUpdate {
     status: StorageTaskStatus,
     summary: Option<String>,
     counts: StorageTaskResultCounts,
-    started_at: Option<NaiveDateTime>,
+    started_at: Option<DateTime<Utc>>,
 }
 
 impl StorageTaskStateUpdate {
@@ -255,7 +258,7 @@ impl StorageTaskStateUpdate {
     }
 
     #[must_use]
-    pub const fn started_at(mut self, started_at: Option<NaiveDateTime>) -> Self {
+    pub const fn started_at(mut self, started_at: Option<DateTime<Utc>>) -> Self {
         self.started_at = started_at;
         self
     }
@@ -268,7 +271,7 @@ impl StorageTaskStateUpdate {
         StorageTaskStatus,
         Option<String>,
         StorageTaskResultCounts,
-        Option<NaiveDateTime>,
+        Option<DateTime<Utc>>,
     ) {
         (
             self.lease,
@@ -291,7 +294,7 @@ pub struct StorageExportTaskArtifact {
     warnings: Value,
     warning_count: i32,
     truncated: bool,
-    output_expires_at: NaiveDateTime,
+    output_expires_at: DateTime<Utc>,
     durations: StorageTaskDurations,
 }
 
@@ -347,7 +350,7 @@ impl StorageExportTaskArtifact {
         content_type: impl Into<String>,
         metadata: Value,
         warnings: Value,
-        output_expires_at: NaiveDateTime,
+        output_expires_at: DateTime<Utc>,
     ) -> StorageExportTaskArtifactBuilder {
         StorageExportTaskArtifactBuilder {
             artifact: Self {
@@ -372,7 +375,7 @@ impl StorageExportTaskArtifact {
         StorageExportTaskArtifactIdentity,
         StorageExportTaskArtifactContent,
         StorageExportTaskArtifactReport,
-        NaiveDateTime,
+        DateTime<Utc>,
         StorageTaskDurations,
     ) {
         (
@@ -451,7 +454,7 @@ pub struct StorageBackupTaskArtifact {
     document: Vec<u8>,
     byte_size: i64,
     sha256: String,
-    output_expires_at: NaiveDateTime,
+    output_expires_at: DateTime<Utc>,
 }
 
 impl StorageBackupTaskArtifact {
@@ -460,7 +463,7 @@ impl StorageBackupTaskArtifact {
         document: Vec<u8>,
         byte_size: i64,
         sha256: impl Into<String>,
-        output_expires_at: NaiveDateTime,
+        output_expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
             document,
@@ -471,7 +474,7 @@ impl StorageBackupTaskArtifact {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<u8>, i64, String, NaiveDateTime) {
+    pub fn into_parts(self) -> (Vec<u8>, i64, String, DateTime<Utc>) {
         (
             self.document,
             self.byte_size,
@@ -496,39 +499,48 @@ impl fmt::Debug for StorageBackupTaskArtifact {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRemoteCallArtifactTarget {
     target_id: Option<RemoteTargetId>,
-    subject_type: String,
+    subject_type: StorageRemoteTargetSubjectType,
     subject_id: ResourceId,
-    method: String,
+    method: Option<StorageRemoteHttpMethod>,
     rendered_url: String,
+}
+
+/// Named remote-call target components consumed by persistence adapters.
+pub struct StorageRemoteCallArtifactTargetParts {
+    pub target_id: Option<RemoteTargetId>,
+    pub subject_type: StorageRemoteTargetSubjectType,
+    pub subject_id: ResourceId,
+    pub method: Option<StorageRemoteHttpMethod>,
+    pub rendered_url: String,
 }
 
 impl StorageRemoteCallArtifactTarget {
     #[must_use]
     pub fn new(
         target_id: Option<RemoteTargetId>,
-        subject_type: impl Into<String>,
+        subject_type: StorageRemoteTargetSubjectType,
         subject_id: ResourceId,
-        method: impl Into<String>,
+        method: Option<StorageRemoteHttpMethod>,
         rendered_url: impl Into<String>,
     ) -> Self {
         Self {
             target_id,
-            subject_type: subject_type.into(),
+            subject_type,
             subject_id,
-            method: method.into(),
+            method,
             rendered_url: rendered_url.into(),
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<RemoteTargetId>, String, ResourceId, String, String) {
-        (
-            self.target_id,
-            self.subject_type,
-            self.subject_id,
-            self.method,
-            self.rendered_url,
-        )
+    pub fn into_parts(self) -> StorageRemoteCallArtifactTargetParts {
+        StorageRemoteCallArtifactTargetParts {
+            target_id: self.target_id,
+            subject_type: self.subject_type,
+            subject_id: self.subject_id,
+            method: self.method,
+            rendered_url: self.rendered_url,
+        }
     }
 }
 
@@ -768,7 +780,7 @@ mod tests {
 
     #[test]
     fn worker_dtos_redact_claims_and_artifacts() {
-        let now = chrono::Utc::now().naive_utc();
+        let now = chrono::Utc::now();
         let task_id = TaskId::new(88_001).unwrap();
         let task = StorageTask::builder(
             task_id,
@@ -796,9 +808,9 @@ mod tests {
         let remote_artifact = StorageRemoteCallTaskArtifact::new(
             StorageRemoteCallArtifactTarget::new(
                 Some(RemoteTargetId::new(7).unwrap()),
-                "object-secret",
+                StorageRemoteTargetSubjectType::Object,
                 ResourceId::new(8).unwrap(),
-                "POST",
+                Some(StorageRemoteHttpMethod::Post),
                 "https://example.invalid/?secret=url",
             ),
             StorageRemoteCallArtifactResponse::new(

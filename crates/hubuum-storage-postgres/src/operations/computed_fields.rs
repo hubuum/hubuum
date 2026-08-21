@@ -15,15 +15,16 @@ use hubuum_domain::{ClassId, PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
-    MutationOutcome, StorageClassComputationState, StorageComputationRevision,
-    StorageComputedFieldDefinition, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation,
-    StorageComputedFieldRebuildRequest, StoragePage, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
-    StorageTaskCompletion, StorageTaskEventInput, StorageTaskKind, StorageTaskLease,
-    StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus,
+    MutationOutcome, StorageClassComputationState, StorageComputationRebuildStatus,
+    StorageComputationRevision, StorageComputedFieldDefinition,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldMutation, StorageComputedFieldRebuildRequest, StoragePage,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskCompletion, StorageTaskEventInput,
+    StorageTaskKind, StorageTaskLease, StorageTaskResultCounts, StorageTaskStateUpdate,
+    StorageTaskStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -77,15 +78,27 @@ impl ComputationStateRow {
     }
 
     fn into_storage(self) -> Result<StorageClassComputationState, PostgresStorageError> {
-        Ok(StorageClassComputationState::new(
+        let rebuild_status = self
+            .rebuild_status
+            .parse::<StorageComputationRebuildStatus>()
+            .map_err(|error| {
+                PostgresStorageError::database(format!(
+                    "Invalid persisted computation rebuild status: {error}"
+                ))
+            })?;
+        StorageClassComputationState::builder(
             ClassId::new(self.class_id)?,
             StorageComputationRevision::new(self.evaluation_revision)?,
-            self.rebuild_status,
-            self.created_at,
-            self.updated_at,
+            rebuild_status,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
         )
         .active_task(self.active_task_id.map(TaskId::new).transpose()?)
-        .last_error(self.last_error))
+        .last_error(self.last_error)
+        .try_build()
+        .map_err(|error| {
+            PostgresStorageError::database(format!("Invalid persisted computation state: {error}"))
+        })
     }
 }
 
@@ -746,7 +759,7 @@ pub async fn execute_computed_field_rebuild(
                             successful_counts(processed),
                         )
                         .summary(Some("Computed-field rebuild superseded".to_string()))
-                        .started_at(task.started_at),
+                        .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                         StorageTaskEventInput::new(
                             StorageTaskStatus::Cancelled.as_str(),
                             "Computed-field rebuild superseded",
@@ -779,7 +792,7 @@ pub async fn execute_computed_field_rebuild(
                         "Rebuilt {processed} of {} objects",
                         task.total_items
                     )))
-                    .started_at(task.started_at),
+                    .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                 )
                 .await?;
             }
@@ -824,7 +837,7 @@ pub async fn execute_computed_field_rebuild(
                 connection,
                 StorageTaskStateUpdate::new(lease, status, successful_counts(processed))
                     .summary(Some(summary.clone()))
-                    .started_at(task.started_at),
+                    .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                 StorageTaskEventInput::new(status.as_str(), summary),
             )
             .await?;

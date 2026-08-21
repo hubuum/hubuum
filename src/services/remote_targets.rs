@@ -12,11 +12,11 @@ use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, resource_id_to_storage,
 };
 use crate::storage::{
-    RemoteTargetStorage, StorageContext, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
-    storage_handle,
+    RemoteTargetStorage, StorageContext, StorageRemoteHttpMethod, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
+    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
+    StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
+    StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate, storage_handle,
 };
 
 pub(crate) async fn get_remote_target(
@@ -73,7 +73,7 @@ pub(crate) async fn create_remote_target(
     let definition = StorageRemoteTargetDefinition::new(
         input.description,
         StorageRemoteTargetTransport::try_new(
-            input.method.as_str(),
+            http_method_to_storage(input.method),
             input.url_template,
             input.headers_template,
             input.body_template,
@@ -151,7 +151,7 @@ pub(crate) async fn update_remote_target(
         )
         .with_name(update.name)
         .with_description(update.description)
-        .with_method(update.method.map(|method| method.as_str().to_string()))
+        .with_method(update.method.map(http_method_to_storage))
         .with_url_template(update.url_template)
         .with_headers_template(update.headers_template)
         .with_body_template(update.body_template)
@@ -199,7 +199,7 @@ pub(crate) async fn record_remote_target_invocation(
             hubuum_domain::RemoteTargetId::new(target_id)
                 .expect("validated remote target id must be positive"),
             hubuum_domain::TaskId::new(task_id).expect("validated task id must be positive"),
-            subject_type.as_str(),
+            subject_type_to_storage(subject_type),
             resource_id_to_storage(subject_id),
             event_context,
         ))
@@ -208,10 +208,33 @@ pub(crate) async fn record_remote_target_invocation(
     Ok(())
 }
 
-fn subject_types_to_storage(subject_types: Vec<RemoteTargetSubjectType>) -> Vec<String> {
+fn http_method_to_storage(method: RemoteHttpMethod) -> StorageRemoteHttpMethod {
+    match method {
+        RemoteHttpMethod::Get => StorageRemoteHttpMethod::Get,
+        RemoteHttpMethod::Post => StorageRemoteHttpMethod::Post,
+        RemoteHttpMethod::Patch => StorageRemoteHttpMethod::Patch,
+        RemoteHttpMethod::Delete => StorageRemoteHttpMethod::Delete,
+    }
+}
+
+fn subject_type_to_storage(
+    subject_type: RemoteTargetSubjectType,
+) -> StorageRemoteTargetSubjectType {
+    match subject_type {
+        RemoteTargetSubjectType::Collection => StorageRemoteTargetSubjectType::Collection,
+        RemoteTargetSubjectType::Class => StorageRemoteTargetSubjectType::Class,
+        RemoteTargetSubjectType::Object => StorageRemoteTargetSubjectType::Object,
+        RemoteTargetSubjectType::ClassRelation => StorageRemoteTargetSubjectType::ClassRelation,
+        RemoteTargetSubjectType::ObjectRelation => StorageRemoteTargetSubjectType::ObjectRelation,
+    }
+}
+
+fn subject_types_to_storage(
+    subject_types: Vec<RemoteTargetSubjectType>,
+) -> Vec<StorageRemoteTargetSubjectType> {
     subject_types
         .into_iter()
-        .map(|subject_type| subject_type.as_str().to_string())
+        .map(subject_type_to_storage)
         .collect()
 }
 
@@ -233,14 +256,14 @@ fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiE
         class_id: class_id.map(|id| id.id()),
         name,
         description,
-        method: RemoteHttpMethod::from_str(&method)?,
+        method: RemoteHttpMethod::from_str(method.as_str())?,
         url_template,
         headers_template,
         body_template,
         auth_config: serde_json::from_value(auth_config)?,
         allowed_subject_types: allowed_subject_types
             .into_iter()
-            .map(|subject_type| RemoteTargetSubjectType::from_str(&subject_type))
+            .map(|subject_type| RemoteTargetSubjectType::from_str(subject_type.as_str()))
             .collect::<Result<Vec<_>, _>>()?,
         timeout_ms,
         enabled,

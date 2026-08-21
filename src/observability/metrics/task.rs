@@ -202,7 +202,13 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
                 metrics,
                 kind,
                 status,
-                terminal_timestamp_seconds(last_terminal.get(&(kind, status)).copied().flatten()),
+                terminal_timestamp_seconds(
+                    last_terminal
+                        .get(&(kind, status))
+                        .copied()
+                        .flatten()
+                        .map(|timestamp| timestamp.naive_utc()),
+                ),
             );
         }
     }
@@ -212,13 +218,23 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
             metrics,
             age.kind(),
             TaskAgeState::Queued,
-            age_seconds(age.oldest_queued_at(), now).unwrap_or(0.0),
+            age_seconds(
+                age.oldest_queued_at()
+                    .map(|timestamp| timestamp.naive_utc()),
+                now,
+            )
+            .unwrap_or(0.0),
         );
         record_task_age(
             metrics,
             age.kind(),
             TaskAgeState::Active,
-            age_seconds(age.oldest_active_at(), now).unwrap_or(0.0),
+            age_seconds(
+                age.oldest_active_at()
+                    .map(|timestamp| timestamp.naive_utc()),
+                now,
+            )
+            .unwrap_or(0.0),
         );
     }
 }

@@ -79,8 +79,8 @@ impl TryFrom<EventSinkRow> for StorageEventSink {
             EventSinkId::new(row.id)?,
             row.name,
             row.kind,
-            row.created_at,
-            row.updated_at,
+            row.created_at.and_utc(),
+            row.updated_at.and_utc(),
             row.revision.into_domain(),
         )
         .configuration(row.config)
@@ -178,8 +178,8 @@ impl TryFrom<EventSubscriptionRow> for StorageEventSubscription {
             CollectionId::new(row.collection_id)?,
             EventSinkId::new(row.sink_id)?,
             row.name,
-            row.created_at,
-            row.updated_at,
+            row.created_at.and_utc(),
+            row.updated_at.and_utc(),
             row.revision.into_domain(),
         )
         .description(row.description)

@@ -17,8 +17,8 @@ use crate::config::{
 use crate::errors::ApiError;
 use crate::models::{
     NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod, RemoteInvocationBodyOverride,
-    RemoteInvocationParameters, RemoteTemplateContext, StoredRemoteCallTaskPayload,
-    TaskResultCounts, TaskStatus, authorize_remote_invocation,
+    RemoteInvocationParameters, RemoteTargetSubjectType, RemoteTemplateContext,
+    StoredRemoteCallTaskPayload, TaskResultCounts, TaskStatus, authorize_remote_invocation,
 };
 use crate::observability::metrics;
 use crate::permissions::AuthorizationContext;
@@ -26,7 +26,8 @@ use crate::services::storage_boundary::resource_id_to_storage;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update_task_state};
 use crate::storage::{
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageTaskCompletionArtifact,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteHttpMethod,
+    StorageRemoteTargetSubjectType, StorageTaskCompletionArtifact,
 };
 use crate::traits::AuthzSubject;
 
@@ -97,9 +98,9 @@ where
                     artifact: StorageRemoteCallTaskArtifact::new(
                         StorageRemoteCallArtifactTarget::new(
                             None,
-                            request.subject.subject_type().as_str(),
+                            subject_type_to_storage(request.subject.subject_type()),
                             resource_id_to_storage(request.subject.subject_id()),
-                            "unknown",
+                            None,
                             "",
                         ),
                         StorageRemoteCallArtifactResponse::new(None, None, None),
@@ -119,12 +120,12 @@ struct RemoteExecutionOutcome {
     artifact: StorageRemoteCallTaskArtifact,
 }
 
-struct RemoteFailureContext<'a> {
+struct RemoteFailureContext {
     task_id: i32,
     target_id: i32,
-    subject_type: &'a str,
+    subject_type: RemoteTargetSubjectType,
     subject_id: i32,
-    method: &'a str,
+    method: RemoteHttpMethod,
 }
 
 async fn execute_remote_call<C>(
@@ -153,9 +154,9 @@ where
     let failure_context = RemoteFailureContext {
         task_id,
         target_id: target.id,
-        subject_type: resolved.subject_type.as_str(),
+        subject_type: resolved.subject_type,
         subject_id: resolved.subject_id,
-        method: target.method.as_str(),
+        method: target.method,
     };
     let normalized_rendered_url = match validate_outbound_url(&rendered_url) {
         Ok(parts) => parts.url().to_string(),
@@ -233,9 +234,9 @@ where
                             hubuum_domain::RemoteTargetId::new(target.id)
                                 .expect("validated remote target id must be positive"),
                         ),
-                        resolved.subject_type.as_str(),
+                        subject_type_to_storage(resolved.subject_type),
                         resource_id_to_storage(resolved.subject_id),
-                        target.method.as_str(),
+                        Some(http_method_to_storage(target.method)),
                         response.url(),
                     ),
                     StorageRemoteCallArtifactResponse::new(
@@ -264,7 +265,7 @@ where
 }
 
 fn remote_call_failure(
-    context: &RemoteFailureContext<'_>,
+    context: &RemoteFailureContext,
     rendered_url: String,
     duration_ms: i32,
     error: OutboundHttpError,
@@ -274,16 +275,16 @@ fn remote_call_failure(
         message = "Remote target call failed",
         task_id = context.task_id,
         target_id = context.target_id,
-        subject_type = context.subject_type,
+        subject_type = context.subject_type.as_str(),
         subject_id = context.subject_id,
-        method = context.method,
+        method = context.method.as_str(),
         outcome = metric_outcome,
         error = %error,
     );
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
     metrics::remote_call_finished(
-        context.method,
+        context.method.as_str(),
         "none",
         metric_outcome,
         std::time::Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0)),
@@ -298,14 +299,35 @@ fn remote_call_failure(
                     hubuum_domain::RemoteTargetId::new(context.target_id)
                         .expect("validated remote target id must be positive"),
                 ),
-                context.subject_type,
+                subject_type_to_storage(context.subject_type),
                 resource_id_to_storage(context.subject_id),
-                context.method,
+                Some(http_method_to_storage(context.method)),
                 rendered_url,
             ),
             StorageRemoteCallArtifactResponse::new(None, None, None),
             StorageRemoteCallArtifactOutcome::new(duration_ms, false, Some(message)),
         ),
+    }
+}
+
+fn http_method_to_storage(method: RemoteHttpMethod) -> StorageRemoteHttpMethod {
+    match method {
+        RemoteHttpMethod::Get => StorageRemoteHttpMethod::Get,
+        RemoteHttpMethod::Post => StorageRemoteHttpMethod::Post,
+        RemoteHttpMethod::Patch => StorageRemoteHttpMethod::Patch,
+        RemoteHttpMethod::Delete => StorageRemoteHttpMethod::Delete,
+    }
+}
+
+fn subject_type_to_storage(
+    subject_type: RemoteTargetSubjectType,
+) -> StorageRemoteTargetSubjectType {
+    match subject_type {
+        RemoteTargetSubjectType::Collection => StorageRemoteTargetSubjectType::Collection,
+        RemoteTargetSubjectType::Class => StorageRemoteTargetSubjectType::Class,
+        RemoteTargetSubjectType::Object => StorageRemoteTargetSubjectType::Object,
+        RemoteTargetSubjectType::ClassRelation => StorageRemoteTargetSubjectType::ClassRelation,
+        RemoteTargetSubjectType::ObjectRelation => StorageRemoteTargetSubjectType::ObjectRelation,
     }
 }
 

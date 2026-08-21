@@ -280,7 +280,7 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .list_group_members(group_id_to_storage(self.id))
+            .list_all_group_members(group_id_to_storage(self.id))
             .await
             .map_err(ApiError::from)
             .and_then(|members| members.into_iter().map(principal_from_storage).collect())
@@ -290,7 +290,7 @@ impl Group {
         &self,
         backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<(crate::models::PrincipalGroup, Principal)>, ApiError>
+    ) -> Result<(Vec<(crate::models::PrincipalGroup, Principal)>, Option<i64>), ApiError>
     where
         C: StorageContext,
     {
@@ -298,31 +298,20 @@ impl Group {
             .list_group_members_page(group_id_to_storage(self.id), query_options.clone())
             .await
             .map_err(ApiError::from)
-            .and_then(|members| {
-                members
+            .and_then(|page| {
+                let (members, total) = page.into_parts();
+                let members = members
                     .into_iter()
-                    .map(|(membership, principal)| {
+                    .map(|member| {
+                        let (membership, principal) = member.into_parts();
                         Ok((
                             principal_group_from_storage(membership)?,
                             principal_from_storage(principal)?,
                         ))
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>, ApiError>>()?;
+                Ok((members, total))
             })
-    }
-
-    pub async fn count_members_paginated<C>(
-        &self,
-        backend: &C,
-        query_options: &QueryOptions,
-    ) -> Result<i64, ApiError>
-    where
-        C: StorageContext,
-    {
-        storage_handle(backend)
-            .count_group_members(group_id_to_storage(self.id), query_options.clone())
-            .await
-            .map_err(ApiError::from)
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.

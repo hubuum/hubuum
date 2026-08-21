@@ -131,7 +131,7 @@ fn storage_task_state_update(
         StorageTaskResultCounts::new(processed, succeeded, failed),
     )
     .summary(change.summary)
-    .started_at(change.started_at)
+    .started_at(change.started_at.map(|timestamp| timestamp.and_utc()))
 }
 
 fn storage_task_event(event: NewTaskEventRecord) -> StorageTaskEventInput {
@@ -691,15 +691,19 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
         submitted_token_id: scope.token_id().map(|id| id.id()),
         submitted_token_scoped: scope.scoped(),
         submitted_token_scopes: scope.scopes().clone(),
-        request_redacted_at: task.request_redacted_at(),
-        started_at: task.started_at(),
-        finished_at: task.finished_at(),
-        deleted_at: task.deleted_at(),
+        request_redacted_at: task
+            .request_redacted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        started_at: task.started_at().map(|timestamp| timestamp.naive_utc()),
+        finished_at: task.finished_at().map(|timestamp| timestamp.naive_utc()),
+        deleted_at: task.deleted_at().map(|timestamp| timestamp.naive_utc()),
         deleted_by: task.deleted_by().map(|id| id.id()),
-        created_at: task.created_at(),
-        updated_at: task.updated_at(),
+        created_at: task.created_at().naive_utc(),
+        updated_at: task.updated_at().naive_utc(),
         lease_token: task.lease_token(),
-        lease_expires_at: task.lease_expires_at(),
+        lease_expires_at: task
+            .lease_expires_at()
+            .map(|timestamp| timestamp.naive_utc()),
         attempt_count: task.attempt_count(),
         initiator_user_id: task.initiator_principal_id().map(|id| id.id()),
     })
@@ -712,7 +716,7 @@ fn task_event_from_storage(event: StorageTaskEvent) -> TaskEventRecord {
         event_type: event.event_type().to_string(),
         message: event.message().to_string(),
         data: event.data().cloned(),
-        created_at: event.created_at(),
+        created_at: event.created_at().naive_utc(),
         actor_user_id: event.actor_principal_id().map(|id| id.id()),
         actor_kind: event.actor_kind().to_string(),
         initiator_user_id: event.initiator_principal_id().map(|id| id.id()),
@@ -731,7 +735,7 @@ fn import_result_from_storage(result: StorageImportTaskResult) -> ImportTaskResu
         outcome: result.outcome().to_string(),
         error: result.error().map(str::to_string),
         details: result.details().cloned(),
-        created_at: result.created_at(),
+        created_at: result.created_at().naive_utc(),
     }
 }
 
@@ -743,7 +747,7 @@ fn export_summary_from_storage(output: StorageExportOutputSummary) -> ExportTask
         content_type: output.content_type().to_string(),
         warning_count: output.warning_count(),
         truncated: output.truncated(),
-        output_expires_at: output.output_expires_at(),
+        output_expires_at: output.output_expires_at().naive_utc(),
         total_duration_ms: durations.total_ms(),
         query_duration_ms: durations.query_ms(),
         hydration_duration_ms: durations.hydration_ms(),
@@ -756,7 +760,7 @@ fn backup_summary_from_storage(output: StorageBackupOutputSummary) -> BackupTask
         task_id: output.task_id().id(),
         byte_size: output.byte_size(),
         sha256: output.sha256().to_string(),
-        output_expires_at: output.output_expires_at(),
+        output_expires_at: output.output_expires_at().naive_utc(),
     }
 }
 
@@ -784,9 +788,9 @@ fn map_export_lookup<T, U>(
 ) -> ExportOutputLookup<U> {
     match lookup {
         StorageTaskOutputLookup::Available(value) => ExportOutputLookup::Available(map(value)),
-        StorageTaskOutputLookup::Expired { expires_at } => {
-            ExportOutputLookup::Expired { expires_at }
-        }
+        StorageTaskOutputLookup::Expired { expires_at } => ExportOutputLookup::Expired {
+            expires_at: expires_at.naive_utc(),
+        },
         StorageTaskOutputLookup::Missing => ExportOutputLookup::Missing,
     }
 }
@@ -797,9 +801,9 @@ fn map_backup_lookup<T, U>(
 ) -> BackupOutputLookup<U> {
     match lookup {
         StorageTaskOutputLookup::Available(value) => BackupOutputLookup::Available(map(value)),
-        StorageTaskOutputLookup::Expired { expires_at } => {
-            BackupOutputLookup::Expired { expires_at }
-        }
+        StorageTaskOutputLookup::Expired { expires_at } => BackupOutputLookup::Expired {
+            expires_at: expires_at.naive_utc(),
+        },
         StorageTaskOutputLookup::Missing => BackupOutputLookup::Missing,
     }
 }

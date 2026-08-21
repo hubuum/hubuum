@@ -1517,8 +1517,10 @@ mod tests {
                  has_create_template = TRUE,
                  has_update_template = TRUE,
                  has_delete_template = TRUE
-             WHERE has_delegate_collection = TRUE",
+             WHERE has_delegate_collection = TRUE
+               AND collection_id = $1",
         )
+        .bind::<diesel::sql_types::Integer, _>(collection.collection.id)
         .execute(&mut conn)
         .await
         .unwrap();

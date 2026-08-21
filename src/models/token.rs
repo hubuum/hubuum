@@ -270,9 +270,9 @@ impl CurrentTokenMetadata {
             })?,
             name: value.name().map(str::to_string),
             description: value.description().map(str::to_string),
-            issued: value.issued(),
-            expires_at: value.expires_at(),
-            last_used_at: value.last_used_at(),
+            issued: value.issued().naive_utc(),
+            expires_at: value.expires_at().map(|timestamp| timestamp.naive_utc()),
+            last_used_at: value.last_used_at().map(|timestamp| timestamp.naive_utc()),
             scope: token_scope_details(value.id().id(), value.is_scoped(), scope)?,
             revision: value.revision(),
         })

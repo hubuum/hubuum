@@ -53,7 +53,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.ServiceAccountStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
-methods = ["is_service_account_disabled", "get_service_account", "get_service_account_point", "list_manageable_service_accounts", "create_service_account", "update_service_account", "disable_service_account", "delete_service_account"]
+methods = ["is_service_account_disabled", "get_service_account", "get_service_account_details", "list_manageable_service_accounts", "create_service_account", "update_service_account", "disable_service_account", "delete_service_account"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.ExternalIdentityStorage]
@@ -63,7 +63,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.UserStorage]
 source = "crates/hubuum-storage-core/src/identity_users.rs"
-methods = ["get_user", "get_user_by_name", "get_user_point", "list_users", "create_user", "update_user", "set_user_password", "delete_user", "anonymize_user"]
+methods = ["get_user", "get_user_by_name", "get_user_details", "list_users", "create_user", "update_user", "set_user_password", "delete_user", "anonymize_user"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.TokenStorage]
@@ -169,7 +169,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.GroupStorage]
 source = "crates/hubuum-storage-core/src/identity_resources.rs"
-methods = ["list_groups", "get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group", "list_group_members", "list_group_members_page", "count_group_members", "get_group_member_principal", "add_group_member", "remove_group_member"]
+methods = ["list_groups", "get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group", "list_all_group_members", "list_group_members_page", "add_group_member", "remove_group_member"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
 native_scenarios = ["crates/hubuum-storage-postgres/tests/connection_loss.rs::connection_loss_before_commit_rolls_back_and_pool_recovers"]
 

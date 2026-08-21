@@ -175,10 +175,10 @@ fn build_audit_event_query(
         query = query.filter(collection_id.eq(Some(value.id())));
     }
     if let Some(value) = filters.occurred_after_value() {
-        query = query.filter(occurred_at.ge(value));
+        query = query.filter(occurred_at.ge(value.naive_utc()));
     }
     if let Some(value) = filters.occurred_before_value() {
-        query = query.filter(occurred_at.le(value));
+        query = query.filter(occurred_at.le(value.naive_utc()));
     }
 
     for parameter in options.filters() {

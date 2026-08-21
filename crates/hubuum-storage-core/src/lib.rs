@@ -68,15 +68,15 @@ pub use collection_authorization::{
     AuthorizationPrincipalCollectionQuery, CollectionAuthorizationQueryStorage,
 };
 pub use computed_fields::{
-    ComputedFieldStorage, StorageClassComputationState, StorageComputationRevision,
-    StorageComputedFieldDefinition, StorageComputedFieldDefinitionContent,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldMutation, StorageComputedFieldProvenance,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate,
+    ComputedFieldStorage, StorageClassComputationState, StorageClassComputationStateBuilder,
+    StorageComputationRebuildStatus, StorageComputationRevision, StorageComputedFieldDefinition,
+    StorageComputedFieldDefinitionContent, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation,
+    StorageComputedFieldProvenance, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate,
 };
 pub use computed_objects::{
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
@@ -134,15 +134,16 @@ pub use identity_operations::{
     StorageExternalUserSyncBuilder, StorageGroupListQuery, StorageIdentityGroup,
     StorageIdentityGroupBuilder, StorageIdentityScope, StorageIdentityScopeEnsure,
     StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDisableOutcome,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountPoint, StorageServiceAccountUpdate, StorageSyncedHuman,
-    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDetails,
+    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
+    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
     StorageTokenMetadataBuilder, StorageTokenObservation, StorageTokenObservationError,
 };
 pub use identity_resources::{
-    GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupUpdate, StoragePrincipal,
-    StoragePrincipalBuilder, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupMember, StorageGroupUpdate,
+    StoragePrincipal, StoragePrincipalBuilder, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation,
 };
 pub use identity_tokens::{
     StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
@@ -150,9 +151,9 @@ pub use identity_tokens::{
     StorageTokenRenew, StorageTokenRevoke, TokenStorage,
 };
 pub use identity_users::{
-    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListItemParts, StorageUserListQuery, StorageUserParts, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserPointParts, StorageUserUpdate, UserStorage,
+    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
+    StorageUserDetailsParts, StorageUserListItem, StorageUserListItemParts, StorageUserListQuery,
+    StorageUserParts, StorageUserPasswordUpdate, StorageUserUpdate, UserStorage,
 };
 pub use import_workflow::{
     ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportAtomicity,
@@ -221,11 +222,11 @@ pub use relation_query::{
     StorageRelatedSort,
 };
 pub use remote_target::{
-    RemoteTargetStorage, StorageRemoteTarget, StorageRemoteTargetCreate,
+    RemoteTargetStorage, StorageRemoteHttpMethod, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
     StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPatchParts,
-    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetTransportParts,
-    StorageRemoteTargetUpdate,
+    StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
+    StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
 };
 pub use resource_lifecycle::{
     ClassStorage, CollectionStorage, ObjectStorage, StorageClassCreate, StorageClassCreateBuilder,
@@ -248,10 +249,11 @@ pub use task_execution::{
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
     StorageExportTaskArtifactReport, StorageRemoteCallArtifactOutcome,
     StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallTaskArtifact, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskResultCounts,
-    StorageTaskStateUpdate, TaskExecutionStorage,
+    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact, StorageTaskClaim,
+    StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionArtifact,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskStateUpdate,
+    TaskExecutionStorage,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
@@ -467,6 +469,16 @@ impl StorageError {
     pub const fn kind(&self) -> StorageErrorKind {
         self.kind
     }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    #[must_use]
+    pub const fn current_revision(&self) -> Option<ResourceRevision> {
+        self.current_revision
+    }
 }
 
 impl fmt::Display for StorageError {
@@ -487,6 +499,8 @@ mod tests {
         let error = StorageError::revision_conflict("stale resource", current_revision);
 
         assert_eq!(error.kind(), StorageErrorKind::RevisionConflict);
+        assert_eq!(error.message(), "stale resource");
+        assert_eq!(error.current_revision(), Some(current_revision));
         assert_eq!(
             error.into_parts(),
             (

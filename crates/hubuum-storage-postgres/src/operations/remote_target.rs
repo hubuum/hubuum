@@ -8,10 +8,11 @@ use hubuum_domain::{ClassId, CollectionId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    AuditReceipt, MutationOutcome, StoragePage, StorageRemoteTarget, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
+    AuditReceipt, MutationOutcome, StoragePage, StorageRemoteHttpMethod, StorageRemoteTarget,
+    StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
+    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
+    StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
+    StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
 };
 use serde_json::{Value, json};
 
@@ -83,7 +84,7 @@ impl RemoteTargetRow {
             StorageRemoteTargetDefinition::new(
                 self.description,
                 StorageRemoteTargetTransport::try_new(
-                    self.method,
+                    decode_http_method(&self.method)?,
                     self.url_template,
                     self.headers_template,
                     self.body_template,
@@ -213,14 +214,14 @@ impl UpdateRemoteTargetRow {
             class_id: parts.class_id().map(|value| value.map(|id| id.id())),
             name: parts.name().map(str::to_string),
             description: parts.description().map(str::to_string),
-            method: parts.method().map(str::to_string),
+            method: parts.method().map(|method| method.as_str().to_string()),
             url_template: parts.url_template().map(str::to_string),
             headers_template: parts.headers_template().cloned(),
             body_template: parts.body_template().map(|value| value.map(str::to_string)),
             auth_config: parts.auth_config().cloned(),
             allowed_subject_types: parts
                 .allowed_subject_types()
-                .map(<[String]>::to_vec)
+                .map(<[StorageRemoteTargetSubjectType]>::to_vec)
                 .map(encode_subject_types)
                 .transpose()?,
             timeout_ms: parts.timeout_ms(),
@@ -300,6 +301,7 @@ impl RemoteTargetDefinitionParts {
             auth_config,
             timeout_ms,
         } = transport.into_parts();
+        let method = method.as_str().to_string();
         let (class_id, allowed_subject_types, enabled) = policy.into_parts();
         Ok(Self {
             class_id: class_id.map(|id| id.id()),
@@ -497,7 +499,7 @@ pub async fn record_remote_target_invocation(
                 .with_collection_id(hubuum_domain::CollectionId::new(target.collection_id)?)
                 .with_metadata(json!({
                     "task_id": task_id,
-                    "subject_type": subject_type,
+                    "subject_type": subject_type.as_str(),
                     "subject_id": subject_id,
                 }));
                 let audit = append_event(connection, &event)
@@ -657,7 +659,13 @@ fn ensure_positive_target_id(target_id: i32) -> Result<(), PostgresStorageError>
     }
 }
 
-fn encode_subject_types(subject_types: Vec<String>) -> Result<Value, PostgresStorageError> {
+fn encode_subject_types(
+    subject_types: Vec<StorageRemoteTargetSubjectType>,
+) -> Result<Value, PostgresStorageError> {
+    let subject_types = subject_types
+        .into_iter()
+        .map(StorageRemoteTargetSubjectType::as_str)
+        .collect::<Vec<_>>();
     serde_json::to_value(subject_types).map_err(|error| {
         PostgresStorageError::database(format!(
             "Could not serialize remote target subject types: {error}"
@@ -665,10 +673,30 @@ fn encode_subject_types(subject_types: Vec<String>) -> Result<Value, PostgresSto
     })
 }
 
-fn decode_subject_types(subject_types: Value) -> Result<Vec<String>, PostgresStorageError> {
-    serde_json::from_value(subject_types).map_err(|error| {
+fn decode_subject_types(
+    subject_types: Value,
+) -> Result<Vec<StorageRemoteTargetSubjectType>, PostgresStorageError> {
+    let subject_types = serde_json::from_value::<Vec<String>>(subject_types).map_err(|error| {
         PostgresStorageError::database(format!(
             "Could not deserialize remote target subject types: {error}"
+        ))
+    })?;
+    subject_types
+        .into_iter()
+        .map(|subject_type| {
+            subject_type.parse().map_err(|error| {
+                PostgresStorageError::database(format!(
+                    "Invalid persisted remote target subject type: {error}"
+                ))
+            })
+        })
+        .collect()
+}
+
+fn decode_http_method(method: &str) -> Result<StorageRemoteHttpMethod, PostgresStorageError> {
+    method.parse().map_err(|error| {
+        PostgresStorageError::database(format!(
+            "Invalid persisted remote target HTTP method: {error}"
         ))
     })
 }

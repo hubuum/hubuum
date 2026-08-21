@@ -114,8 +114,8 @@ pub(crate) fn parse_audit_event_filters(
         .actor_user_id(actor_user_id.map(principal_id_to_storage))
         .initiator_user_id(initiator_user_id.map(principal_id_to_storage))
         .collection_id(collection_id.map(collection_id_to_storage))
-        .occurred_after(occurred_after)
-        .occurred_before(occurred_before))
+        .occurred_after(occurred_after.map(|timestamp| timestamp.and_utc()))
+        .occurred_before(occurred_before.map(|timestamp| timestamp.and_utc())))
 }
 
 fn take_single(
@@ -187,8 +187,8 @@ fn event_sink_from_storage(sink: StorageEventSink) -> Result<EventSink, ApiError
         config: sink.configuration().clone(),
         secret_ref: sink.secret_ref().map(str::to_string),
         enabled: sink.enabled(),
-        created_at: sink.created_at(),
-        updated_at: sink.updated_at(),
+        created_at: sink.created_at().naive_utc(),
+        updated_at: sink.updated_at().naive_utc(),
         revision: sink.revision(),
     })
 }
@@ -316,8 +316,8 @@ fn event_subscription_from_storage(
         filter: subscription.filter().clone(),
         routing: subscription.routing().clone(),
         enabled: subscription.enabled(),
-        created_at: subscription.created_at(),
-        updated_at: subscription.updated_at(),
+        created_at: subscription.created_at().naive_utc(),
+        updated_at: subscription.updated_at().naive_utc(),
         revision: subscription.revision(),
     })
 }
@@ -459,13 +459,15 @@ fn event_delivery_from_storage(delivery: StorageEventDelivery) -> EventDeliveryR
         id: delivery.id().id(),
         event_id: delivery.event_id().get(),
         subscription_id: delivery.subscription_id().id(),
-        status: delivery.status().to_string(),
+        status: delivery.status().as_str().to_string(),
         attempts: delivery.attempts(),
-        next_attempt_at: delivery.next_attempt_at(),
+        next_attempt_at: delivery.next_attempt_at().naive_utc(),
         last_error: delivery.last_error().map(str::to_string),
-        locked_until: delivery.locked_until(),
-        created_at: delivery.created_at(),
-        updated_at: delivery.updated_at(),
+        locked_until: delivery
+            .locked_until()
+            .map(|timestamp| timestamp.naive_utc()),
+        created_at: delivery.created_at().naive_utc(),
+        updated_at: delivery.updated_at().naive_utc(),
     }
 }
 

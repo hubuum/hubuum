@@ -8,7 +8,7 @@ use crate::services::storage_boundary::{
     group_from_storage, group_id_to_storage, principal_from_storage, principal_group_from_storage,
     principal_id_to_storage,
 };
-use crate::storage::{GroupStorage, StorageContext, storage_handle};
+use crate::storage::{GroupStorage, PrincipalStorage, StorageContext, storage_handle};
 
 use crate::traits::crud::SaveAdapter;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .get_group_member_principal(principal_id_to_storage(self.principal_id))
+            .get_principal(principal_id_to_storage(self.principal_id))
             .await
             .map_err(ApiError::from)
             .and_then(principal_from_storage)

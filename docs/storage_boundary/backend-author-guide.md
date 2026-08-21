@@ -164,8 +164,9 @@ backend.
 
 ## Errors
 
-Define an adapter-owned error, for example `ExampleStorageError`. Preserve
-native context inside that layer and convert it once at the adapter edge:
+Define an adapter-owned error, for example `ExampleStorageError`. Record native
+context in adapter-owned structured logs and convert it once at the adapter
+edge:
 
 ```text
 ExampleStorageError -> StorageError -> ApiError
@@ -174,10 +175,14 @@ ExampleStorageError -> StorageError -> ApiError
 Map expected outcomes to the narrowest `StorageErrorKind`, including not found,
 conflict, validation, and stale precondition. Map connectivity and native
 execution failures to backend or unavailable classifications as appropriate.
-Retain diagnostic detail for logs while keeping public responses safe.
+Keep diagnostic detail in those logs; the portable error retains only a safe
+classification, message, and optional current revision.
 
 Backend-neutral storage crates must not import `ApiError`. Application code
-must not convert `ApiError` back into `StorageError`.
+must not convert `ApiError` back into `StorageError`. An adapter may convert a
+`StorageError` produced by a contract DTO validator into its private error type
+while it is still assembling or decoding that DTO; that is not an application
+dependency reversal.
 
 ## Import Plans and References
 

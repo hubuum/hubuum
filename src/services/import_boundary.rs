@@ -35,6 +35,7 @@ use hubuum_storage_core::{
     StorageImportPrincipalKey, StorageImportPrincipalKeyParts, StorageImportPrincipalParts,
     StorageImportPrincipalSubtype, StorageImportRemoteTarget, StorageImportRemoteTargetParts,
     StorageImportRevision, StorageImportTimestamps, StorageImportWriteCondition,
+    StorageRemoteHttpMethod, StorageRemoteTargetSubjectType,
 };
 
 fn json_to_storage<T: Serialize>(value: T, field: &str) -> Result<Value, ApiError> {
@@ -55,7 +56,7 @@ fn timestamp_to_storage(
     timestamps: RestoreTimestamps,
 ) -> Result<StorageImportTimestamps, ApiError> {
     let (created_at, updated_at) = timestamps.as_pair();
-    StorageImportTimestamps::new(created_at, updated_at).map_err(ApiError::from)
+    StorageImportTimestamps::new(created_at.and_utc(), updated_at.and_utc()).map_err(ApiError::from)
 }
 
 fn condition_to_storage(
@@ -149,7 +150,7 @@ fn principal_subtype_to_storage(subtype: ImportPrincipalSubtype) -> StorageImpor
             password_hash,
             proper_name,
             email,
-            anonymized_at,
+            anonymized_at: anonymized_at.map(|timestamp| timestamp.and_utc()),
         },
         ImportPrincipalSubtype::ServiceAccount {
             description,
@@ -164,7 +165,7 @@ fn principal_subtype_to_storage(subtype: ImportPrincipalSubtype) -> StorageImpor
             owner_group_key: owner_group_key.map(group_key_to_storage),
             created_by_ref,
             created_by_key: created_by_key.map(principal_key_to_storage),
-            disabled_at,
+            disabled_at: disabled_at.map(|timestamp| timestamp.and_utc()),
         },
     }
 }
@@ -209,8 +210,12 @@ pub(crate) fn import_operation_to_storage(
                     identity_scope_key: input.identity_scope_key.map(identity_scope_key_to_storage),
                     managed_by: input.managed_by,
                     external_key: input.external_key,
-                    last_sync_attempted_at: input.last_sync_attempted_at,
-                    last_sync_success_at: input.last_sync_success_at,
+                    last_sync_attempted_at: input
+                        .last_sync_attempted_at
+                        .map(|timestamp| timestamp.and_utc()),
+                    last_sync_success_at: input
+                        .last_sync_success_at
+                        .map(|timestamp| timestamp.and_utc()),
                     condition: condition_to_storage(input.condition)?,
                     timestamps: timestamps_to_storage(input.timestamps)?,
                 }),
@@ -227,8 +232,12 @@ pub(crate) fn import_operation_to_storage(
                     provider_managed: input.provider_managed,
                     settings: input.settings,
                     external_subject: input.external_subject,
-                    last_sync_attempted_at: input.last_sync_attempted_at,
-                    last_sync_success_at: input.last_sync_success_at,
+                    last_sync_attempted_at: input
+                        .last_sync_attempted_at
+                        .map(|timestamp| timestamp.and_utc()),
+                    last_sync_success_at: input
+                        .last_sync_success_at
+                        .map(|timestamp| timestamp.and_utc()),
                     subtype: principal_subtype_to_storage(input.subtype),
                     condition: condition_to_storage(input.condition)?,
                     timestamps: timestamps_to_storage(input.timestamps)?,
@@ -529,7 +538,12 @@ fn remote_target_to_storage(
             class_key: input.class_key.map(class_key_to_storage),
             name: input.name,
             description: input.description,
-            method: input.method.as_str().to_string(),
+            method: match input.method {
+                crate::models::RemoteHttpMethod::Get => StorageRemoteHttpMethod::Get,
+                crate::models::RemoteHttpMethod::Post => StorageRemoteHttpMethod::Post,
+                crate::models::RemoteHttpMethod::Patch => StorageRemoteHttpMethod::Patch,
+                crate::models::RemoteHttpMethod::Delete => StorageRemoteHttpMethod::Delete,
+            },
             url_template: input.url_template,
             headers_template: input.headers_template,
             body_template: input.body_template,
@@ -537,7 +551,23 @@ fn remote_target_to_storage(
             allowed_subject_types: input
                 .allowed_subject_types
                 .into_iter()
-                .map(|subject| subject.as_str().to_string())
+                .map(|subject| match subject {
+                    crate::models::RemoteTargetSubjectType::Collection => {
+                        StorageRemoteTargetSubjectType::Collection
+                    }
+                    crate::models::RemoteTargetSubjectType::Class => {
+                        StorageRemoteTargetSubjectType::Class
+                    }
+                    crate::models::RemoteTargetSubjectType::Object => {
+                        StorageRemoteTargetSubjectType::Object
+                    }
+                    crate::models::RemoteTargetSubjectType::ClassRelation => {
+                        StorageRemoteTargetSubjectType::ClassRelation
+                    }
+                    crate::models::RemoteTargetSubjectType::ObjectRelation => {
+                        StorageRemoteTargetSubjectType::ObjectRelation
+                    }
+                })
                 .collect(),
             timeout_ms: input.timeout_ms,
             enabled: input.enabled,

@@ -614,7 +614,7 @@ pub async fn store_export_output(
         warnings_json,
         warning_count,
         truncated,
-        output_expires_at,
+        output_expires_at: output_expires_at.naive_utc(),
         total_duration_ms: durations.total_ms(),
         query_duration_ms: durations.query_ms(),
         hydration_duration_ms: durations.hydration_ms(),

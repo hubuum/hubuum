@@ -376,16 +376,15 @@ async fn human_unscoped_user_from_meta(
 }
 
 fn authentication_human_to_user(human: AuthenticationHuman) -> User {
-    let (id, proper_name, email, created_at, updated_at, anonymized_at) = human.into_parts();
     User {
-        id: id.id(),
+        id: human.id().id(),
         kind: "human".to_string(),
         password: None,
-        proper_name,
-        email,
-        created_at,
-        updated_at,
-        anonymized_at,
+        proper_name: human.proper_name().map(str::to_string),
+        email: human.email().map(str::to_string),
+        created_at: human.created_at().naive_utc(),
+        updated_at: human.updated_at().naive_utc(),
+        anonymized_at: human.anonymized_at().map(|timestamp| timestamp.naive_utc()),
     }
 }
 

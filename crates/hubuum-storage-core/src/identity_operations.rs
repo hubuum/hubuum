@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{
     GroupId, IdentityScopeId, PrincipalId, ResourceRevision, ServiceAccountId, TokenId, UserId,
 };
@@ -18,8 +18,8 @@ pub struct StorageIdentityScope {
     id: IdentityScopeId,
     name: String,
     provider_kind: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -29,8 +29,8 @@ impl StorageIdentityScope {
         id: IdentityScopeId,
         name: impl Into<String>,
         provider_kind: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> Self {
         Self {
@@ -59,12 +59,12 @@ impl StorageIdentityScope {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -106,8 +106,8 @@ impl StorageIdentityScopeEnsure {
 pub struct StoragePrincipalGroup {
     principal_id: PrincipalId,
     group_id: GroupId,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -120,10 +120,10 @@ pub struct StorageIdentityGroup {
     identity_scope_id: IdentityScopeId,
     managed_by: String,
     external_key: Option<String>,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -179,22 +179,22 @@ impl StorageIdentityGroup {
     }
 
     #[must_use]
-    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_attempted_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_attempted_at
     }
 
     #[must_use]
-    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_success_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_success_at
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -211,8 +211,8 @@ pub struct StorageIdentityGroupBuilder {
     identity_scope_id: IdentityScopeId,
     managed_by: String,
     external_key: Option<String>,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
 }
 
 impl StorageIdentityGroupBuilder {
@@ -223,13 +223,13 @@ impl StorageIdentityGroupBuilder {
     }
 
     #[must_use]
-    pub const fn last_sync_attempted_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_sync_attempted_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_sync_attempted_at = value;
         self
     }
 
     #[must_use]
-    pub const fn last_sync_success_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_sync_success_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_sync_success_at = value;
         self
     }
@@ -245,8 +245,8 @@ impl StorageIdentityGroupBuilder {
             external_key: self.external_key,
             last_sync_attempted_at: self.last_sync_attempted_at,
             last_sync_success_at: self.last_sync_success_at,
-            created_at: self.metadata.created_at().naive_utc(),
-            updated_at: self.metadata.updated_at().naive_utc(),
+            created_at: self.metadata.created_at(),
+            updated_at: self.metadata.updated_at(),
             revision: self.metadata.revision(),
         }
     }
@@ -340,8 +340,8 @@ impl StoragePrincipalGroup {
     pub const fn new(
         principal_id: PrincipalId,
         group_id: GroupId,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> Self {
         Self {
@@ -364,12 +364,12 @@ impl StoragePrincipalGroup {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -397,14 +397,14 @@ pub enum StorageTokenListState {
 /// that point, batch, and list operations use identical lifecycle semantics.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StorageTokenObservation {
-    observed_at: NaiveDateTime,
-    legacy_valid_after: NaiveDateTime,
+    observed_at: DateTime<Utc>,
+    legacy_valid_after: DateTime<Utc>,
 }
 
 impl StorageTokenObservation {
     pub fn new(
-        observed_at: NaiveDateTime,
-        legacy_valid_after: NaiveDateTime,
+        observed_at: DateTime<Utc>,
+        legacy_valid_after: DateTime<Utc>,
     ) -> Result<Self, StorageTokenObservationError> {
         if legacy_valid_after > observed_at {
             return Err(StorageTokenObservationError);
@@ -416,7 +416,7 @@ impl StorageTokenObservation {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (NaiveDateTime, NaiveDateTime) {
+    pub const fn into_parts(self) -> (DateTime<Utc>, DateTime<Utc>) {
         (self.observed_at, self.legacy_valid_after)
     }
 }
@@ -523,10 +523,10 @@ pub struct StorageTokenMetadata {
     principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
-    issued: NaiveDateTime,
-    expires_at: Option<NaiveDateTime>,
-    last_used_at: Option<NaiveDateTime>,
-    revoked_at: Option<NaiveDateTime>,
+    issued: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    last_used_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
     active: bool,
     expired: bool,
     scope: Option<AuthenticationTokenScope>,
@@ -551,7 +551,7 @@ impl StorageTokenMetadata {
     pub const fn builder(
         id: TokenId,
         principal_id: PrincipalId,
-        issued: NaiveDateTime,
+        issued: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> StorageTokenMetadataBuilder {
         StorageTokenMetadataBuilder {
@@ -591,22 +591,22 @@ impl StorageTokenMetadata {
     }
 
     #[must_use]
-    pub const fn issued(&self) -> NaiveDateTime {
+    pub const fn issued(&self) -> DateTime<Utc> {
         self.issued
     }
 
     #[must_use]
-    pub const fn expires_at(&self) -> Option<NaiveDateTime> {
+    pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
         self.expires_at
     }
 
     #[must_use]
-    pub const fn last_used_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_used_at(&self) -> Option<DateTime<Utc>> {
         self.last_used_at
     }
 
     #[must_use]
-    pub const fn revoked_at(&self) -> Option<NaiveDateTime> {
+    pub const fn revoked_at(&self) -> Option<DateTime<Utc>> {
         self.revoked_at
     }
 
@@ -642,10 +642,10 @@ pub struct StorageTokenMetadataBuilder {
     principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
-    issued: NaiveDateTime,
-    expires_at: Option<NaiveDateTime>,
-    last_used_at: Option<NaiveDateTime>,
-    revoked_at: Option<NaiveDateTime>,
+    issued: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    last_used_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
     active: bool,
     expired: bool,
     scope: Option<AuthenticationTokenScope>,
@@ -666,19 +666,19 @@ impl StorageTokenMetadataBuilder {
     }
 
     #[must_use]
-    pub const fn expires_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn expires_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.expires_at = value;
         self
     }
 
     #[must_use]
-    pub const fn last_used_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_used_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_used_at = value;
         self
     }
 
     #[must_use]
-    pub const fn revoked_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn revoked_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.revoked_at = value;
         self
     }
@@ -728,9 +728,9 @@ pub struct StorageServiceAccount {
     description: String,
     owner_group_id: GroupId,
     created_by: Option<PrincipalId>,
-    disabled_at: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    disabled_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl StorageServiceAccount {
@@ -740,9 +740,9 @@ impl StorageServiceAccount {
         description: impl Into<String>,
         owner_group_id: GroupId,
         created_by: Option<PrincipalId>,
-        disabled_at: Option<NaiveDateTime>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        disabled_at: Option<DateTime<Utc>>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
     ) -> Self {
         Self {
             id,
@@ -776,17 +776,17 @@ impl StorageServiceAccount {
     }
 
     #[must_use]
-    pub const fn disabled_at(&self) -> Option<NaiveDateTime> {
+    pub const fn disabled_at(&self) -> Option<DateTime<Utc>> {
         self.disabled_at
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -807,7 +807,7 @@ pub struct StorageServiceAccountListItem {
 
 /// Strong service-account point with its revision-owned principal fields.
 #[derive(Clone, PartialEq, Eq)]
-pub struct StorageServiceAccountPoint {
+pub struct StorageServiceAccountDetails {
     service_account: StorageServiceAccount,
     identity_scope_id: IdentityScopeId,
     name: String,
@@ -841,7 +841,7 @@ impl StorageServiceAccountDisableOutcome {
     }
 }
 
-impl StorageServiceAccountPoint {
+impl StorageServiceAccountDetails {
     #[must_use]
     pub fn new(
         service_account: StorageServiceAccount,
@@ -1155,8 +1155,8 @@ pub struct StorageExternalPrincipalState {
     identity_scope: String,
     username: String,
     external_subject: String,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
 }
 
 impl StorageExternalPrincipalState {
@@ -1165,8 +1165,8 @@ impl StorageExternalPrincipalState {
         identity_scope: impl Into<String>,
         username: impl Into<String>,
         external_subject: impl Into<String>,
-        last_sync_attempted_at: Option<NaiveDateTime>,
-        last_sync_success_at: Option<NaiveDateTime>,
+        last_sync_attempted_at: Option<DateTime<Utc>>,
+        last_sync_success_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             identity_scope: identity_scope.into(),
@@ -1193,12 +1193,12 @@ impl StorageExternalPrincipalState {
     }
 
     #[must_use]
-    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_attempted_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_attempted_at
     }
 
     #[must_use]
-    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_success_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_success_at
     }
 }
@@ -1414,9 +1414,9 @@ pub struct StorageSyncedHuman {
     id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    anonymized_at: Option<NaiveDateTime>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    anonymized_at: Option<DateTime<Utc>>,
 }
 
 /// Initial local administrator bootstrap request.
@@ -1506,9 +1506,9 @@ impl StorageSyncedHuman {
         id: UserId,
         proper_name: Option<String>,
         email: Option<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        anonymized_at: Option<NaiveDateTime>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        anonymized_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             id,
@@ -1521,24 +1521,33 @@ impl StorageSyncedHuman {
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        UserId,
-        Option<String>,
-        Option<String>,
-        NaiveDateTime,
-        NaiveDateTime,
-        Option<NaiveDateTime>,
-    ) {
-        (
-            self.id,
-            self.proper_name,
-            self.email,
-            self.created_at,
-            self.updated_at,
-            self.anonymized_at,
-        )
+    pub const fn id(&self) -> UserId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn proper_name(&self) -> Option<&str> {
+        self.proper_name.as_deref()
+    }
+
+    #[must_use]
+    pub fn email(&self) -> Option<&str> {
+        self.email.as_deref()
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> DateTime<Utc> {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn anonymized_at(&self) -> Option<DateTime<Utc>> {
+        self.anonymized_at
     }
 }
 
@@ -1639,10 +1648,10 @@ pub trait ServiceAccountStorage: Send + Sync {
 
     /// Load one service account together with the principal-owned name, scope,
     /// and revision needed for a strong point response.
-    async fn get_service_account_point(
+    async fn get_service_account_details(
         &self,
         service_account_id: ServiceAccountId,
-    ) -> Result<StorageServiceAccountPoint, StorageError>;
+    ) -> Result<StorageServiceAccountDetails, StorageError>;
 
     /// List service accounts manageable by the requestor, applying owner-group
     /// authorization, administrator override, filtering, stable paging, and an
@@ -1713,13 +1722,13 @@ mod tests {
 
     #[test]
     fn identity_group_builder_keeps_record_metadata_and_optional_sync_state() {
-        let created_at = NaiveDateTime::default();
+        let created_at = DateTime::<Utc>::default();
         let updated_at = created_at + chrono::Duration::seconds(1);
         let group = StorageIdentityGroup::builder(
             StorageRecordMetadata::try_new(
                 hubuum_domain::ResourceId::new(7).unwrap(),
-                created_at.and_utc(),
-                updated_at.and_utc(),
+                created_at,
+                updated_at,
                 hubuum_domain::ResourceRevision::new(3).unwrap(),
             )
             .unwrap(),
@@ -1811,7 +1820,7 @@ mod tests {
 
     #[test]
     fn token_observation_rejects_a_future_legacy_cutoff() {
-        let observed_at = NaiveDateTime::default();
+        let observed_at = DateTime::<Utc>::default();
 
         let result = StorageTokenObservation::new(
             observed_at,
@@ -1823,7 +1832,7 @@ mod tests {
 
     #[test]
     fn token_observation_debug_redacts_timestamps() {
-        let observed_at = NaiveDateTime::default();
+        let observed_at = DateTime::<Utc>::default();
         let observation =
             StorageTokenObservation::new(observed_at, observed_at - chrono::Duration::hours(24))
                 .unwrap();

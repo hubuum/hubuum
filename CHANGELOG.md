@@ -101,8 +101,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   adapters. Adapter authors must update method names, await archive calls,
   provide atomic transaction-scoped lifecycle accessors, attach notification
   providers explicitly when supported, and use the named `StorageError`
-  constructors. Static application selection remains unchanged; there is no
-  dynamic plugin interface.
+  constructors. Named parts structs replace the most error-prone positional
+  decompositions introduced or changed by this boundary work. Static
+  application selection remains unchanged; there is no dynamic plugin
+  interface.
 - **Breaking (workspace storage API):** ordinary storage mutations now require
   `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
   non-empty set of durable `AuditReceipt` values for commits and no receipt for
@@ -149,10 +151,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   negative sentinel or a second counted-page type. Persisted record metadata
   uses explicit UTC timestamps and rejects reversed creation/update order.
   Restore identities, artifact digests, lifecycle timestamps, remote-target
-  transports, retained events, and backup rows validate their invariants at
-  construction; history metadata uses typed semantic operations, validates its
-  validity window, and exposes named parts instead of a positional tuple.
-  Other long positional decompositions likewise use named parts structs.
+  transports and policies, event-delivery and computed-rebuild states, retained
+  events, and backup rows validate their invariants at construction. History
+  metadata, import DTOs, group membership, user details, remote transports, and
+  remote-call artifact targets expose named parts where positional
+  decomposition would be especially error-prone. Contract DTO timestamps use
+  explicit UTC values; adapters must convert native timestamp representations
+  at their private boundary.
   `StorageErrorKind::UnsupportedOperation` and
   `StorageErrorKind::ValidationFailed` now distinguish unsupported behavior
   from semantically invalid content, and malformed persisted conflict metadata

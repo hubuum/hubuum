@@ -21,7 +21,12 @@ fn read_source(path: &Path) -> std::io::Result<String> {
 fn item_body<'a>(source: &'a str, keyword: &str, name: &str) -> &'a str {
     let marker = format!("{keyword} {name}");
     let declaration = source
-        .find(&marker)
+        .match_indices(&marker)
+        .find_map(|(index, _)| {
+            let next = source[index + marker.len()..].chars().next();
+            next.is_none_or(|character| !character.is_ascii_alphanumeric() && character != '_')
+                .then_some(index)
+        })
         .unwrap_or_else(|| panic!("could not find {marker}"));
     let opening = source[declaration..]
         .find('{')
@@ -41,6 +46,20 @@ fn item_body<'a>(source: &'a str, keyword: &str, name: &str) -> &'a str {
         }
     }
     panic!("could not find closing brace for {marker}");
+}
+
+#[cfg(test)]
+fn trait_supertraits(source: &str, trait_name: &str) -> BTreeSet<String> {
+    source
+        .split_once(&format!("pub trait {trait_name}:"))
+        .and_then(|(_, remainder)| remainder.split_once("\n{"))
+        .map(|(body, _)| body)
+        .unwrap_or_else(|| panic!("{trait_name} should have a readable aggregate declaration"))
+        .split('+')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -178,6 +197,16 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "TransactionStorage",
 ];
 
+#[cfg(test)]
+const REQUIRED_STORAGE_BACKEND_FAMILIES: &[&str] = &[
+    "ResourceStorage",
+    "IdentityStorage",
+    "QueryStorage",
+    "WorkflowStorage",
+    "EventStorage",
+    "OperationalStorage",
+];
+
 #[test]
 fn storage_boundary_documentation_covers_the_complete_contract() {
     let root = repository_root();
@@ -268,19 +297,24 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
 
     let contract = read_source(&root.join("crates/hubuum-storage-core/src/backend.rs"))
         .expect("complete storage contract should be readable");
-    let aggregate = contract
-        .split_once("pub trait StorageBackend:")
-        .and_then(|(_, remainder)| remainder.split_once("\n{"))
-        .map(|(body, _)| body)
-        .expect("StorageBackend should have a readable aggregate declaration")
-        .split('+')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
+    let aggregate = trait_supertraits(&contract, "StorageBackend");
+    let expected_families = REQUIRED_STORAGE_BACKEND_FAMILIES
+        .iter()
+        .map(|name| (*name).to_string())
         .collect::<BTreeSet<_>>();
     assert_eq!(
-        aggregate, expected_traits,
-        "the complete backend aggregate and semantic inventory must change together"
+        aggregate, expected_families,
+        "the complete backend aggregate and family inventory must change together"
+    );
+    let family_source = read_source(&root.join("crates/hubuum-storage-core/src/families.rs"))
+        .expect("storage family bounds should be readable");
+    let family_traits = REQUIRED_STORAGE_BACKEND_FAMILIES
+        .iter()
+        .flat_map(|family| trait_supertraits(&family_source, family))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        family_traits, expected_traits,
+        "storage family bounds and semantic inventory must change together"
     );
 
     for (trait_name, value) in traits {
@@ -602,6 +636,24 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
             assert_eq!(
                 observer_count, 1,
                 "{trait_name}::{method} must cross exactly one common storage observer"
+            );
+            let capability_marker = "StorageCapability::";
+            let capability_start = body.find(capability_marker).unwrap_or_else(|| {
+                panic!("{trait_name}::{method} must use a typed storage capability")
+            }) + capability_marker.len();
+            let capability_len = body[capability_start..]
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric())
+                .count();
+            let operation = body[capability_start + capability_len..]
+                .split('"')
+                .nth(1)
+                .unwrap_or_else(|| {
+                    panic!("{trait_name}::{method} must use a static operation label")
+                });
+            assert_eq!(
+                operation, method,
+                "{trait_name}::{method} must use the trait method name as its operation label"
             );
         }
     }
@@ -1015,6 +1067,9 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     let contract_path = root.join("crates/hubuum-storage-core/src/backend.rs");
     let contract_source = read_source(&contract_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
+    let family_path = root.join("crates/hubuum-storage-core/src/families.rs");
+    let family_source = read_source(&family_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", family_path.display()));
     let adapter_path = root.join("crates/hubuum-storage-postgres/src/backend/mod.rs");
     let adapter_source = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
@@ -1030,15 +1085,21 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             )
         });
 
-    let contract_body = contract_source
-        .split_once("pub trait StorageBackend:")
-        .and_then(|(_, remainder)| remainder.split_once("\n{"))
-        .map(|(body, _)| body)
-        .expect("StorageBackend should have a readable aggregate trait declaration");
+    let contract_families = trait_supertraits(&contract_source, "StorageBackend");
+    for required in REQUIRED_STORAGE_BACKEND_FAMILIES {
+        assert!(
+            contract_families.contains(*required),
+            "complete storage contract is missing family {required}"
+        );
+    }
+    let family_traits = REQUIRED_STORAGE_BACKEND_FAMILIES
+        .iter()
+        .flat_map(|family| trait_supertraits(&family_source, family))
+        .collect::<BTreeSet<_>>();
     for required in REQUIRED_STORAGE_BACKEND_TRAITS {
         assert!(
-            contract_body.contains(required),
-            "complete storage contract is missing {required}"
+            family_traits.contains(*required),
+            "complete storage families are missing {required}"
         );
     }
     assert!(
@@ -1049,12 +1110,6 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         !adapter_source.contains("StorageBackend for MemoryStorageModel"),
         "the focused memory contract model must not be selectable as a full backend"
     );
-    for forbidden_marker in ["WorkflowStorage", "OperationalStorage"] {
-        assert!(
-            !contract_source.contains(forbidden_marker),
-            "complete storage certification must not rely on marker {forbidden_marker}"
-        );
-    }
     let required = "S: RegisteredStorageBackend";
     assert!(
         context_source.contains(required),
@@ -1090,10 +1145,11 @@ fn ordinary_storage_mutations_have_no_optional_audit_context_escape_hatch() {
         }
     }
 
-    let backend = read_source(&root.join("crates/hubuum-storage-core/src/backend.rs"))
-        .expect("complete storage contract should be readable");
+    let families = read_source(&root.join("crates/hubuum-storage-core/src/families.rs"))
+        .expect("complete storage families should be readable");
+    let workflows = trait_supertraits(&families, "WorkflowStorage");
     assert!(
-        backend.contains("+ ImportStorage") && backend.contains("+ RestoreStorage"),
+        workflows.contains("ImportStorage") && workflows.contains("RestoreStorage"),
         "import and restore must remain explicit complete-backend capabilities"
     );
 }
@@ -2082,7 +2138,7 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
     }
 
     let capability_path =
-        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity_queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(
@@ -2403,7 +2459,7 @@ fn service_account_resources_are_owned_by_the_postgres_adapter() {
     );
     for method in [
         "get_service_account",
-        "get_service_account_point",
+        "get_service_account_details",
         "list_manageable_service_accounts",
         "create_service_account",
         "update_service_account",
@@ -2496,7 +2552,7 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
     }
 
     let capability_path =
-        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity_queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "PrincipalStorage for PostgresStorage");
@@ -2539,7 +2595,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     }
 
     let capability_path =
-        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/resources.rs");
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/identity_queries.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(&capability, "impl", "GroupStorage for PostgresStorage");
@@ -2550,10 +2606,8 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         "create_group",
         "update_group",
         "delete_group",
-        "list_group_members",
+        "list_all_group_members",
         "list_group_members_page",
-        "count_group_members",
-        "get_group_member_principal",
         "add_group_member",
         "remove_group_member",
     ] {
@@ -2622,7 +2676,7 @@ fn user_resources_are_owned_by_the_postgres_adapter() {
     for method in [
         "get_user",
         "get_user_by_name",
-        "get_user_point",
+        "get_user_details",
         "list_users",
         "create_user",
         "update_user",
@@ -2751,7 +2805,7 @@ fn postgres_operational_queries_are_owned_by_the_adapter_crate() {
     }
 
     let capability_path =
-        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/operations.rs");
+        root.join("crates/hubuum-storage-postgres/src/backend/capabilities/operational.rs");
     let capability = read_source(&capability_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", capability_path.display()));
     let implementation = item_body(

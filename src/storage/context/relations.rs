@@ -10,7 +10,7 @@ impl ObjectAggregateStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ObjectAggregates,
-            "aggregate",
+            "aggregate_objects",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.aggregate_objects(query, authorizer).await
@@ -30,7 +30,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "list_classes",
+            "list_class_relations",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_class_relations(query).await
@@ -47,7 +47,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "list_objects",
+            "list_object_relations",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_object_relations(query).await
@@ -64,7 +64,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "classes_touching",
+            "list_class_relations_touching",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_class_relations_touching(query).await
@@ -81,7 +81,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "objects_touching",
+            "list_object_relations_touching",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_object_relations_touching(query).await
@@ -98,7 +98,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "classes_touching_ids",
+            "list_class_relations_touching_ids",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_class_relations_touching_ids(query).await
@@ -115,7 +115,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "classes_between_ids",
+            "list_class_relations_between_ids",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_class_relations_between_ids(query).await
@@ -132,7 +132,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "objects_between_ids",
+            "list_object_relations_between_ids",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_object_relations_between_ids(query).await
@@ -149,7 +149,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "objects_touching_ids",
+            "list_object_relations_touching_ids",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_object_relations_touching_ids(query).await
@@ -209,7 +209,7 @@ impl RelationQueryStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RelationQueries,
-            "bidirectional_objects_for_roots",
+            "list_bidirectionally_related_objects_for_roots",
             async {
                 dispatch_backend!(self, |backend| {
                     backend
@@ -231,7 +231,7 @@ impl UnifiedSearchStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,
-            "collections",
+            "search_collections",
             async {
                 dispatch_backend!(self, |backend| { backend.search_collections(query).await })
             },
@@ -246,7 +246,7 @@ impl UnifiedSearchStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,
-            "classes",
+            "search_classes",
             async { dispatch_backend!(self, |backend| { backend.search_classes(query).await }) },
         )
         .await
@@ -259,7 +259,7 @@ impl UnifiedSearchStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,
-            "objects",
+            "search_objects",
             async { dispatch_backend!(self, |backend| { backend.search_objects(query).await }) },
         )
         .await

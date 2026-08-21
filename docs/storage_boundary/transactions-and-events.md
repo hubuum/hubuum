@@ -170,7 +170,8 @@ A complete adapter must:
 - commit only when the callback returns `Ok`;
 - roll back state and side effects when it returns `Err` or native commit
   fails; and
-- convert its native error once into `StorageError` at the adapter boundary.
+- log native diagnostic context inside the adapter and convert the failure once
+  into a safe `StorageError` at the adapter boundary.
 
 An adapter may use a connection, session, batch, compare-and-swap log, or other
 native mechanism internally. Those types never cross the contract.

@@ -1,9 +1,10 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    CollectionId, EventDeliveryId, EventSinkId, EventSubscriptionId, PrincipalId, ResourceRevision,
+    CollectionId, EventDeliveryId, EventDeliveryStatus, EventSinkId, EventSubscriptionId,
+    PrincipalId, ResourceRevision,
 };
 use hubuum_events_core::{
     Action, ActorKind, EntityType, EventContext, EventEntityId, EventSequence,
@@ -24,8 +25,8 @@ pub struct StorageAuditEventFilters {
     actor_user_id: Option<PrincipalId>,
     initiator_user_id: Option<PrincipalId>,
     collection_id: Option<CollectionId>,
-    occurred_after: Option<NaiveDateTime>,
-    occurred_before: Option<NaiveDateTime>,
+    occurred_after: Option<DateTime<Utc>>,
+    occurred_before: Option<DateTime<Utc>>,
 }
 
 impl StorageAuditEventFilters {
@@ -87,13 +88,13 @@ impl StorageAuditEventFilters {
     }
 
     #[must_use]
-    pub const fn occurred_after(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn occurred_after(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.occurred_after = value;
         self
     }
 
     #[must_use]
-    pub const fn occurred_before(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn occurred_before(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.occurred_before = value;
         self
     }
@@ -134,12 +135,12 @@ impl StorageAuditEventFilters {
     }
 
     #[must_use]
-    pub const fn occurred_after_value(&self) -> Option<NaiveDateTime> {
+    pub const fn occurred_after_value(&self) -> Option<DateTime<Utc>> {
         self.occurred_after
     }
 
     #[must_use]
-    pub const fn occurred_before_value(&self) -> Option<NaiveDateTime> {
+    pub const fn occurred_before_value(&self) -> Option<DateTime<Utc>> {
         self.occurred_before
     }
 }
@@ -252,8 +253,8 @@ pub struct StorageEventSink {
     configuration: Value,
     secret_ref: Option<String>,
     enabled: bool,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -263,8 +264,8 @@ impl StorageEventSink {
         id: EventSinkId,
         name: impl Into<String>,
         kind: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> StorageEventSinkBuilder {
         StorageEventSinkBuilder {
@@ -311,12 +312,12 @@ impl StorageEventSink {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -334,8 +335,8 @@ pub struct StorageEventSinkBuilder {
     configuration: Value,
     secret_ref: Option<String>,
     enabled: bool,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -671,8 +672,8 @@ pub struct StorageEventSubscription {
     filter: EventSubscriptionFilter,
     routing: Value,
     enabled: bool,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -683,8 +684,8 @@ impl StorageEventSubscription {
         collection_id: CollectionId,
         sink_id: EventSinkId,
         name: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> StorageEventSubscriptionBuilder {
         StorageEventSubscriptionBuilder {
@@ -755,12 +756,12 @@ impl StorageEventSubscription {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -782,8 +783,8 @@ pub struct StorageEventSubscriptionBuilder {
     filter: EventSubscriptionFilter,
     routing: Value,
     enabled: bool,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -1343,13 +1344,13 @@ pub struct StorageEventDelivery {
     id: EventDeliveryId,
     event_id: EventSequence,
     subscription_id: EventSubscriptionId,
-    status: String,
+    status: EventDeliveryStatus,
     attempts: i32,
-    next_attempt_at: NaiveDateTime,
+    next_attempt_at: DateTime<Utc>,
     last_error: Option<String>,
-    locked_until: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    locked_until: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl StorageEventDelivery {
@@ -1358,16 +1359,16 @@ impl StorageEventDelivery {
         id: EventDeliveryId,
         event_id: EventSequence,
         subscription_id: EventSubscriptionId,
-        status: impl Into<String>,
-        next_attempt_at: NaiveDateTime,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        status: EventDeliveryStatus,
+        next_attempt_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
     ) -> StorageEventDeliveryBuilder {
         StorageEventDeliveryBuilder {
             id,
             event_id,
             subscription_id,
-            status: status.into(),
+            status,
             attempts: 0,
             next_attempt_at,
             last_error: None,
@@ -1393,8 +1394,8 @@ impl StorageEventDelivery {
     }
 
     #[must_use]
-    pub fn status(&self) -> &str {
-        &self.status
+    pub const fn status(&self) -> EventDeliveryStatus {
+        self.status
     }
 
     #[must_use]
@@ -1403,7 +1404,7 @@ impl StorageEventDelivery {
     }
 
     #[must_use]
-    pub const fn next_attempt_at(&self) -> NaiveDateTime {
+    pub const fn next_attempt_at(&self) -> DateTime<Utc> {
         self.next_attempt_at
     }
 
@@ -1413,17 +1414,17 @@ impl StorageEventDelivery {
     }
 
     #[must_use]
-    pub const fn locked_until(&self) -> Option<NaiveDateTime> {
+    pub const fn locked_until(&self) -> Option<DateTime<Utc>> {
         self.locked_until
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 }
@@ -1433,13 +1434,13 @@ pub struct StorageEventDeliveryBuilder {
     id: EventDeliveryId,
     event_id: EventSequence,
     subscription_id: EventSubscriptionId,
-    status: String,
+    status: EventDeliveryStatus,
     attempts: i32,
-    next_attempt_at: NaiveDateTime,
+    next_attempt_at: DateTime<Utc>,
     last_error: Option<String>,
-    locked_until: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    locked_until: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl StorageEventDeliveryBuilder {
@@ -1456,14 +1457,23 @@ impl StorageEventDeliveryBuilder {
     }
 
     #[must_use]
-    pub const fn locked_until(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn locked_until(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.locked_until = value;
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageEventDelivery {
-        StorageEventDelivery {
+    pub fn try_build(self) -> Result<StorageEventDelivery, StorageError> {
+        if self.attempts < 0 {
+            return Err(StorageError::invalid_input(
+                "Event delivery attempts must not be negative",
+            ));
+        }
+        if self.updated_at < self.created_at {
+            return Err(StorageError::invalid_input(
+                "Event delivery updated_at must not precede created_at",
+            ));
+        }
+        Ok(StorageEventDelivery {
             id: self.id,
             event_id: self.event_id,
             subscription_id: self.subscription_id,
@@ -1474,7 +1484,7 @@ impl StorageEventDeliveryBuilder {
             locked_until: self.locked_until,
             created_at: self.created_at,
             updated_at: self.updated_at,
-        }
+        })
     }
 }
 
@@ -1558,6 +1568,37 @@ pub trait EventDeliveryAdministrationStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_delivery_builder_rejects_negative_attempts_and_reversed_timestamps() {
+        let created_at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let earlier = created_at - chrono::Duration::seconds(1);
+        let delivery = |updated_at| {
+            StorageEventDelivery::builder(
+                EventDeliveryId::new(1).unwrap(),
+                EventSequence::new(2).unwrap(),
+                EventSubscriptionId::new(3).unwrap(),
+                EventDeliveryStatus::Pending,
+                created_at,
+                created_at,
+                updated_at,
+            )
+        };
+
+        assert_eq!(
+            delivery(created_at)
+                .attempts(-1)
+                .try_build()
+                .err()
+                .unwrap()
+                .kind(),
+            crate::StorageErrorKind::InvalidInput
+        );
+        assert_eq!(
+            delivery(earlier).try_build().err().unwrap().kind(),
+            crate::StorageErrorKind::InvalidInput
+        );
+    }
 
     #[test]
     fn event_administration_query_debug_is_bounded_and_redacted() {

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{
     AuthorizationGrantId, ClassId, CollectionId, GroupId, IdentityScopeId, ObjectId, PrincipalId,
     ResourceId, ResourceRevision,
@@ -372,8 +372,8 @@ pub struct AuthorizationCollection {
     id: CollectionId,
     name: String,
     description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     parent_collection_id: Option<CollectionId>,
     revision: ResourceRevision,
 }
@@ -384,8 +384,8 @@ impl AuthorizationCollection {
         id: CollectionId,
         name: impl Into<String>,
         description: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         parent_collection_id: Option<CollectionId>,
         revision: ResourceRevision,
     ) -> Self {
@@ -416,12 +416,12 @@ impl AuthorizationCollection {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -501,8 +501,8 @@ impl fmt::Debug for AuthorizationGroupIdentity {
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthorizationGroupProfile {
     description: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
@@ -510,8 +510,8 @@ impl AuthorizationGroupProfile {
     #[must_use]
     pub fn new(
         description: impl Into<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> Self {
         Self {
@@ -537,15 +537,15 @@ impl fmt::Debug for AuthorizationGroupProfile {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AuthorizationGroupSyncState {
-    last_attempted_at: Option<NaiveDateTime>,
-    last_succeeded_at: Option<NaiveDateTime>,
+    last_attempted_at: Option<DateTime<Utc>>,
+    last_succeeded_at: Option<DateTime<Utc>>,
 }
 
 impl AuthorizationGroupSyncState {
     #[must_use]
     pub const fn new(
-        last_attempted_at: Option<NaiveDateTime>,
-        last_succeeded_at: Option<NaiveDateTime>,
+        last_attempted_at: Option<DateTime<Utc>>,
+        last_succeeded_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             last_attempted_at,
@@ -588,11 +588,11 @@ impl AuthorizationGroup {
         &self.profile.description
     }
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.profile.created_at
     }
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.profile.updated_at
     }
     #[must_use]
@@ -608,11 +608,11 @@ impl AuthorizationGroup {
         self.identity.external_key.as_deref()
     }
     #[must_use]
-    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_attempted_at(&self) -> Option<DateTime<Utc>> {
         self.sync.last_attempted_at
     }
     #[must_use]
-    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_success_at(&self) -> Option<DateTime<Utc>> {
         self.sync.last_succeeded_at
     }
     #[must_use]
@@ -638,8 +638,8 @@ pub struct AuthorizationGrant {
     collection_id: CollectionId,
     group_id: GroupId,
     permissions: Vec<AuthorizationPermission>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl fmt::Debug for AuthorizationGrant {
@@ -663,8 +663,8 @@ impl AuthorizationGrant {
         collection_id: CollectionId,
         group_id: GroupId,
         permissions: impl IntoIterator<Item = AuthorizationPermission>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
     ) -> Self {
         Self {
             id,
@@ -693,11 +693,11 @@ impl AuthorizationGrant {
         &self.permissions
     }
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 }
@@ -1304,8 +1304,8 @@ mod tests {
             collection(876_543),
             group(654_321),
             [AuthorizationPermission::ReadCollection],
-            NaiveDateTime::default(),
-            NaiveDateTime::default(),
+            DateTime::<Utc>::default(),
+            DateTime::<Utc>::default(),
         );
         let debug = format!("{query:?} {grant:?}");
 

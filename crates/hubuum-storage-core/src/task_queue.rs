@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId, TokenId};
 use hubuum_events_core::EventSequence;
 use hubuum_query::QueryOptions;
@@ -359,15 +359,15 @@ pub struct StorageTask {
     summary: Option<String>,
     progress: StorageTaskProgress,
     scope_snapshot: StorageTaskScopeSnapshot,
-    request_redacted_at: Option<NaiveDateTime>,
-    started_at: Option<NaiveDateTime>,
-    finished_at: Option<NaiveDateTime>,
-    deleted_at: Option<NaiveDateTime>,
+    request_redacted_at: Option<DateTime<Utc>>,
+    started_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    deleted_at: Option<DateTime<Utc>>,
     deleted_by: Option<PrincipalId>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     lease_token: Option<Uuid>,
-    lease_expires_at: Option<NaiveDateTime>,
+    lease_expires_at: Option<DateTime<Utc>>,
     attempt_count: i32,
     initiator_principal_id: Option<PrincipalId>,
 }
@@ -378,8 +378,8 @@ impl StorageTask {
         id: TaskId,
         kind: StorageTaskKind,
         status: StorageTaskStatus,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
     ) -> StorageTaskBuilder {
         StorageTaskBuilder {
             task: Self {
@@ -439,22 +439,22 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn started_at(&self) -> Option<NaiveDateTime> {
+    pub const fn started_at(&self) -> Option<DateTime<Utc>> {
         self.started_at
     }
 
     #[must_use]
-    pub const fn finished_at(&self) -> Option<NaiveDateTime> {
+    pub const fn finished_at(&self) -> Option<DateTime<Utc>> {
         self.finished_at
     }
 
     #[must_use]
-    pub const fn request_redacted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn request_redacted_at(&self) -> Option<DateTime<Utc>> {
         self.request_redacted_at
     }
 
@@ -479,7 +479,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn deleted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         self.deleted_at
     }
 
@@ -489,7 +489,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -499,7 +499,7 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn lease_expires_at(&self) -> Option<NaiveDateTime> {
+    pub const fn lease_expires_at(&self) -> Option<DateTime<Utc>> {
         self.lease_expires_at
     }
 
@@ -578,19 +578,19 @@ impl StorageTaskBuilder {
     }
 
     #[must_use]
-    pub const fn request_redacted_at(mut self, request_redacted_at: Option<NaiveDateTime>) -> Self {
+    pub const fn request_redacted_at(mut self, request_redacted_at: Option<DateTime<Utc>>) -> Self {
         self.task.request_redacted_at = request_redacted_at;
         self
     }
 
     #[must_use]
-    pub const fn started_at(mut self, started_at: Option<NaiveDateTime>) -> Self {
+    pub const fn started_at(mut self, started_at: Option<DateTime<Utc>>) -> Self {
         self.task.started_at = started_at;
         self
     }
 
     #[must_use]
-    pub const fn finished_at(mut self, finished_at: Option<NaiveDateTime>) -> Self {
+    pub const fn finished_at(mut self, finished_at: Option<DateTime<Utc>>) -> Self {
         self.task.finished_at = finished_at;
         self
     }
@@ -598,7 +598,7 @@ impl StorageTaskBuilder {
     #[must_use]
     pub const fn deletion(
         mut self,
-        deleted_at: Option<NaiveDateTime>,
+        deleted_at: Option<DateTime<Utc>>,
         deleted_by: Option<PrincipalId>,
     ) -> Self {
         self.task.deleted_at = deleted_at;
@@ -610,7 +610,7 @@ impl StorageTaskBuilder {
     pub const fn lease(
         mut self,
         lease_token: Option<Uuid>,
-        lease_expires_at: Option<NaiveDateTime>,
+        lease_expires_at: Option<DateTime<Utc>>,
     ) -> Self {
         self.task.lease_token = lease_token;
         self.task.lease_expires_at = lease_expires_at;
@@ -737,7 +737,7 @@ pub struct StorageTaskEvent {
     event_type: String,
     message: String,
     data: Option<Value>,
-    created_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
     actor_principal_id: Option<PrincipalId>,
     actor_kind: String,
     initiator_principal_id: Option<PrincipalId>,
@@ -751,7 +751,7 @@ impl StorageTaskEvent {
         task_id: TaskId,
         event_type: impl Into<String>,
         message: impl Into<String>,
-        created_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
         actor_kind: impl Into<String>,
     ) -> StorageTaskEventBuilder {
         StorageTaskEventBuilder {
@@ -796,7 +796,7 @@ impl StorageTaskEvent {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
@@ -866,7 +866,7 @@ pub struct StorageImportTaskResult {
     outcome: String,
     error: Option<String>,
     details: Option<Value>,
-    created_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
 }
 
 impl StorageImportTaskResult {
@@ -877,7 +877,7 @@ impl StorageImportTaskResult {
         entity_kind: impl Into<String>,
         action: impl Into<String>,
         outcome: impl Into<String>,
-        created_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
     ) -> StorageImportTaskResultBuilder {
         StorageImportTaskResultBuilder {
             result: Self {
@@ -941,7 +941,7 @@ impl StorageImportTaskResult {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 }
@@ -1049,7 +1049,7 @@ macro_rules! task_output_accessors {
         }
 
         #[must_use]
-        pub const fn output_expires_at(&self) -> NaiveDateTime {
+        pub const fn output_expires_at(&self) -> DateTime<Utc> {
             self.output_expires_at
         }
 
@@ -1078,7 +1078,7 @@ macro_rules! backup_output_accessors {
         }
 
         #[must_use]
-        pub const fn output_expires_at(&self) -> NaiveDateTime {
+        pub const fn output_expires_at(&self) -> DateTime<Utc> {
             self.output_expires_at
         }
     };
@@ -1091,7 +1091,7 @@ pub struct StorageExportOutputSummary {
     content_type: String,
     warning_count: i32,
     truncated: bool,
-    output_expires_at: NaiveDateTime,
+    output_expires_at: DateTime<Utc>,
     durations: StorageTaskDurations,
 }
 
@@ -1103,7 +1103,7 @@ impl StorageExportOutputSummary {
         content_type: impl Into<String>,
         warning_count: i32,
         truncated: bool,
-        output_expires_at: NaiveDateTime,
+        output_expires_at: DateTime<Utc>,
         durations: StorageTaskDurations,
     ) -> Self {
         Self {
@@ -1125,7 +1125,7 @@ pub struct StorageBackupOutputSummary {
     task_id: TaskId,
     byte_size: i64,
     sha256: String,
-    output_expires_at: NaiveDateTime,
+    output_expires_at: DateTime<Utc>,
 }
 
 impl StorageBackupOutputSummary {
@@ -1134,7 +1134,7 @@ impl StorageBackupOutputSummary {
         task_id: TaskId,
         byte_size: i64,
         sha256: impl Into<String>,
-        output_expires_at: NaiveDateTime,
+        output_expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
             task_id,
@@ -1158,9 +1158,9 @@ pub struct StorageExportOutput {
     warnings: Value,
     warning_count: i32,
     truncated: bool,
-    output_expires_at: NaiveDateTime,
+    output_expires_at: DateTime<Utc>,
     durations: StorageTaskDurations,
-    created_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
 }
 
 impl StorageExportOutput {
@@ -1170,8 +1170,8 @@ impl StorageExportOutput {
         content_type: impl Into<String>,
         metadata: Value,
         warnings: Value,
-        output_expires_at: NaiveDateTime,
-        created_at: NaiveDateTime,
+        output_expires_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
     ) -> StorageExportOutputBuilder {
         StorageExportOutputBuilder {
             output: Self {
@@ -1214,7 +1214,7 @@ impl StorageExportOutput {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 }
@@ -1262,8 +1262,8 @@ pub struct StorageBackupOutput {
     document: Vec<u8>,
     byte_size: i64,
     sha256: String,
-    output_expires_at: NaiveDateTime,
-    created_at: NaiveDateTime,
+    output_expires_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
 }
 
 impl StorageBackupOutput {
@@ -1273,8 +1273,8 @@ impl StorageBackupOutput {
         document: Vec<u8>,
         byte_size: i64,
         sha256: impl Into<String>,
-        output_expires_at: NaiveDateTime,
-        created_at: NaiveDateTime,
+        output_expires_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
     ) -> Self {
         Self {
             task_id,
@@ -1294,7 +1294,7 @@ impl StorageBackupOutput {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 }
@@ -1302,7 +1302,7 @@ impl StorageBackupOutput {
 #[derive(Clone, PartialEq)]
 pub enum StorageTaskOutputLookup<T> {
     Available(T),
-    Expired { expires_at: NaiveDateTime },
+    Expired { expires_at: DateTime<Utc> },
     Missing,
 }
 
@@ -1367,7 +1367,7 @@ mod tests {
 
     #[test]
     fn task_debug_redacts_identity_payload_scope_and_claim() {
-        let now = chrono::Utc::now().naive_utc();
+        let now = chrono::Utc::now();
         let task = StorageTask::builder(
             TaskId::new(91_001).unwrap(),
             StorageTaskKind::Import,

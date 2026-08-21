@@ -6,8 +6,8 @@ use std::time::Duration;
 use actix_web::{App, http, test, web::Data};
 use async_trait::async_trait;
 use hubuum_domain::{
-    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, GroupId, ObjectId,
-    ObjectRelationId, PrincipalId, ResourceId, ResourceRevision,
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventDeliveryStatus,
+    GroupId, ObjectId, ObjectRelationId, PrincipalId, ResourceId, ResourceRevision,
 };
 use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -570,9 +570,9 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
     async fn observations(&self) -> Result<ObservationProbe, FixtureError> {
         Ok(ObservationProbe::new(
             self.logical_observer
-                .operation_count("collections", "create"),
+                .operation_count("collections", "create_collection"),
             self.logical_observer
-                .operation_count("event_configuration", "create_subscription"),
+                .operation_count("event_configuration", "create_event_subscription"),
             self.postgres_observer.operation_count(),
             self.postgres_observer.failure_count(),
         ))
@@ -685,7 +685,7 @@ impl DeliveryFaultFixture for PostgresAuditContractFixture {
             .mark_event_delivery_failed(&claim, settings, "deterministic transport failure")
             .await?;
         let failed = self.backend.get_event_delivery(delivery_id).await?;
-        let failure_persisted = failed.status() == "failed"
+        let failure_persisted = failed.status() == EventDeliveryStatus::Failed
             && failed.attempts() == 1
             && failed.last_error() == Some("deterministic transport failure");
 
@@ -703,8 +703,8 @@ impl DeliveryFaultFixture for PostgresAuditContractFixture {
         self.backend
             .mark_event_delivery_succeeded(&retry_claim)
             .await?;
-        let retry_completed =
-            self.backend.get_event_delivery(delivery_id).await?.status() == "succeeded";
+        let retry_completed = self.backend.get_event_delivery(delivery_id).await?.status()
+            == EventDeliveryStatus::Succeeded;
 
         Ok(DeliveryFaultProbe::new(
             TransactionFaultProbe::new(claim_error.kind(), true),
@@ -1344,7 +1344,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .into_value();
 
         let members = backend
-            .list_group_members(created.id())
+            .list_all_group_members(created.id())
             .await
             .expect("certified backend should list group members");
         assert!(
@@ -1352,15 +1352,6 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
                 .iter()
                 .any(|member| member.id() == principal_id(user.id))
         );
-        assert_eq!(
-            backend
-                .get_group_member_principal(principal_id(user.id))
-                .await
-                .expect("certified backend should load a membership principal")
-                .id(),
-            principal_id(user.id)
-        );
-
         let query_options = QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
             .expect("contract query must be valid");
         let page = backend
@@ -1368,29 +1359,22 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .await
             .expect("certified backend should page group members");
         assert!(
-            page.iter()
-                .any(|(_, member)| member.id() == principal_id(user.id))
+            page.rows()
+                .iter()
+                .any(|member| member.principal().id() == principal_id(user.id))
         );
-        assert_eq!(
-            backend
-                .count_group_members(created.id(), query_options.clone())
-                .await
-                .expect("certified backend should count group members"),
-            1
-        );
+        assert_eq!(page.total(), Some(1));
 
         backend
             .remove_group_member(principal_id(user.id), created.id(), &EventContext::system())
             .await
             .expect("certified backend should remove group members")
             .into_value();
-        assert_eq!(
-            backend
-                .count_group_members(created.id(), query_options)
-                .await
-                .expect("certified backend should recount group members"),
-            0
-        );
+        let empty_page = backend
+            .list_group_members_page(created.id(), query_options)
+            .await
+            .expect("certified backend should recount group members");
+        assert_eq!(empty_page.total(), Some(0));
         assert_eq!(
             backend
                 .delete_group(created.id(), &EventContext::system())
@@ -1497,7 +1481,7 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         .expect("authentication compatibility token should be created");
 
     for backend in available_backends() {
-        let observed_at = chrono::Utc::now().naive_utc();
+        let observed_at = chrono::Utc::now();
         let attempt = AuthenticationAttempt::new(
             AuthenticationCredential::new(token.storage_hash()),
             observed_at,
@@ -1662,7 +1646,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         );
         assert_eq!(
             backend
-                .get_user_point(contract_user_id)
+                .get_user_details(contract_user_id)
                 .await
                 .expect("certified backend should load user points")
                 .into_parts()
@@ -1716,7 +1700,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
 
         let token_policy =
             StorageTokenIssuancePolicy::new(24, 24).expect("contract token policy should be valid");
-        let token_observed_at = chrono::Utc::now().naive_utc() + chrono::Duration::seconds(1);
+        let token_observed_at = chrono::Utc::now() + chrono::Duration::seconds(1);
         let token_observation = StorageTokenObservation::new(
             token_observed_at,
             token_observed_at - chrono::Duration::hours(24),
@@ -1875,7 +1859,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should load service accounts");
         assert_eq!(loaded.owner_group_id(), group_id(owner_group.id));
         let point = backend
-            .get_service_account_point(created.id())
+            .get_service_account_details(created.id())
             .await
             .expect("certified backend should load service-account points");
         assert_eq!(point.into_parts().2, service_account_name);
@@ -1983,7 +1967,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .await
             .expect("certified backend should synchronize external identities")
             .into_value();
-        let external_id = external.into_parts().0;
+        let external_id = external.id();
         let external_state = backend
             .get_external_principal_state(principal_id(external_id.id()))
             .await
@@ -2048,8 +2032,7 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
         .await
         .expect("initial external identity sync should succeed")
         .into_value()
-        .into_parts()
-        .0;
+        .id();
     let manual_group = backend
         .create_group(
             StorageGroupCreate::new(
@@ -2082,8 +2065,7 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
         .await
         .expect("renamed external identity sync should succeed")
         .into_value()
-        .into_parts()
-        .0;
+        .id();
     let replacement_id = backend
         .sync_external_user(request(
             &replacement_subject,
@@ -2094,8 +2076,7 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
         .await
         .expect("external subject replacement should succeed")
         .into_value()
-        .into_parts()
-        .0;
+        .id();
     assert_eq!(renamed_id, first_id);
     assert_eq!(replacement_id, first_id);
 
@@ -2791,7 +2772,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
 
 fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskCompletionArtifact {
     let output_expires_at =
-        chrono::Utc::now().naive_utc() + chrono::Duration::try_hours(1).expect("valid duration");
+        chrono::Utc::now() + chrono::Duration::try_hours(1).expect("valid duration");
     match kind {
         StorageTaskKind::Import | StorageTaskKind::Reindex => StorageTaskCompletionArtifact::None,
         StorageTaskKind::Export => StorageTaskCompletionArtifact::Export(
@@ -2811,9 +2792,9 @@ fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskComple
             StorageTaskCompletionArtifact::RemoteCall(StorageRemoteCallTaskArtifact::new(
                 StorageRemoteCallArtifactTarget::new(
                     None,
-                    "collection",
+                    crate::storage::StorageRemoteTargetSubjectType::Collection,
                     ResourceId::new(1).unwrap(),
-                    "GET",
+                    Some(crate::storage::StorageRemoteHttpMethod::Get),
                     "https://compatibility.invalid",
                 ),
                 StorageRemoteCallArtifactResponse::new(
@@ -3018,7 +2999,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
                 StorageRemoteTargetDefinition::new(
                     "Compatibility remote target",
                     StorageRemoteTargetTransport::try_new(
-                        "get",
+                        crate::storage::StorageRemoteHttpMethod::Get,
                         "https://compatibility.invalid/collections/{{ collection.id }}",
                         serde_json::json!({}),
                         None,
@@ -3026,8 +3007,12 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
                         1_000,
                     )
                     .expect("valid compatibility remote-target transport"),
-                    StorageRemoteTargetPolicy::try_new(None, vec!["collection".to_string()], true)
-                        .expect("valid compatibility remote-target policy"),
+                    StorageRemoteTargetPolicy::try_new(
+                        None,
+                        vec![crate::storage::StorageRemoteTargetSubjectType::Collection],
+                        true,
+                    )
+                    .expect("valid compatibility remote-target policy"),
                 ),
                 event_context.clone(),
             ))
@@ -3078,14 +3063,17 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
         let (_, allowed_subject_types, enabled) = policy.into_parts();
         assert_eq!(metadata.id().id(), target_id.id());
         assert_eq!(updated_name, format!("{name}_updated"));
-        assert_eq!(allowed_subject_types, ["collection"]);
+        assert_eq!(
+            allowed_subject_types,
+            [crate::storage::StorageRemoteTargetSubjectType::Collection]
+        );
         assert!(!enabled);
 
         backend
             .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
                 target_id,
                 hubuum_domain::TaskId::new(12345).unwrap(),
-                "collection",
+                crate::storage::StorageRemoteTargetSubjectType::Collection,
                 ResourceId::new(collection_id).unwrap(),
                 event_context.clone(),
             ))
@@ -4302,7 +4290,7 @@ async fn every_available_storage_backend_supplies_computed_fields() {
             .get_computed_field_state(class_id)
             .await
             .expect("certified backend should expose the completed rebuild state");
-        assert_eq!(ready_state.rebuild_status(), "ready");
+        assert_eq!(ready_state.rebuild_status().as_str(), "ready");
         assert_eq!(ready_state.active_task_id(), None);
 
         let personal = backend
@@ -5011,12 +4999,12 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
             .mark_event_delivery_dead(delivery_id)
             .await
             .expect("certified backend should dead-letter event deliveries");
-        assert_eq!(dead.status(), "dead");
+        assert_eq!(dead.status(), EventDeliveryStatus::Dead);
         let pending = backend
             .release_event_delivery_for_retry(delivery_id)
             .await
             .expect("certified backend should release event deliveries for retry");
-        assert_eq!(pending.status(), "pending");
+        assert_eq!(pending.status(), EventDeliveryStatus::Pending);
         assert_eq!(
             backend
                 .get_event_delivery(delivery_id)

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, CollectionId, IdentityScopeId, ObjectId, PrincipalId, ResourceRevision, TokenId,
     UserId,
@@ -49,8 +49,8 @@ impl AuthenticationCredential {
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthenticationAttempt {
     credential: AuthenticationCredential,
-    observed_at: NaiveDateTime,
-    legacy_valid_after: NaiveDateTime,
+    observed_at: DateTime<Utc>,
+    legacy_valid_after: DateTime<Utc>,
 }
 
 impl std::fmt::Debug for AuthenticationAttempt {
@@ -67,8 +67,8 @@ impl std::fmt::Debug for AuthenticationAttempt {
 impl AuthenticationAttempt {
     pub fn new(
         credential: AuthenticationCredential,
-        observed_at: NaiveDateTime,
-        legacy_valid_after: NaiveDateTime,
+        observed_at: DateTime<Utc>,
+        legacy_valid_after: DateTime<Utc>,
     ) -> Result<Self, AuthenticationAttemptError> {
         if legacy_valid_after > observed_at {
             return Err(AuthenticationAttemptError);
@@ -81,7 +81,7 @@ impl AuthenticationAttempt {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (AuthenticationCredential, NaiveDateTime, NaiveDateTime) {
+    pub fn into_parts(self) -> (AuthenticationCredential, DateTime<Utc>, DateTime<Utc>) {
         (self.credential, self.observed_at, self.legacy_valid_after)
     }
 }
@@ -109,9 +109,9 @@ pub struct AuthenticatedToken {
     principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
-    issued: NaiveDateTime,
-    expires_at: Option<NaiveDateTime>,
-    last_used_at: Option<NaiveDateTime>,
+    issued: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    last_used_at: Option<DateTime<Utc>>,
     permission_scoped: bool,
     resource_scoped: bool,
     revision: ResourceRevision,
@@ -149,7 +149,7 @@ impl AuthenticatedToken {
     pub const fn builder(
         id: TokenId,
         principal_id: PrincipalId,
-        issued: NaiveDateTime,
+        issued: DateTime<Utc>,
         revision: ResourceRevision,
     ) -> AuthenticatedTokenBuilder {
         AuthenticatedTokenBuilder {
@@ -187,17 +187,17 @@ impl AuthenticatedToken {
     }
 
     #[must_use]
-    pub const fn issued(&self) -> NaiveDateTime {
+    pub const fn issued(&self) -> DateTime<Utc> {
         self.issued
     }
 
     #[must_use]
-    pub const fn expires_at(&self) -> Option<NaiveDateTime> {
+    pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
         self.expires_at
     }
 
     #[must_use]
-    pub const fn last_used_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_used_at(&self) -> Option<DateTime<Utc>> {
         self.last_used_at
     }
 
@@ -229,9 +229,9 @@ pub struct AuthenticatedTokenBuilder {
     principal_id: PrincipalId,
     name: Option<String>,
     description: Option<String>,
-    issued: NaiveDateTime,
-    expires_at: Option<NaiveDateTime>,
-    last_used_at: Option<NaiveDateTime>,
+    issued: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    last_used_at: Option<DateTime<Utc>>,
     permission_scoped: bool,
     resource_scoped: bool,
     revision: ResourceRevision,
@@ -251,13 +251,13 @@ impl AuthenticatedTokenBuilder {
     }
 
     #[must_use]
-    pub const fn expires_at(mut self, expires_at: Option<NaiveDateTime>) -> Self {
+    pub const fn expires_at(mut self, expires_at: Option<DateTime<Utc>>) -> Self {
         self.expires_at = expires_at;
         self
     }
 
     #[must_use]
-    pub const fn last_used_at(mut self, last_used_at: Option<NaiveDateTime>) -> Self {
+    pub const fn last_used_at(mut self, last_used_at: Option<DateTime<Utc>>) -> Self {
         self.last_used_at = last_used_at;
         self
     }
@@ -403,9 +403,9 @@ pub struct AuthenticationHuman {
     id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-    anonymized_at: Option<NaiveDateTime>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    anonymized_at: Option<DateTime<Utc>>,
 }
 
 impl std::fmt::Debug for AuthenticationHuman {
@@ -434,9 +434,9 @@ impl AuthenticationHuman {
         id: UserId,
         proper_name: Option<String>,
         email: Option<String>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-        anonymized_at: Option<NaiveDateTime>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        anonymized_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             id,
@@ -449,24 +449,33 @@ impl AuthenticationHuman {
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        UserId,
-        Option<String>,
-        Option<String>,
-        NaiveDateTime,
-        NaiveDateTime,
-        Option<NaiveDateTime>,
-    ) {
-        (
-            self.id,
-            self.proper_name,
-            self.email,
-            self.created_at,
-            self.updated_at,
-            self.anonymized_at,
-        )
+    pub const fn id(&self) -> UserId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn proper_name(&self) -> Option<&str> {
+        self.proper_name.as_deref()
+    }
+
+    #[must_use]
+    pub fn email(&self) -> Option<&str> {
+        self.email.as_deref()
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(&self) -> DateTime<Utc> {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn anonymized_at(&self) -> Option<DateTime<Utc>> {
+        self.anonymized_at
     }
 }
 
@@ -678,7 +687,7 @@ mod tests {
 
     #[test]
     fn authentication_attempt_rejects_an_inverted_validity_window() {
-        let observed_at = NaiveDateTime::default();
+        let observed_at = DateTime::<Utc>::default();
         let valid_after = observed_at + chrono::Duration::seconds(1);
 
         assert!(
@@ -712,7 +721,7 @@ mod tests {
         let token = AuthenticatedToken::builder(
             TokenId::new(42).unwrap(),
             PrincipalId::new(17).unwrap(),
-            NaiveDateTime::default(),
+            DateTime::<Utc>::default(),
             ResourceRevision::new(3).unwrap(),
         )
         .name(Some("sensitive-name".to_string()))

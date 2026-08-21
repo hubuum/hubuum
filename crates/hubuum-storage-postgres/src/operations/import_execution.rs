@@ -26,7 +26,7 @@ use hubuum_storage_core::{
     StorageImportPlanItem, StorageImportPreflight, StorageImportPreflightItem,
     StorageImportPrincipal, StorageImportPrincipalKey, StorageImportPrincipalParts,
     StorageImportPrincipalSubtype, StorageImportRemoteTarget, StorageImportTimestamps,
-    StorageImportWriteCondition, StorageObject,
+    StorageImportWriteCondition, StorageObject, StorageRemoteTargetSubjectType,
 };
 use hubuum_templates::{TemplateAutoEscape, TemplateLimits, validate_template_composition};
 use tokio::sync::Semaphore;
@@ -518,7 +518,7 @@ async fn create_collection(
     assert_import_create_condition(parts.condition)?;
     let row = match parts.timestamps {
         Some(timestamps) => {
-            let (created_at, updated_at) = timestamps.as_pair();
+            let (created_at, updated_at) = import_timestamp_pair(timestamps);
             diesel::insert_into(crate::schema::collections::table)
                 .values((
                     crate::schema::collections::name.eq(parts.name),
@@ -564,7 +564,7 @@ async fn update_collection(
         .optional()?;
     assert_import_revision(parts.condition, require_existing(current, parts.condition)?)?;
     let updated = if let Some(timestamps) = parts.timestamps {
-        let (created_at, updated_at) = timestamps.as_pair();
+        let (created_at, updated_at) = import_timestamp_pair(timestamps);
         with_imported_timestamp_override(connection, async |connection| {
             updated_or_current(
                 diesel::update(
@@ -625,7 +625,7 @@ async fn create_class(
     assert_import_create_condition(parts.condition)?;
     let row = match parts.timestamps {
         Some(timestamps) => {
-            let (created_at, updated_at) = timestamps.as_pair();
+            let (created_at, updated_at) = import_timestamp_pair(timestamps);
             diesel::insert_into(crate::schema::hubuumclass::table)
                 .values((
                     crate::schema::hubuumclass::name.eq(parts.name),
@@ -678,7 +678,7 @@ async fn update_class(
         crate::schema::hubuumclass::description.eq(parts.description),
     );
     let row = if let Some(timestamps) = parts.timestamps {
-        let (created_at, updated_at) = timestamps.as_pair();
+        let (created_at, updated_at) = import_timestamp_pair(timestamps);
         with_imported_timestamp_override(connection, async |connection| {
             updated_or_current(
                 diesel::update(
@@ -735,7 +735,7 @@ async fn create_object(
     assert_import_create_condition(parts.condition)?;
     let row = match parts.timestamps {
         Some(timestamps) => {
-            let (created_at, updated_at) = timestamps.as_pair();
+            let (created_at, updated_at) = import_timestamp_pair(timestamps);
             diesel::insert_into(crate::schema::hubuumobject::table)
                 .values((
                     crate::schema::hubuumobject::name.eq(parts.name),
@@ -786,7 +786,7 @@ async fn update_object(
         crate::schema::hubuumobject::description.eq(parts.description),
     );
     let row = if let Some(timestamps) = parts.timestamps {
-        let (created_at, updated_at) = timestamps.as_pair();
+        let (created_at, updated_at) = import_timestamp_pair(timestamps);
         with_imported_timestamp_override(connection, async |connection| {
             updated_or_current(
                 diesel::update(
@@ -958,7 +958,7 @@ async fn execute_identity_scope(
             assert_import_revision(parts.condition, revision)?;
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((existing_created_at, existing_updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 updated_or_current(
@@ -1044,7 +1044,7 @@ async fn execute_group(
             assert_import_revision(parts.condition, existing.revision)?;
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 updated_or_current(
@@ -1056,9 +1056,12 @@ async fn execute_group(
                         crate::schema::groups::description.eq(parts.description),
                         crate::schema::groups::managed_by.eq(parts.managed_by),
                         crate::schema::groups::external_key.eq(parts.external_key),
-                        crate::schema::groups::last_sync_attempted_at
-                            .eq(parts.last_sync_attempted_at),
-                        crate::schema::groups::last_sync_success_at.eq(parts.last_sync_success_at),
+                        crate::schema::groups::last_sync_attempted_at.eq(parts
+                            .last_sync_attempted_at
+                            .map(|timestamp| timestamp.naive_utc())),
+                        crate::schema::groups::last_sync_success_at.eq(parts
+                            .last_sync_success_at
+                            .map(|timestamp| timestamp.naive_utc())),
                         crate::schema::groups::created_at.eq(created_at),
                         crate::schema::groups::updated_at.eq(updated_at),
                     ))
@@ -1089,8 +1092,12 @@ async fn execute_group(
                     crate::schema::groups::identity_scope_id.eq(identity_scope_id),
                     crate::schema::groups::managed_by.eq(parts.managed_by),
                     crate::schema::groups::external_key.eq(parts.external_key),
-                    crate::schema::groups::last_sync_attempted_at.eq(parts.last_sync_attempted_at),
-                    crate::schema::groups::last_sync_success_at.eq(parts.last_sync_success_at),
+                    crate::schema::groups::last_sync_attempted_at.eq(parts
+                        .last_sync_attempted_at
+                        .map(|timestamp| timestamp.naive_utc())),
+                    crate::schema::groups::last_sync_success_at.eq(parts
+                        .last_sync_success_at
+                        .map(|timestamp| timestamp.naive_utc())),
                     crate::schema::groups::created_at.eq(created_at),
                     crate::schema::groups::updated_at.eq(updated_at),
                 ))
@@ -1311,8 +1318,13 @@ fn imported_timestamps(
             let now = Utc::now().naive_utc();
             (now, now)
         },
-        StorageImportTimestamps::as_pair,
+        import_timestamp_pair,
     )
+}
+
+fn import_timestamp_pair(timestamps: StorageImportTimestamps) -> (NaiveDateTime, NaiveDateTime) {
+    let (created_at, updated_at) = timestamps.as_pair();
+    (created_at.naive_utc(), updated_at.naive_utc())
 }
 
 async fn upsert_principal(
@@ -1372,7 +1384,7 @@ async fn upsert_principal(
         Some(existing) => {
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 updated_or_current(
@@ -1384,10 +1396,12 @@ async fn upsert_principal(
                         crate::schema::principals::provider_managed.eq(parts.provider_managed),
                         crate::schema::principals::settings.eq(&parts.settings),
                         crate::schema::principals::external_subject.eq(&parts.external_subject),
-                        crate::schema::principals::last_sync_attempted_at
-                            .eq(parts.last_sync_attempted_at),
-                        crate::schema::principals::last_sync_success_at
-                            .eq(parts.last_sync_success_at),
+                        crate::schema::principals::last_sync_attempted_at.eq(parts
+                            .last_sync_attempted_at
+                            .map(|timestamp| timestamp.naive_utc())),
+                        crate::schema::principals::last_sync_success_at.eq(parts
+                            .last_sync_success_at
+                            .map(|timestamp| timestamp.naive_utc())),
                         crate::schema::principals::created_at.eq(created_at),
                         crate::schema::principals::updated_at.eq(updated_at),
                     ))
@@ -1419,9 +1433,12 @@ async fn upsert_principal(
                     crate::schema::principals::provider_managed.eq(parts.provider_managed),
                     crate::schema::principals::settings.eq(&parts.settings),
                     crate::schema::principals::external_subject.eq(&parts.external_subject),
-                    crate::schema::principals::last_sync_attempted_at
-                        .eq(parts.last_sync_attempted_at),
-                    crate::schema::principals::last_sync_success_at.eq(parts.last_sync_success_at),
+                    crate::schema::principals::last_sync_attempted_at.eq(parts
+                        .last_sync_attempted_at
+                        .map(|timestamp| timestamp.naive_utc())),
+                    crate::schema::principals::last_sync_success_at.eq(parts
+                        .last_sync_success_at
+                        .map(|timestamp| timestamp.naive_utc())),
                     crate::schema::principals::created_at.eq(created_at),
                     crate::schema::principals::updated_at.eq(updated_at),
                 ))
@@ -1445,7 +1462,7 @@ async fn upsert_principal(
                 .optional()?;
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .or_else(|| {
                     existing
                         .as_ref()
@@ -1462,7 +1479,8 @@ async fn upsert_principal(
                         crate::schema::users::password.eq(supplied_password.or(existing.password)),
                         crate::schema::users::proper_name.eq(proper_name),
                         crate::schema::users::email.eq(email),
-                        crate::schema::users::anonymized_at.eq(*anonymized_at),
+                        crate::schema::users::anonymized_at
+                            .eq(anonymized_at.map(|timestamp| timestamp.naive_utc())),
                         crate::schema::users::created_at.eq(created_at),
                         crate::schema::users::updated_at.eq(updated_at),
                     ))
@@ -1479,7 +1497,8 @@ async fn upsert_principal(
                         crate::schema::users::password.eq(supplied_password),
                         crate::schema::users::proper_name.eq(proper_name),
                         crate::schema::users::email.eq(email),
-                        crate::schema::users::anonymized_at.eq(*anonymized_at),
+                        crate::schema::users::anonymized_at
+                            .eq(anonymized_at.map(|timestamp| timestamp.naive_utc())),
                         crate::schema::users::created_at.eq(created_at),
                         crate::schema::users::updated_at.eq(updated_at),
                     ))
@@ -1504,7 +1523,7 @@ async fn upsert_principal(
                 .optional()?;
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .or_else(|| {
                     existing
                         .as_ref()
@@ -1521,7 +1540,8 @@ async fn upsert_principal(
                         crate::schema::service_accounts::description.eq(description),
                         crate::schema::service_accounts::owner_group_id.eq(owner_group_id),
                         crate::schema::service_accounts::created_by.eq(created_by),
-                        crate::schema::service_accounts::disabled_at.eq(*disabled_at),
+                        crate::schema::service_accounts::disabled_at
+                            .eq(disabled_at.map(|timestamp| timestamp.naive_utc())),
                         crate::schema::service_accounts::created_at.eq(created_at),
                         crate::schema::service_accounts::updated_at.eq(updated_at),
                     ))
@@ -1538,7 +1558,8 @@ async fn upsert_principal(
                         crate::schema::service_accounts::description.eq(description),
                         crate::schema::service_accounts::owner_group_id.eq(owner_group_id),
                         crate::schema::service_accounts::created_by.eq(created_by),
-                        crate::schema::service_accounts::disabled_at.eq(*disabled_at),
+                        crate::schema::service_accounts::disabled_at
+                            .eq(disabled_at.map(|timestamp| timestamp.naive_utc())),
                         crate::schema::service_accounts::created_at.eq(created_at),
                         crate::schema::service_accounts::updated_at.eq(updated_at),
                     ))
@@ -1583,7 +1604,7 @@ async fn upsert_group_membership(
     }
     with_imported_timestamp_override(connection, async |connection| {
         let membership_timestamps = timestamps
-            .map(StorageImportTimestamps::as_pair)
+            .map(import_timestamp_pair)
             .or(existing.map(|(created, updated, _)| (created, updated)))
             .unwrap_or_else(|| imported_timestamps(None));
         if existing.is_some() {
@@ -1627,7 +1648,7 @@ async fn upsert_group_membership(
                 .optional()?;
             let source_timestamps = source
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .or(existing_source)
                 .unwrap_or_else(|| imported_timestamps(None));
             if existing_source.is_some() {
@@ -1788,7 +1809,7 @@ async fn execute_computed_field(
             }
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((existing.created_at(), existing.updated_at()));
             with_imported_timestamp_override(connection, async |connection| {
                 let updated = diesel::update(
@@ -1925,7 +1946,7 @@ async fn create_class_relation(
     )?;
     match parts.timestamps {
         Some(timestamps) => {
-            let (created_at, updated_at) = timestamps.as_pair();
+            let (created_at, updated_at) = import_timestamp_pair(timestamps);
             diesel::insert_into(crate::schema::hubuumclass_relation::table)
                 .values((
                     crate::schema::hubuumclass_relation::from_hubuum_class_id
@@ -1982,7 +2003,7 @@ async fn update_class_relation_timestamps(
         class_relation_revision(connection, pair).await?,
         parts.condition,
     )?;
-    let (created_at, updated_at) = timestamps.as_pair();
+    let (created_at, updated_at) = import_timestamp_pair(timestamps);
     with_imported_timestamp_override(connection, async |connection| {
         diesel::update(
             crate::schema::hubuumclass_relation::table
@@ -2072,7 +2093,7 @@ async fn create_object_relation(
     let object_pair = normalize_pair(from.id().id(), to.id().id());
     match parts.timestamps {
         Some(timestamps) => {
-            let (created_at, updated_at) = timestamps.as_pair();
+            let (created_at, updated_at) = import_timestamp_pair(timestamps);
             diesel::insert_into(crate::schema::hubuumobject_relation::table)
                 .values((
                     crate::schema::hubuumobject_relation::from_hubuum_object_id.eq(object_pair.0),
@@ -2111,7 +2132,7 @@ async fn update_object_relation_timestamps(
         object_relation_revision(connection, pair).await?,
         parts.condition,
     )?;
-    let (created_at, updated_at) = timestamps.as_pair();
+    let (created_at, updated_at) = import_timestamp_pair(timestamps);
     with_imported_timestamp_override(connection, async |connection| {
         diesel::update(
             crate::schema::hubuumobject_relation::table
@@ -2297,7 +2318,7 @@ async fn upsert_export_template(
         Some((id, old_created_at, old_updated_at, _)) => {
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((old_created_at, old_updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 diesel::update(
@@ -2487,13 +2508,19 @@ async fn upsert_remote_target(
             parts.name
         )));
     }
-    let allowed_subject_types = serde_json::to_value(parts.allowed_subject_types)
-        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+    let allowed_subject_types = serde_json::to_value(
+        parts
+            .allowed_subject_types
+            .into_iter()
+            .map(StorageRemoteTargetSubjectType::as_str)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     match existing {
         Some((id, old_created_at, old_updated_at, _)) => {
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((old_created_at, old_updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 diesel::update(
@@ -2503,7 +2530,7 @@ async fn upsert_remote_target(
                 .set((
                     crate::schema::remote_targets::class_id.eq(class_id),
                     crate::schema::remote_targets::description.eq(parts.description),
-                    crate::schema::remote_targets::method.eq(parts.method),
+                    crate::schema::remote_targets::method.eq(parts.method.as_str()),
                     crate::schema::remote_targets::url_template.eq(parts.url_template),
                     crate::schema::remote_targets::headers_template.eq(parts.headers_template),
                     crate::schema::remote_targets::body_template.eq(parts.body_template),
@@ -2528,7 +2555,7 @@ async fn upsert_remote_target(
                     crate::schema::remote_targets::class_id.eq(class_id),
                     crate::schema::remote_targets::name.eq(parts.name),
                     crate::schema::remote_targets::description.eq(parts.description),
-                    crate::schema::remote_targets::method.eq(parts.method),
+                    crate::schema::remote_targets::method.eq(parts.method.as_str()),
                     crate::schema::remote_targets::url_template.eq(parts.url_template),
                     crate::schema::remote_targets::headers_template.eq(parts.headers_template),
                     crate::schema::remote_targets::body_template.eq(parts.body_template),
@@ -2576,7 +2603,7 @@ async fn execute_event_sink(
         Some((id, old_created_at, old_updated_at, _)) => {
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((old_created_at, old_updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 diesel::update(
@@ -2674,7 +2701,7 @@ async fn upsert_event_subscription(
         Some((id, old_created_at, old_updated_at, _)) => {
             let (created_at, updated_at) = parts
                 .timestamps
-                .map(StorageImportTimestamps::as_pair)
+                .map(import_timestamp_pair)
                 .unwrap_or((old_created_at, old_updated_at));
             with_imported_timestamp_override(connection, async |connection| {
                 diesel::update(

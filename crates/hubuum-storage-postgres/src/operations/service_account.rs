@@ -9,8 +9,8 @@ use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, N
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
     MutationOutcome, StoragePage, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
     StorageServiceAccountUpdate,
 };
 use serde_json::{Value, json};
@@ -95,9 +95,9 @@ impl ServiceAccountRow {
             self.description,
             GroupId::new(self.owner_group_id)?,
             self.created_by.map(PrincipalId::new).transpose()?,
-            self.disabled_at,
-            self.created_at,
-            self.updated_at,
+            self.disabled_at.map(|timestamp| timestamp.and_utc()),
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
         ))
     }
 
@@ -141,10 +141,10 @@ pub async fn get_service_account(
         .await
 }
 
-pub async fn get_service_account_point(
+pub async fn get_service_account_details(
     runtime: &PostgresRuntime,
     service_account_id: i32,
-) -> Result<StorageServiceAccountPoint, PostgresStorageError> {
+) -> Result<StorageServiceAccountDetails, PostgresStorageError> {
     validate_positive_id(service_account_id, "service account id")?;
     runtime
         .with_connection(async move |connection| {
@@ -164,7 +164,7 @@ pub async fn get_service_account_point(
                     ))
                     .first::<(ServiceAccountRow, i32, String, PostgresRevision)>(connection)
                     .await?;
-            Ok::<_, PostgresStorageError>(StorageServiceAccountPoint::new(
+            Ok::<_, PostgresStorageError>(StorageServiceAccountDetails::new(
                 account.into_storage()?,
                 IdentityScopeId::new(identity_scope_id)?,
                 name,

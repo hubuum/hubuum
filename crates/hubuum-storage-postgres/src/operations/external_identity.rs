@@ -50,9 +50,9 @@ impl ExternalUserRow {
             UserId::new(self.id)?,
             self.proper_name,
             self.email,
-            self.created_at,
-            self.updated_at,
-            self.anonymized_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
+            self.anonymized_at.map(|timestamp| timestamp.and_utc()),
         ))
     }
 }
@@ -155,8 +155,8 @@ pub async fn get_external_principal_state(
         identity_scope,
         username,
         external_subject,
-        last_sync_attempted_at,
-        last_sync_success_at,
+        last_sync_attempted_at.map(|timestamp| timestamp.and_utc()),
+        last_sync_success_at.map(|timestamp| timestamp.and_utc()),
     )))
 }
 

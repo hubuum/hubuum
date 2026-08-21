@@ -1,12 +1,13 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, TaskId};
 use serde_json::Value;
 
 use crate::{
     AuthorizationPermission, StorageClassRecord, StorageCollection, StorageError, StorageObject,
+    StorageRemoteHttpMethod, StorageRemoteTargetSubjectType,
 };
 
 macro_rules! import_dto {
@@ -166,12 +167,12 @@ impl StorageImportMode {
 /// Validated imported creation and update timestamps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageImportTimestamps {
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl StorageImportTimestamps {
-    pub fn new(created_at: NaiveDateTime, updated_at: NaiveDateTime) -> Result<Self, StorageError> {
+    pub fn new(created_at: DateTime<Utc>, updated_at: DateTime<Utc>) -> Result<Self, StorageError> {
         if updated_at < created_at {
             return Err(StorageError::invalid_input(
                 "import updated_at must not be earlier than created_at",
@@ -184,12 +185,12 @@ impl StorageImportTimestamps {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (NaiveDateTime, NaiveDateTime) {
+    pub const fn into_parts(self) -> (DateTime<Utc>, DateTime<Utc>) {
         (self.created_at, self.updated_at)
     }
 
     #[must_use]
-    pub const fn as_pair(self) -> (NaiveDateTime, NaiveDateTime) {
+    pub const fn as_pair(self) -> (DateTime<Utc>, DateTime<Utc>) {
         (self.created_at, self.updated_at)
     }
 }
@@ -267,8 +268,8 @@ import_dto!(
         identity_scope_key: Option<StorageImportIdentityScopeKey>,
         managed_by: String,
         external_key: Option<String>,
-        last_sync_attempted_at: Option<NaiveDateTime>,
-        last_sync_success_at: Option<NaiveDateTime>,
+        last_sync_attempted_at: Option<DateTime<Utc>>,
+        last_sync_success_at: Option<DateTime<Utc>>,
         condition: Option<StorageImportWriteCondition>,
         timestamps: Option<StorageImportTimestamps>,
     }
@@ -282,7 +283,7 @@ pub enum StorageImportPrincipalSubtype {
         password_hash: Option<String>,
         proper_name: Option<String>,
         email: Option<String>,
-        anonymized_at: Option<NaiveDateTime>,
+        anonymized_at: Option<DateTime<Utc>>,
     },
     ServiceAccount {
         description: String,
@@ -290,7 +291,7 @@ pub enum StorageImportPrincipalSubtype {
         owner_group_key: Option<StorageImportGroupKey>,
         created_by_ref: Option<String>,
         created_by_key: Option<StorageImportPrincipalKey>,
-        disabled_at: Option<NaiveDateTime>,
+        disabled_at: Option<DateTime<Utc>>,
     },
 }
 
@@ -313,8 +314,8 @@ import_dto!(
         provider_managed: bool,
         settings: Value,
         external_subject: Option<String>,
-        last_sync_attempted_at: Option<NaiveDateTime>,
-        last_sync_success_at: Option<NaiveDateTime>,
+        last_sync_attempted_at: Option<DateTime<Utc>>,
+        last_sync_success_at: Option<DateTime<Utc>>,
         subtype: StorageImportPrincipalSubtype,
         condition: Option<StorageImportWriteCondition>,
         timestamps: Option<StorageImportTimestamps>,
@@ -492,12 +493,12 @@ import_dto!(
         class_key: Option<StorageImportClassKey>,
         name: String,
         description: String,
-        method: String,
+        method: StorageRemoteHttpMethod,
         url_template: String,
         headers_template: Value,
         body_template: Option<String>,
         auth_config: Value,
-        allowed_subject_types: Vec<String>,
+        allowed_subject_types: Vec<StorageRemoteTargetSubjectType>,
         timeout_ms: i32,
         enabled: bool,
         condition: Option<StorageImportWriteCondition>,
@@ -959,8 +960,30 @@ impl StorageImportOperation {
                     "remote target",
                 )?;
                 validate_text(&parts.name, "remote-target name")?;
-                validate_text(&parts.method, "remote-target method")?;
                 validate_text(&parts.url_template, "remote-target URL template")?;
+                if parts.allowed_subject_types.is_empty() {
+                    return Err(StorageError::invalid_input(
+                        "remote-target policy must allow at least one subject type",
+                    ));
+                }
+                let unique_subject_types = parts
+                    .allowed_subject_types
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>();
+                if unique_subject_types.len() != parts.allowed_subject_types.len() {
+                    return Err(StorageError::invalid_input(
+                        "remote-target policy contains duplicate subject types",
+                    ));
+                }
+                let has_class_scope = parts.class_ref.is_some() || parts.class_key.is_some();
+                let allows_objects =
+                    unique_subject_types.contains(&StorageRemoteTargetSubjectType::Object);
+                if has_class_scope != allows_objects {
+                    return Err(StorageError::invalid_input(
+                        "remote-target class scope must be present exactly when object subjects are allowed",
+                    ));
+                }
                 if parts.timeout_ms <= 0 {
                     return Err(StorageError::invalid_input(
                         "remote-target timeout must be greater than zero",
@@ -1514,11 +1537,13 @@ mod tests {
         let created_at = NaiveDate::from_ymd_opt(2026, 8, 14)
             .unwrap()
             .and_hms_opt(10, 0, 0)
-            .unwrap();
+            .unwrap()
+            .and_utc();
         let updated_at = NaiveDate::from_ymd_opt(2026, 8, 14)
             .unwrap()
             .and_hms_opt(9, 0, 0)
-            .unwrap();
+            .unwrap()
+            .and_utc();
 
         assert!(StorageImportTimestamps::new(created_at, updated_at).is_err());
     }

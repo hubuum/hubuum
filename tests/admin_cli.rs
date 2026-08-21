@@ -275,7 +275,7 @@ async fn export_template_health_reports_persisted_output_statistics() {
     let database_url = database_url();
     let pool = database_pool(&database_url);
     let template_name = unique_name("admin_cli_health_template");
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     let task = hubuum::test_support::create_persisted_test_task(
         &pool,
         hubuum_storage_postgres::test_support::TestTaskCreate::internal_completed(

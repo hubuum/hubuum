@@ -93,8 +93,8 @@ fn collection_from_storage(row: CollectionHistoryRecord) -> Result<CollectionHis
         id: id.id(),
         name,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         parent_collection_id: parent_collection_id.map(|id| id.id()),
         op: metadata.operation,
         valid_from: metadata.valid_from,
@@ -129,8 +129,8 @@ fn class_from_storage(row: ClassHistoryRecord) -> Result<HubuumClassHistory, Api
         json_schema,
         validate_schema,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         op: metadata.operation,
         valid_from: metadata.valid_from,
         valid_to: metadata.valid_to,
@@ -155,8 +155,8 @@ fn object_from_storage(row: ObjectHistoryRecord) -> Result<HubuumObjectHistory, 
         hubuum_class_id: hubuum_class_id.id(),
         data,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         op: metadata.operation,
         valid_from: metadata.valid_from,
         valid_to: metadata.valid_to,
@@ -222,8 +222,12 @@ fn remote_target_from_storage(
     } = transport.into_parts();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     let (id, created_at, updated_at, _) = record_metadata.into_parts();
-    let (allowed_subject_types, metadata) =
-        (serde_json::to_value(allowed_subject_types)?, metadata);
+    let allowed_subject_types = serde_json::to_value(
+        allowed_subject_types
+            .into_iter()
+            .map(|subject_type| subject_type.as_str())
+            .collect::<Vec<_>>(),
+    )?;
     let metadata = AppHistoryMetadata::from(metadata);
     Ok(RemoteTargetHistory {
         id: id.id(),
@@ -231,7 +235,7 @@ fn remote_target_from_storage(
         class_id: class_id.map(|id| id.id()),
         name,
         description,
-        method,
+        method: method.as_str().to_string(),
         url_template,
         headers_template,
         body_template,

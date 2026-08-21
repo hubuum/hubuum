@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{
     CollectionId, EventSinkId, EventSubscriptionId, ExportTemplateId, MaintenanceState,
     TokenRetentionSettings,
@@ -184,8 +184,8 @@ pub struct OperationalTaskQueueSnapshot {
     kinds: OperationalTaskKindCounts,
     total_task_events: i64,
     total_import_result_rows: i64,
-    oldest_queued_at: Option<NaiveDateTime>,
-    oldest_active_at: Option<NaiveDateTime>,
+    oldest_queued_at: Option<DateTime<Utc>>,
+    oldest_active_at: Option<DateTime<Utc>>,
 }
 
 /// Aggregated execution health for one export-template identity.
@@ -324,8 +324,8 @@ impl OperationalTaskQueueSnapshot {
         kinds: OperationalTaskKindCounts,
         total_task_events: i64,
         total_import_result_rows: i64,
-        oldest_queued_at: Option<NaiveDateTime>,
-        oldest_active_at: Option<NaiveDateTime>,
+        oldest_queued_at: Option<DateTime<Utc>>,
+        oldest_active_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             statuses,
@@ -358,12 +358,12 @@ impl OperationalTaskQueueSnapshot {
     }
 
     #[must_use]
-    pub const fn oldest_queued_at(self) -> Option<NaiveDateTime> {
+    pub const fn oldest_queued_at(self) -> Option<DateTime<Utc>> {
         self.oldest_queued_at
     }
 
     #[must_use]
-    pub const fn oldest_active_at(self) -> Option<NaiveDateTime> {
+    pub const fn oldest_active_at(self) -> Option<DateTime<Utc>> {
         self.oldest_active_at
     }
 }

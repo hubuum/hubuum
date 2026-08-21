@@ -70,8 +70,8 @@ use crate::storage::{
     StorageExportOutput, StorageExportOutputSummary, StorageExportTemplate,
     StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
     StorageExportTemplateReplace, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageIdentityGroup,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StorageImportApply,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupMember, StorageGroupUpdate,
+    StorageIdentityGroup, StorageIdentityScope, StorageIdentityScopeEnsure, StorageImportApply,
     StorageImportCollectionKey, StorageImportMode, StorageImportPlan, StorageImportPreflight,
     StorageImportResult, StorageImportTaskResult, StorageInventoryCounts,
     StorageLocalPasswordReset, StorageNotification, StorageNotificationListener,
@@ -86,8 +86,8 @@ use crate::storage::{
     StorageRestoreApply, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
     StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreJob, StorageRestoreStageCreate,
     StorageRestoreStatus, StorageServiceAccount, StorageServiceAccountCreate,
-    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountPoint,
+    StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
     StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
     StorageTask, StorageTaskAccess, StorageTaskClaim, StorageTaskCompletion,
@@ -96,8 +96,8 @@ use crate::storage::{
     StorageTaskPageQuery, StorageTaskStateUpdate, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew,
     StorageTokenRevoke, StorageTransaction, StorageTransactionFuture, StorageUser,
-    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserPoint, StorageUserUpdate,
+    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
     TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
     TransactionStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
     WorkerNotificationProvider,
@@ -197,13 +197,13 @@ macro_rules! dispatch_backend {
 
 mod api;
 mod computed_fields;
-mod diagnostics;
+mod events;
 mod execution;
 mod identity;
-mod operations;
+mod identity_queries;
+mod operational;
 mod queries;
 mod relations;
-mod resources;
 mod tasks;
 mod transaction;
 mod workflows;

@@ -11,7 +11,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     GroupPointResponse, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::services::groups::list as list_groups;
 use crate::services::identity::get_principal_group;
@@ -252,16 +252,9 @@ pub async fn get_group_members(
         requestor = requestor.user.id
     );
 
-    let total_count = if params.include_total() {
-        let count_params = count_query_options(&params);
-        group
-            .count_members_paginated(&context, &count_params)
-            .await?
-    } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
     let search_params = prepare_db_pagination::<Principal>(&params)?;
-    let members = group.members_paginated(&context, &search_params).await?;
+    let (members, total_count) = group.members_paginated(&context, &search_params).await?;
+    let total_count = total_count.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT);
 
     let response = PrincipalMemberResponse::from_memberships(&context, members).await?;
     ApiResponse::paginated(response, total_count, &params)

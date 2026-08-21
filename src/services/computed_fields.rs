@@ -307,11 +307,11 @@ fn state_from_storage(state: StorageClassComputationState) -> ClassComputationSt
     ClassComputationState {
         class_id: state.class_id().id(),
         evaluation_revision: state.evaluation_revision().get(),
-        rebuild_status: state.rebuild_status().to_string(),
+        rebuild_status: state.rebuild_status().as_str().to_string(),
         active_task_id: state.active_task_id().map(|id| id.id()),
         last_error: state.last_error_message().map(str::to_string),
-        created_at: state.created_at(),
-        updated_at: state.updated_at(),
+        created_at: state.created_at().naive_utc(),
+        updated_at: state.updated_at().naive_utc(),
     }
 }
 

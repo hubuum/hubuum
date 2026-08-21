@@ -68,19 +68,29 @@ impl TryFrom<AdministrationDeliveryRow> for StorageEventDelivery {
     type Error = PostgresStorageError;
 
     fn try_from(row: AdministrationDeliveryRow) -> Result<Self, Self::Error> {
-        Ok(Self::builder(
+        let status = row.status.parse::<EventDeliveryStatus>().map_err(|error| {
+            PostgresStorageError::database(format!(
+                "Invalid persisted event delivery status: {error}"
+            ))
+        })?;
+        Self::builder(
             EventDeliveryId::new(row.id)?,
             EventSequence::new(row.event_id)?,
             EventSubscriptionId::new(row.subscription_id)?,
-            row.status,
-            row.next_attempt_at,
-            row.created_at,
-            row.updated_at,
+            status,
+            row.next_attempt_at.and_utc(),
+            row.created_at.and_utc(),
+            row.updated_at.and_utc(),
         )
         .attempts(row.attempts)
         .last_error(row.last_error)
-        .locked_until(row.locked_until)
-        .build())
+        .locked_until(row.locked_until.map(|timestamp| timestamp.and_utc()))
+        .try_build()
+        .map_err(|error| {
+            PostgresStorageError::database(format!(
+                "Invalid persisted event delivery projection: {error}"
+            ))
+        })
     }
 }
 

@@ -71,7 +71,7 @@ pub mod events {
 }
 
 /// Execution context, observation, operational state, and process integration.
-pub mod operations {
+pub mod operational {
     pub use crate::OperationalStorage;
     pub use crate::execution::*;
     pub use crate::metrics::*;

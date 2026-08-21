@@ -20,8 +20,12 @@ pub async fn authenticate_bearer_token(
     let credential = AuthenticationCredential::new(token.storage_hash());
     let observed_at = chrono::Utc::now().naive_utc().trunc_subsecs(6);
     let legacy_valid_after = configured_token_lifetime()?.cutoff_from(observed_at)?;
-    let attempt = AuthenticationAttempt::new(credential, observed_at, legacy_valid_after)
-        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+    let attempt = AuthenticationAttempt::new(
+        credential,
+        observed_at.and_utc(),
+        legacy_valid_after.and_utc(),
+    )
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
     Ok(storage_handle(context)
         .authenticate_bearer_token(attempt)
         .await?)

@@ -43,8 +43,14 @@ impl PrincipalRow {
         .provider_managed(self.provider_managed)
         .settings(self.settings)
         .external_subject(self.external_subject)
-        .last_sync_attempted_at(self.last_sync_attempted_at)
-        .last_sync_success_at(self.last_sync_success_at)
+        .last_sync_attempted_at(
+            self.last_sync_attempted_at
+                .map(|timestamp| timestamp.and_utc()),
+        )
+        .last_sync_success_at(
+            self.last_sync_success_at
+                .map(|timestamp| timestamp.and_utc()),
+        )
         .build())
     }
 }

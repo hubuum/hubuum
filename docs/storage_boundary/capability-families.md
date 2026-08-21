@@ -16,7 +16,8 @@ For source locations, see the [maintainer guide](maintainer-guide.md).
 A **trait** is the Rust interface that makes an operation available. A
 **capability family** is a documentation grouping for related traits and
 semantics. `hubuum_storage_core::capabilities` exposes broader discovery
-modules for resources, identity, queries, workflows, events, and operations;
+modules for resources, identity, queries, workflows, events, and operational
+capabilities;
 the more detailed families below are semantic subgroups, not a one-to-one
 module map. Neither form represents separately versioned or negotiable runtime
 features.
@@ -70,7 +71,7 @@ StorageBackend
 |
 `-- event and operational control
     |-- event administration
-    `-- operations
+    `-- operational state and execution
 ```
 
 The tree groups responsibilities; it is not a runtime call graph. The important
@@ -320,7 +321,7 @@ This family owns visibility-scoped audit reads, sink and subscription
 lifecycle, and claim-free delivery inspection, retry, and dead-letter actions.
 Sink and subscription mutations include their lifecycle events atomically.
 
-### `operations`
+### `operational`
 
 Required traits:
 

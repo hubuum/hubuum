@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ObjectId, ObjectRelationId, ResourceId,
     ResourceRevision,
@@ -103,8 +103,8 @@ impl StorageClassRelation {
         ClassId,
         Option<String>,
         Option<String>,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         Option<i32>,
         Option<i32>,
         ResourceRevision,
@@ -116,8 +116,8 @@ impl StorageClassRelation {
             self.to_class_id,
             self.forward_template_alias,
             self.reverse_template_alias,
-            created_at.naive_utc(),
-            updated_at.naive_utc(),
+            created_at,
+            updated_at,
             self.from_max_relations,
             self.to_max_relations,
             revision,
@@ -177,8 +177,8 @@ impl StorageObjectRelation {
         ObjectId,
         ObjectId,
         ClassRelationId,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         ResourceRevision,
     ) {
         let (id, created_at, updated_at, revision) = self.metadata.into_parts();
@@ -187,8 +187,8 @@ impl StorageObjectRelation {
             self.from_object_id,
             self.to_object_id,
             self.class_relation_id,
-            created_at.naive_utc(),
-            updated_at.naive_utc(),
+            created_at,
+            updated_at,
             revision,
         )
     }
@@ -261,8 +261,8 @@ impl StorageGraphClass {
         Option<Value>,
         bool,
         String,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         ResourceRevision,
     ) {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
@@ -274,8 +274,8 @@ impl StorageGraphClass {
             self.json_schema,
             self.validate_schema,
             description,
-            created_at.naive_utc(),
-            updated_at.naive_utc(),
+            created_at,
+            updated_at,
             revision,
         )
     }
@@ -309,8 +309,8 @@ impl StorageGraphObject {
         ClassId,
         String,
         Value,
-        NaiveDateTime,
-        NaiveDateTime,
+        DateTime<Utc>,
+        DateTime<Utc>,
         ResourceRevision,
     ) {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
@@ -322,8 +322,8 @@ impl StorageGraphObject {
             self.class_id,
             description,
             self.data,
-            created_at.naive_utc(),
-            updated_at.naive_utc(),
+            created_at,
+            updated_at,
             revision,
         )
     }

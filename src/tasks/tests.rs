@@ -1122,8 +1122,14 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         (classes[1].created_at(), classes[1].updated_at()),
         (objects[0].created_at(), objects[0].updated_at()),
         (objects[1].created_at(), objects[1].updated_at()),
-        relation_timestamps.0,
-        relation_timestamps.1,
+        (
+            relation_timestamps.0.0.and_utc(),
+            relation_timestamps.0.1.and_utc(),
+        ),
+        (
+            relation_timestamps.1.0.and_utc(),
+            relation_timestamps.1.1.and_utc(),
+        ),
     ];
     let expected = actual[0].0;
 

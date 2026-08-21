@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, CollectionId, RemoteTargetId, ResourceId, TaskId};
@@ -8,10 +8,87 @@ use serde_json::Value;
 
 use crate::{MutationOutcome, StorageError, StoragePage, StorageRecordMetadata};
 
+/// HTTP methods supported by Hubuum remote targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageRemoteHttpMethod {
+    Get,
+    Post,
+    Patch,
+    Delete,
+}
+
+impl StorageRemoteHttpMethod {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+            Self::Patch => "patch",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+impl FromStr for StorageRemoteHttpMethod {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "get" => Ok(Self::Get),
+            "post" => Ok(Self::Post),
+            "patch" => Ok(Self::Patch),
+            "delete" => Ok(Self::Delete),
+            _ => Err(StorageError::invalid_input(format!(
+                "Unsupported remote target HTTP method '{value}'"
+            ))),
+        }
+    }
+}
+
+/// Resource kinds accepted by a remote target and recorded for invocations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageRemoteTargetSubjectType {
+    Collection,
+    Class,
+    Object,
+    ClassRelation,
+    ObjectRelation,
+}
+
+impl StorageRemoteTargetSubjectType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Collection => "collection",
+            Self::Class => "class",
+            Self::Object => "object",
+            Self::ClassRelation => "class_relation",
+            Self::ObjectRelation => "object_relation",
+        }
+    }
+}
+
+impl FromStr for StorageRemoteTargetSubjectType {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "collection" => Ok(Self::Collection),
+            "class" => Ok(Self::Class),
+            "object" => Ok(Self::Object),
+            "class_relation" => Ok(Self::ClassRelation),
+            "object_relation" => Ok(Self::ObjectRelation),
+            _ => Err(StorageError::invalid_input(format!(
+                "Unsupported remote target subject type '{value}'"
+            ))),
+        }
+    }
+}
+
 /// HTTP transport configuration for a remote target.
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetTransport {
-    method: String,
+    method: StorageRemoteHttpMethod,
     url_template: String,
     headers_template: Value,
     body_template: Option<String>,
@@ -21,7 +98,7 @@ pub struct StorageRemoteTargetTransport {
 
 /// Named HTTP transport components used by adapters and application mappers.
 pub struct StorageRemoteTargetTransportParts {
-    pub method: String,
+    pub method: StorageRemoteHttpMethod,
     pub url_template: String,
     pub headers_template: Value,
     pub body_template: Option<String>,
@@ -31,20 +108,14 @@ pub struct StorageRemoteTargetTransportParts {
 
 impl StorageRemoteTargetTransport {
     pub fn try_new(
-        method: impl Into<String>,
+        method: StorageRemoteHttpMethod,
         url_template: impl Into<String>,
         headers_template: Value,
         body_template: Option<String>,
         auth_config: Value,
         timeout_ms: i32,
     ) -> Result<Self, StorageError> {
-        let method = method.into();
         let url_template = url_template.into();
-        if method.trim().is_empty() {
-            return Err(StorageError::invalid_input(
-                "Remote target HTTP method must not be empty",
-            ));
-        }
         if url_template.trim().is_empty() {
             return Err(StorageError::invalid_input(
                 "Remote target URL template must not be empty",
@@ -99,14 +170,14 @@ impl fmt::Debug for StorageRemoteTargetTransport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageRemoteTargetPolicy {
     class_id: Option<ClassId>,
-    allowed_subject_types: Vec<String>,
+    allowed_subject_types: Vec<StorageRemoteTargetSubjectType>,
     enabled: bool,
 }
 
 impl StorageRemoteTargetPolicy {
     pub fn try_new(
         class_id: Option<ClassId>,
-        allowed_subject_types: Vec<String>,
+        allowed_subject_types: Vec<StorageRemoteTargetSubjectType>,
         enabled: bool,
     ) -> Result<Self, StorageError> {
         if allowed_subject_types.is_empty() {
@@ -116,21 +187,14 @@ impl StorageRemoteTargetPolicy {
         }
         let mut unique_subject_types = std::collections::HashSet::new();
         for subject_type in &allowed_subject_types {
-            if !matches!(
-                subject_type.as_str(),
-                "collection" | "class" | "object" | "class_relation" | "object_relation"
-            ) {
+            if !unique_subject_types.insert(*subject_type) {
                 return Err(StorageError::invalid_input(format!(
-                    "Remote target policy contains unknown subject type '{subject_type}'"
-                )));
-            }
-            if !unique_subject_types.insert(subject_type.as_str()) {
-                return Err(StorageError::invalid_input(format!(
-                    "Remote target policy contains duplicate subject type '{subject_type}'"
+                    "Remote target policy contains duplicate subject type '{}'",
+                    subject_type.as_str()
                 )));
             }
         }
-        let allows_objects = unique_subject_types.contains("object");
+        let allows_objects = unique_subject_types.contains(&StorageRemoteTargetSubjectType::Object);
         if allows_objects != class_id.is_some() {
             return Err(StorageError::invalid_input(
                 "Remote target class scope must be present exactly when object subjects are allowed",
@@ -144,7 +208,7 @@ impl StorageRemoteTargetPolicy {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<ClassId>, Vec<String>, bool) {
+    pub fn into_parts(self) -> (Option<ClassId>, Vec<StorageRemoteTargetSubjectType>, bool) {
         (self.class_id, self.allowed_subject_types, self.enabled)
     }
 }
@@ -357,12 +421,12 @@ pub struct StorageRemoteTargetPatchParts {
     class_id: Option<Option<ClassId>>,
     name: Option<String>,
     description: Option<String>,
-    method: Option<String>,
+    method: Option<StorageRemoteHttpMethod>,
     url_template: Option<String>,
     headers_template: Option<Value>,
     body_template: Option<Option<String>>,
     auth_config: Option<Value>,
-    allowed_subject_types: Option<Vec<String>>,
+    allowed_subject_types: Option<Vec<StorageRemoteTargetSubjectType>>,
     timeout_ms: Option<i32>,
     enabled: Option<bool>,
 }
@@ -385,8 +449,8 @@ impl StorageRemoteTargetPatchParts {
         self.description.as_deref()
     }
     #[must_use]
-    pub fn method(&self) -> Option<&str> {
-        self.method.as_deref()
+    pub const fn method(&self) -> Option<StorageRemoteHttpMethod> {
+        self.method
     }
     #[must_use]
     pub fn url_template(&self) -> Option<&str> {
@@ -405,7 +469,7 @@ impl StorageRemoteTargetPatchParts {
         self.auth_config.as_ref()
     }
     #[must_use]
-    pub fn allowed_subject_types(&self) -> Option<&[String]> {
+    pub fn allowed_subject_types(&self) -> Option<&[StorageRemoteTargetSubjectType]> {
         self.allowed_subject_types.as_deref()
     }
     #[must_use]
@@ -425,12 +489,12 @@ pub struct StorageRemoteTargetPatch {
     class_id: Option<Option<ClassId>>,
     name: Option<String>,
     description: Option<String>,
-    method: Option<String>,
+    method: Option<StorageRemoteHttpMethod>,
     url_template: Option<String>,
     headers_template: Option<Value>,
     body_template: Option<Option<String>>,
     auth_config: Option<Value>,
-    allowed_subject_types: Option<Vec<String>>,
+    allowed_subject_types: Option<Vec<StorageRemoteTargetSubjectType>>,
     timeout_ms: Option<i32>,
     enabled: Option<bool>,
 }
@@ -479,7 +543,7 @@ impl StorageRemoteTargetPatch {
     }
 
     #[must_use]
-    pub fn with_method(mut self, value: Option<String>) -> Self {
+    pub const fn with_method(mut self, value: Option<StorageRemoteHttpMethod>) -> Self {
         self.method = value;
         self
     }
@@ -509,7 +573,10 @@ impl StorageRemoteTargetPatch {
     }
 
     #[must_use]
-    pub fn with_allowed_subject_types(mut self, value: Option<Vec<String>>) -> Self {
+    pub fn with_allowed_subject_types(
+        mut self,
+        value: Option<Vec<StorageRemoteTargetSubjectType>>,
+    ) -> Self {
         self.allowed_subject_types = value;
         self
     }
@@ -623,7 +690,7 @@ impl StorageRemoteTargetDelete {
 pub struct StorageRemoteTargetInvocation {
     target_id: RemoteTargetId,
     task_id: TaskId,
-    subject_type: String,
+    subject_type: StorageRemoteTargetSubjectType,
     subject_id: ResourceId,
     event_context: EventContext,
 }
@@ -633,21 +700,29 @@ impl StorageRemoteTargetInvocation {
     pub fn new(
         target_id: RemoteTargetId,
         task_id: TaskId,
-        subject_type: impl Into<String>,
+        subject_type: StorageRemoteTargetSubjectType,
         subject_id: ResourceId,
         event_context: EventContext,
     ) -> Self {
         Self {
             target_id,
             task_id,
-            subject_type: subject_type.into(),
+            subject_type,
             subject_id,
             event_context,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (RemoteTargetId, TaskId, String, ResourceId, EventContext) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        RemoteTargetId,
+        TaskId,
+        StorageRemoteTargetSubjectType,
+        ResourceId,
+        EventContext,
+    ) {
         (
             self.target_id,
             self.task_id,
@@ -712,7 +787,7 @@ mod tests {
         StorageRemoteTargetDefinition::new(
             "secret description",
             StorageRemoteTargetTransport::try_new(
-                "post",
+                StorageRemoteHttpMethod::Post,
                 "https://secret.invalid/{{ secret }}",
                 serde_json::json!({"x-secret": "{{ secret }}"}),
                 Some("{{ secret }}".to_string()),
@@ -720,20 +795,23 @@ mod tests {
                 1_000,
             )
             .unwrap(),
-            StorageRemoteTargetPolicy::try_new(None, vec!["collection".to_string()], true).unwrap(),
+            StorageRemoteTargetPolicy::try_new(
+                None,
+                vec![StorageRemoteTargetSubjectType::Collection],
+                true,
+            )
+            .unwrap(),
         )
     }
 
     #[test]
     fn debug_output_redacts_target_configuration() {
-        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .expect("valid timestamp")
-            .naive_utc();
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp");
         let target = StorageRemoteTarget::new(
             StorageRecordMetadata::try_new(
                 hubuum_domain::ResourceId::new(1).unwrap(),
-                now.and_utc(),
-                now.and_utc(),
+                now,
+                now,
                 hubuum_domain::ResourceRevision::new(1).unwrap(),
             )
             .unwrap(),
@@ -767,10 +845,10 @@ mod tests {
         let policy = StorageRemoteTargetPolicy::try_new(
             None,
             vec![
-                "collection".to_string(),
-                "class".to_string(),
-                "class_relation".to_string(),
-                "object_relation".to_string(),
+                StorageRemoteTargetSubjectType::Collection,
+                StorageRemoteTargetSubjectType::Class,
+                StorageRemoteTargetSubjectType::ClassRelation,
+                StorageRemoteTargetSubjectType::ObjectRelation,
             ],
             true,
         );

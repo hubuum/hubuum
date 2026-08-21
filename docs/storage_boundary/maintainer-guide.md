@@ -75,7 +75,12 @@ The root crate has no PostgreSQL module tree. New adapter-specific tests belong
 beside `hubuum-storage-postgres` or use its typed `integration-test-support`
 surface. Do not recreate Diesel rows or SQL helpers in application tests.
 
-The composition modules are grouped by capability family. In `src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource ports, and one exhaustive dispatch macro. Sibling modules own forwarding implementations for identity, queries, computed fields, tasks, workflows, resources, diagnostics, and operations.
+The composition modules are grouped by capability family. In
+`src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource
+ports, and one exhaustive dispatch macro. Sibling modules own forwarding
+implementations for identity, identity queries, general queries, relations,
+computed fields, tasks, workflows, events, transactions, and operational
+capabilities.
 
 `crates/hubuum-storage-postgres/src/backend` implements every contract trait for
 `PostgresStorage`. The capability modules are thin delegation boundaries; the
@@ -232,8 +237,10 @@ the public mapping.
 When adding an error path:
 
 1. Preserve the expected domain classification when possible.
-2. Include diagnostic source context inside the adapter error.
-3. Avoid sensitive values in display text and tracing fields.
+2. Record native diagnostic context in adapter-owned structured logs before
+   constructing the portable error; `StorageError` deliberately retains only
+   its safe classification, message, and optional current revision.
+3. Avoid sensitive values in portable display text and tracing fields.
 4. Do not make the storage crate depend on an HTTP error.
 
 ## Logging and Metrics
@@ -263,7 +270,7 @@ Keep both. Do not infer one from the other or silently omit the common wrapper
 because native instrumentation exists.
 
 The complete transaction callback is one logical operation labeled
-`transactions/run`. Its constituent resource calls are steps inside that
+`transactions/with_transaction`. Its constituent resource calls are steps inside that
 entrypoint. PostgreSQL pool, transaction, and query diagnostics provide the
 lower-level view without double-counting each step as an independent
 application call.
@@ -349,7 +356,8 @@ Before considering a boundary change complete:
 - [ ] Ordinary mutations require attribution and return the correct outcome.
 - [ ] Maintenance APIs remain narrow and cannot bypass ordinary auditing.
 - [ ] Audited state and event side effects share one commit boundary.
-- [ ] Errors follow the one-way conversion path.
+- [ ] Errors cross outward through the one-way adapter-to-contract-to-application
+  path; contract validation errors may still be classified inside an adapter.
 - [ ] Dispatch is exhaustive and commonly observed.
 - [ ] Production composition supplies logical and adapter-native telemetry.
 - [ ] Labels and debug output are bounded and non-sensitive.

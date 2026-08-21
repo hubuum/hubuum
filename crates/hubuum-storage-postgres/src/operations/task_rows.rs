@@ -54,8 +54,8 @@ impl TaskRow {
             TaskId::new(self.id)?,
             kind,
             status,
-            self.created_at,
-            self.updated_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
         )
         .submitted_by(self.submitted_by.map(PrincipalId::new).transpose()?)
         .idempotency_key(self.idempotency_key)
@@ -73,14 +73,20 @@ impl TaskRow {
             self.submitted_token_scoped,
             self.submitted_token_scopes,
         ))
-        .request_redacted_at(self.request_redacted_at)
-        .started_at(self.started_at)
-        .finished_at(self.finished_at)
+        .request_redacted_at(
+            self.request_redacted_at
+                .map(|timestamp| timestamp.and_utc()),
+        )
+        .started_at(self.started_at.map(|timestamp| timestamp.and_utc()))
+        .finished_at(self.finished_at.map(|timestamp| timestamp.and_utc()))
         .deletion(
-            self.deleted_at,
+            self.deleted_at.map(|timestamp| timestamp.and_utc()),
             self.deleted_by.map(PrincipalId::new).transpose()?,
         )
-        .lease(self.lease_token, self.lease_expires_at)
+        .lease(
+            self.lease_token,
+            self.lease_expires_at.map(|timestamp| timestamp.and_utc()),
+        )
         .attempt_count(self.attempt_count)
         .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
         .build())

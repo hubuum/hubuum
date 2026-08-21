@@ -170,7 +170,7 @@ pub async fn load_task_gauge_snapshot(
                     Ok(TaskGaugeLastTerminal::new(
                         storage_task_kind(&kind)?,
                         storage_task_status(&status)?,
-                        finished_at,
+                        finished_at.map(|timestamp| timestamp.and_utc()),
                     ))
                 })
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
@@ -193,7 +193,11 @@ pub async fn load_task_gauge_snapshot(
                 .map(|kind| {
                     let (oldest_queued_at, oldest_active_at) =
                         ages_by_kind.remove(&kind).unwrap_or((None, None));
-                    TaskGaugeAge::new(kind, oldest_queued_at, oldest_active_at)
+                    TaskGaugeAge::new(
+                        kind,
+                        oldest_queued_at.map(|timestamp| timestamp.and_utc()),
+                        oldest_active_at.map(|timestamp| timestamp.and_utc()),
+                    )
                 })
                 .collect();
 

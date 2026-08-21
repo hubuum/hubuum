@@ -110,8 +110,8 @@ pub(crate) fn collection_from_storage(row: StorageCollection) -> Result<Collecti
         id: id.id(),
         name,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         parent_collection_id: parent_collection_id.map(hubuum_domain::CollectionId::id),
         revision,
     })
@@ -122,13 +122,17 @@ pub(crate) fn group_from_storage(row: StorageIdentityGroup) -> Result<Group, Api
         id: row.id().id(),
         groupname: row.name().to_string(),
         description: row.description().to_string(),
-        created_at: row.created_at(),
-        updated_at: row.updated_at(),
+        created_at: row.created_at().naive_utc(),
+        updated_at: row.updated_at().naive_utc(),
         identity_scope_id: row.identity_scope_id().id(),
         managed_by: row.managed_by().to_string(),
         external_key: row.external_key().map(ToString::to_string),
-        last_sync_attempted_at: row.last_sync_attempted_at(),
-        last_sync_success_at: row.last_sync_success_at(),
+        last_sync_attempted_at: row
+            .last_sync_attempted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        last_sync_success_at: row
+            .last_sync_success_at()
+            .map(|timestamp| timestamp.naive_utc()),
         revision: row.revision(),
     })
 }
@@ -150,14 +154,18 @@ pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal,
         id: row.id().id(),
         kind: row.kind().to_owned(),
         name: row.name().to_owned(),
-        created_at: row.created_at(),
-        updated_at: row.updated_at(),
+        created_at: row.created_at().naive_utc(),
+        updated_at: row.updated_at().naive_utc(),
         identity_scope_id: row.identity_scope_id().id(),
         provider_managed: row.provider_managed(),
         settings: row.settings().clone(),
         external_subject: row.external_subject().map(ToOwned::to_owned),
-        last_sync_attempted_at: row.last_sync_attempted_at(),
-        last_sync_success_at: row.last_sync_success_at(),
+        last_sync_attempted_at: row
+            .last_sync_attempted_at()
+            .map(|timestamp| timestamp.naive_utc()),
+        last_sync_success_at: row
+            .last_sync_success_at()
+            .map(|timestamp| timestamp.naive_utc()),
         revision: row.revision(),
     })
 }
@@ -168,8 +176,8 @@ pub(crate) fn principal_group_from_storage(
     Ok(PrincipalGroup {
         principal_id: row.principal_id().id(),
         group_id: row.group_id().id(),
-        created_at: row.created_at(),
-        updated_at: row.updated_at(),
+        created_at: row.created_at().naive_utc(),
+        updated_at: row.updated_at().naive_utc(),
         revision: row.revision(),
     })
 }
@@ -256,8 +264,8 @@ pub(super) fn class_from_storage(row: StorageClass) -> Result<HubuumClassExpande
         json_schema,
         validate_schema,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         revision,
     })
 }
@@ -281,8 +289,8 @@ pub(crate) fn class_record_from_storage(row: StorageClassRecord) -> Result<Hubuu
         json_schema,
         validate_schema,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         revision,
     })
 }
@@ -384,8 +392,8 @@ pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, Ap
         hubuum_class_id: hubuum_class_id.id(),
         data,
         description,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         revision,
     })
 }
@@ -543,8 +551,8 @@ pub(crate) fn class_relation_from_storage(
         to_hubuum_class_id: to_hubuum_class_id.id(),
         forward_template_alias,
         reverse_template_alias,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         from_max_relations: from_max_relations
             .map(ObjectRelationLimit::new)
             .transpose()?,
@@ -665,8 +673,8 @@ pub(crate) fn object_relation_from_storage(
         from_hubuum_object_id: from_hubuum_object_id.id(),
         to_hubuum_object_id: to_hubuum_object_id.id(),
         class_relation_id: class_relation_id.id(),
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         revision,
     })
 }

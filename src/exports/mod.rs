@@ -1384,7 +1384,7 @@ fn artifact_to_storage(artifact: ExportArtifact) -> Result<StorageExportTaskArti
         artifact.content_type.as_mime(),
         serde_json::to_value(&artifact.meta)?,
         serde_json::to_value(&artifact.warnings)?,
-        output_expires_at,
+        output_expires_at.and_utc(),
     )
     .template_name(artifact.template_name)
     .output(

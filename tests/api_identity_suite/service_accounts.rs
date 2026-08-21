@@ -682,7 +682,7 @@ mod tests {
         .await
         .expect("token row should exist after validation");
 
-        assert_eq!(returned, persisted);
+        assert_eq!(returned, persisted.map(|timestamp| timestamp.and_utc()));
     }
 
     /// #8: disabling a service account makes its existing tokens fail validation.

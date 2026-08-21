@@ -9,7 +9,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "state",
+            "get_computed_field_state",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_computed_field_state(class_id).await
@@ -26,7 +26,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "list_shared",
+            "list_shared_computed_fields",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_shared_computed_fields(class_id).await
@@ -43,7 +43,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "list_personal",
+            "list_personal_computed_fields",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_personal_computed_fields(query).await
@@ -60,7 +60,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "get",
+            "get_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.get_computed_field(definition_id).await
@@ -77,7 +77,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "create_shared",
+            "create_shared_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.create_shared_computed_field(request).await
@@ -94,7 +94,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "update_shared",
+            "update_shared_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.update_shared_computed_field(request).await
@@ -111,7 +111,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "delete_shared",
+            "delete_shared_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.delete_shared_computed_field(request).await
@@ -128,7 +128,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "create_personal",
+            "create_personal_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.create_personal_computed_field(request).await
@@ -145,7 +145,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "update_personal",
+            "update_personal_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.update_personal_computed_field(request).await
@@ -162,7 +162,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "delete_personal",
+            "delete_personal_computed_field",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.delete_personal_computed_field(request).await
@@ -179,7 +179,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "request_rebuild",
+            "request_computed_field_rebuild",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.request_computed_field_rebuild(request).await
@@ -196,7 +196,7 @@ impl ComputedFieldStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedFields,
-            "execute_rebuild",
+            "execute_computed_field_rebuild",
             async {
                 dispatch_backend!(self, |backend| {
                     backend.execute_computed_field_rebuild(lease).await

@@ -9,8 +9,8 @@ use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
     MutationOutcome, StoragePage, StorageUser, StorageUserAnonymize, StorageUserCreate,
-    StorageUserDelete, StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserPoint, StorageUserUpdate,
+    StorageUserDelete, StorageUserDetails, StorageUserListItem, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserUpdate,
 };
 use serde_json::{Value, json};
 
@@ -96,9 +96,9 @@ impl UserRow {
             self.password,
             self.proper_name,
             self.email,
-            self.created_at,
-            self.updated_at,
-            self.anonymized_at,
+            self.created_at.and_utc(),
+            self.updated_at.and_utc(),
+            self.anonymized_at.map(|timestamp| timestamp.and_utc()),
         ))
     }
 
@@ -163,10 +163,10 @@ pub async fn get_user_by_name(
         .await
 }
 
-pub async fn get_user_point(
+pub async fn get_user_details(
     runtime: &PostgresRuntime,
     user_id: i32,
-) -> Result<StorageUserPoint, PostgresStorageError> {
+) -> Result<StorageUserDetails, PostgresStorageError> {
     validate_positive_id(user_id, "user id")?;
     runtime
         .with_connection(async |connection| {
@@ -187,10 +187,10 @@ pub async fn get_user_point(
                     .first::<(UserRow, i32, bool, String, PostgresRevision)>(connection)
                     .await?;
             Ok::<_, PostgresStorageError>(
-                StorageUserPoint::builder(
+                StorageUserDetails::builder(
                     UserId::new(user.id)?,
-                    user.created_at,
-                    user.updated_at,
+                    user.created_at.and_utc(),
+                    user.updated_at.and_utc(),
                     IdentityScopeId::new(identity_scope_id)?,
                     name,
                     revision.into_domain(),
@@ -273,8 +273,8 @@ pub async fn list_users(
                             revision.into_domain(),
                         )
                         .provider_managed(managed)
-                        .last_sync_attempted_at(attempted)
-                        .last_sync_success_at(succeeded)
+                        .last_sync_attempted_at(attempted.map(|timestamp| timestamp.and_utc()))
+                        .last_sync_success_at(succeeded.map(|timestamp| timestamp.and_utc()))
                         .build())
                     },
                 )

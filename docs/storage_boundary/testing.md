@@ -160,7 +160,7 @@ The suite covers these family-level behaviors:
 | `export_queries` | Mandatory logical budget scope |
 | `export_template_lifecycle` | Point/scoped reads, bindings, and audited lifecycle |
 | `event_administration` | Audit visibility, sink/subscription lifecycle, fan-out delivery creation, retry, and dead-letter actions |
-| `operations` | Metrics, readiness and diagnostics, event health/fan-out/retention, token retention, and execution context |
+| `operational` | Metrics, readiness and diagnostics, event health/fan-out/retention, token retention, and execution context |
 
 The aggregate trait guarantees that every method exists. The semantic coverage
 inventory guarantees that the method and tracked input-variant lists cannot

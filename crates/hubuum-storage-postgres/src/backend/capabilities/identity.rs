@@ -166,11 +166,11 @@ impl ServiceAccountStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn get_service_account_point(
+    async fn get_service_account_details(
         &self,
         service_account_id: ServiceAccountId,
-    ) -> Result<StorageServiceAccountPoint, StorageError> {
-        crate::operations::service_account::get_service_account_point(
+    ) -> Result<StorageServiceAccountDetails, StorageError> {
+        crate::operations::service_account::get_service_account_details(
             self.runtime(),
             service_account_id.id(),
         )
@@ -278,8 +278,8 @@ impl UserStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn get_user_point(&self, id: UserId) -> Result<StorageUserPoint, StorageError> {
-        crate::operations::user::get_user_point(self.runtime(), id.id())
+    async fn get_user_details(&self, id: UserId) -> Result<StorageUserDetails, StorageError> {
+        crate::operations::user::get_user_details(self.runtime(), id.id())
             .await
             .map_err(StorageError::from)
     }

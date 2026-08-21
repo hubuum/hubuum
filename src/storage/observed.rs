@@ -136,7 +136,7 @@ where
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "get",
+            "get_collection",
             self.inner.get_collection(id),
         )
         .await
@@ -149,7 +149,7 @@ where
     ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "create",
+            "create_collection",
             self.inner.create_collection(command, context),
         )
         .await
@@ -163,7 +163,7 @@ where
     ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "update",
+            "update_collection",
             self.inner.update_collection(id, changes, context),
         )
         .await
@@ -176,7 +176,7 @@ where
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "delete",
+            "delete_collection",
             self.inner.delete_collection(id, context),
         )
         .await
@@ -188,7 +188,7 @@ where
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "children",
+            "list_collection_children",
             self.inner.list_collection_children(id),
         )
         .await
@@ -200,7 +200,7 @@ where
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "ancestors",
+            "list_collection_ancestors",
             self.inner.list_collection_ancestors(id),
         )
         .await
@@ -214,7 +214,7 @@ where
     ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collections,
-            "move",
+            "move_collection",
             self.inner.move_collection(id, new_parent_id, context),
         )
         .await
@@ -232,7 +232,7 @@ where
     ) -> Result<StorageResolvedClass, StorageError> {
         self.call(
             StorageCapability::Classes,
-            "resolve",
+            "resolve_class",
             self.inner.resolve_class(selector),
         )
         .await
@@ -245,7 +245,7 @@ where
     ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.call(
             StorageCapability::Classes,
-            "create",
+            "create_class",
             self.inner.create_class(command, context),
         )
         .await
@@ -259,7 +259,7 @@ where
     ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.call(
             StorageCapability::Classes,
-            "update",
+            "update_class",
             self.inner.update_class(target, changes, context),
         )
         .await
@@ -272,7 +272,7 @@ where
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::Classes,
-            "delete",
+            "delete_class",
             self.inner.delete_class(target, context),
         )
         .await
@@ -284,7 +284,7 @@ where
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
         self.call(
             StorageCapability::Classes,
-            "names",
+            "resolve_class_names",
             self.inner.resolve_class_names(class_ids),
         )
         .await
@@ -299,7 +299,7 @@ where
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         self.call(
             StorageCapability::Objects,
-            "get",
+            "get_object",
             self.inner.get_object(object_id),
         )
         .await
@@ -311,7 +311,7 @@ where
     ) -> Result<StorageResolvedObject, StorageError> {
         self.call(
             StorageCapability::Objects,
-            "resolve",
+            "resolve_object",
             self.inner.resolve_object(selector),
         )
         .await
@@ -325,7 +325,7 @@ where
     ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
             StorageCapability::Objects,
-            "create",
+            "create_object",
             self.inner.create_object(class, command, context),
         )
         .await
@@ -339,7 +339,7 @@ where
     ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
             StorageCapability::Objects,
-            "update",
+            "update_object",
             self.inner.update_object(target, changes, context),
         )
         .await
@@ -353,7 +353,7 @@ where
     ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
             StorageCapability::Objects,
-            "patch_data",
+            "patch_object_data",
             self.inner.patch_object_data(target, patch, context),
         )
         .await
@@ -366,7 +366,7 @@ where
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::Objects,
-            "delete",
+            "delete_object",
             self.inner.delete_object(target, context),
         )
         .await
@@ -375,7 +375,7 @@ where
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
         self.call(
             StorageCapability::Objects,
-            "validate",
+            "validate_object",
             self.inner.validate_object(object),
         )
         .await
@@ -387,7 +387,7 @@ where
     ) -> Result<(), StorageError> {
         self.call(
             StorageCapability::Objects,
-            "validate_create",
+            "validate_object_create",
             self.inner.validate_object_create(command),
         )
         .await
@@ -400,7 +400,7 @@ where
     ) -> Result<(), StorageError> {
         self.call(
             StorageCapability::Objects,
-            "validate_update",
+            "validate_object_update",
             self.inner.validate_object_update(object_id, changes),
         )
         .await
@@ -418,7 +418,7 @@ where
     ) -> Result<StoragePreparedClassRelation, StorageError> {
         self.call(
             StorageCapability::ClassRelations,
-            "prepare_create",
+            "prepare_class_relation",
             self.inner.prepare_class_relation(command),
         )
         .await
@@ -430,7 +430,7 @@ where
     ) -> Result<StorageResolvedClassRelation, StorageError> {
         self.call(
             StorageCapability::ClassRelations,
-            "resolve",
+            "resolve_class_relation",
             self.inner.resolve_class_relation(id),
         )
         .await
@@ -443,7 +443,7 @@ where
     ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
         self.call(
             StorageCapability::ClassRelations,
-            "create",
+            "create_class_relation",
             self.inner.create_class_relation(prepared, context),
         )
         .await
@@ -456,7 +456,7 @@ where
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::ClassRelations,
-            "delete",
+            "delete_class_relation",
             self.inner.delete_class_relation(target, context),
         )
         .await
@@ -474,7 +474,7 @@ where
     ) -> Result<StoragePreparedObjectRelation, StorageError> {
         self.call(
             StorageCapability::ObjectRelations,
-            "prepare_create",
+            "prepare_object_relation",
             self.inner.prepare_object_relation(selector),
         )
         .await
@@ -486,7 +486,7 @@ where
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
         self.call(
             StorageCapability::ObjectRelations,
-            "resolve",
+            "resolve_object_relation",
             self.inner.resolve_object_relation(selector),
         )
         .await
@@ -499,7 +499,7 @@ where
     ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         self.call(
             StorageCapability::ObjectRelations,
-            "create",
+            "create_object_relation",
             self.inner.create_object_relation(prepared, context),
         )
         .await
@@ -512,7 +512,7 @@ where
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::ObjectRelations,
-            "delete",
+            "delete_object_relation",
             self.inner.delete_object_relation(target, context),
         )
         .await

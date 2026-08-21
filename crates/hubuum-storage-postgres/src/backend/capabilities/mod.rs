@@ -1,5 +1,7 @@
+mod events;
 mod execution;
 mod identity;
-mod operations;
+mod identity_queries;
+mod operational;
 mod queries;
 mod resources;

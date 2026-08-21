@@ -348,11 +348,13 @@ fn event_delivery_response(
         subscription_id: delivery.subscription_id().id(),
         status: delivery.status().to_string(),
         attempts: delivery.attempts(),
-        next_attempt_at: delivery.next_attempt_at(),
+        next_attempt_at: delivery.next_attempt_at().naive_utc(),
         last_error: delivery.last_error().map(ToString::to_string),
-        locked_until: delivery.locked_until(),
-        created_at: delivery.created_at(),
-        updated_at: delivery.updated_at(),
+        locked_until: delivery
+            .locked_until()
+            .map(|timestamp| timestamp.naive_utc()),
+        created_at: delivery.created_at().naive_utc(),
+        updated_at: delivery.updated_at().naive_utc(),
     }
 }
 

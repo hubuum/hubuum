@@ -165,7 +165,10 @@ pub(crate) async fn execute_backup_task(
             })),
         },
         StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::new(
-            bytes, byte_size, sha256, expires_at,
+            bytes,
+            byte_size,
+            sha256,
+            expires_at.and_utc(),
         )),
     )
     .await?;

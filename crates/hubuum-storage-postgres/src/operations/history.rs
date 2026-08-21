@@ -8,8 +8,9 @@ use hubuum_storage_core::{
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPrincipalName,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
     StorageClassRecord, StorageCollection, StorageExportTemplate, StorageExportTemplateDefinition,
-    StorageHistoryOperation, StorageObject, StoragePage, StorageRemoteTarget,
-    StorageRemoteTargetDefinition, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageHistoryOperation, StorageObject, StoragePage, StorageRemoteHttpMethod,
+    StorageRemoteTarget, StorageRemoteTargetDefinition, StorageRemoteTargetPolicy,
+    StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
 
@@ -257,15 +258,33 @@ impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
     fn try_from(row: RemoteTargetHistoryRow) -> Result<Self, Self::Error> {
         let metadata = metadata!(row)?;
         let allowed_subject_types =
-            serde_json::from_value::<Vec<String>>(row.allowed_subject_types).map_err(|error| {
-                PostgresStorageError::database(format!(
-                    "Invalid persisted remote-target subject policy: {error}"
-                ))
-            })?;
+            serde_json::from_value::<Vec<String>>(row.allowed_subject_types)
+                .map_err(|error| {
+                    PostgresStorageError::database(format!(
+                        "Invalid persisted remote-target subject policy: {error}"
+                    ))
+                })?
+                .into_iter()
+                .map(|subject_type| {
+                    subject_type
+                        .parse::<StorageRemoteTargetSubjectType>()
+                        .map_err(|error| {
+                            PostgresStorageError::database(format!(
+                                "Invalid persisted remote-target subject policy: {error}"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
         let definition = StorageRemoteTargetDefinition::new(
             row.description,
             StorageRemoteTargetTransport::try_new(
-                row.method,
+                row.method
+                    .parse::<StorageRemoteHttpMethod>()
+                    .map_err(|error| {
+                        PostgresStorageError::database(format!(
+                            "Invalid persisted remote-target HTTP method: {error}"
+                        ))
+                    })?,
                 row.url_template,
                 row.headers_template,
                 row.body_template,

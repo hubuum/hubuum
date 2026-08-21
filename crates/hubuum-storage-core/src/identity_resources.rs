@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ResourceRevision};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
@@ -18,14 +18,14 @@ pub struct StoragePrincipal {
     id: PrincipalId,
     kind: String,
     name: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     identity_scope_id: IdentityScopeId,
     provider_managed: bool,
     settings: Value,
     external_subject: Option<String>,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
     revision: ResourceRevision,
 }
 
@@ -66,12 +66,12 @@ impl StoragePrincipal {
     }
 
     #[must_use]
-    pub const fn created_at(&self) -> NaiveDateTime {
+    pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
 
     #[must_use]
-    pub const fn updated_at(&self) -> NaiveDateTime {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
 
@@ -96,12 +96,12 @@ impl StoragePrincipal {
     }
 
     #[must_use]
-    pub const fn last_sync_attempted_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_attempted_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_attempted_at
     }
 
     #[must_use]
-    pub const fn last_sync_success_at(&self) -> Option<NaiveDateTime> {
+    pub const fn last_sync_success_at(&self) -> Option<DateTime<Utc>> {
         self.last_sync_success_at
     }
 
@@ -132,8 +132,8 @@ pub struct StoragePrincipalBuilder {
     provider_managed: bool,
     settings: Value,
     external_subject: Option<String>,
-    last_sync_attempted_at: Option<NaiveDateTime>,
-    last_sync_success_at: Option<NaiveDateTime>,
+    last_sync_attempted_at: Option<DateTime<Utc>>,
+    last_sync_success_at: Option<DateTime<Utc>>,
 }
 
 impl StoragePrincipalBuilder {
@@ -156,13 +156,13 @@ impl StoragePrincipalBuilder {
     }
 
     #[must_use]
-    pub const fn last_sync_attempted_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_sync_attempted_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_sync_attempted_at = value;
         self
     }
 
     #[must_use]
-    pub const fn last_sync_success_at(mut self, value: Option<NaiveDateTime>) -> Self {
+    pub const fn last_sync_success_at(mut self, value: Option<DateTime<Utc>>) -> Self {
         self.last_sync_success_at = value;
         self
     }
@@ -173,8 +173,8 @@ impl StoragePrincipalBuilder {
             id: PrincipalId::from(self.metadata.id()),
             kind: self.kind,
             name: self.name,
-            created_at: self.metadata.created_at().naive_utc(),
-            updated_at: self.metadata.updated_at().naive_utc(),
+            created_at: self.metadata.created_at(),
+            updated_at: self.metadata.updated_at(),
             identity_scope_id: self.identity_scope_id,
             provider_managed: self.provider_managed,
             settings: self.settings,
@@ -279,6 +279,38 @@ pub enum StoragePrincipalSettingsMutation {
     Reset,
 }
 
+/// One group-membership row paired with its principal projection.
+#[derive(Clone, PartialEq)]
+pub struct StorageGroupMember {
+    membership: StoragePrincipalGroup,
+    principal: StoragePrincipal,
+}
+
+impl StorageGroupMember {
+    #[must_use]
+    pub const fn new(membership: StoragePrincipalGroup, principal: StoragePrincipal) -> Self {
+        Self {
+            membership,
+            principal,
+        }
+    }
+
+    #[must_use]
+    pub const fn membership(&self) -> &StoragePrincipalGroup {
+        &self.membership
+    }
+
+    #[must_use]
+    pub const fn principal(&self) -> &StoragePrincipal {
+        &self.principal
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (StoragePrincipalGroup, StoragePrincipal) {
+        (self.membership, self.principal)
+    }
+}
+
 /// Complete group lifecycle and membership behavior required from a backend.
 #[async_trait]
 pub trait GroupStorage: Send + Sync {
@@ -315,7 +347,7 @@ pub trait GroupStorage: Send + Sync {
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<usize>, StorageError>;
 
-    async fn list_group_members(
+    async fn list_all_group_members(
         &self,
         group_id: GroupId,
     ) -> Result<Vec<StoragePrincipal>, StorageError>;
@@ -324,18 +356,7 @@ pub trait GroupStorage: Send + Sync {
         &self,
         group_id: GroupId,
         query_options: QueryOptions,
-    ) -> Result<Vec<(StoragePrincipalGroup, StoragePrincipal)>, StorageError>;
-
-    async fn count_group_members(
-        &self,
-        group_id: GroupId,
-        query_options: QueryOptions,
-    ) -> Result<i64, StorageError>;
-
-    async fn get_group_member_principal(
-        &self,
-        principal_id: PrincipalId,
-    ) -> Result<StoragePrincipal, StorageError>;
+    ) -> Result<StoragePage<StorageGroupMember>, StorageError>;
 
     async fn add_group_member(
         &self,
