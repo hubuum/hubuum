@@ -40,7 +40,7 @@ pub(crate) fn json_filter_sql(
         });
     }
     let (raw_path, value) = parameter.value.split_once('=').ok_or_else(|| {
-        PostgresStorageError::bad_request("Expected exactly two parts of key=value")
+        PostgresStorageError::invalid_input("Expected exactly two parts of key=value")
     })?;
     let path = json_path(raw_path)?;
     let text_expression = json_text_path_expression(json_expression, path);
@@ -69,7 +69,7 @@ pub(crate) fn json_filter_sql(
         }
         Operator::ArrayLength => {
             let length = value.parse::<i32>().map_err(|_| {
-                PostgresStorageError::bad_request(format!(
+                PostgresStorageError::invalid_input(format!(
                     "array_length requires an integer, got '{value}'"
                 ))
             })?;
@@ -105,7 +105,7 @@ pub(crate) fn json_filter_sql(
     match mapped_type {
         Some(QueryScalarType::Numeric) => {
             let values = hubuum_query::parse_integer_list(value)
-                .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
                 .into_iter()
                 .map(SqlValue::Integer)
                 .collect();
@@ -119,7 +119,7 @@ pub(crate) fn json_filter_sql(
         }
         Some(QueryScalarType::Date) => {
             let values = hubuum_query::parse_datetime_list(value)
-                .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
                 .into_iter()
                 .map(SqlValue::DateTime)
                 .collect();
@@ -133,7 +133,7 @@ pub(crate) fn json_filter_sql(
         }
         Some(QueryScalarType::Boolean) => {
             let value = hubuum_query::parse_boolean_value(value)
-                .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
             typed_json_filter(
                 &format!("try_boolean({text_expression})"),
                 vec![SqlValue::Boolean(value)],
@@ -158,7 +158,7 @@ pub(crate) fn json_filter_sql(
                 Operator::Lt => ("<", value.to_string()),
                 Operator::Lte => ("<=", value.to_string()),
                 _ => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Invalid operator for JSON: '{operator:?}'"
                     )));
                 }
@@ -169,7 +169,7 @@ pub(crate) fn json_filter_sql(
                 negated,
             ))
         }
-        None => Err(PostgresStorageError::bad_request(format!(
+        None => Err(PostgresStorageError::invalid_input(format!(
             "Invalid JSON type mapping between key '{path}' and operator '{}'",
             parameter.operator
         ))),
@@ -197,7 +197,7 @@ fn typed_json_filter(
 ) -> Result<SqlComponent, PostgresStorageError> {
     let required_values = if operator == Operator::Between { 2 } else { 1 };
     if bind_variables.len() != required_values {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Operator '{operator}' requires exactly {required_values} value(s) for JSON field '{}'",
             parameter.field
         )));
@@ -210,7 +210,7 @@ fn typed_json_filter(
         Operator::Lte => format!("{expression} <= ?"),
         Operator::Between => format!("{expression} BETWEEN ? AND ?"),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Invalid operator for typed JSON search: '{operator:?}'"
             )));
         }
@@ -237,7 +237,7 @@ fn json_ip_filter(
             .parse::<IpAddr>()
             .map(|address| address.to_string())
             .map_err(|_| {
-                PostgresStorageError::bad_request(format!("Invalid IP address: '{value}'"))
+                PostgresStorageError::invalid_input(format!("Invalid IP address: '{value}'"))
             })?,
         Operator::WithinNetwork
         | Operator::ContainsNetwork
@@ -278,19 +278,19 @@ fn parse_ip_or_host_network(value: &str) -> Result<String, PostgresStorageError>
         Ok(IpAddr::V4(address)) => Ipv4Net::new(address, 32).map(IpNet::from),
         Ok(IpAddr::V6(address)) => Ipv6Net::new(address, 128).map(IpNet::from),
         Err(_) => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Invalid IP/CIDR: '{value}'"
             )));
         }
     };
     network
         .map(|network| network.to_string())
-        .map_err(|_| PostgresStorageError::bad_request(format!("Invalid IP/CIDR: '{value}'")))
+        .map_err(|_| PostgresStorageError::invalid_input(format!("Invalid IP/CIDR: '{value}'")))
 }
 
 fn json_path(value: &str) -> Result<JsonFieldPathRef<'_>, PostgresStorageError> {
     JsonFieldPathRef::new(value)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn json_text_path_expression(expression: &str, path: JsonFieldPathRef<'_>) -> String {
@@ -304,7 +304,7 @@ fn json_value_path_expression(expression: &str, path: JsonFieldPathRef<'_>) -> S
 fn comma_values(value: &str, operator: &str) -> Result<Vec<String>, PostgresStorageError> {
     let values = value.split(',').map(str::to_string).collect::<Vec<_>>();
     if values.is_empty() {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "'{operator}' requires at least one value"
         )))
     } else {

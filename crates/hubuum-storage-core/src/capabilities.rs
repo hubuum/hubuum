@@ -19,6 +19,7 @@ pub mod backend {
 
 /// Atomic resource lifecycle and transaction capabilities.
 pub mod resources {
+    pub use crate::ResourceStorage;
     pub use crate::relation_lifecycle::*;
     pub use crate::resource_lifecycle::*;
     pub use crate::transaction::*;
@@ -26,6 +27,7 @@ pub mod resources {
 
 /// Authentication, identity, group, principal, and authorization capabilities.
 pub mod identity {
+    pub use crate::IdentityStorage;
     pub use crate::authorization::*;
     pub use crate::collection_authorization::*;
     pub use crate::identity::*;
@@ -37,6 +39,7 @@ pub mod identity {
 
 /// Backend-neutral read-model capabilities.
 pub mod queries {
+    pub use crate::QueryStorage;
     pub use crate::catalog::*;
     pub use crate::computed_objects::*;
     pub use crate::history::*;
@@ -48,8 +51,9 @@ pub mod queries {
 
 /// Long-running and application workflow capabilities.
 pub mod workflows {
+    pub use crate::WorkflowStorage;
     pub use crate::backup_snapshot::*;
-    pub use crate::computed_field_lifecycle::*;
+    pub use crate::computed_fields::*;
     pub use crate::export_query::*;
     pub use crate::export_template_lifecycle::*;
     pub use crate::import_workflow::*;
@@ -61,12 +65,14 @@ pub mod workflows {
 
 /// Audit, fan-out, delivery, administration, and retention capabilities.
 pub mod events {
+    pub use crate::EventStorage;
     pub use crate::event_administration::*;
     pub use crate::events::*;
 }
 
 /// Execution context, observation, operational state, and process integration.
 pub mod operations {
+    pub use crate::OperationalStorage;
     pub use crate::execution::*;
     pub use crate::metrics::*;
     pub use crate::operational::*;

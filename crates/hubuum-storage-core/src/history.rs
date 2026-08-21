@@ -7,8 +7,8 @@ use hubuum_domain::{
 use hubuum_query::QueryOptions;
 
 use crate::{
-    StorageClassRecord, StorageCollection, StorageCountedPage, StorageError, StorageExportTemplate,
-    StorageObject, StorageRemoteTarget,
+    StorageClassRecord, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
+    StoragePage, StorageRemoteTarget,
 };
 
 /// Collection visibility applied by the adapter before counting or paging.
@@ -140,40 +140,76 @@ impl ObjectHistoryAsOfQuery {
     }
 }
 
-/// Common temporal and provenance columns for one history row.
+/// Backend-neutral kind of change represented by a temporal history entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageHistoryOperation {
+    Create,
+    Update,
+    Delete,
+}
+
+impl StorageHistoryOperation {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+/// Common temporal and provenance values for one history entry.
 #[derive(Clone, PartialEq, Eq)]
 pub struct HistoryMetadata {
-    operation: String,
+    operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
     valid_to: Option<DateTime<Utc>>,
     actor_id: Option<PrincipalId>,
-    history_id: HistoryRecordId,
+    history_entry_id: HistoryRecordId,
     actor_kind: Option<String>,
     initiator_principal_id: Option<PrincipalId>,
     task_id: Option<TaskId>,
     revision: ResourceRevision,
 }
 
+/// Named temporal and provenance values used by application mappers.
+pub struct HistoryMetadataParts {
+    pub operation: StorageHistoryOperation,
+    pub valid_from: DateTime<Utc>,
+    pub valid_to: Option<DateTime<Utc>>,
+    pub actor_id: Option<PrincipalId>,
+    pub history_entry_id: HistoryRecordId,
+    pub actor_kind: Option<String>,
+    pub initiator_principal_id: Option<PrincipalId>,
+    pub task_id: Option<TaskId>,
+    pub revision: ResourceRevision,
+}
+
 impl HistoryMetadata {
-    #[must_use]
-    pub fn new(
-        operation: impl Into<String>,
+    pub fn try_new(
+        operation: StorageHistoryOperation,
         valid_from: DateTime<Utc>,
         valid_to: Option<DateTime<Utc>>,
-        history_id: HistoryRecordId,
+        history_entry_id: HistoryRecordId,
         revision: ResourceRevision,
-    ) -> Self {
-        Self {
-            operation: operation.into(),
+    ) -> Result<Self, StorageError> {
+        if valid_to.is_some_and(|timestamp| timestamp < valid_from) {
+            return Err(StorageError::internal(
+                "Persisted history valid_to must not be earlier than valid_from",
+            ));
+        }
+        Ok(Self {
+            operation,
             valid_from,
             valid_to,
             actor_id: None,
-            history_id,
+            history_entry_id,
             actor_kind: None,
             initiator_principal_id: None,
             task_id: None,
             revision,
-        }
+        })
     }
 
     #[must_use]
@@ -199,31 +235,18 @@ impl HistoryMetadata {
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        String,
-        DateTime<Utc>,
-        Option<DateTime<Utc>>,
-        Option<PrincipalId>,
-        HistoryRecordId,
-        Option<String>,
-        Option<PrincipalId>,
-        Option<TaskId>,
-        ResourceRevision,
-    ) {
-        (
-            self.operation,
-            self.valid_from,
-            self.valid_to,
-            self.actor_id,
-            self.history_id,
-            self.actor_kind,
-            self.initiator_principal_id,
-            self.task_id,
-            self.revision,
-        )
+    pub fn into_parts(self) -> HistoryMetadataParts {
+        HistoryMetadataParts {
+            operation: self.operation,
+            valid_from: self.valid_from,
+            valid_to: self.valid_to,
+            actor_id: self.actor_id,
+            history_entry_id: self.history_entry_id,
+            actor_kind: self.actor_kind,
+            initiator_principal_id: self.initiator_principal_id,
+            task_id: self.task_id,
+            revision: self.revision,
+        }
     }
 }
 
@@ -358,7 +381,7 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_collection_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<CollectionHistoryRecord>, StorageError>;
+    ) -> Result<StoragePage<CollectionHistoryRecord>, StorageError>;
 
     async fn get_collection_history_as_of(
         &self,
@@ -368,7 +391,7 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_class_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<ClassHistoryRecord>, StorageError>;
+    ) -> Result<StoragePage<ClassHistoryRecord>, StorageError>;
 
     async fn get_class_history_as_of(
         &self,
@@ -378,7 +401,7 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_object_history(
         &self,
         query: ObjectHistoryListQuery,
-    ) -> Result<StorageCountedPage<ObjectHistoryRecord>, StorageError>;
+    ) -> Result<StoragePage<ObjectHistoryRecord>, StorageError>;
 
     async fn get_object_history_as_of(
         &self,
@@ -388,7 +411,7 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_export_template_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<ExportTemplateHistoryRecord>, StorageError>;
+    ) -> Result<StoragePage<ExportTemplateHistoryRecord>, StorageError>;
 
     async fn get_export_template_history_as_of(
         &self,
@@ -398,7 +421,7 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_remote_target_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<RemoteTargetHistoryRecord>, StorageError>;
+    ) -> Result<StoragePage<RemoteTargetHistoryRecord>, StorageError>;
 
     async fn get_remote_target_history_as_of(
         &self,
@@ -439,25 +462,44 @@ mod tests {
     fn history_metadata_preserves_complete_provenance() {
         let valid_from = Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
         let revision = ResourceRevision::new(7).unwrap();
-        let history_id = HistoryRecordId::new(41).unwrap();
-        let metadata = HistoryMetadata::new("U", valid_from, None, history_id, revision)
-            .actor(PrincipalId::new(11).ok(), Some("human".to_string()))
-            .initiator_principal_id(PrincipalId::new(13).ok())
-            .task_id(TaskId::new(17).ok());
+        let history_entry_id = HistoryRecordId::new(41).unwrap();
+        let metadata = HistoryMetadata::try_new(
+            StorageHistoryOperation::Update,
+            valid_from,
+            None,
+            history_entry_id,
+            revision,
+        )
+        .unwrap()
+        .actor(PrincipalId::new(11).ok(), Some("human".to_string()))
+        .initiator_principal_id(PrincipalId::new(13).ok())
+        .task_id(TaskId::new(17).ok());
+        let parts = metadata.into_parts();
 
-        assert_eq!(
-            metadata.into_parts(),
-            (
-                "U".to_string(),
+        assert_eq!(parts.operation, StorageHistoryOperation::Update);
+        assert_eq!(parts.valid_from, valid_from);
+        assert_eq!(parts.valid_to, None);
+        assert_eq!(parts.actor_id, PrincipalId::new(11).ok());
+        assert_eq!(parts.history_entry_id, history_entry_id);
+        assert_eq!(parts.actor_kind, Some("human".to_string()));
+        assert_eq!(parts.initiator_principal_id, PrincipalId::new(13).ok());
+        assert_eq!(parts.task_id, TaskId::new(17).ok());
+        assert_eq!(parts.revision, revision);
+    }
+
+    #[test]
+    fn history_metadata_rejects_reversed_validity_windows() {
+        let valid_from = Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+
+        assert!(
+            HistoryMetadata::try_new(
+                StorageHistoryOperation::Update,
                 valid_from,
-                None,
-                PrincipalId::new(11).ok(),
-                history_id,
-                Some("human".to_string()),
-                PrincipalId::new(13).ok(),
-                TaskId::new(17).ok(),
-                revision,
+                Some(valid_from - chrono::Duration::seconds(1)),
+                HistoryRecordId::new(41).unwrap(),
+                ResourceRevision::new(7).unwrap(),
             )
+            .is_err()
         );
     }
 }

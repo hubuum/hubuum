@@ -465,7 +465,7 @@ fn candidate_execution_options(
         PostgresStorageError::internal("aggregate candidate query is missing its limit")
     })?;
     if limit == 0 {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "aggregate candidate query limit must be positive",
         ));
     }
@@ -514,7 +514,7 @@ fn reject_unsupported_filters(options: &QueryOptions) -> Result<(), PostgresStor
         .map(|filter| &filter.field)
         .find(|field| field.related_query().is_some())
     {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Field '{field}' isn't searchable (or does not exist) for object aggregates"
         )));
     }

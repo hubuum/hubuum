@@ -85,7 +85,7 @@ impl ObjectAggregateCandidateBatch {
             PostgresStorageError::internal("aggregate candidate page is missing its limit")
         })?;
         if limit == 0 {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "aggregate candidate page limit must be positive",
             ));
         }

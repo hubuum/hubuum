@@ -650,13 +650,13 @@ fn validate_object_state(
     class: &ClassRow,
 ) -> Result<(), PostgresStorageError> {
     if class_id != class.id {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Object hubuum_class_id {class_id} does not match class {}",
             class.id
         )));
     }
     if collection_id != class.collection_id {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Object collection_id {collection_id} does not match class collection_id {}",
             class.collection_id
         )));
@@ -709,7 +709,7 @@ fn validate_positive_id(value: i32, noun: &str) -> Result<(), PostgresStorageErr
     if value > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "Invalid {noun}: expected a positive integer"
         )))
     }

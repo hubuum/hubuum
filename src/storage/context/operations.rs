@@ -5,7 +5,7 @@ impl OperationalStateStorage for StorageHandle {
     async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "operational_state",
+            StorageCapability::OperationalState,
             "get_readiness_snapshot",
             async { dispatch_backend!(self, |backend| { backend.get_readiness_snapshot().await }) },
         )
@@ -15,7 +15,7 @@ impl OperationalStateStorage for StorageHandle {
     async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "operational_state",
+            StorageCapability::OperationalState,
             "maintenance_state",
             async { dispatch_backend!(self, |backend| backend.get_maintenance_state().await) },
         )
@@ -25,7 +25,7 @@ impl OperationalStateStorage for StorageHandle {
     async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "operational_state",
+            StorageCapability::OperationalState,
             "get_task_queue_snapshot",
             async {
                 dispatch_backend!(self, |backend| { backend.get_task_queue_snapshot().await })
@@ -39,7 +39,7 @@ impl OperationalStateStorage for StorageHandle {
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "operational_state",
+            StorageCapability::OperationalState,
             "get_export_template_health",
             async {
                 dispatch_backend!(self, |backend| {
@@ -55,7 +55,7 @@ impl OperationalStateStorage for StorageHandle {
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "operational_state",
+            StorageCapability::OperationalState,
             "list_export_templates_for_audit",
             async {
                 dispatch_backend!(self, |backend| {
@@ -72,7 +72,7 @@ impl EventHealthStorage for StorageHandle {
     async fn get_event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_health",
+            StorageCapability::EventHealth,
             "delivery_health",
             async {
                 dispatch_backend!(self, |backend| {
@@ -90,19 +90,22 @@ impl AuditEventStorage for StorageHandle {
         &self,
         query: StorageAuditEventListQuery,
     ) -> Result<StoragePage<StorageAuditEvent>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "audit_events", "list", async {
-            dispatch_backend!(self, |backend| { backend.list_audit_events(query).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::AuditEvents,
+            "list",
+            async { dispatch_backend!(self, |backend| { backend.list_audit_events(query).await }) },
+        )
         .await
     }
 }
 
 #[async_trait]
-impl EventSubscriptionStorage for StorageHandle {
+impl EventConfigurationStorage for StorageHandle {
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "count_enabled_sinks",
             async {
                 dispatch_backend!(self, |backend| {
@@ -119,7 +122,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<StoragePage<StorageEventSink>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "list_sinks",
             async { dispatch_backend!(self, |backend| { backend.list_event_sinks(query).await }) },
         )
@@ -129,7 +132,7 @@ impl EventSubscriptionStorage for StorageHandle {
     async fn get_event_sink(&self, sink_id: EventSinkId) -> Result<StorageEventSink, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "get_sink",
             async { dispatch_backend!(self, |backend| { backend.get_event_sink(sink_id).await }) },
         )
@@ -142,7 +145,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "create_sink",
             async {
                 dispatch_backend!(self, |backend| { backend.create_event_sink(request).await })
@@ -157,7 +160,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "update_sink",
             async {
                 dispatch_backend!(self, |backend| { backend.update_event_sink(request).await })
@@ -172,7 +175,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "delete_sink",
             async {
                 dispatch_backend!(self, |backend| { backend.delete_event_sink(request).await })
@@ -187,7 +190,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<StoragePage<StorageEventSubscription>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "list_subscriptions",
             async {
                 dispatch_backend!(self, |backend| {
@@ -205,7 +208,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<StorageEventSubscription, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "get_subscription",
             async {
                 dispatch_backend!(self, |backend| {
@@ -224,7 +227,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "create_subscription",
             async {
                 dispatch_backend!(self, |backend| {
@@ -241,7 +244,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "update_subscription",
             async {
                 dispatch_backend!(self, |backend| {
@@ -258,7 +261,7 @@ impl EventSubscriptionStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_subscriptions",
+            StorageCapability::EventConfiguration,
             "delete_subscription",
             async {
                 dispatch_backend!(self, |backend| {
@@ -276,11 +279,16 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
         &self,
         query: StorageEventDeliveryListQuery,
     ) -> Result<StoragePage<StorageEventDelivery>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "event_delivery", "list", async {
-            dispatch_backend!(self, |backend| {
-                backend.list_event_deliveries(query).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryAdministration,
+            "list",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_event_deliveries(query).await
+                })
+            },
+        )
         .await
     }
 
@@ -288,11 +296,16 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        self.observe_storage_call(self.backend_name(), "event_delivery", "get", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_event_delivery(delivery_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryAdministration,
+            "get",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_event_delivery(delivery_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -302,7 +315,7 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
     ) -> Result<StorageEventDelivery, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_delivery",
+            StorageCapability::EventDeliveryAdministration,
             "release_for_retry",
             async {
                 dispatch_backend!(self, |backend| {
@@ -317,24 +330,29 @@ impl EventDeliveryAdministrationStorage for StorageHandle {
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        self.observe_storage_call(self.backend_name(), "event_delivery", "mark_dead", async {
-            dispatch_backend!(self, |backend| {
-                backend.mark_event_delivery_dead(delivery_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryAdministration,
+            "mark_dead",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.mark_event_delivery_dead(delivery_id).await
+                })
+            },
+        )
         .await
     }
 }
 
 #[async_trait]
-impl EventDeliveryStorage for StorageHandle {
+impl EventDeliveryWorkerStorage for StorageHandle {
     async fn claim_event_delivery_batch(
         &self,
         settings: EventDeliverySettings,
     ) -> Result<EventDeliveryBatch, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_delivery",
+            StorageCapability::EventDeliveryWorker,
             "claim_batch",
             async {
                 dispatch_backend!(self, |backend| {
@@ -351,7 +369,7 @@ impl EventDeliveryStorage for StorageHandle {
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_delivery",
+            StorageCapability::EventDeliveryWorker,
             "mark_succeeded",
             async {
                 dispatch_backend!(self, |backend| {
@@ -370,7 +388,7 @@ impl EventDeliveryStorage for StorageHandle {
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_delivery",
+            StorageCapability::EventDeliveryWorker,
             "mark_failed",
             async {
                 dispatch_backend!(self, |backend| {
@@ -392,7 +410,7 @@ impl EventFanoutStorage for StorageHandle {
     ) -> Result<usize, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_fanout",
+            StorageCapability::EventFanout,
             "process_batch",
             async {
                 dispatch_backend!(self, |backend| {
@@ -412,7 +430,7 @@ impl EventRetentionStorage for StorageHandle {
     ) -> Result<Option<EventRetentionBatch>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_retention",
+            StorageCapability::EventRetention,
             "claim_batch",
             async {
                 dispatch_backend!(self, |backend| {
@@ -429,7 +447,7 @@ impl EventRetentionStorage for StorageHandle {
     ) -> Result<EventRetentionSummary, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "event_retention",
+            StorageCapability::EventRetention,
             "complete_batch",
             async {
                 dispatch_backend!(self, |backend| {
@@ -449,7 +467,7 @@ impl TokenRetentionStorage for StorageHandle {
     ) -> Result<usize, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "token_retention",
+            StorageCapability::TokenRetention,
             "purge_expired",
             async {
                 dispatch_backend!(self, |backend| {

@@ -147,7 +147,7 @@
       "expires": "2027-01-31",
       "reason": "Oasdiff 1.16 reports request/response directionality changes for reused tagged-enum components and treats the typed optional TaskID reference as a nullable widening even though those schemas accept the same JSON values as v0.0.9.",
       "migration": "No client migration is required because the token-resource and remote-invocation `oneOf` variants are schema-identical to v0.0.9 and optional provenance task IDs retain the same integer-or-null representation.",
-      "changelog_entry": "Public HTTP request and response shapes are unchanged",
+      "changelog_entry": "token-resource and remote-invocation `oneOf` variants remain JSON-compatible",
       "fingerprints": [
         "0b60d388e8a9",
         "1fcdaa57d414",

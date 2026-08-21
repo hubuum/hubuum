@@ -249,8 +249,9 @@ pub async fn recover_expired_task_leases(
     runtime: &PostgresRuntime,
     batch_size: usize,
 ) -> Result<Vec<StorageTask>, PostgresStorageError> {
-    let batch_size = i64::try_from(batch_size)
-        .map_err(|_| PostgresStorageError::bad_request("Task recovery batch size is too large"))?;
+    let batch_size = i64::try_from(batch_size).map_err(|_| {
+        PostgresStorageError::invalid_input("Task recovery batch size is too large")
+    })?;
     let recovered = runtime
         .with_transaction(async move |connection| {
             use crate::schema::tasks::dsl as tasks;
@@ -348,7 +349,7 @@ pub async fn update_task_state(
 ) -> Result<StorageTask, PostgresStorageError> {
     let (claimed, update) = state_update(request)?;
     if !update.status.is_active() {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Task state updates require an active status, received '{}'",
             update.status.as_str()
         )));
@@ -364,7 +365,7 @@ pub async fn complete_task(
     let (update, event, artifact) = completion.into_parts();
     let (claimed, update) = state_update(update)?;
     if !update.status.is_terminal() {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Task completion requires a terminal status, received '{}'",
             update.status.as_str()
         )));
@@ -388,7 +389,7 @@ pub async fn complete_task(
         )
     );
     if !artifact_matches {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Task completion artifact does not match task kind '{}'",
             kind.as_str()
         )));
@@ -442,7 +443,7 @@ pub(super) async fn complete_task_on_connection(
 ) -> Result<TaskRow, PostgresStorageError> {
     let (claimed, update) = state_update(update)?;
     if !update.status.is_terminal() {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Task completion requires a terminal status, received '{}'",
             update.status.as_str()
         )));
@@ -733,7 +734,7 @@ fn state_update(
 
 pub(super) fn claimed_task(lease: &StorageTaskLease) -> Result<ClaimedTask, PostgresStorageError> {
     let token = Uuid::parse_str(lease.token().adapter_value()).map_err(|_| {
-        PostgresStorageError::bad_request("Task claim token is not valid for this backend")
+        PostgresStorageError::invalid_input("Task claim token is not valid for this backend")
     })?;
     Ok(ClaimedTask {
         id: lease.task_id().id(),
@@ -748,7 +749,7 @@ fn validate_lease_duration(
     if milliseconds > 0 {
         Ok(milliseconds)
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "Task lease duration must be greater than zero",
         ))
     }

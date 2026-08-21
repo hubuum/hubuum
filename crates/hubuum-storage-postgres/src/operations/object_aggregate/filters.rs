@@ -46,7 +46,7 @@ macro_rules! apply_object_aggregate_source_filters {
                 }
                 hubuum_query::FilterField::Permissions => {}
                 _ => {
-                    return Err($crate::PostgresStorageError::bad_request(format!(
+                    return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for objects",
                         param.field
                     )));

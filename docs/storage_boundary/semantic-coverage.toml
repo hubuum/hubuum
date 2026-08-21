@@ -36,7 +36,7 @@ source = "crates/hubuum-storage-core/src/identity.rs"
 methods = ["authenticate_bearer_token", "get_authentication_identity", "get_authentication_token_scope"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_authentication_projections"]
 
-[traits.BootstrapStorage]
+[traits.LocalIdentityCredentialStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
 methods = ["is_default_admin_bootstrap_required", "bootstrap_default_admin", "reset_local_password"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
@@ -48,12 +48,12 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.IdentityMembershipStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
-methods = ["get_principal_group", "list_principal_groups", "list_groups", "list_retained_tokens", "is_human_owner_group_member"]
+methods = ["get_principal_group", "list_principal_groups", "is_human_owner_group_member"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.ServiceAccountStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
-methods = ["is_principal_disabled", "get_service_account", "get_service_account_point", "list_manageable_service_accounts", "create_service_account", "update_service_account", "disable_service_account", "delete_service_account"]
+methods = ["is_service_account_disabled", "get_service_account", "get_service_account_point", "list_manageable_service_accounts", "create_service_account", "update_service_account", "disable_service_account", "delete_service_account"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.ExternalIdentityStorage]
@@ -68,12 +68,12 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.TokenStorage]
 source = "crates/hubuum-storage-core/src/identity_tokens.rs"
-methods = ["create_token", "renew_token", "get_token_metadata", "get_token_metadata_batch", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
+methods = ["list_retained_tokens", "create_token", "renew_token", "get_token_metadata", "get_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
-[traits.AuthorizationStorage]
+[traits.AuthorizationDataStorage]
 source = "crates/hubuum-storage-core/src/authorization.rs"
-methods = ["get_authorization_principal", "is_authorization_principal_group_member", "get_authorization_classes", "get_authorization_objects", "authorize_local_collection", "authorize_local_collections", "list_local_authorized_collections", "list_authorization_collection_candidates", "list_authorization_group_candidates", "get_authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "get_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
+methods = ["get_authorization_principal", "is_authorization_principal_group_member", "list_authorization_classes", "list_authorization_objects", "authorize_local_collection", "authorize_local_collections", "list_local_authorized_collections", "list_authorization_collection_candidates", "list_authorization_group_candidates", "get_authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "get_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
 
 [traits.CatalogStorage]
@@ -81,10 +81,10 @@ source = "crates/hubuum-storage-core/src/catalog.rs"
 methods = ["list_collections", "list_classes", "list_objects"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_catalog_queries"]
 
-[traits.ComputedFieldLifecycleStorage]
-source = "crates/hubuum-storage-core/src/computed_field_lifecycle.rs"
+[traits.ComputedFieldStorage]
+source = "crates/hubuum-storage-core/src/computed_fields.rs"
 methods = ["get_computed_field_state", "list_shared_computed_fields", "list_personal_computed_fields", "get_computed_field", "create_shared_computed_field", "update_shared_computed_field", "delete_shared_computed_field", "create_personal_computed_field", "update_personal_computed_field", "delete_personal_computed_field", "request_computed_field_rebuild", "execute_computed_field_rebuild"]
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_field_lifecycle"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_fields"]
 
 [traits.ComputedObjectStorage]
 source = "crates/hubuum-storage-core/src/computed_objects.rs"
@@ -106,7 +106,7 @@ source = "crates/hubuum-storage-core/src/event_administration.rs"
 methods = ["list_audit_events"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
 
-[traits.EventSubscriptionStorage]
+[traits.EventConfigurationStorage]
 source = "crates/hubuum-storage-core/src/event_administration.rs"
 methods = ["count_enabled_event_sinks", "list_event_sinks", "get_event_sink", "create_event_sink", "update_event_sink", "delete_event_sink", "list_event_subscriptions", "get_event_subscription", "create_event_subscription", "update_event_subscription", "delete_event_subscription"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
@@ -116,7 +116,7 @@ source = "crates/hubuum-storage-core/src/event_administration.rs"
 methods = ["list_event_deliveries", "get_event_delivery", "release_event_delivery_for_retry", "mark_event_delivery_dead"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
 
-[traits.EventDeliveryStorage]
+[traits.EventDeliveryWorkerStorage]
 source = "crates/hubuum-storage-core/src/events.rs"
 methods = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http"]
@@ -169,16 +169,16 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.GroupStorage]
 source = "crates/hubuum-storage-core/src/identity_resources.rs"
-methods = ["get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group", "list_group_members", "list_group_members_page", "count_group_members", "get_group_member_principal", "add_group_member", "remove_group_member"]
+methods = ["list_groups", "get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group", "list_group_members", "list_group_members_page", "count_group_members", "get_group_member_principal", "add_group_member", "remove_group_member"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
 native_scenarios = ["crates/hubuum-storage-postgres/tests/connection_loss.rs::connection_loss_before_commit_rolls_back_and_pool_recovers"]
 
 [traits.PrincipalStorage]
 source = "crates/hubuum-storage-core/src/identity_resources.rs"
-methods = ["get_principal", "get_principal_settings", "mutate_principal_settings"]
+methods = ["get_principal", "get_principal_settings", "update_principal_settings"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_principal_behavior"]
 
-[traits.CollectionAuthorizationStorage]
+[traits.CollectionAuthorizationQueryStorage]
 source = "crates/hubuum-storage-core/src/collection_authorization.rs"
 methods = ["list_principal_collection_permissions", "list_all_principal_collection_permissions", "list_principal_collection_permissions_page", "list_effective_principal_collection_permissions", "list_visible_collections", "has_group_collection_permission", "list_effective_group_collection_permissions", "list_groups_with_collection_permission", "list_groups_with_collection_permission_page", "list_collection_group_permissions", "list_collection_group_permissions_page", "get_collection_group_permission"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
@@ -249,9 +249,9 @@ variants = ["Validated", "Confirmed", "Succeeded", "Failed", "Expired"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination"]
 
 [enums.StorageComputedFieldVisibility]
-source = "crates/hubuum-storage-core/src/computed_field_lifecycle.rs"
+source = "crates/hubuum-storage-core/src/computed_fields.rs"
 variants = ["Shared", "Personal"]
-scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_field_lifecycle"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_fields"]
 
 [enums.StorageRelatedDirection]
 source = "crates/hubuum-storage-core/src/relation_query.rs"

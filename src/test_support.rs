@@ -22,7 +22,8 @@ use crate::models::{
 };
 use crate::services::Services;
 use crate::storage::{
-    EventSubscriptionStorage, StorageEventSinkCreate, StorageEventSubscriptionCreate, StorageHandle,
+    EventConfigurationStorage, StorageEventSinkCreate, StorageEventSubscriptionCreate,
+    StorageHandle,
 };
 use crate::traits::PrincipalIdAccessor;
 use hubuum_storage_postgres::{PostgresPool, PostgresStorage};

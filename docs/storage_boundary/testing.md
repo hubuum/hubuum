@@ -144,7 +144,7 @@ The suite covers these family-level behaviors:
 | `domain_lifecycle` | Lifecycle service contracts, record compatibility operations, and cross-family transaction commit/rollback |
 | `catalog_queries` | Collection, class, and object listing with real matching rows |
 | `computed_object_queries` | Computed filtering and enrichment |
-| `computed_field_lifecycle` | Shared and personal definitions, class state, scheduling, and claimed rebuild execution |
+| `computed_fields` | Shared and personal definitions, class state, scheduling, and claimed rebuild execution |
 | `object_aggregates` | Storage-pushdown and delegated authorization modes |
 | `relation_queries` | Lists, endpoint sets, graph traversal, exclusions, and multi-root expansion |
 | `identity_and_authorization_data` | Authentication projections, scopes, users, service accounts, tokens, groups, memberships, local decisions, grants, and policy snapshots |

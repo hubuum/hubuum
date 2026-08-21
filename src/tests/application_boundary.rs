@@ -138,23 +138,23 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "ClassRelationStorage",
     "ObjectRelationStorage",
     "AuthenticationStorage",
-    "BootstrapStorage",
+    "LocalIdentityCredentialStorage",
     "IdentityScopeStorage",
     "IdentityMembershipStorage",
     "ServiceAccountStorage",
     "ExternalIdentityStorage",
     "UserStorage",
     "TokenStorage",
-    "AuthorizationStorage",
+    "AuthorizationDataStorage",
     "CatalogStorage",
-    "ComputedFieldLifecycleStorage",
+    "ComputedFieldStorage",
     "ComputedObjectStorage",
     "ObjectAggregateStorage",
     "RelationQueryStorage",
     "AuditEventStorage",
-    "EventSubscriptionStorage",
+    "EventConfigurationStorage",
     "EventDeliveryAdministrationStorage",
-    "EventDeliveryStorage",
+    "EventDeliveryWorkerStorage",
     "EventFanoutStorage",
     "EventHealthStorage",
     "EventRetentionStorage",
@@ -166,7 +166,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "UnifiedSearchStorage",
     "GroupStorage",
     "PrincipalStorage",
-    "CollectionAuthorizationStorage",
+    "CollectionAuthorizationQueryStorage",
     "RemoteTargetStorage",
     "TaskQueueStorage",
     "TaskExecutionStorage",
@@ -520,27 +520,31 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
     ] {
         for (offset, _) in source.match_indices(marker) {
             let call = &source[offset + marker.len()..];
-            let quoted = call
-                .split('"')
-                .skip(1)
-                .step_by(2)
-                .take(2)
-                .collect::<Vec<_>>();
-            assert_eq!(
-                quoted.len(),
-                2,
-                "storage observer must have static capability and operation labels"
+            let capability_marker = "StorageCapability::";
+            let capability_start = call.find(capability_marker).unwrap_or_else(|| {
+                panic!("storage observer must use a typed StorageCapability label")
+            }) + capability_marker.len();
+            let capability = call[capability_start..]
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric())
+                .collect::<String>();
+            assert!(
+                !capability.is_empty(),
+                "storage capability variant is missing"
             );
-            let pair = (quoted[0].to_string(), quoted[1].to_string());
-            for label in [&pair.0, &pair.1] {
-                assert!(
-                    !label.is_empty()
-                        && label
-                            .bytes()
-                            .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
-                    "storage observation label must be bounded snake_case: {label}"
-                );
-            }
+            let operation = call[capability_start + capability.len()..]
+                .split('"')
+                .nth(1)
+                .expect("storage observer must use a static operation label")
+                .to_string();
+            assert!(
+                !operation.is_empty()
+                    && operation
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+                "storage operation label must be bounded snake_case: {operation}"
+            );
+            let pair = (capability, operation);
             assert!(
                 labels.insert(pair.clone()),
                 "duplicate storage observation label pair: {}/{}",
@@ -1887,10 +1891,10 @@ fn computed_object_queries_are_owned_by_the_postgres_adapter() {
 }
 
 #[test]
-fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
+fn computed_fields_are_owned_by_the_postgres_adapter() {
     let root = repository_root();
     let adapter_path =
-        root.join("crates/hubuum-storage-postgres/src/operations/computed_lifecycle.rs");
+        root.join("crates/hubuum-storage-postgres/src/operations/computed_fields.rs");
     let adapter = read_source(&adapter_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", adapter_path.display()));
     for forbidden in [
@@ -1928,11 +1932,7 @@ fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
     let facade_path = root.join("crates/hubuum-storage-postgres/src/backend/computed_fields.rs");
     let facade = read_source(&facade_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
-    let implementation = item_body(
-        &facade,
-        "impl",
-        "ComputedFieldLifecycleStorage for PostgresStorage",
-    );
+    let implementation = item_body(&facade, "impl", "ComputedFieldStorage for PostgresStorage");
     for method in [
         "get_computed_field_state",
         "list_shared_computed_fields",
@@ -1949,7 +1949,7 @@ fn computed_field_lifecycle_is_owned_by_the_postgres_adapter() {
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
-            method_body.contains("postgres_computed_lifecycle::"),
+            method_body.contains("postgres_computed_fields::"),
             "the {method} computed-field implementation must delegate into the adapter crate"
         );
         for forbidden in ["self.pool", "operations::computed_field", "_to_storage"] {
@@ -2088,7 +2088,7 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
     let implementation = item_body(
         &capability,
         "impl",
-        "CollectionAuthorizationStorage for PostgresStorage",
+        "CollectionAuthorizationQueryStorage for PostgresStorage",
     );
     for method in [
         "list_principal_collection_permissions",
@@ -2360,7 +2360,7 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
         "impl",
         "ServiceAccountStorage for PostgresStorage",
     );
-    let method = "is_principal_disabled";
+    let method = "is_service_account_disabled";
     let method_body = item_body(service_accounts, "fn", method);
     assert!(
         method_body.contains("crate::operations::identity_principals"),
@@ -2503,7 +2503,7 @@ fn principal_resources_are_owned_by_the_postgres_adapter() {
     for method in [
         "get_principal",
         "get_principal_settings",
-        "mutate_principal_settings",
+        "update_principal_settings",
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
@@ -2545,6 +2545,7 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     let implementation = item_body(&capability, "impl", "GroupStorage for PostgresStorage");
     for method in [
         "get_group",
+        "list_groups",
         "resolve_group_identity_scope_name",
         "create_group",
         "update_group",
@@ -2580,17 +2581,16 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         "impl",
         "IdentityMembershipStorage for PostgresStorage",
     );
-    for method in ["list_principal_groups", "list_groups"] {
-        let method_body = item_body(identity_implementation, "fn", method);
-        assert!(
-            method_body.contains("crate::operations::group"),
-            "the {method} implementation must delegate into the adapter crate"
-        );
-        assert!(
-            !method_body.contains("&self.pool"),
-            "the {method} implementation must not expose the PostgreSQL pool"
-        );
-    }
+    let method = "list_principal_groups";
+    let method_body = item_body(identity_implementation, "fn", method);
+    assert!(
+        method_body.contains("crate::operations::group"),
+        "the {method} implementation must delegate into the adapter crate"
+    );
+    assert!(
+        !method_body.contains("&self.pool"),
+        "the {method} implementation must not expose the PostgreSQL pool"
+    );
 
     assert!(!root.join("src/storage/postgres").exists());
 }
@@ -2672,10 +2672,11 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
         "create_token",
         "renew_token",
         "get_token_metadata",
-        "get_token_metadata_batch",
+        "get_token_metadata_by_ids",
         "revoke_token",
         "revoke_token_by_hash",
         "revoke_all_principal_tokens",
+        "list_retained_tokens",
     ] {
         let method_body = item_body(token_implementation, "fn", method);
         assert!(
@@ -2687,15 +2688,6 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
             "the {method} implementation must not expose the PostgreSQL pool"
         );
     }
-
-    let identity_implementation = item_body(
-        &capability,
-        "impl",
-        "IdentityMembershipStorage for PostgresStorage",
-    );
-    let list_body = item_body(identity_implementation, "fn", "list_retained_tokens");
-    assert!(list_body.contains("crate::operations::token"));
-    assert!(!list_body.contains("&self.pool"));
 
     assert!(!root.join("src/storage/postgres").exists());
 }
@@ -2800,4 +2792,39 @@ fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
         library_source.contains("#[doc(hidden)]\npub mod storage;"),
         "the internal root storage module must remain hidden from generated API documentation"
     );
+}
+
+#[test]
+fn actix_http2_stays_disabled_until_its_h2_dependency_is_fixed() {
+    let manifest_path = repository_root().join("Cargo.toml");
+    let source = read_source(&manifest_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", manifest_path.display()));
+    let manifest = toml::from_str::<toml::Value>(&source).expect("root manifest should be valid");
+    let dependencies = manifest
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .expect("root manifest should have dependencies");
+
+    for dependency in ["actix-web", "actix-http"] {
+        let settings = dependencies
+            .get(dependency)
+            .and_then(toml::Value::as_table)
+            .unwrap_or_else(|| panic!("{dependency} should use explicit dependency settings"));
+        assert_eq!(
+            settings
+                .get("default-features")
+                .and_then(toml::Value::as_bool),
+            Some(false),
+            "{dependency} default features would re-enable vulnerable h2 0.3"
+        );
+        assert!(
+            settings
+                .get("features")
+                .and_then(toml::Value::as_array)
+                .is_none_or(|features| features
+                    .iter()
+                    .all(|feature| feature.as_str() != Some("http2"))),
+            "{dependency} must not enable HTTP/2 while Actix depends on vulnerable h2 0.3"
+        );
+    }
 }

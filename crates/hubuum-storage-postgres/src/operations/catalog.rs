@@ -58,7 +58,8 @@ pub async fn list_collections(
         .visibility()
         .allows_permissions(&[AuthorizationPermission::ReadCollection])
     {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     let (options, visibility) = query.into_parts();
@@ -89,7 +90,7 @@ pub async fn list_collections(
                 .map(CollectionCatalogRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -110,7 +111,8 @@ pub async fn list_classes(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -146,7 +148,7 @@ pub async fn list_classes(
                 .map(|row| class_to_storage(row, &collections))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok::<_, PostgresStorageError>(StoragePage::new(classes, total))
+            StoragePage::try_new(classes, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -167,7 +169,8 @@ pub async fn list_objects(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
     reject_computed_object_query(&options)?;
 
@@ -205,7 +208,7 @@ pub async fn list_objects(
                 .map(ObjectRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -220,7 +223,7 @@ fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresSt
             .iter()
             .any(|sort| sort.field.computed_query().is_some())
     {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "Computed object queries require a resolved query plan",
         ));
     }
@@ -312,7 +315,7 @@ pub(crate) fn apply_object_filters<'query>(
             }
             FilterField::Permissions => {}
             other => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{other}' isn't searchable (or does not exist) for objects"
                 )));
             }
@@ -376,7 +379,7 @@ pub(crate) fn object_cursor_field(
             nullable: false,
         },
         other => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{other}' is not orderable for objects"
             )));
         }
@@ -451,7 +454,7 @@ fn apply_class_filters<'query>(
             }
             FilterField::Permissions => {}
             other => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{other}' isn't searchable (or does not exist) for classes"
                 )));
             }
@@ -504,7 +507,7 @@ fn class_cursor_fields(
                     nullable: false,
                 },
                 ref other => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{other}' is not orderable for classes"
                     )));
                 }
@@ -633,7 +636,7 @@ fn apply_collection_filters<'query>(
             }
             FilterField::Permissions => {}
             other => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{other}' isn't searchable (or does not exist) for collections"
                 )));
             }
@@ -650,7 +653,7 @@ fn validate_permission_filters(
         .filter(|parameter| parameter.field == FilterField::Permissions)
         .map(|parameter| {
             AuthorizationPermission::from_name(&parameter.value)
-                .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
         })
         .collect()
 }
@@ -694,7 +697,7 @@ fn collection_cursor_fields(
                     nullable: false,
                 },
                 ref other => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{other}' is not orderable for collections"
                     )));
                 }

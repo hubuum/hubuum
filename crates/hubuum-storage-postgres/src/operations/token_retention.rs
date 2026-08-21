@@ -140,7 +140,7 @@ pub async fn purge_expired_tokens_at(
 ) -> Result<usize, PostgresStorageError> {
     let cutoffs = settings
         .cutoffs(now)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let batch_size = settings.batch_size().as_i64();
 
     runtime
@@ -524,7 +524,7 @@ fn resource_scope_snapshot(
     id: i32,
 ) -> Result<serde_json::Value, PostgresStorageError> {
     if id <= 0 {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Invalid {kind} ID: expected a positive integer"
         )));
     }

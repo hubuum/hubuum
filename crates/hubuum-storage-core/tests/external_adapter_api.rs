@@ -84,12 +84,13 @@ fn query_options_are_readable_and_mutable_without_exposing_their_representation(
 #[test]
 fn principal_records_expose_typed_identity_through_accessors() {
     let timestamp = NaiveDateTime::default();
-    let metadata = StorageRecordMetadata::new(
+    let metadata = StorageRecordMetadata::try_new(
         ResourceId::new(7).unwrap(),
-        timestamp,
-        timestamp,
+        timestamp.and_utc(),
+        timestamp.and_utc(),
         ResourceRevision::INITIAL,
-    );
+    )
+    .unwrap();
     let principal = StoragePrincipal::builder(
         metadata,
         "user",

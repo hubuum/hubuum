@@ -324,7 +324,7 @@ pub async fn list_event_sinks(
                 .into_iter()
                 .map(StorageEventSink::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -502,7 +502,7 @@ pub async fn list_event_subscriptions(
                 .into_iter()
                 .map(StorageEventSubscription::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -800,7 +800,7 @@ fn build_event_sink_query(
                 crate::postgres_revision_filter!(query, parameter, revision)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for event sinks",
                     parameter.field
                 )));
@@ -835,7 +835,7 @@ fn build_event_subscription_query(
                 crate::postgres_revision_filter!(query, parameter, revision)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for event subscriptions",
                     parameter.field
                 )));
@@ -853,7 +853,7 @@ fn event_sink_cursor_field(field: &FilterField) -> Result<CursorSqlField, Postgr
         FilterField::CreatedAt => cursor_field("event_sinks.created_at", CursorSqlType::DateTime),
         FilterField::Revision => cursor_field("event_sinks.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for event sinks"
             )));
         }
@@ -873,7 +873,7 @@ fn event_subscription_cursor_field(
             cursor_field("event_subscriptions.revision", CursorSqlType::BigInt)
         }
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for event subscriptions"
             )));
         }

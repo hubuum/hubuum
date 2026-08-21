@@ -19354,7 +19354,8 @@
           },
           "created_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "RFC 3339 creation instant in UTC."
           },
           "history": {
             "oneOf": [
@@ -19380,7 +19381,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only logical snapshots. Backup version 4 defines one\ncanonical row shape per section; the PostgreSQL restore adapter maps those\nshapes to its tables. Other selectable adapters must project to and restore\nfrom the same format. These are versioned disaster-recovery internals, not\nportable import data.",
+        "description": "Privileged, restore-only logical snapshots. Backup version 5 identifies\nsections by stable Hubuum resources rather than PostgreSQL tables. Each\nstorage adapter explicitly maps its persistence layout to these versioned\nsections. These are disaster-recovery internals, not portable import data.",
         "required": [
           "sections"
         ],
@@ -19388,7 +19389,8 @@
           "sections": {
             "type": "object"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "BackupManifest": {
         "type": "object",
@@ -19428,7 +19430,8 @@
           "sections": {
             "type": "object"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "BackupTaskDetails": {
         "type": "object",

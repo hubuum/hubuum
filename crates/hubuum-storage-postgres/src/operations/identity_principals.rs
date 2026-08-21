@@ -84,7 +84,7 @@ pub async fn is_human_owner_group_member(
 
 /// Service accounts are disabled when their subtype row carries a timestamp;
 /// human principals and unknown principal ids are not disabled.
-pub async fn is_principal_disabled(
+pub async fn is_service_account_disabled(
     runtime: &PostgresRuntime,
     principal_id: i32,
 ) -> Result<bool, PostgresStorageError> {
@@ -107,7 +107,7 @@ fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }

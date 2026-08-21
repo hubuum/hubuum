@@ -14,7 +14,7 @@ impl HistoryStorage for PostgresStorage {
     async fn list_collection_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<CollectionHistoryRecord>, StorageError> {
+    ) -> Result<StoragePage<CollectionHistoryRecord>, StorageError> {
         crate::operations::history::list_collection_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -32,7 +32,7 @@ impl HistoryStorage for PostgresStorage {
     async fn list_class_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<ClassHistoryRecord>, StorageError> {
+    ) -> Result<StoragePage<ClassHistoryRecord>, StorageError> {
         crate::operations::history::list_class_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -50,7 +50,7 @@ impl HistoryStorage for PostgresStorage {
     async fn list_object_history(
         &self,
         query: ObjectHistoryListQuery,
-    ) -> Result<StorageCountedPage<ObjectHistoryRecord>, StorageError> {
+    ) -> Result<StoragePage<ObjectHistoryRecord>, StorageError> {
         crate::operations::history::list_object_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -68,7 +68,7 @@ impl HistoryStorage for PostgresStorage {
     async fn list_export_template_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<ExportTemplateHistoryRecord>, StorageError> {
+    ) -> Result<StoragePage<ExportTemplateHistoryRecord>, StorageError> {
         crate::operations::history::list_export_template_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -86,7 +86,7 @@ impl HistoryStorage for PostgresStorage {
     async fn list_remote_target_history(
         &self,
         query: HistoryListQuery,
-    ) -> Result<StorageCountedPage<RemoteTargetHistoryRecord>, StorageError> {
+    ) -> Result<StoragePage<RemoteTargetHistoryRecord>, StorageError> {
         crate::operations::history::list_remote_target_history(self.runtime(), query)
             .await
             .map_err(StorageError::from)

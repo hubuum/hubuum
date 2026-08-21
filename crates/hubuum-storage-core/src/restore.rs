@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use serde_json::Value;
 use uuid::Uuid;
@@ -52,23 +52,45 @@ pub struct StorageRestoreInitiator {
     name: String,
 }
 
+/// Named restore-initiator components used by adapters and application mappers.
+pub struct StorageRestoreInitiatorParts {
+    pub principal_id: Option<PrincipalId>,
+    pub identity_scope: String,
+    pub name: String,
+}
+
 impl StorageRestoreInitiator {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         principal_id: Option<PrincipalId>,
         identity_scope: impl Into<String>,
         name: impl Into<String>,
-    ) -> Self {
-        Self {
-            principal_id,
-            identity_scope: identity_scope.into(),
-            name: name.into(),
+    ) -> Result<Self, StorageError> {
+        let identity_scope = identity_scope.into();
+        let name = name.into();
+        if identity_scope.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Restore initiator identity scope must not be empty",
+            ));
         }
+        if name.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Restore initiator name must not be empty",
+            ));
+        }
+        Ok(Self {
+            principal_id,
+            identity_scope,
+            name,
+        })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<PrincipalId>, String, String) {
-        (self.principal_id, self.identity_scope, self.name)
+    pub fn into_parts(self) -> StorageRestoreInitiatorParts {
+        StorageRestoreInitiatorParts {
+            principal_id: self.principal_id,
+            identity_scope: self.identity_scope,
+            name: self.name,
+        }
     }
 }
 
@@ -89,18 +111,34 @@ pub struct StorageRestoreArtifactSummary {
     sha256: String,
 }
 
+/// Named restore-artifact components used by adapters and application mappers.
+pub struct StorageRestoreArtifactSummaryParts {
+    pub byte_size: i64,
+    pub sha256: String,
+}
+
 impl StorageRestoreArtifactSummary {
-    #[must_use]
-    pub fn new(byte_size: i64, sha256: impl Into<String>) -> Self {
-        Self {
-            byte_size,
-            sha256: sha256.into(),
+    pub fn try_new(byte_size: i64, sha256: impl Into<String>) -> Result<Self, StorageError> {
+        let sha256 = sha256.into();
+        if byte_size < 0 {
+            return Err(StorageError::invalid_input(
+                "Restore artifact byte size must not be negative",
+            ));
         }
+        if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(StorageError::invalid_input(
+                "Restore artifact SHA-256 digest must contain exactly 64 hexadecimal characters",
+            ));
+        }
+        Ok(Self { byte_size, sha256 })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i64, String) {
-        (self.byte_size, self.sha256)
+    pub fn into_parts(self) -> StorageRestoreArtifactSummaryParts {
+        StorageRestoreArtifactSummaryParts {
+            byte_size: self.byte_size,
+            sha256: self.sha256,
+        }
     }
 }
 
@@ -117,53 +155,76 @@ impl fmt::Debug for StorageRestoreArtifactSummary {
 /// Durable timestamps attached to a staged restore.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageRestoreTimestamps {
-    expires_at: NaiveDateTime,
-    confirmed_at: Option<NaiveDateTime>,
-    finished_at: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    expires_at: DateTime<Utc>,
+    confirmed_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+/// Named lifecycle timestamps for a staged restore.
+pub struct StorageRestoreTimestampParts {
+    pub expires_at: DateTime<Utc>,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl StorageRestoreTimestamps {
-    #[must_use]
-    pub const fn new(
-        expires_at: NaiveDateTime,
-        confirmed_at: Option<NaiveDateTime>,
-        finished_at: Option<NaiveDateTime>,
-        created_at: NaiveDateTime,
-        updated_at: NaiveDateTime,
-    ) -> Self {
-        Self {
+    pub fn try_new(
+        expires_at: DateTime<Utc>,
+        confirmed_at: Option<DateTime<Utc>>,
+        finished_at: Option<DateTime<Utc>>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Self, StorageError> {
+        if updated_at < created_at {
+            return Err(StorageError::internal(
+                "Persisted restore updated_at must not be earlier than created_at",
+            ));
+        }
+        if confirmed_at.is_some_and(|value| value < created_at) {
+            return Err(StorageError::internal(
+                "Persisted restore confirmed_at must not be earlier than created_at",
+            ));
+        }
+        if finished_at.is_some_and(|value| value < created_at) {
+            return Err(StorageError::internal(
+                "Persisted restore finished_at must not be earlier than created_at",
+            ));
+        }
+        if confirmed_at
+            .zip(finished_at)
+            .is_some_and(|(confirmed, finished)| finished < confirmed)
+        {
+            return Err(StorageError::internal(
+                "Persisted restore finished_at must not be earlier than confirmed_at",
+            ));
+        }
+        Ok(Self {
             expires_at,
             confirmed_at,
             finished_at,
             created_at,
             updated_at,
-        }
+        })
     }
 
     #[must_use]
-    pub const fn expires_at(self) -> NaiveDateTime {
+    pub const fn expires_at(self) -> DateTime<Utc> {
         self.expires_at
     }
 
     #[must_use]
-    pub const fn into_parts(
-        self,
-    ) -> (
-        NaiveDateTime,
-        Option<NaiveDateTime>,
-        Option<NaiveDateTime>,
-        NaiveDateTime,
-        NaiveDateTime,
-    ) {
-        (
-            self.expires_at,
-            self.confirmed_at,
-            self.finished_at,
-            self.created_at,
-            self.updated_at,
-        )
+    pub const fn into_parts(self) -> StorageRestoreTimestampParts {
+        StorageRestoreTimestampParts {
+            expires_at: self.expires_at,
+            confirmed_at: self.confirmed_at,
+            finished_at: self.finished_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
     }
 }
 
@@ -257,7 +318,7 @@ pub struct StorageRestoreStageCreate {
     artifact: StorageRestoreArtifactSummary,
     capability_hash: String,
     validation_summary: Value,
-    expires_at: NaiveDateTime,
+    expires_at: DateTime<Utc>,
 }
 
 impl StorageRestoreStageCreate {
@@ -268,7 +329,7 @@ impl StorageRestoreStageCreate {
         artifact: StorageRestoreArtifactSummary,
         capability_hash: impl Into<String>,
         validation_summary: Value,
-        expires_at: NaiveDateTime,
+        expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
             initiator,
@@ -289,7 +350,7 @@ impl StorageRestoreStageCreate {
         StorageRestoreArtifactSummary,
         String,
         Value,
-        NaiveDateTime,
+        DateTime<Utc>,
     ) {
         (
             self.initiator,
@@ -411,7 +472,7 @@ impl fmt::Debug for StorageRestoreStatus {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRestoreDocumentMetadata {
     backup_version: i32,
-    created_at: NaiveDateTime,
+    created_at: DateTime<Utc>,
     source_version: String,
 }
 
@@ -419,7 +480,7 @@ impl StorageRestoreDocumentMetadata {
     #[must_use]
     pub fn new(
         backup_version: i32,
-        created_at: NaiveDateTime,
+        created_at: DateTime<Utc>,
         source_version: impl Into<String>,
     ) -> Self {
         Self {
@@ -430,7 +491,7 @@ impl StorageRestoreDocumentMetadata {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (i32, NaiveDateTime, String) {
+    pub fn into_parts(self) -> (i32, DateTime<Utc>, String) {
         (self.backup_version, self.created_at, self.source_version)
     }
 }
@@ -498,13 +559,13 @@ impl StorageRestoreApply {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageRestoreCompletion {
-    started_at: NaiveDateTime,
-    finished_at: NaiveDateTime,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
 }
 
 impl StorageRestoreCompletion {
     #[must_use]
-    pub const fn new(started_at: NaiveDateTime, finished_at: NaiveDateTime) -> Self {
+    pub const fn new(started_at: DateTime<Utc>, finished_at: DateTime<Utc>) -> Self {
         Self {
             started_at,
             finished_at,
@@ -512,7 +573,7 @@ impl StorageRestoreCompletion {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (NaiveDateTime, NaiveDateTime) {
+    pub const fn into_parts(self) -> (DateTime<Utc>, DateTime<Utc>) {
         (self.started_at, self.finished_at)
     }
 }
@@ -553,7 +614,7 @@ impl fmt::Debug for StorageRestoreFailure {
 pub struct StorageRestoreCoordinatorSnapshot {
     maintenance_state: MaintenanceState,
     restore_job_id: Option<RestoreJobId>,
-    backend_now: NaiveDateTime,
+    backend_now: DateTime<Utc>,
 }
 
 impl StorageRestoreCoordinatorSnapshot {
@@ -561,7 +622,7 @@ impl StorageRestoreCoordinatorSnapshot {
     pub const fn new(
         maintenance_state: MaintenanceState,
         restore_job_id: Option<RestoreJobId>,
-        backend_now: NaiveDateTime,
+        backend_now: DateTime<Utc>,
     ) -> Self {
         Self {
             maintenance_state,
@@ -581,7 +642,7 @@ impl StorageRestoreCoordinatorSnapshot {
     }
 
     #[must_use]
-    pub const fn backend_now(self) -> NaiveDateTime {
+    pub const fn backend_now(self) -> DateTime<Utc> {
         self.backend_now
     }
 }
@@ -687,7 +748,7 @@ pub trait RestoreStorage: Send + Sync {
     async fn start_restore_draining(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<NaiveDateTime, StorageError>;
+    ) -> Result<DateTime<Utc>, StorageError>;
 
     /// Replace all restorable state with the validated canonical snapshot.
     ///
@@ -734,7 +795,7 @@ pub trait RestoreStorage: Send + Sync {
     /// Return the current generation and live instances newer than the cutoff.
     async fn get_restore_drain_state(
         &self,
-        heartbeat_cutoff: NaiveDateTime,
+        heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError>;
 
     /// Remove this process's coordinator membership during shutdown.
@@ -743,35 +804,51 @@ pub trait RestoreStorage: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
+    use crate::{StorageBackupRow, StorageBackupStateSection};
 
-    fn timestamp() -> NaiveDateTime {
-        chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .expect("valid timestamp")
-            .naive_utc()
+    fn timestamp() -> DateTime<Utc> {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
     }
 
     #[test]
     fn restore_dtos_redact_documents_capabilities_and_identity() {
         let request = StorageRestoreStageCreate::new(
-            StorageRestoreInitiator::new(PrincipalId::new(3).ok(), "secret-scope", "secret-name"),
+            StorageRestoreInitiator::try_new(
+                PrincipalId::new(3).ok(),
+                "secret-scope",
+                "secret-name",
+            )
+            .unwrap(),
             b"secret-document".to_vec(),
-            StorageRestoreArtifactSummary::new(15, "secret-digest"),
+            StorageRestoreArtifactSummary::try_new(15, "a".repeat(64)).unwrap(),
             "secret-capability-hash",
             serde_json::json!({"secret-validation": true}),
             timestamp(),
         );
         let document = StorageRestoreDocument::new(
-            StorageRestoreDocumentMetadata::new(4, timestamp(), "secret-version"),
-            StorageBackupSnapshot::new(
-                BTreeMap::from([(
-                    "secret-section".to_string(),
-                    vec![serde_json::json!({"secret-row": true})],
-                )]),
+            StorageRestoreDocumentMetadata::new(5, timestamp(), "secret-version"),
+            StorageBackupSnapshot::try_new(
+                StorageBackupStateSection::ALL
+                    .iter()
+                    .copied()
+                    .map(|section| {
+                        let rows = if section == StorageBackupStateSection::Classes {
+                            vec![
+                                StorageBackupRow::try_from_value(
+                                    serde_json::json!({"secret-row": true}),
+                                )
+                                .expect("object backup row"),
+                            ]
+                        } else {
+                            Vec::new()
+                        };
+                        (section, rows)
+                    })
+                    .collect(),
                 None,
-            ),
+            )
+            .expect("complete backup snapshot"),
         );
 
         let debug = format!("{request:?} {document:?}");
@@ -783,10 +860,50 @@ mod tests {
             "secret-capability-hash",
             "secret-validation",
             "secret-version",
-            "secret-section",
             "secret-row",
         ] {
             assert!(!debug.contains(secret));
         }
+    }
+
+    #[test]
+    fn restore_initiators_reject_blank_identity_fields() {
+        let error = StorageRestoreInitiator::try_new(None, " ", "operator").unwrap_err();
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn restore_artifacts_reject_malformed_sha256_digests() {
+        let error = StorageRestoreArtifactSummary::try_new(15, "not-a-digest").unwrap_err();
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn restore_timestamps_reject_updates_before_creation() {
+        let error = StorageRestoreTimestamps::try_new(
+            timestamp(),
+            None,
+            None,
+            timestamp(),
+            timestamp() - chrono::Duration::seconds(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+    }
+
+    #[test]
+    fn restore_timestamps_allow_lifecycle_markers_after_the_last_row_update() {
+        let timestamps = StorageRestoreTimestamps::try_new(
+            timestamp() + chrono::Duration::hours(1),
+            Some(timestamp() + chrono::Duration::seconds(1)),
+            Some(timestamp() + chrono::Duration::seconds(2)),
+            timestamp(),
+            timestamp(),
+        );
+
+        assert!(timestamps.is_ok());
     }
 }

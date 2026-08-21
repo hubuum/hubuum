@@ -10,6 +10,7 @@ use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, ResourceRevision};
+use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
     AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef, authorization_collection_from_storage,
     authorization_effective_group_grant_from_storage, authorization_group_from_storage,
@@ -23,7 +24,7 @@ use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
     AuthorizationGroupCollectionQuery, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, CollectionAuthorizationStorage, StorageContext,
+    AuthorizationPrincipalCollectionQuery, CollectionAuthorizationQueryStorage, StorageContext,
     storage_handle,
 };
 use crate::traits::AuthzSubject;
@@ -202,7 +203,7 @@ where
                 rows.into_iter()
                     .map(authorization_group_grant_from_storage)
                     .collect::<Result<Vec<_>, _>>()?,
-                total,
+                total.unwrap_or(SKIPPED_TOTAL_COUNT),
             ))
         })
 }
@@ -380,7 +381,7 @@ where
                 rows.into_iter()
                     .map(authorization_group_from_storage)
                     .collect::<Result<Vec<_>, _>>()?,
-                total,
+                total.unwrap_or(SKIPPED_TOTAL_COUNT),
             ))
         })
 }
@@ -468,7 +469,7 @@ where
                 rows.into_iter()
                     .map(authorization_group_grant_from_storage)
                     .collect::<Result<Vec<_>, _>>()?,
-                total,
+                total.unwrap_or(SKIPPED_TOTAL_COUNT),
             ))
         })
 }
@@ -492,7 +493,7 @@ where
         .await
         .map_err(ApiError::from)?
         .into_parts();
-    Ok(total)
+    Ok(total.unwrap_or(SKIPPED_TOTAL_COUNT))
 }
 
 /// List all permissions for a given group on a collection

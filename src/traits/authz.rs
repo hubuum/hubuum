@@ -12,8 +12,8 @@ use crate::models::{
 use crate::permissions::ResourceRef;
 use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
 use crate::storage::{
-    AuthenticationPrincipal, AuthorizationCollectionsAccessQuery,
-    AuthorizationGroupMembershipQuery, AuthorizationStorage, StorageContext, storage_handle,
+    AuthenticationPrincipal, AuthorizationCollectionsAccessQuery, AuthorizationDataStorage,
+    AuthorizationGroupMembershipQuery, StorageContext, storage_handle,
 };
 
 use super::CollectionAccessors;

@@ -68,7 +68,7 @@ macro_rules! apply_group_filters {
                     crate::schema::groups::revision
                 ),
                 _ => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
                         parameter.field
                     )));
@@ -267,7 +267,7 @@ pub async fn list_principal_groups(
                 .into_iter()
                 .map(GroupRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(groups, total))
+            StoragePage::try_new(groups, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -309,7 +309,7 @@ pub async fn list_groups(
                 .into_iter()
                 .map(GroupRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(groups, total))
+            StoragePage::try_new(groups, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -322,7 +322,7 @@ pub async fn create_group(
     let (identity_scope, name, description) = command.into_parts();
     let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     if identity_scope != LOCAL_IDENTITY_SCOPE {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "groups in non-local identity scopes are managed by their identity provider",
         ));
     }
@@ -644,7 +644,7 @@ async fn ensure_group_allows_local_write(
     if manager == LOCAL_PROVIDER_KIND {
         Ok(())
     } else {
-        Err(PostgresStorageError::forbidden(
+        Err(PostgresStorageError::permission_denied(
             "Provider-managed groups are read-only in Hubuum",
         ))
     }
@@ -843,7 +843,7 @@ fn apply_member_filters<'query>(
                 crate::schema::group_memberships::revision
             ),
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for principals",
                     parameter.field
                 )));
@@ -867,7 +867,7 @@ fn member_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSt
         }
         FilterField::Revision => cursor_field("group_memberships.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for principals"
             )));
         }
@@ -885,7 +885,7 @@ fn group_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSto
         FilterField::UpdatedAt => cursor_field("groups.updated_at", CursorSqlType::DateTime),
         FilterField::Revision => cursor_field("groups.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for groups"
             )));
         }
@@ -936,7 +936,7 @@ fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }

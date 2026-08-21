@@ -16,11 +16,16 @@ impl TransactionStorage for StorageHandle {
             + Send,
         R: Send,
     {
-        self.observe_storage_call(self.backend_name(), "transactions", "run", async {
-            dispatch_backend!(self, |backend| {
-                backend.with_transaction(event_context, operation).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Transactions,
+            "run",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.with_transaction(event_context, operation).await
+                })
+            },
+        )
         .await
     }
 }

@@ -301,8 +301,8 @@ impl StorageCollection {
             id: CollectionId::from(metadata.id()),
             name: name.into(),
             description: description.into(),
-            created_at: metadata.created_at(),
-            updated_at: metadata.updated_at(),
+            created_at: metadata.created_at().naive_utc(),
+            updated_at: metadata.updated_at().naive_utc(),
             parent_collection_id,
             revision: metadata.revision(),
         }
@@ -491,8 +491,8 @@ impl StorageClassBuilder {
             json_schema: self.json_schema,
             validate_schema: self.validate_schema,
             description: self.description,
-            created_at: self.metadata.created_at(),
-            updated_at: self.metadata.updated_at(),
+            created_at: self.metadata.created_at().naive_utc(),
+            updated_at: self.metadata.updated_at().naive_utc(),
             revision: self.metadata.revision(),
         }
     }
@@ -546,8 +546,8 @@ impl StorageObject {
             class_id,
             data,
             description: description.into(),
-            created_at: metadata.created_at(),
-            updated_at: metadata.updated_at(),
+            created_at: metadata.created_at().naive_utc(),
+            updated_at: metadata.updated_at().naive_utc(),
             revision: metadata.revision(),
         }
     }

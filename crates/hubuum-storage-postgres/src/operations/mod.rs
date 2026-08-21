@@ -8,7 +8,7 @@ pub mod catalog;
 pub mod class;
 pub mod collection;
 pub(crate) mod computed_definition;
-pub mod computed_lifecycle;
+pub mod computed_fields;
 pub mod computed_materialization;
 pub mod computed_objects;
 pub(crate) mod dynamic_sql;

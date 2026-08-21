@@ -105,12 +105,13 @@ fn timestamp() -> NaiveDateTime {
 
 fn collection(id: i32, parent_collection_id: Option<i32>) -> StorageCollection {
     StorageCollection::new(
-        StorageRecordMetadata::new(
+        StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("benchmark resource id should be valid"),
-            timestamp(),
-            timestamp(),
+            timestamp().and_utc(),
+            timestamp().and_utc(),
             ResourceRevision::INITIAL,
-        ),
+        )
+        .expect("benchmark timestamps should be ordered"),
         format!("collection-{id}"),
         "deterministic benchmark collection",
         parent_collection_id

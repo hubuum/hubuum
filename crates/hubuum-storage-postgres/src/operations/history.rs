@@ -7,8 +7,8 @@ use hubuum_storage_core::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPrincipalName,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    StorageClassRecord, StorageCollection, StorageCountedPage, StorageExportTemplate,
-    StorageExportTemplateDefinition, StorageObject, StorageRemoteTarget,
+    StorageClassRecord, StorageCollection, StorageExportTemplate, StorageExportTemplateDefinition,
+    StorageHistoryOperation, StorageObject, StoragePage, StorageRemoteTarget,
     StorageRemoteTargetDefinition, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
@@ -16,8 +16,6 @@ use serde_json::Value;
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
-
-const SKIPPED_TOTAL_COUNT: i64 = -1;
 
 #[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::collections_history)]
@@ -146,13 +144,13 @@ macro_rules! metadata {
     ($row:expr) => {{
         let row = &$row;
         Ok::<_, PostgresStorageError>(
-            HistoryMetadata::new(
-                row.op.clone(),
+            HistoryMetadata::try_new(
+                history_operation(&row.op)?,
                 row.valid_from,
                 row.valid_to,
                 HistoryRecordId::new(row.history_id)?,
                 row.revision.into_domain(),
-            )
+            )?
             .actor(
                 row.actor_id.map(PrincipalId::new).transpose()?,
                 row.actor_kind.clone(),
@@ -161,6 +159,17 @@ macro_rules! metadata {
             .task_id(row.task_id.map(TaskId::new).transpose()?),
         )
     }};
+}
+
+fn history_operation(value: &str) -> Result<StorageHistoryOperation, PostgresStorageError> {
+    match value {
+        "I" => Ok(StorageHistoryOperation::Create),
+        "U" => Ok(StorageHistoryOperation::Update),
+        "D" => Ok(StorageHistoryOperation::Delete),
+        _ => Err(PostgresStorageError::database(format!(
+            "Invalid persisted history operation '{value}'"
+        ))),
+    }
 }
 
 impl TryFrom<CollectionHistoryRow> for CollectionHistoryRecord {
@@ -255,19 +264,19 @@ impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
             })?;
         let definition = StorageRemoteTargetDefinition::new(
             row.description,
-            StorageRemoteTargetTransport::new(
+            StorageRemoteTargetTransport::try_new(
                 row.method,
                 row.url_template,
                 row.headers_template,
                 row.body_template,
                 row.auth_config,
                 row.timeout_ms,
-            ),
-            StorageRemoteTargetPolicy::new(
+            )?,
+            StorageRemoteTargetPolicy::try_new(
                 row.class_id.map(ClassId::new).transpose()?,
                 allowed_subject_types,
                 row.enabled,
-            ),
+            )?,
         );
         let record = StorageRemoteTarget::new(
             record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
@@ -326,7 +335,7 @@ fn history_cursor_fields(
                 FilterField::HistoryId => "history_id",
                 FilterField::Revision => "revision",
                 ref field => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{field}' is not orderable for history"
                     )));
                 }
@@ -343,7 +352,7 @@ fn history_cursor_fields(
 fn validate_history_filters(options: &QueryOptions) -> Result<(), PostgresStorageError> {
     for parameter in options.filters() {
         if parameter.field != FilterField::Revision {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{}' is not searchable for history",
                 parameter.field
             )));
@@ -374,7 +383,7 @@ macro_rules! history_operations {
         pub async fn $list_fn(
             runtime: &PostgresRuntime,
             query: HistoryListQuery,
-        ) -> Result<StorageCountedPage<$record>, PostgresStorageError> {
+        ) -> Result<StoragePage<$record>, PostgresStorageError> {
             let (entity_id, options, scope) = query.into_parts();
             let visible_collection_ids = visible_collection_ids(&scope);
             validate_history_filters(&options)?;
@@ -393,9 +402,9 @@ macro_rules! history_operations {
                         crate::postgres_revision_filter!(count_query, parameter, revision);
                     }
                     let total = if options.include_total() {
-                        count_query.count().get_result::<i64>(connection).await?
+                        Some(count_query.count().get_result::<i64>(connection).await?)
                     } else {
-                        SKIPPED_TOTAL_COUNT
+                        None
                     };
 
                     let mut records = crate::schema::$table::table
@@ -414,7 +423,7 @@ macro_rules! history_operations {
                         .into_iter()
                         .map(<$record>::try_from)
                         .collect::<Result<Vec<_>, _>>()?;
-                    Ok::<_, PostgresStorageError>(StorageCountedPage::new(rows, total))
+                    StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
                 })
                 .await
         }
@@ -488,7 +497,7 @@ history_operations!(
 pub async fn list_object_history(
     runtime: &PostgresRuntime,
     query: ObjectHistoryListQuery,
-) -> Result<StorageCountedPage<ObjectHistoryRecord>, PostgresStorageError> {
+) -> Result<StoragePage<ObjectHistoryRecord>, PostgresStorageError> {
     let (object_id, class_id, options, scope) = query.into_parts();
     let visible_collection_ids = visible_collection_ids(&scope);
     validate_history_filters(&options)?;
@@ -508,9 +517,9 @@ pub async fn list_object_history(
                 crate::postgres_revision_filter!(count_query, parameter, history::revision);
             }
             let total = if options.include_total() {
-                count_query.count().get_result::<i64>(connection).await?
+                Some(count_query.count().get_result::<i64>(connection).await?)
             } else {
-                SKIPPED_TOTAL_COUNT
+                None
             };
 
             let mut records = history::hubuumobject_history
@@ -530,7 +539,7 @@ pub async fn list_object_history(
                 .into_iter()
                 .map(ObjectHistoryRecord::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StorageCountedPage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }

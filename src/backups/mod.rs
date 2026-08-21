@@ -69,11 +69,11 @@ impl BackupSettings {
 fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> BackupManifest {
     let mut item_counts = BTreeMap::new();
     for (name, rows) in &state.sections {
-        item_counts.insert(name.clone(), rows.len() as i64);
+        item_counts.insert(name.as_str().to_string(), rows.len() as i64);
     }
     if let Some(history) = history {
         for (name, rows) in &history.sections {
-            item_counts.insert(format!("history.{name}"), rows.len() as i64);
+            item_counts.insert(format!("history.{}", name.as_str()), rows.len() as i64);
         }
     }
     BackupManifest {
@@ -101,7 +101,7 @@ pub async fn create_backup_document(
     let manifest = build_manifest(&state, history.as_ref());
     Ok(BackupDocument {
         backup_version: CURRENT_BACKUP_VERSION,
-        created_at: Utc::now().naive_utc(),
+        created_at: Utc::now(),
         source_version: env!("CARGO_PKG_VERSION").to_string(),
         state,
         history,

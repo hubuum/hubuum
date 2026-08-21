@@ -489,7 +489,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .mutate_principal_settings(
+            .update_principal_settings(
                 crate::services::storage_boundary::principal_id_to_storage(self.id()),
                 StoragePrincipalSettingsMutation::Replace(settings.as_value().clone()),
                 event_context,
@@ -510,7 +510,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .mutate_principal_settings(
+            .update_principal_settings(
                 crate::services::storage_boundary::principal_id_to_storage(self.id()),
                 StoragePrincipalSettingsMutation::MergePatch(patch.as_value().clone()),
                 event_context,
@@ -530,7 +530,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .mutate_principal_settings(
+            .update_principal_settings(
                 crate::services::storage_boundary::principal_id_to_storage(self.id()),
                 StoragePrincipalSettingsMutation::Reset,
                 event_context,
@@ -552,7 +552,7 @@ where
     C: StorageContext,
 {
     storage_handle(backend)
-        .mutate_principal_settings(
+        .update_principal_settings(
             crate::services::storage_boundary::principal_id_to_storage(principal_id.id()),
             principal_settings_mutation_to_storage(patch)?,
             event_context,

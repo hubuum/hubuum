@@ -9,7 +9,7 @@ use hubuum_domain::{
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{MutationOutcome, StorageCountedPage, StorageError};
+use crate::{MutationOutcome, StorageError, StoragePage};
 
 /// Permission vocabulary persisted by a local authorization store.
 ///
@@ -126,7 +126,7 @@ impl AuthorizationPermission {
         Self::ALL
             .into_iter()
             .find(|permission| permission.as_str() == value)
-            .ok_or_else(|| StorageError::bad_request(format!("Invalid permission: '{value}'")))
+            .ok_or_else(|| StorageError::invalid_input(format!("Invalid permission: '{value}'")))
     }
 }
 
@@ -1147,7 +1147,7 @@ impl fmt::Debug for AuthorizationObjectResource {
 /// local policy-store operations needed by Hubuum's built-in permission
 /// backend.
 #[async_trait]
-pub trait AuthorizationStorage: Send + Sync {
+pub trait AuthorizationDataStorage: Send + Sync {
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
@@ -1158,12 +1158,12 @@ pub trait AuthorizationStorage: Send + Sync {
         query: AuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError>;
 
-    async fn get_authorization_classes(
+    async fn list_authorization_classes(
         &self,
         query: AuthorizationResourceIds,
     ) -> Result<Vec<AuthorizationClassResource>, StorageError>;
 
-    async fn get_authorization_objects(
+    async fn list_authorization_objects(
         &self,
         query: AuthorizationResourceIds,
     ) -> Result<Vec<AuthorizationObjectResource>, StorageError>;
@@ -1199,7 +1199,7 @@ pub trait AuthorizationStorage: Send + Sync {
     async fn list_local_collection_grants(
         &self,
         query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError>;
+    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
 
     async fn get_local_collection_grant(
         &self,

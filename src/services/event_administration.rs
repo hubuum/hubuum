@@ -12,7 +12,7 @@ use crate::models::{
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
 use crate::storage::{
-    AuditEventStorage, EventDeliveryAdministrationStorage, EventSubscriptionStorage,
+    AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageContext,
     StorageEventDelivery, StorageEventDeliveryListQuery, StorageEventSink, StorageEventSinkCreate,
     StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,

@@ -1,6 +1,6 @@
 //! PostgreSQL-owned restore staging and coordinator lifecycle.
 
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::NullableExpressionMethods;
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
@@ -10,17 +10,21 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
 use hubuum_storage_core::{
-    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
-    StorageCallSite, StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus,
-    StorageRestoreJobSummary, StorageRestoreStageCreate, StorageRestoreStatus,
-    StorageRestoreTimestamps,
+    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
+    StorageBackupStateSection, StorageBackupStateSections, StorageCallSite, StorageRestoreApply,
+    StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
+    StorageRestoreInitiatorParts, StorageRestoreInstance, StorageRestoreJob,
+    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageRestoreTimestamps,
 };
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::operations::computed_lifecycle::enqueue_restored_computed_rebuilds_on_connection;
+use crate::operations::backup::{
+    history_row_to_postgres, history_table, state_row_to_postgres, state_table,
+};
+use crate::operations::computed_fields::enqueue_restored_computed_rebuilds_on_connection;
 use crate::operations::event_record::append_event;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError, with_storage_call_site};
 
@@ -198,20 +202,20 @@ fn summary_from_parts(
     Ok(StorageRestoreJobSummary::new(
         RestoreJobId::new(parts.id)?,
         StorageRestoreJobStatus::from_stored(&parts.status)?,
-        StorageRestoreInitiator::new(
+        StorageRestoreInitiator::try_new(
             parts.requested_by.map(PrincipalId::new).transpose()?,
             parts.requested_by_identity_scope,
             parts.requested_by_name,
-        ),
-        StorageRestoreArtifactSummary::new(parts.byte_size, parts.sha256),
+        )?,
+        StorageRestoreArtifactSummary::try_new(parts.byte_size, parts.sha256)?,
         parts.error,
-        StorageRestoreTimestamps::new(
-            parts.expires_at,
-            parts.confirmed_at,
-            parts.finished_at,
-            parts.created_at,
-            parts.updated_at,
-        ),
+        StorageRestoreTimestamps::try_new(
+            parts.expires_at.and_utc(),
+            parts.confirmed_at.map(|value| value.and_utc()),
+            parts.finished_at.map(|value| value.and_utc()),
+            parts.created_at.and_utc(),
+            parts.updated_at.and_utc(),
+        )?,
     ))
 }
 
@@ -278,8 +282,13 @@ pub async fn stage_restore(
 ) -> Result<StorageRestoreJob, PostgresStorageError> {
     let (initiator, document, artifact, capability_hash, validation_summary, expires_at) =
         request.into_parts();
-    let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
-    let (byte_size, sha256) = artifact.into_parts();
+    let StorageRestoreInitiatorParts {
+        principal_id: requested_by,
+        identity_scope: requested_by_identity_scope,
+        name: requested_by_name,
+    } = initiator.into_parts();
+    let hubuum_storage_core::StorageRestoreArtifactSummaryParts { byte_size, sha256 } =
+        artifact.into_parts();
     let input = NewRestoreJobRow {
         status: StorageRestoreJobStatus::Validated.as_str().to_string(),
         requested_by: requested_by.map(|principal_id| principal_id.id()),
@@ -290,7 +299,7 @@ pub async fn stage_restore(
         sha256,
         capability_hash,
         validation_summary,
-        expires_at,
+        expires_at: expires_at.naive_utc(),
     };
     runtime
         .with_connection(async |connection| {
@@ -376,7 +385,7 @@ pub async fn expire_restore_stage(
 pub async fn start_restore_draining(
     runtime: &PostgresRuntime,
     job_id: i64,
-) -> Result<NaiveDateTime, PostgresStorageError> {
+) -> Result<DateTime<Utc>, PostgresStorageError> {
     runtime
         .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
@@ -426,7 +435,7 @@ pub async fn start_restore_draining(
                 Some(connection),
             )
             .await?;
-            Ok(confirmation_time)
+            Ok(confirmation_time.and_utc())
         })
         .await
 }
@@ -519,7 +528,10 @@ pub async fn apply_restore(
 
                 let finished_at = Utc::now().naive_utc();
                 finish_restore(connection, finished_at).await?;
-                Ok(StorageRestoreCompletion::new(started_at, finished_at))
+                Ok(StorageRestoreCompletion::new(
+                    started_at.and_utc(),
+                    finished_at.and_utc(),
+                ))
             },
         )
         .await
@@ -543,8 +555,8 @@ async fn enable_restore_session_settings(
 
 async fn replace_backend_state(
     connection: &mut PostgresConnection,
-    state_sections: &hubuum_storage_core::StorageBackupSections,
-    history_sections: Option<&hubuum_storage_core::StorageBackupSections>,
+    state_sections: &StorageBackupStateSections,
+    history_sections: Option<&StorageBackupHistorySections>,
 ) -> Result<(), PostgresStorageError> {
     for table in TRUNCATE_TABLES {
         validate_restore_identifier(table, None)?;
@@ -559,19 +571,33 @@ async fn replace_backend_state(
     .execute(connection)
     .await?;
 
-    for table in BACKUP_STATE_SECTIONS {
-        let rows = state_sections.get(*table).map(Vec::as_slice).unwrap_or(&[]);
+    for section in StorageBackupStateSection::ALL.iter().copied() {
+        let table = state_table(section);
+        let rows = state_sections
+            .get(&section)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let rows = rows
+            .iter()
+            .cloned()
+            .map(StorageBackupRow::into_value)
+            .map(|row| state_row_to_postgres(section, row))
+            .collect::<Result<Vec<_>, _>>()?;
         insert_restore_rows(connection, table, rows).await?;
     }
     if let Some(history_sections) = history_sections {
-        for table in BACKUP_TEMPORAL_HISTORY_SECTIONS
-            .iter()
-            .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
-        {
+        for section in StorageBackupHistorySection::ALL.iter().copied() {
+            let table = history_table(section);
             let rows = history_sections
-                .get(*table)
+                .get(&section)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let rows = rows
+                .iter()
+                .cloned()
+                .map(StorageBackupRow::into_value)
+                .map(|row| history_row_to_postgres(section, row))
+                .collect::<Result<Vec<_>, _>>()?;
             insert_restore_rows(connection, table, rows).await?;
         }
     }
@@ -590,7 +616,7 @@ async fn replace_backend_state(
 async fn insert_restore_rows(
     connection: &mut PostgresConnection,
     table: &str,
-    rows: &[Value],
+    rows: Vec<Value>,
 ) -> Result<(), PostgresStorageError> {
     validate_restore_identifier(table, None)?;
     if rows.is_empty() {
@@ -600,7 +626,7 @@ async fn insert_restore_rows(
         "INSERT INTO {table} SELECT * FROM jsonb_populate_recordset(NULL::{table}, $1::jsonb)"
     );
     diesel::sql_query(query)
-        .bind::<Jsonb, _>(Value::Array(rows.to_vec()))
+        .bind::<Jsonb, _>(Value::Array(rows))
         .execute(connection)
         .await?;
     Ok(())
@@ -625,12 +651,18 @@ fn validate_restore_identifier(
     table: &str,
     column: Option<&str>,
 ) -> Result<(), PostgresStorageError> {
-    let known_table = BACKUP_STATE_SECTIONS
+    let known_table = StorageBackupStateSection::ALL
         .iter()
-        .chain(BACKUP_TEMPORAL_HISTORY_SECTIONS)
-        .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
-        .chain(TRUNCATE_TABLES)
-        .any(|known| *known == table);
+        .copied()
+        .map(state_table)
+        .chain(
+            StorageBackupHistorySection::ALL
+                .iter()
+                .copied()
+                .map(history_table),
+        )
+        .chain(TRUNCATE_TABLES.iter().copied())
+        .any(|known| known == table);
     let known_column = column.is_none_or(|value| matches!(value, "id" | "history_id"));
     if known_table && known_column {
         Ok(())
@@ -724,7 +756,7 @@ pub async fn get_restore_coordinator_snapshot(
             Ok(StorageRestoreCoordinatorSnapshot::new(
                 maintenance_state,
                 restore_job_id.map(RestoreJobId::new).transpose()?,
-                backend_now,
+                backend_now.and_utc(),
             ))
         })
         .await
@@ -839,7 +871,7 @@ pub async fn tick_restore_coordinator(
                 Ok(StorageRestoreCoordinatorSnapshot::new(
                     maintenance_state,
                     restore_job_id.map(RestoreJobId::new).transpose()?,
-                    backend_now,
+                    backend_now.and_utc(),
                 ))
             })
             .await
@@ -850,8 +882,9 @@ pub async fn tick_restore_coordinator(
 /// Return the current generation and live coordinator instances.
 pub async fn get_restore_drain_state(
     runtime: &PostgresRuntime,
-    heartbeat_cutoff: NaiveDateTime,
+    heartbeat_cutoff: DateTime<Utc>,
 ) -> Result<StorageRestoreDrainState, PostgresStorageError> {
+    let heartbeat_cutoff = heartbeat_cutoff.naive_utc();
     let (generation, instances) = runtime
         .with_connection(async |connection| {
             let generation = crate::schema::system_maintenance::table

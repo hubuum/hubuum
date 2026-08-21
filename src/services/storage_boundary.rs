@@ -201,13 +201,14 @@ pub(crate) fn principal_settings_mutation_to_storage(
 #[cfg(test)]
 pub(crate) fn collection_to_storage(collection: Collection) -> StorageCollection {
     StorageCollection::new(
-        StorageRecordMetadata::new(
+        StorageRecordMetadata::try_new(
             hubuum_domain::ResourceId::new(collection.id)
                 .expect("stored collection id must be positive"),
-            collection.created_at,
-            collection.updated_at,
+            collection.created_at.and_utc(),
+            collection.updated_at.and_utc(),
             collection.revision,
-        ),
+        )
+        .expect("stored collection timestamps must be ordered"),
         collection.name,
         collection.description,
         collection.parent_collection_id.map(|id| {
@@ -288,12 +289,13 @@ pub(crate) fn class_record_from_storage(row: StorageClassRecord) -> Result<Hubuu
 
 pub(crate) fn class_record_to_storage(class: HubuumClass) -> StorageClassRecord {
     StorageClassRecord::builder(
-        StorageRecordMetadata::new(
+        StorageRecordMetadata::try_new(
             hubuum_domain::ResourceId::new(class.id).expect("stored class id must be positive"),
-            class.created_at,
-            class.updated_at,
+            class.created_at.and_utc(),
+            class.updated_at.and_utc(),
             class.revision,
-        ),
+        )
+        .expect("stored class timestamps must be ordered"),
         class.name,
         hubuum_domain::CollectionId::new(class.collection_id)
             .expect("stored class collection id must be positive"),
@@ -390,12 +392,13 @@ pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, Ap
 
 pub(crate) fn object_to_storage(object: HubuumObject) -> StorageObject {
     StorageObject::new(
-        StorageRecordMetadata::new(
+        StorageRecordMetadata::try_new(
             hubuum_domain::ResourceId::new(object.id).expect("stored object id must be positive"),
-            object.created_at,
-            object.updated_at,
+            object.created_at.and_utc(),
+            object.updated_at.and_utc(),
             object.revision,
-        ),
+        )
+        .expect("stored object timestamps must be ordered"),
         object.name,
         hubuum_domain::CollectionId::new(object.collection_id)
             .expect("stored object collection id must be positive"),
@@ -498,13 +501,14 @@ pub(crate) fn object_patch_to_storage(
 
 pub(crate) fn class_relation_to_storage(relation: HubuumClassRelation) -> StorageClassRelation {
     StorageClassRelation::new(
-        StorageRecordMetadata::new(
+        StorageRecordMetadata::try_new(
             hubuum_domain::ResourceId::new(relation.id)
                 .expect("stored class relation id must be positive"),
-            relation.created_at,
-            relation.updated_at,
+            relation.created_at.and_utc(),
+            relation.updated_at.and_utc(),
             relation.revision,
-        ),
+        )
+        .expect("stored class relation timestamps must be ordered"),
         class_id_to_storage(relation.from_hubuum_class_id),
         class_id_to_storage(relation.to_hubuum_class_id),
     )
@@ -630,13 +634,14 @@ pub(crate) fn resolved_class_relation_from_storage(
 
 pub(crate) fn object_relation_to_storage(relation: HubuumObjectRelation) -> StorageObjectRelation {
     StorageObjectRelation::new(
-        StorageRecordMetadata::new(
+        StorageRecordMetadata::try_new(
             hubuum_domain::ResourceId::new(relation.id)
                 .expect("stored object relation id must be positive"),
-            relation.created_at,
-            relation.updated_at,
+            relation.created_at.and_utc(),
+            relation.updated_at.and_utc(),
             relation.revision,
-        ),
+        )
+        .expect("stored object relation timestamps must be ordered"),
         object_id_to_storage(relation.from_hubuum_object_id),
         object_id_to_storage(relation.to_hubuum_object_id),
         class_relation_id_to_storage(relation.class_relation_id),

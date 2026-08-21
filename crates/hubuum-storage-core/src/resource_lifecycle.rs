@@ -153,8 +153,8 @@ impl StorageClassRecordBuilder {
             json_schema: self.json_schema,
             validate_schema: self.validate_schema,
             description: self.description,
-            created_at: self.metadata.created_at(),
-            updated_at: self.metadata.updated_at(),
+            created_at: self.metadata.created_at().naive_utc(),
+            updated_at: self.metadata.updated_at().naive_utc(),
             revision: self.metadata.revision(),
         }
     }

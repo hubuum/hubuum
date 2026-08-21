@@ -178,7 +178,7 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::PermissionDenied => Self::Forbidden(message),
             StorageErrorKind::Internal => Self::InternalServerError(message),
             StorageErrorKind::NotFound => Self::NotFound(message),
-            StorageErrorKind::Unsupported => Self::NotAcceptable(message),
+            StorageErrorKind::UnsupportedOperation => Self::NotAcceptable(message),
             StorageErrorKind::InputTooLarge => Self::PayloadTooLarge(message),
             StorageErrorKind::RevisionConflict => Self::RevisionConflict(
                 message,
@@ -191,7 +191,7 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::RateLimited => Self::TooManyRequests(message),
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
             StorageErrorKind::AuthenticationRequired => Self::Unauthorized(message),
-            StorageErrorKind::Validation => Self::ValidationError(message),
+            StorageErrorKind::ValidationFailed => Self::ValidationError(message),
         }
     }
 }
@@ -479,7 +479,7 @@ mod tests {
             ),
             (StorageError::not_found("collection missing"), "not_found"),
             (
-                StorageError::validation("object schema mismatch"),
+                StorageError::validation_failed("object schema mismatch"),
                 "validation_error",
             ),
             (

@@ -53,7 +53,7 @@ pub struct StorageImportRevision(i64);
 impl StorageImportRevision {
     pub fn new(value: i64) -> Result<Self, StorageError> {
         if value <= 0 {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "import revision must be greater than zero",
             ));
         }
@@ -173,7 +173,7 @@ pub struct StorageImportTimestamps {
 impl StorageImportTimestamps {
     pub fn new(created_at: NaiveDateTime, updated_at: NaiveDateTime) -> Result<Self, StorageError> {
         if updated_at < created_at {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "import updated_at must not be earlier than created_at",
             ));
         }
@@ -727,7 +727,7 @@ impl StorageImportPlan {
         let mut previous_index = None;
         for item in &items {
             if previous_index.is_some_and(|previous| item.index() <= previous) {
-                return Err(StorageError::bad_request(
+                return Err(StorageError::invalid_input(
                     "import plan indexes must be strictly increasing",
                 ));
             }
@@ -962,7 +962,7 @@ impl StorageImportOperation {
                 validate_text(&parts.method, "remote-target method")?;
                 validate_text(&parts.url_template, "remote-target URL template")?;
                 if parts.timeout_ms <= 0 {
-                    return Err(StorageError::bad_request(
+                    return Err(StorageError::invalid_input(
                         "remote-target timeout must be greater than zero",
                     ));
                 }
@@ -1003,7 +1003,7 @@ impl StorageImportOperation {
 
 fn validate_text(value: &str, field: &str) -> Result<(), StorageError> {
     if value.trim().is_empty() {
-        Err(StorageError::bad_request(format!(
+        Err(StorageError::invalid_input(format!(
             "{field} must not be empty"
         )))
     } else {
@@ -1023,10 +1023,10 @@ fn validate_selector<T>(
 ) -> Result<(), StorageError> {
     validate_optional_reference(reference, field)?;
     match (reference.is_some(), key.is_some(), required) {
-        (true, true, _) => Err(StorageError::bad_request(format!(
+        (true, true, _) => Err(StorageError::invalid_input(format!(
             "{field} must use either a ref or a key, not both"
         ))),
-        (false, false, true) => Err(StorageError::bad_request(format!(
+        (false, false, true) => Err(StorageError::invalid_input(format!(
             "{field} requires either a ref or a key"
         ))),
         _ => Ok(()),
@@ -1061,7 +1061,7 @@ fn validate_collection_key(key: &StorageImportCollectionKey) -> Result<(), Stora
         .as_ref()
         .is_some_and(|path| path.iter().any(|segment| segment.trim().is_empty()))
     {
-        return Err(StorageError::bad_request(
+        return Err(StorageError::invalid_input(
             "collection key path segments must not be empty",
         ));
     }

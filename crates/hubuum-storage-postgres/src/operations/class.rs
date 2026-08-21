@@ -244,7 +244,7 @@ pub async fn resolve_class_names(
     class_ids: Vec<i32>,
 ) -> Result<Vec<(i32, String)>, PostgresStorageError> {
     if class_ids.iter().any(|id| *id <= 0) {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "class ids must be greater than zero",
         ));
     }
@@ -258,7 +258,7 @@ pub(crate) async fn class_names_on(
     mut class_ids: Vec<i32>,
 ) -> Result<Vec<(i32, String)>, PostgresStorageError> {
     if class_ids.iter().any(|id| *id <= 0) {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "class ids must be greater than zero",
         ));
     }

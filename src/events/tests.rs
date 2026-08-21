@@ -23,7 +23,8 @@ use crate::models::{
 use crate::storage::{
     RemoteTargetStorage, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
     StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetPatch,
-    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    StorageRemoteTargetPolicy, StorageRemoteTargetTransport, StorageRemoteTargetTransportParts,
+    StorageRemoteTargetUpdate,
 };
 use crate::tests::{TestScope, create_test_user, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate, GroupIdApplicationExt, PermissionController};
@@ -1200,7 +1201,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             scope.scoped_name("event_remote_target"),
             StorageRemoteTargetDefinition::new(
                 "before",
-                StorageRemoteTargetTransport::new(
+                StorageRemoteTargetTransport::try_new(
                     "get",
                     "https://example.invalid/{{ subject.id }}",
                     serde_json::json!({}),
@@ -1211,8 +1212,10 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
                         "secret": "super-secret"
                     }),
                     1000,
-                ),
-                StorageRemoteTargetPolicy::new(None, vec!["collection".to_string()], true),
+                )
+                .unwrap(),
+                StorageRemoteTargetPolicy::try_new(None, vec!["collection".to_string()], true)
+                    .unwrap(),
             ),
             context.clone(),
         ))
@@ -1232,8 +1235,14 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         .into_value();
     let (updated_metadata, collection_id, name, definition) = updated.clone().into_parts();
     let (description, transport, policy) = definition.into_parts();
-    let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
-        transport.into_parts();
+    let StorageRemoteTargetTransportParts {
+        method,
+        url_template,
+        headers_template,
+        body_template,
+        auth_config,
+        timeout_ms,
+    } = transport.into_parts();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     let unchanged = backend
         .update_remote_target(StorageRemoteTargetUpdate::new(

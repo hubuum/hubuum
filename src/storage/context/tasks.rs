@@ -6,16 +6,22 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         request: StorageTaskCreateRequest,
     ) -> Result<StorageTask, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "create", async {
-            dispatch_backend!(self, |backend| backend.create_task(request).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "create",
+            async { dispatch_backend!(self, |backend| backend.create_task(request).await) },
+        )
         .await
     }
 
     async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "get_access", async {
-            dispatch_backend!(self, |backend| { backend.get_task_access(task_id).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "get_access",
+            async { dispatch_backend!(self, |backend| { backend.get_task_access(task_id).await }) },
+        )
         .await
     }
 
@@ -23,9 +29,12 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         query: StorageTaskListQuery,
     ) -> Result<StoragePage<StorageTask>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "list", async {
-            dispatch_backend!(self, |backend| backend.list_tasks(query).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "list",
+            async { dispatch_backend!(self, |backend| backend.list_tasks(query).await) },
+        )
         .await
     }
 
@@ -33,9 +42,12 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         query: StorageTaskPageQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "list_events", async {
-            dispatch_backend!(self, |backend| backend.list_task_events(query).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "list_events",
+            async { dispatch_backend!(self, |backend| backend.list_task_events(query).await) },
+        )
         .await
     }
 
@@ -43,11 +55,16 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         query: StorageTaskPageQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "list_import_results", async {
-            dispatch_backend!(self, |backend| {
-                backend.list_import_task_results(query).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "list_import_results",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_import_task_results(query).await
+                })
+            },
+        )
         .await
     }
 
@@ -55,11 +72,16 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageExportOutputSummary>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "list_export_outputs", async {
-            dispatch_backend!(self, |backend| {
-                backend.list_export_output_summaries(task_ids).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "list_export_outputs",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_export_output_summaries(task_ids).await
+                })
+            },
+        )
         .await
     }
 
@@ -67,11 +89,16 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageBackupOutputSummary>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "list_backup_outputs", async {
-            dispatch_backend!(self, |backend| {
-                backend.list_backup_output_summaries(task_ids).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "list_backup_outputs",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_backup_output_summaries(task_ids).await
+                })
+            },
+        )
         .await
     }
 
@@ -79,11 +106,16 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "get_export_summary", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_export_output_summary(task_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "get_export_summary",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_export_output_summary(task_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -91,11 +123,16 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "get_backup_summary", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_backup_output_summary(task_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "get_backup_summary",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_backup_output_summary(task_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -103,9 +140,14 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "get_export_output", async {
-            dispatch_backend!(self, |backend| { backend.get_export_output(task_id).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "get_export_output",
+            async {
+                dispatch_backend!(self, |backend| { backend.get_export_output(task_id).await })
+            },
+        )
         .await
     }
 
@@ -113,9 +155,14 @@ impl TaskQueueStorage for StorageHandle {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "tasks", "get_backup_output", async {
-            dispatch_backend!(self, |backend| { backend.get_backup_output(task_id).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Tasks,
+            "get_backup_output",
+            async {
+                dispatch_backend!(self, |backend| { backend.get_backup_output(task_id).await })
+            },
+        )
         .await
     }
 }
@@ -126,11 +173,16 @@ impl TaskExecutionStorage for StorageHandle {
         &self,
         lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "task_execution", "claim", async {
-            dispatch_backend!(self, |backend| {
-                backend.claim_next_task(lease_duration).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "claim",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.claim_next_task(lease_duration).await
+                })
+            },
+        )
         .await
     }
 
@@ -141,7 +193,7 @@ impl TaskExecutionStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "task_execution",
+            StorageCapability::TaskExecution,
             "renew_lease",
             async {
                 dispatch_backend!(self, |backend| {
@@ -158,7 +210,7 @@ impl TaskExecutionStorage for StorageHandle {
     ) -> Result<Vec<StorageTask>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "task_execution",
+            StorageCapability::TaskExecution,
             "recover_leases",
             async {
                 dispatch_backend!(self, |backend| {
@@ -172,7 +224,7 @@ impl TaskExecutionStorage for StorageHandle {
     async fn append_task_event(&self, event: StorageTaskEventAppend) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "task_execution",
+            StorageCapability::TaskExecution,
             "append_event",
             async { dispatch_backend!(self, |backend| { backend.append_task_event(event).await }) },
         )
@@ -185,7 +237,7 @@ impl TaskExecutionStorage for StorageHandle {
     ) -> Result<StorageTask, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "task_execution",
+            StorageCapability::TaskExecution,
             "update_state",
             async {
                 dispatch_backend!(self, |backend| { backend.update_task_state(update).await })
@@ -198,23 +250,31 @@ impl TaskExecutionStorage for StorageHandle {
         &self,
         completion: StorageTaskCompletion,
     ) -> Result<StorageTask, StorageError> {
-        self.observe_storage_call(self.backend_name(), "task_execution", "complete", async {
-            dispatch_backend!(self, |backend| { backend.complete_task(completion).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "complete",
+            async {
+                dispatch_backend!(self, |backend| { backend.complete_task(completion).await })
+            },
+        )
         .await
     }
 
     async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError> {
-        self.observe_storage_call(self.backend_name(), "task_execution", "fail", async {
-            dispatch_backend!(self, |backend| backend.fail_task(failure).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "fail",
+            async { dispatch_backend!(self, |backend| backend.fail_task(failure).await) },
+        )
         .await
     }
 
     async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "task_execution",
+            StorageCapability::TaskExecution,
             "purge_export_outputs",
             async {
                 dispatch_backend!(self, |backend| {
@@ -228,7 +288,7 @@ impl TaskExecutionStorage for StorageHandle {
     async fn purge_expired_backup_outputs(&self) -> Result<usize, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "task_execution",
+            StorageCapability::TaskExecution,
             "purge_backup_outputs",
             async {
                 dispatch_backend!(self, |backend| {
@@ -246,11 +306,16 @@ impl BackupSnapshotStorage for StorageHandle {
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
-        self.observe_storage_call(self.backend_name(), "backup_snapshots", "snapshot", async {
-            dispatch_backend!(self, |backend| {
-                backend.create_backup_snapshot(include_history).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::BackupSnapshots,
+            "snapshot",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.create_backup_snapshot(include_history).await
+                })
+            },
+        )
         .await
     }
 }

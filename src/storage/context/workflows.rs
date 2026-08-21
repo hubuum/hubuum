@@ -6,11 +6,16 @@ impl ExportTemplateStorage for StorageHandle {
         &self,
         template_id: ExportTemplateId,
     ) -> Result<StorageExportTemplate, StorageError> {
-        self.observe_storage_call(self.backend_name(), "export_templates", "get", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_export_template(template_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExportTemplates,
+            "get",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_export_template(template_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -18,11 +23,16 @@ impl ExportTemplateStorage for StorageHandle {
         &self,
         query: StorageExportTemplateListQuery,
     ) -> Result<StoragePage<StorageExportTemplate>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "export_templates", "list", async {
-            dispatch_backend!(self, |backend| {
-                backend.list_export_templates(query).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExportTemplates,
+            "list",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_export_templates(query).await
+                })
+            },
+        )
         .await
     }
 
@@ -33,7 +43,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<Vec<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "export_templates",
+            StorageCapability::ExportTemplates,
             "list_in_collection",
             async {
                 dispatch_backend!(self, |backend| {
@@ -52,7 +62,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<Option<CollectionId>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "export_templates",
+            StorageCapability::ExportTemplates,
             "class_collection",
             async {
                 dispatch_backend!(self, |backend| {
@@ -69,11 +79,16 @@ impl ExportTemplateStorage for StorageHandle {
         &self,
         request: StorageExportTemplateCreate,
     ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "export_templates", "create", async {
-            dispatch_backend!(self, |backend| {
-                backend.create_export_template(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExportTemplates,
+            "create",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.create_export_template(request).await
+                })
+            },
+        )
         .await
     }
 
@@ -81,11 +96,16 @@ impl ExportTemplateStorage for StorageHandle {
         &self,
         request: StorageExportTemplateReplace,
     ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "export_templates", "replace", async {
-            dispatch_backend!(self, |backend| {
-                backend.replace_export_template(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExportTemplates,
+            "replace",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.replace_export_template(request).await
+                })
+            },
+        )
         .await
     }
 
@@ -93,11 +113,16 @@ impl ExportTemplateStorage for StorageHandle {
         &self,
         request: StorageExportTemplateDelete,
     ) -> Result<MutationOutcome<()>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "export_templates", "delete", async {
-            dispatch_backend!(self, |backend| {
-                backend.delete_export_template(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExportTemplates,
+            "delete",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.delete_export_template(request).await
+                })
+            },
+        )
         .await
     }
 }
@@ -108,11 +133,16 @@ impl RemoteTargetStorage for StorageHandle {
         &self,
         target_id: RemoteTargetId,
     ) -> Result<StorageRemoteTarget, StorageError> {
-        self.observe_storage_call(self.backend_name(), "remote_targets", "get", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_remote_target(target_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RemoteTargets,
+            "get",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_remote_target(target_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -120,9 +150,14 @@ impl RemoteTargetStorage for StorageHandle {
         &self,
         query: StorageRemoteTargetListQuery,
     ) -> Result<StoragePage<StorageRemoteTarget>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "remote_targets", "list", async {
-            dispatch_backend!(self, |backend| { backend.list_remote_targets(query).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RemoteTargets,
+            "list",
+            async {
+                dispatch_backend!(self, |backend| { backend.list_remote_targets(query).await })
+            },
+        )
         .await
     }
 
@@ -130,11 +165,16 @@ impl RemoteTargetStorage for StorageHandle {
         &self,
         request: StorageRemoteTargetCreate,
     ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "remote_targets", "create", async {
-            dispatch_backend!(self, |backend| {
-                backend.create_remote_target(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RemoteTargets,
+            "create",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.create_remote_target(request).await
+                })
+            },
+        )
         .await
     }
 
@@ -142,11 +182,16 @@ impl RemoteTargetStorage for StorageHandle {
         &self,
         request: StorageRemoteTargetUpdate,
     ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "remote_targets", "update", async {
-            dispatch_backend!(self, |backend| {
-                backend.update_remote_target(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RemoteTargets,
+            "update",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.update_remote_target(request).await
+                })
+            },
+        )
         .await
     }
 
@@ -154,11 +199,16 @@ impl RemoteTargetStorage for StorageHandle {
         &self,
         request: StorageRemoteTargetDelete,
     ) -> Result<MutationOutcome<()>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "remote_targets", "delete", async {
-            dispatch_backend!(self, |backend| {
-                backend.delete_remote_target(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RemoteTargets,
+            "delete",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.delete_remote_target(request).await
+                })
+            },
+        )
         .await
     }
 
@@ -168,7 +218,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "remote_targets",
+            StorageCapability::RemoteTargets,
             "record_invocation",
             async {
                 dispatch_backend!(self, |backend| {
@@ -183,11 +233,16 @@ impl RemoteTargetStorage for StorageHandle {
 #[async_trait]
 impl ImportStorage for StorageHandle {
     async fn get_import_root_collection(&self) -> Result<StorageCollection, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "root_collection", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_import_root_collection().await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "root_collection",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_import_root_collection().await
+                })
+            },
+        )
         .await
     }
 
@@ -195,11 +250,16 @@ impl ImportStorage for StorageHandle {
         &self,
         collection_id: CollectionId,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "collection_by_id", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_import_collection_by_id(collection_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "collection_by_id",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_import_collection_by_id(collection_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -207,11 +267,16 @@ impl ImportStorage for StorageHandle {
         &self,
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "collection_by_key", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_import_collection_by_key(key).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "collection_by_key",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_import_collection_by_key(key).await
+                })
+            },
+        )
         .await
     }
 
@@ -221,7 +286,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "imports",
+            StorageCapability::Imports,
             "collections_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -239,7 +304,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Option<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "imports",
+            StorageCapability::Imports,
             "collection_child_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -257,11 +322,16 @@ impl ImportStorage for StorageHandle {
         collection_id: CollectionId,
         name: &str,
     ) -> Result<Option<StorageClassRecord>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "class_by_name", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_import_class_by_name(collection_id, name).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "class_by_name",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_import_class_by_name(collection_id, name).await
+                })
+            },
+        )
         .await
     }
 
@@ -270,13 +340,18 @@ impl ImportStorage for StorageHandle {
         collection_id: CollectionId,
         names: &[String],
     ) -> Result<Vec<StorageClassRecord>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "classes_by_names", async {
-            dispatch_backend!(self, |backend| {
-                backend
-                    .list_import_classes_by_names(collection_id, names)
-                    .await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "classes_by_names",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .list_import_classes_by_names(collection_id, names)
+                        .await
+                })
+            },
+        )
         .await
     }
 
@@ -285,11 +360,16 @@ impl ImportStorage for StorageHandle {
         class_id: ClassId,
         name: &str,
     ) -> Result<Option<StorageObject>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "object_by_name", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_import_object_by_name(class_id, name).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "object_by_name",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_import_object_by_name(class_id, name).await
+                })
+            },
+        )
         .await
     }
 
@@ -298,11 +378,16 @@ impl ImportStorage for StorageHandle {
         class_id: ClassId,
         names: &[String],
     ) -> Result<Vec<StorageObject>, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "objects_by_names", async {
-            dispatch_backend!(self, |backend| {
-                backend.list_import_objects_by_names(class_id, names).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "objects_by_names",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_import_objects_by_names(class_id, names).await
+                })
+            },
+        )
         .await
     }
 
@@ -313,7 +398,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "imports",
+            StorageCapability::Imports,
             "class_relation_exists",
             async {
                 dispatch_backend!(self, |backend| {
@@ -333,7 +418,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "imports",
+            StorageCapability::Imports,
             "object_relation_exists",
             async {
                 dispatch_backend!(self, |backend| {
@@ -351,11 +436,16 @@ impl ImportStorage for StorageHandle {
         identity_scope: &str,
         group_name: &str,
     ) -> Result<bool, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "group_exists", async {
-            dispatch_backend!(self, |backend| {
-                backend.has_import_group(identity_scope, group_name).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "group_exists",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.has_import_group(identity_scope, group_name).await
+                })
+            },
+        )
         .await
     }
 
@@ -364,18 +454,28 @@ impl ImportStorage for StorageHandle {
         plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "preflight", async {
-            dispatch_backend!(self, |backend| {
-                backend.preflight_import(plan, mode).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "preflight",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.preflight_import(plan, mode).await
+                })
+            },
+        )
         .await
     }
 
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "apply_strict", async {
-            dispatch_backend!(self, |backend| { backend.apply_import_strict(plan).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "apply_strict",
+            async {
+                dispatch_backend!(self, |backend| { backend.apply_import_strict(plan).await })
+            },
+        )
         .await
     }
 
@@ -384,11 +484,16 @@ impl ImportStorage for StorageHandle {
         plan: StorageImportPlan,
         mode: StorageImportMode,
     ) -> Result<StorageImportApply, StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "apply_best_effort", async {
-            dispatch_backend!(self, |backend| {
-                backend.apply_import_best_effort(plan, mode).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "apply_best_effort",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.apply_import_best_effort(plan, mode).await
+                })
+            },
+        )
         .await
     }
 
@@ -396,11 +501,16 @@ impl ImportStorage for StorageHandle {
         &self,
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
-        self.observe_storage_call(self.backend_name(), "imports", "record_results", async {
-            dispatch_backend!(self, |backend| {
-                backend.record_import_results(results).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Imports,
+            "record_results",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.record_import_results(results).await
+                })
+            },
+        )
         .await
     }
 }
@@ -411,9 +521,12 @@ impl RestoreStorage for StorageHandle {
         &self,
         request: StorageRestoreStageCreate,
     ) -> Result<StorageRestoreJob, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "stage", async {
-            dispatch_backend!(self, |backend| backend.stage_restore(request).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "stage",
+            async { dispatch_backend!(self, |backend| backend.stage_restore(request).await) },
+        )
         .await
     }
 
@@ -421,9 +534,12 @@ impl RestoreStorage for StorageHandle {
         &self,
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreJob, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "get_job", async {
-            dispatch_backend!(self, |backend| backend.get_restore_job(job_id).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "get_job",
+            async { dispatch_backend!(self, |backend| backend.get_restore_job(job_id).await) },
+        )
         .await
     }
 
@@ -431,30 +547,45 @@ impl RestoreStorage for StorageHandle {
         &self,
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreStatus, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "get_status", async {
-            dispatch_backend!(self, |backend| { backend.get_restore_status(job_id).await })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "get_status",
+            async {
+                dispatch_backend!(self, |backend| { backend.get_restore_status(job_id).await })
+            },
+        )
         .await
     }
 
     async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "expire", async {
-            dispatch_backend!(self, |backend| {
-                backend.expire_restore_stage(job_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "expire",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.expire_restore_stage(job_id).await
+                })
+            },
+        )
         .await
     }
 
     async fn start_restore_draining(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<NaiveDateTime, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "start_draining", async {
-            dispatch_backend!(self, |backend| {
-                backend.start_restore_draining(job_id).await
-            })
-        })
+    ) -> Result<DateTime<Utc>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "start_draining",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.start_restore_draining(job_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -462,9 +593,12 @@ impl RestoreStorage for StorageHandle {
         &self,
         request: StorageRestoreApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "apply", async {
-            dispatch_backend!(self, |backend| backend.apply_restore(request).await)
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "apply",
+            async { dispatch_backend!(self, |backend| backend.apply_restore(request).await) },
+        )
         .await
     }
 
@@ -472,11 +606,16 @@ impl RestoreStorage for StorageHandle {
         &self,
         request: StorageRestoreFailure,
     ) -> Result<(), StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "fail_and_resume", async {
-            dispatch_backend!(self, |backend| {
-                backend.fail_restore_and_resume(request).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "fail_and_resume",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.fail_restore_and_resume(request).await
+                })
+            },
+        )
         .await
     }
 
@@ -485,7 +624,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "restores",
+            StorageCapability::Restores,
             "coordinator_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
@@ -499,7 +638,7 @@ impl RestoreStorage for StorageHandle {
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "restores",
+            StorageCapability::Restores,
             "resume_without_job",
             async {
                 dispatch_backend!(self, |backend| {
@@ -511,11 +650,16 @@ impl RestoreStorage for StorageHandle {
     }
 
     async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "resume_terminal", async {
-            dispatch_backend!(self, |backend| {
-                backend.resume_terminal_restore(job_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "resume_terminal",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.resume_terminal_restore(job_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -525,38 +669,53 @@ impl RestoreStorage for StorageHandle {
         local_work_is_idle: &(dyn Fn() -> bool + Send + Sync),
         expire_validated_jobs: bool,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "tick", async {
-            dispatch_backend!(self, |backend| {
-                backend
-                    .tick_restore_coordinator(
-                        instance_id,
-                        local_work_is_idle,
-                        expire_validated_jobs,
-                    )
-                    .await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "tick",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .tick_restore_coordinator(
+                            instance_id,
+                            local_work_is_idle,
+                            expire_validated_jobs,
+                        )
+                        .await
+                })
+            },
+        )
         .await
     }
 
     async fn get_restore_drain_state(
         &self,
-        heartbeat_cutoff: NaiveDateTime,
+        heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "drain_state", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_restore_drain_state(heartbeat_cutoff).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "drain_state",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_restore_drain_state(heartbeat_cutoff).await
+                })
+            },
+        )
         .await
     }
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
-        self.observe_storage_call(self.backend_name(), "restores", "remove_instance", async {
-            dispatch_backend!(self, |backend| {
-                backend.remove_restore_instance(instance_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Restores,
+            "remove_instance",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.remove_restore_instance(instance_id).await
+                })
+            },
+        )
         .await
     }
 }

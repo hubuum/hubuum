@@ -31,8 +31,8 @@ impl From<MemoryStorageModelError> for StorageError {
             ApiError::BadRequest(message)
             | ApiError::InvalidIntegerRange(message)
             | ApiError::OperatorMismatch(message) => Self::invalid_input(message),
-            ApiError::NotAcceptable(message) => Self::unsupported(message),
-            ApiError::ValidationError(message) => Self::validation(message),
+            ApiError::NotAcceptable(message) => Self::unsupported_operation(message),
+            ApiError::ValidationError(message) => Self::validation_failed(message),
             ApiError::PayloadTooLarge(message) => Self::input_too_large(message),
             ApiError::Conflict(message) => Self::conflict(message),
             ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
@@ -65,7 +65,7 @@ mod tests {
     fn memory_model_errors_are_classified_before_crossing_the_storage_boundary() {
         assert_eq!(
             map_memory_error(ApiError::ValidationError("invalid value".to_string())).kind(),
-            StorageErrorKind::Validation
+            StorageErrorKind::ValidationFailed
         );
         assert_eq!(
             map_memory_error(ApiError::Conflict("duplicate".to_string())).kind(),

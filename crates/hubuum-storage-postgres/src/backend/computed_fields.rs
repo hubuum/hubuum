@@ -1,9 +1,9 @@
-use crate::operations::computed_lifecycle as postgres_computed_lifecycle;
+use crate::operations::computed_fields as postgres_computed_fields;
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, ComputedFieldDefinitionId};
 
 use hubuum_storage_core::{
-    ComputedFieldLifecycleStorage, MutationOutcome, StorageClassComputationState,
+    ComputedFieldStorage, MutationOutcome, StorageClassComputationState,
     StorageComputedFieldDefinition, StorageComputedFieldMutation,
     StorageComputedFieldRebuildRequest, StorageError, StoragePage,
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
@@ -15,12 +15,12 @@ use hubuum_storage_core::{
 use super::PostgresStorage;
 
 #[async_trait]
-impl ComputedFieldLifecycleStorage for PostgresStorage {
+impl ComputedFieldStorage for PostgresStorage {
     async fn get_computed_field_state(
         &self,
         class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError> {
-        postgres_computed_lifecycle::get_computed_field_state(self.runtime(), class_id.id())
+        postgres_computed_fields::get_computed_field_state(self.runtime(), class_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -29,7 +29,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         class_id: ClassId,
     ) -> Result<Vec<StorageComputedFieldDefinition>, StorageError> {
-        postgres_computed_lifecycle::list_shared_computed_fields(self.runtime(), class_id.id())
+        postgres_computed_fields::list_shared_computed_fields(self.runtime(), class_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -38,7 +38,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         query: StoragePersonalComputedFieldListQuery,
     ) -> Result<StoragePage<StorageComputedFieldDefinition>, StorageError> {
-        postgres_computed_lifecycle::list_personal_computed_fields(self.runtime(), query)
+        postgres_computed_fields::list_personal_computed_fields(self.runtime(), query)
             .await
             .map_err(StorageError::from)
     }
@@ -47,7 +47,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         definition_id: ComputedFieldDefinitionId,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
-        postgres_computed_lifecycle::get_computed_field(self.runtime(), definition_id.id())
+        postgres_computed_fields::get_computed_field(self.runtime(), definition_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -56,7 +56,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StorageSharedComputedFieldCreate,
     ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
-        postgres_computed_lifecycle::create_shared_computed_field(self.runtime(), request)
+        postgres_computed_fields::create_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -65,7 +65,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StorageSharedComputedFieldUpdate,
     ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
-        postgres_computed_lifecycle::update_shared_computed_field(self.runtime(), request)
+        postgres_computed_fields::update_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -74,7 +74,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StorageSharedComputedFieldDelete,
     ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
-        postgres_computed_lifecycle::delete_shared_computed_field(self.runtime(), request)
+        postgres_computed_fields::delete_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -83,7 +83,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StoragePersonalComputedFieldCreate,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
-        postgres_computed_lifecycle::create_personal_computed_field(self.runtime(), request)
+        postgres_computed_fields::create_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -92,7 +92,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StoragePersonalComputedFieldUpdate,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
-        postgres_computed_lifecycle::update_personal_computed_field(self.runtime(), request)
+        postgres_computed_fields::update_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -101,7 +101,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StoragePersonalComputedFieldDelete,
     ) -> Result<(), StorageError> {
-        postgres_computed_lifecycle::delete_personal_computed_field(self.runtime(), request)
+        postgres_computed_fields::delete_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -110,7 +110,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         request: StorageComputedFieldRebuildRequest,
     ) -> Result<StorageClassComputationState, StorageError> {
-        postgres_computed_lifecycle::request_computed_field_rebuild(self.runtime(), request)
+        postgres_computed_fields::request_computed_field_rebuild(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
@@ -119,7 +119,7 @@ impl ComputedFieldLifecycleStorage for PostgresStorage {
         &self,
         lease: StorageTaskLease,
     ) -> Result<StorageTask, StorageError> {
-        postgres_computed_lifecycle::execute_computed_field_rebuild(self.runtime(), lease)
+        postgres_computed_fields::execute_computed_field_rebuild(self.runtime(), lease)
             .await
             .map_err(StorageError::from)
     }

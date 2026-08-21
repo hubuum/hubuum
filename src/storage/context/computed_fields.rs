@@ -1,16 +1,21 @@
 use super::*;
 
 #[async_trait]
-impl ComputedFieldLifecycleStorage for StorageHandle {
+impl ComputedFieldStorage for StorageHandle {
     async fn get_computed_field_state(
         &self,
         class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError> {
-        self.observe_storage_call(self.backend_name(), "computed_fields", "state", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_computed_field_state(class_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ComputedFields,
+            "state",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_computed_field_state(class_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -20,7 +25,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<Vec<StorageComputedFieldDefinition>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "list_shared",
             async {
                 dispatch_backend!(self, |backend| {
@@ -37,7 +42,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<StoragePage<StorageComputedFieldDefinition>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "list_personal",
             async {
                 dispatch_backend!(self, |backend| {
@@ -52,11 +57,16 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
         &self,
         definition_id: ComputedFieldDefinitionId,
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
-        self.observe_storage_call(self.backend_name(), "computed_fields", "get", async {
-            dispatch_backend!(self, |backend| {
-                backend.get_computed_field(definition_id).await
-            })
-        })
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ComputedFields,
+            "get",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_computed_field(definition_id).await
+                })
+            },
+        )
         .await
     }
 
@@ -66,7 +76,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "create_shared",
             async {
                 dispatch_backend!(self, |backend| {
@@ -83,7 +93,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "update_shared",
             async {
                 dispatch_backend!(self, |backend| {
@@ -100,7 +110,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "delete_shared",
             async {
                 dispatch_backend!(self, |backend| {
@@ -117,7 +127,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "create_personal",
             async {
                 dispatch_backend!(self, |backend| {
@@ -134,7 +144,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "update_personal",
             async {
                 dispatch_backend!(self, |backend| {
@@ -151,7 +161,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "delete_personal",
             async {
                 dispatch_backend!(self, |backend| {
@@ -168,7 +178,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<StorageClassComputationState, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "request_rebuild",
             async {
                 dispatch_backend!(self, |backend| {
@@ -185,7 +195,7 @@ impl ComputedFieldLifecycleStorage for StorageHandle {
     ) -> Result<StorageTask, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            "computed_fields",
+            StorageCapability::ComputedFields,
             "execute_rebuild",
             async {
                 dispatch_backend!(self, |backend| {

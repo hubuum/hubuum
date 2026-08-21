@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::errors::ApiError;
 use crate::models::Permissions;
 use crate::services::storage_boundary::principal_id_to_storage;
-use crate::storage::{AuthorizationStorage, storage_handle};
+use crate::storage::{AuthorizationDataStorage, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

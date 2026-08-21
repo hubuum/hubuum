@@ -503,10 +503,11 @@ mod tests {
             "before_revision": null,
             "after_revision": null,
         });
-        RetainedEvent::new(
+        RetainedEvent::try_new(
             crate::events::EventSequence::new(1).unwrap(),
             serde_json::to_string(&event).unwrap(),
         )
+        .unwrap()
     }
 
     fn batch() -> EventRetentionBatch {

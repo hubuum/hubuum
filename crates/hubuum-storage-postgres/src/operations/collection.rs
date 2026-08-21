@@ -352,7 +352,7 @@ pub(crate) async fn move_collection_on(
         return Ok(MutationOutcome::unchanged(before.into_storage()?));
     }
     if collection_id == new_parent_id {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "A collection cannot be moved under itself",
         ));
     }
@@ -369,7 +369,7 @@ pub(crate) async fn move_collection_on(
         .await?
         > 0;
     if new_parent_is_descendant {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "A collection cannot be moved under one of its descendants",
         ));
     }
@@ -571,7 +571,7 @@ fn validate_positive_id(value: i32, noun: &str) -> Result<(), PostgresStorageErr
     if value > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "Invalid {noun}: expected a positive integer"
         )))
     }

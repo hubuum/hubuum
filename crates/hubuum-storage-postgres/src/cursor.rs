@@ -108,7 +108,7 @@ where
 
 fn cursor_codec_error(error: CursorCodecError) -> PostgresStorageError {
     match error {
-        CursorCodecError::Invalid(message) => PostgresStorageError::bad_request(message),
+        CursorCodecError::Invalid(message) => PostgresStorageError::invalid_input(message),
         CursorCodecError::Encoding(message) => PostgresStorageError::database(message),
     }
 }
@@ -122,7 +122,7 @@ where
 {
     match value {
         CursorValue::Null if field.nullable => Ok(()),
-        CursorValue::Null => Err(PostgresStorageError::bad_request(format!(
+        CursorValue::Null => Err(PostgresStorageError::invalid_input(format!(
             "cursor contains null for non-nullable field '{}'",
             field.expression()
         ))),
@@ -139,7 +139,7 @@ where
 {
     match value {
         CursorValue::Null if field.nullable => Ok(format!("{} IS NULL", field.expression())),
-        CursorValue::Null => Err(PostgresStorageError::bad_request(format!(
+        CursorValue::Null => Err(PostgresStorageError::invalid_input(format!(
             "cursor contains null for non-nullable field '{}'",
             field.expression()
         ))),
@@ -160,7 +160,7 @@ where
     T: AsRef<str>,
 {
     match value {
-        CursorValue::Null if !field.nullable => Err(PostgresStorageError::bad_request(format!(
+        CursorValue::Null if !field.nullable => Err(PostgresStorageError::invalid_input(format!(
             "cursor contains null for non-nullable field '{}'",
             field.expression()
         ))),
@@ -191,7 +191,7 @@ where
     T: AsRef<str>,
 {
     match (field.sql_type, value) {
-        (_, CursorValue::Null) => Err(PostgresStorageError::bad_request(format!(
+        (_, CursorValue::Null) => Err(PostgresStorageError::invalid_input(format!(
             "cursor contains null for field '{}'",
             field.expression()
         ))),
@@ -225,7 +225,7 @@ where
             })?;
             Ok(format!("'{}'::jsonb", value.replace('\'', "''")))
         }
-        _ => Err(PostgresStorageError::bad_request(format!(
+        _ => Err(PostgresStorageError::invalid_input(format!(
             "cursor value does not match expected type for '{}'",
             field.expression()
         ))),
@@ -238,12 +238,12 @@ fn validate_postgres_jsonb_cursor_value(
     match validate_storage_json_value(value) {
         Ok(()) => Ok(()),
         Err(StorageJsonValidationError::UnsupportedValue) => {
-            Err(PostgresStorageError::bad_request(
+            Err(PostgresStorageError::invalid_input(
                 "cursor contains JSON that PostgreSQL JSONB cannot represent",
             ))
         }
         Err(StorageJsonValidationError::NestingTooDeep) => {
-            Err(PostgresStorageError::bad_request(format!(
+            Err(PostgresStorageError::invalid_input(format!(
                 "cursor JSON exceeds the maximum nesting depth of {MAX_STORAGE_JSON_NESTING_DEPTH}"
             )))
         }

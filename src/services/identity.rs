@@ -20,8 +20,8 @@ use crate::services::storage_boundary::{
     principal_id_to_storage,
 };
 use crate::storage::{
-    AuthenticationResourceScope, AuthenticationTokenScope, BootstrapStorage,
-    ExternalIdentityStorage, IdentityMembershipStorage, IdentityScopeStorage,
+    AuthenticationResourceScope, AuthenticationTokenScope, ExternalIdentityStorage,
+    IdentityMembershipStorage, IdentityScopeStorage, LocalIdentityCredentialStorage,
     ServiceAccountStorage, StorageContext, StorageExternalGroup, StorageExternalPrincipalState,
     StorageExternalUserSync, StorageIdentityGroup, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
@@ -498,12 +498,12 @@ pub async fn get_token_metadata(
     )
 }
 
-pub async fn get_token_metadata_batch(
+pub async fn get_token_metadata_by_ids(
     context: &impl StorageContext,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     storage_handle(context)
-        .get_token_metadata_batch(
+        .get_token_metadata_by_ids(
             tokens
                 .iter()
                 .map(|token| {
@@ -683,12 +683,12 @@ pub async fn is_human_owner_group_member(
         .await?)
 }
 
-pub async fn is_principal_disabled(
+pub async fn is_service_account_disabled(
     context: &impl StorageContext,
     principal_id: i32,
 ) -> Result<bool, ApiError> {
     Ok(storage_handle(context)
-        .is_principal_disabled(principal_id_to_storage(principal_id))
+        .is_service_account_disabled(principal_id_to_storage(principal_id))
         .await?)
 }
 

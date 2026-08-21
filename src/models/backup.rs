@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
+use hubuum_storage_core::{StorageBackupHistorySections, StorageBackupStateSections};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -11,22 +12,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 4;
-
-pub(crate) use hubuum_storage_core::{
-    BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
-};
-
-pub(crate) fn backup_history_sections() -> impl Iterator<Item = &'static str> {
-    BACKUP_TEMPORAL_HISTORY_SECTIONS
-        .iter()
-        .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
-        .copied()
-}
-
-pub(crate) fn is_backup_history_section(name: &str) -> bool {
-    backup_history_sections().any(|known| known == name)
-}
+pub const CURRENT_BACKUP_VERSION: i32 = 5;
 
 /// Immutable identity snapshot recorded with a restore stage and its provenance event.
 pub struct RestoreInitiator {
@@ -126,15 +112,15 @@ pub struct BackupManifest {
     pub exclusions: Vec<String>,
 }
 
-/// Privileged, restore-only logical snapshots. Backup version 4 defines one
-/// canonical row shape per section; the PostgreSQL restore adapter maps those
-/// shapes to its tables. Other selectable adapters must project to and restore
-/// from the same format. These are versioned disaster-recovery internals, not
-/// portable import data.
+/// Privileged, restore-only logical snapshots. Backup version 5 identifies
+/// sections by stable Hubuum resources rather than PostgreSQL tables. Each
+/// storage adapter explicitly maps its persistence layout to these versioned
+/// sections. These are disaster-recovery internals, not portable import data.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BackupHistory {
     #[schema(value_type = Object)]
-    pub sections: BTreeMap<String, Vec<serde_json::Value>>,
+    pub sections: StorageBackupHistorySections,
 }
 
 impl fmt::Debug for BackupHistory {
@@ -152,9 +138,10 @@ impl fmt::Debug for BackupHistory {
 
 /// Canonical logical rows used by the destructive full-system restore path.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BackupState {
     #[schema(value_type = Object)]
-    pub sections: BTreeMap<String, Vec<serde_json::Value>>,
+    pub sections: StorageBackupStateSections,
 }
 
 impl fmt::Debug for BackupState {
@@ -174,7 +161,8 @@ impl fmt::Debug for BackupState {
 #[serde(deny_unknown_fields)]
 pub struct BackupDocument {
     pub backup_version: i32,
-    pub created_at: NaiveDateTime,
+    /// RFC 3339 creation instant in UTC.
+    pub created_at: DateTime<Utc>,
     pub source_version: String,
     pub state: BackupState,
     pub history: Option<BackupHistory>,
@@ -402,6 +390,9 @@ pub const RESTORE_CONFIRMATION_PHRASE: &str = "REPLACE ALL HUBUUM DATA";
 #[cfg(test)]
 mod sensitive_debug_tests {
     use super::*;
+    use hubuum_storage_core::{
+        StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection,
+    };
 
     fn timestamp() -> NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
@@ -409,22 +400,36 @@ mod sensitive_debug_tests {
             .naive_utc()
     }
 
+    fn instant() -> DateTime<Utc> {
+        timestamp().and_utc()
+    }
+
     #[test]
     fn backup_debug_reports_shape_without_snapshot_rows() {
         let document = BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
-            created_at: timestamp(),
+            created_at: instant(),
             source_version: "test".to_string(),
             state: BackupState {
                 sections: BTreeMap::from([(
-                    "users".to_string(),
-                    vec![serde_json::json!({"password": "backup-state-secret"})],
+                    StorageBackupStateSection::Users,
+                    vec![
+                        StorageBackupRow::try_from_value(
+                            serde_json::json!({"password": "backup-state-secret"}),
+                        )
+                        .unwrap(),
+                    ],
                 )]),
             },
             history: Some(BackupHistory {
                 sections: BTreeMap::from([(
-                    "remote_call_results".to_string(),
-                    vec![serde_json::json!({"body": "backup-history-secret"})],
+                    StorageBackupHistorySection::RemoteCallResults,
+                    vec![
+                        StorageBackupRow::try_from_value(
+                            serde_json::json!({"body": "backup-history-secret"}),
+                        )
+                        .unwrap(),
+                    ],
                 )]),
             }),
             manifest: BackupManifest::default(),

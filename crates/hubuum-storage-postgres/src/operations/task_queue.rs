@@ -311,7 +311,7 @@ pub async fn create_task(
             acquire_capacity_lock(connection, submitted_by, kind).await?;
             let active_count = count_active_tasks(connection, submitted_by, kind).await?;
             if active_count >= maximum_active_tasks {
-                return Err(PostgresStorageError::too_many_requests(format!(
+                return Err(PostgresStorageError::rate_limited(format!(
                     "Too many active {} tasks for user ({active_count} >= {maximum_active_tasks}); wait for queued or running tasks to finish",
                     kind.as_str()
                 )));
@@ -407,7 +407,7 @@ pub async fn list_tasks(
         .into_iter()
         .map(TaskRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StoragePage::new(tasks, total))
+    StoragePage::try_new(tasks, total).map_err(PostgresStorageError::from)
 }
 
 pub async fn list_task_events(
@@ -427,7 +427,7 @@ pub async fn list_task_events(
         .into_iter()
         .map(TaskEventRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StoragePage::new(events, total))
+    StoragePage::try_new(events, total).map_err(PostgresStorageError::from)
 }
 
 pub async fn list_import_task_results(
@@ -488,7 +488,7 @@ pub async fn list_import_task_results(
         .into_iter()
         .map(ImportTaskResultRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StoragePage::new(results, total))
+    StoragePage::try_new(results, total).map_err(PostgresStorageError::from)
 }
 
 pub async fn list_export_output_summaries(
@@ -676,7 +676,7 @@ fn task_cursor_fields(options: &QueryOptions) -> Result<Vec<CursorSqlField>, Pos
                     nullable: true,
                 },
                 field => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{field}' is not orderable for tasks"
                     )));
                 }
@@ -943,10 +943,10 @@ fn decode_i64_page_cursor(
         return Ok(None);
     };
     let values = hubuum_query::decode_cursor_values(cursor, options.sort())
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     match values.as_slice() {
         [CursorValue::Integer(value)] => Ok(Some(*value)),
-        _ => Err(PostgresStorageError::bad_request(format!(
+        _ => Err(PostgresStorageError::invalid_input(format!(
             "{resource} cursor does not match the current sort order"
         ))),
     }
@@ -959,7 +959,7 @@ fn decode_i32_page_cursor(
     decode_i64_page_cursor(options, resource)?
         .map(|value| {
             i32::try_from(value)
-                .map_err(|_| PostgresStorageError::bad_request("cursor id is out of range"))
+                .map_err(|_| PostgresStorageError::invalid_input("cursor id is out of range"))
         })
         .transpose()
 }
@@ -998,7 +998,7 @@ fn validate_positive_task_id(task_id: i32) -> Result<(), PostgresStorageError> {
     if task_id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "task id must be positive",
         ))
     }

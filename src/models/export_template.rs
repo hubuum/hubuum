@@ -206,8 +206,8 @@ fn export_template_from_storage(
             .map(ExportMissingDataPolicy::from_str)
             .transpose()?,
         default_limits: from_optional_json(definition.default_limits().cloned())?,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         revision,
     })
 }

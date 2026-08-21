@@ -75,14 +75,14 @@ impl<'transaction> TransactionalCollections<'transaction> {
             .await
     }
 
-    pub async fn children(
+    pub async fn list_children(
         &self,
         collection_id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.storage.list_collection_children(collection_id).await
     }
 
-    pub async fn ancestors(
+    pub async fn list_ancestors(
         &self,
         collection_id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
@@ -155,7 +155,7 @@ impl<'transaction> TransactionalClasses<'transaction> {
         self.storage.delete_class(target, self.event_context).await
     }
 
-    pub async fn names(
+    pub async fn resolve_names(
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {

@@ -238,7 +238,7 @@ impl TestTaskCreate {
         status: StorageTaskStatus,
     ) -> Result<Self, PostgresStorageError> {
         if !status.is_terminal() {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "unattributed non-reindex test tasks must be terminal",
             ));
         }
@@ -469,7 +469,7 @@ pub async fn create_task(
     request: TestTaskCreate,
 ) -> Result<StorageTask, PostgresStorageError> {
     if !request.status.is_terminal() && request.request_payload.is_none() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "active test tasks require a request payload",
         ));
     }
@@ -477,7 +477,7 @@ pub async fn create_task(
         && request.kind != StorageTaskKind::Reindex
         && !request.status.is_terminal()
     {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "unattributed non-reindex test tasks must be terminal",
         ));
     }
@@ -634,7 +634,7 @@ pub async fn create_computed_object_data(
     request: TestComputedObjectDataCreate,
 ) -> Result<(), PostgresStorageError> {
     if request.evaluation_revision <= 0 {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "computed evaluation revision must be positive",
         ));
     }
@@ -644,7 +644,7 @@ pub async fn create_computed_object_data(
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "computed source-data SHA-256 must contain 64 hexadecimal characters",
         ));
     }

@@ -55,7 +55,8 @@ pub async fn list_class_relations(
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -89,7 +90,7 @@ pub async fn list_class_relations(
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -103,7 +104,8 @@ pub async fn list_object_relations(
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -127,7 +129,7 @@ pub async fn list_object_relations(
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -142,7 +144,8 @@ pub async fn list_class_relations_touching(
     validate_positive_id(class_id.id(), "class id")?;
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -174,7 +177,7 @@ pub async fn list_class_relations_touching(
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -189,7 +192,8 @@ pub async fn list_object_relations_touching(
     validate_positive_id(object_id.id(), "object id")?;
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -219,7 +223,7 @@ pub async fn list_object_relations_touching(
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -283,7 +287,7 @@ pub async fn list_object_relations_touching_ids(
         return Ok(Vec::new());
     }
     let max_results = i64::try_from(max_results).map_err(|_| {
-        PostgresStorageError::bad_request("Object-relation result limit is too large")
+        PostgresStorageError::invalid_input("Object-relation result limit is too large")
     })?;
     let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     let excluded_ids = excluded_ids
@@ -336,7 +340,8 @@ pub async fn list_related_classes(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -344,7 +349,8 @@ pub async fn list_related_classes(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
-                return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+                return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+                    .map_err(PostgresStorageError::from);
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Class,
@@ -378,7 +384,7 @@ pub async fn list_related_classes(
                 .into_iter()
                 .map(ClassGraphQueryRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -399,7 +405,8 @@ pub async fn list_related_objects(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     runtime
@@ -407,7 +414,8 @@ pub async fn list_related_objects(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
-                return Ok(StoragePage::new(Vec::new(), include_total.then_some(0)));
+                return StoragePage::try_new(Vec::new(), include_total.then_some(0))
+                    .map_err(PostgresStorageError::from);
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Object,
@@ -441,7 +449,7 @@ pub async fn list_related_objects(
                 .into_iter()
                 .map(ObjectGraphQueryRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -737,7 +745,7 @@ fn build_graph_filter_clause(
     }
 
     let column = graph_column(kind, &parameter.field).ok_or_else(|| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Field '{}' isn't searchable (or does not exist) for {}",
             parameter.field,
             kind.resource_label()
@@ -758,7 +766,7 @@ fn build_graph_filter_clause(
         match operator {
             Operator::Equals => {
                 if matches!(kind, GraphKind::Object) && values.len() > 50 {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Operator 'equals' is limited to 50 values, got {} (use between?)",
                         values.len()
                     )));
@@ -833,7 +841,7 @@ fn build_graph_filter_clause(
             _ => return Err(unsupported_operator(parameter, "array")),
         }
     } else {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Field '{}' isn't searchable (or does not exist) for {}",
             parameter.field,
             kind.resource_label()
@@ -978,7 +986,7 @@ fn ensure_operator_type(
     if parameter.operator.is_applicable_to(data_type) {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "Operator '{:?}' is not applicable to field '{}'",
             parameter.operator, parameter.field
         )))
@@ -987,32 +995,32 @@ fn ensure_operator_type(
 
 fn integer_values(parameter: &ParsedQueryParam) -> Result<Vec<i32>, PostgresStorageError> {
     hubuum_query::parse_integer_list(&parameter.value)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn datetime_values(
     parameter: &ParsedQueryParam,
 ) -> Result<Vec<chrono::NaiveDateTime>, PostgresStorageError> {
     hubuum_query::parse_datetime_list(&parameter.value)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn filter_requires_value(parameter: &ParsedQueryParam) -> PostgresStorageError {
-    PostgresStorageError::bad_request(format!(
+    PostgresStorageError::invalid_input(format!(
         "Searching on field '{}' requires a value",
         parameter.field
     ))
 }
 
 fn between_requires_two(parameter: &ParsedQueryParam) -> PostgresStorageError {
-    PostgresStorageError::bad_request(format!(
+    PostgresStorageError::invalid_input(format!(
         "Operator 'between' requires 2 values (min,max) for field '{}'",
         parameter.field
     ))
 }
 
 fn unsupported_operator(parameter: &ParsedQueryParam, kind: &str) -> PostgresStorageError {
-    PostgresStorageError::bad_request(format!(
+    PostgresStorageError::invalid_input(format!(
         "Operator '{:?}' not implemented for field '{}' (type: {kind})",
         parameter.operator, parameter.field
     ))
@@ -1165,7 +1173,7 @@ fn graph_cursor_field(
     field: &FilterField,
 ) -> Result<CursorSqlField, PostgresStorageError> {
     let column = graph_column(kind, field).ok_or_else(|| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Field '{field}' is not orderable for {}",
             kind.resource_label()
         ))
@@ -1179,7 +1187,7 @@ fn graph_cursor_field(
     } else if *field == FilterField::Path {
         CursorSqlType::IntegerArray
     } else {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Field '{field}' is not orderable for {}",
             kind.resource_label()
         )));
@@ -1537,12 +1545,12 @@ fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<SqlValue>) -> Stri
 
 fn validate_graph_bounds(max_depth: i32, per_root_limit: i32) -> Result<(), PostgresStorageError> {
     if max_depth < 0 {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "relation graph depth cannot be negative",
         ));
     }
     if per_root_limit < 0 {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "relation graph result limit cannot be negative",
         ));
     }
@@ -1965,7 +1973,7 @@ fn build_class_relation_query<'query>(
             }
             FilterField::Permissions | FilterField::ClassFromName | FilterField::ClassToName => {}
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for class relations",
                     parameter.field
                 )));
@@ -2070,7 +2078,7 @@ fn build_object_relation_query<'query>(
             ),
             FilterField::Permissions => {}
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for object relations",
                     parameter.field
                 )));
@@ -2220,7 +2228,7 @@ fn relation_cursor_field(
             ("hubuumobject_relation.revision", CursorSqlType::BigInt)
         }
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for relations"
             )));
         }
@@ -2234,7 +2242,7 @@ fn relation_cursor_field(
 
 fn validate_positive_id(id: i32, label: &str) -> Result<(), PostgresStorageError> {
     if id <= 0 {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "{label} must be greater than zero"
         )));
     }

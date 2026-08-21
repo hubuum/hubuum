@@ -519,7 +519,7 @@ pub async fn list_event_deliveries(
                     .into_iter()
                     .map(StorageEventDelivery::try_from)
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(StoragePage::new(rows, total))
+                StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
             },
         )
         .await
@@ -626,7 +626,7 @@ fn build_administration_delivery_query(
         match parameter.field {
             FilterField::Id => {
                 let values = hubuum_query::parse_integer_list(&parameter.value)
-                    .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
+                    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
                     .into_iter()
                     .map(i64::from)
                     .collect::<Vec<_>>();
@@ -639,7 +639,7 @@ fn build_administration_delivery_query(
                         query = query.filter(diesel::dsl::not(id.eq_any(values)));
                     }
                     _ => {
-                        return Err(PostgresStorageError::bad_request(format!(
+                        return Err(PostgresStorageError::invalid_input(format!(
                             "Operator '{:?}' not implemented for field '{}' (type: bigint)",
                             parameter.operator, parameter.field
                         )));
@@ -657,7 +657,7 @@ fn build_administration_delivery_query(
                 crate::postgres_datetime_filter!(query, parameter, next_attempt_at)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for event deliveries",
                     parameter.field
                 )));
@@ -699,7 +699,7 @@ fn administration_delivery_cursor_field(
             nullable: false,
         },
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for event deliveries"
             )));
         }

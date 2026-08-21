@@ -15,7 +15,7 @@ use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
-use crate::storage::{AuthorizationStorage, StorageHandle};
+use crate::storage::{AuthorizationDataStorage, StorageHandle};
 use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
 use super::backend::PermissionBackend;

@@ -234,7 +234,7 @@ impl ComputedReindexPayload {
             || self.target_revision < 0
             || self.object_upper_bound < 0
         {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "Computed-field reindex task payload is invalid",
             ));
         }
@@ -352,7 +352,7 @@ pub async fn list_personal_computed_fields(
         .into_iter()
         .map(ComputedDefinitionRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StoragePage::new(definitions, total))
+    StoragePage::try_new(definitions, total).map_err(PostgresStorageError::from)
 }
 
 pub async fn get_computed_field(
@@ -395,7 +395,7 @@ pub async fn create_shared_computed_field(
                 .get_result::<i64>(connection)
                 .await?;
             if count >= MAX_SHARED_DEFINITIONS as i64 {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "A class may have at most {MAX_SHARED_DEFINITIONS} shared computed fields"
                 )));
             }
@@ -562,7 +562,7 @@ pub async fn create_personal_computed_field(
                 .get_result::<i64>(connection)
                 .await?;
             if count >= MAX_PERSONAL_DEFINITIONS as i64 {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "A user may have at most {MAX_PERSONAL_DEFINITIONS} personal computed fields per class"
                 )));
             }
@@ -712,7 +712,7 @@ pub async fn execute_computed_field_rebuild(
     let claimed = task_execution::claimed_task(&lease)?;
     let task = task_execution::find_task(runtime, claimed.id).await?;
     if task.kind != StorageTaskKind::Reindex.as_str() {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Task {} is not a computed-field rebuild",
             task.id
         )));
@@ -725,10 +725,10 @@ pub async fn execute_computed_field_rebuild(
     let payload = task
         .request_payload
         .clone()
-        .ok_or_else(|| PostgresStorageError::bad_request("Reindex task payload is missing"))
+        .ok_or_else(|| PostgresStorageError::invalid_input("Reindex task payload is missing"))
         .and_then(|payload| {
             serde_json::from_value::<ComputedReindexPayload>(payload)
-                .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
         })?;
     payload.validate()?;
 
@@ -954,7 +954,7 @@ fn apply_personal_definition_filters<'query>(
                 crate::postgres_revision_filter!(query, parameter, definitions::revision)
             }
             ref field => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{field}' is not searchable for computed fields"
                 )));
             }
@@ -1015,7 +1015,7 @@ fn computed_cursor_fields(
                     nullable: false,
                 },
                 ref field => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{field}' is not orderable for computed fields"
                     )));
                 }
@@ -1046,13 +1046,13 @@ fn validated_definition(
     enabled: bool,
 ) -> Result<(), PostgresStorageError> {
     let operation = serde_json::from_value::<Operation>(operation.clone())
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let key = FieldKey::new(key.to_string())
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let result_type = result_type_from_storage(result_type)?;
     Definition::new(key, label, description, operation, result_type, enabled)
         .map(|_| ())
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn result_type_from_storage(value: &str) -> Result<ResultType, PostgresStorageError> {
@@ -1063,7 +1063,7 @@ fn result_type_from_storage(value: &str) -> Result<ResultType, PostgresStorageEr
         "boolean" => Ok(ResultType::Boolean),
         "object" => Ok(ResultType::Object),
         "array" => Ok(ResultType::Array),
-        _ => Err(PostgresStorageError::bad_request(format!(
+        _ => Err(PostgresStorageError::invalid_input(format!(
             "Unknown computed result type '{value}'"
         ))),
     }
@@ -1481,7 +1481,7 @@ async fn database_now(
 
 fn validate_positive(label: &str, value: i32) -> Result<(), PostgresStorageError> {
     if value <= 0 {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{label} id must be greater than zero"
         )))
     } else {

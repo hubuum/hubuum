@@ -138,10 +138,13 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
 
     with_transaction(&pool, async |conn| {
         let interrupted_at = chrono::Utc::now().naive_utc() - chrono::Duration::seconds(61);
+        let staged_at = interrupted_at - chrono::Duration::seconds(1);
         diesel::update(restore_jobs::table.filter(restore_jobs::id.eq(staged.id)))
             .set((
                 restore_jobs::status.eq(RestoreJobStatus::Confirmed.as_str()),
                 restore_jobs::confirmed_at.eq(Some(interrupted_at)),
+                restore_jobs::created_at.eq(staged_at),
+                restore_jobs::updated_at.eq(staged_at),
             ))
             .execute(conn)
             .await?;

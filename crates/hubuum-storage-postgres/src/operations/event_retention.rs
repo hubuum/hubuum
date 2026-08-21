@@ -290,13 +290,12 @@ fn retention_batch(row: RetentionBatchRow) -> Result<EventRetentionBatch, Postgr
                 ));
             }
             let sequence = EventSequence::new(id)?;
-            serde_json::to_string(document)
-                .map(|json| RetainedEvent::new(sequence, json))
-                .map_err(|error| {
-                    PostgresStorageError::database(format!(
-                        "Failed to serialize claimed PostgreSQL event: {error}"
-                    ))
-                })
+            let json = serde_json::to_string(document).map_err(|error| {
+                PostgresStorageError::database(format!(
+                    "Failed to serialize claimed PostgreSQL event: {error}"
+                ))
+            })?;
+            RetainedEvent::try_new(sequence, json).map_err(PostgresStorageError::from)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(EventRetentionBatch::new(

@@ -264,10 +264,8 @@ pub async fn list_export_templates(
     let collection_ids = collection_ids.map(|ids| ids.into_iter().map(CollectionId::id).collect());
     let options = normalize_query_options(options)?;
     if collection_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Ok(StoragePage::new(
-            Vec::new(),
-            options.include_total().then_some(0),
-        ));
+        return StoragePage::try_new(Vec::new(), options.include_total().then_some(0))
+            .map_err(PostgresStorageError::from);
     }
 
     if options.include_total() {
@@ -280,7 +278,7 @@ pub async fn list_export_templates(
                 let templates =
                     load_export_template_rows(connection, collection_ids.as_deref(), &options)
                         .await?;
-                Ok::<_, PostgresStorageError>(StoragePage::new(templates, Some(total)))
+                StoragePage::try_new(templates, Some(total)).map_err(PostgresStorageError::from)
             })
             .await
     } else {
@@ -289,7 +287,7 @@ pub async fn list_export_templates(
                 let templates =
                     load_export_template_rows(connection, collection_ids.as_deref(), &options)
                         .await?;
-                Ok::<_, PostgresStorageError>(StoragePage::new(templates, None))
+                StoragePage::try_new(templates, None).map_err(PostgresStorageError::from)
             })
             .await
     }
@@ -533,7 +531,7 @@ fn build_list_query<'a>(
                 crate::postgres_revision_filter!(query, parameter, revision)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable for export templates",
                     parameter.field
                 )));
@@ -554,7 +552,7 @@ fn normalize_query_options(
             }]
             .try_into()
             .map_err(|error: hubuum_query::QueryError| {
-                PostgresStorageError::bad_request(error.to_string())
+                PostgresStorageError::invalid_input(error.to_string())
             })?,
         );
     }
@@ -572,7 +570,7 @@ fn normalize_query_options(
                 field: FilterField::Id,
                 descending: false,
             })
-            .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+            .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     }
     Ok(options)
 }
@@ -597,7 +595,7 @@ fn export_template_cursor_field(
         }
         FilterField::Revision => cursor_field("export_templates.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for export templates"
             )));
         }
@@ -642,7 +640,7 @@ fn ensure_positive_id(id: i32, entity: &str) -> Result<(), PostgresStorageError>
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{entity} id must be greater than zero"
         )))
     }

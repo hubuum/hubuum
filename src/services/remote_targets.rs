@@ -15,7 +15,8 @@ use crate::storage::{
     RemoteTargetStorage, StorageContext, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
     StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, storage_handle,
+    StorageRemoteTargetTransport, StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
+    storage_handle,
 };
 
 pub(crate) async fn get_remote_target(
@@ -71,21 +72,21 @@ pub(crate) async fn create_remote_target(
     )?;
     let definition = StorageRemoteTargetDefinition::new(
         input.description,
-        StorageRemoteTargetTransport::new(
+        StorageRemoteTargetTransport::try_new(
             input.method.as_str(),
             input.url_template,
             input.headers_template,
             input.body_template,
             serde_json::to_value(input.auth_config)?,
             input.timeout_ms,
-        ),
-        StorageRemoteTargetPolicy::new(
+        )?,
+        StorageRemoteTargetPolicy::try_new(
             input
                 .class_id
                 .map(|class_id| class_id_to_storage(class_id.id())),
             subject_types_to_storage(input.allowed_subject_types),
             input.enabled,
-        ),
+        )?,
     );
     let target = storage_handle(backend)
         .create_remote_target(StorageRemoteTargetCreate::new(
@@ -217,8 +218,14 @@ fn subject_types_to_storage(subject_types: Vec<RemoteTargetSubjectType>) -> Vec<
 fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiError> {
     let (metadata, collection_id, name, definition) = target.into_parts();
     let (description, transport, policy) = definition.into_parts();
-    let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
-        transport.into_parts();
+    let StorageRemoteTargetTransportParts {
+        method,
+        url_template,
+        headers_template,
+        body_template,
+        auth_config,
+        timeout_ms,
+    } = transport.into_parts();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     Ok(RemoteTarget {
         id: metadata.id().id(),
@@ -237,8 +244,8 @@ fn target_from_storage(target: StorageRemoteTarget) -> Result<RemoteTarget, ApiE
             .collect::<Result<Vec<_>, _>>()?,
         timeout_ms,
         enabled,
-        created_at: metadata.created_at(),
-        updated_at: metadata.updated_at(),
+        created_at: metadata.created_at().naive_utc(),
+        updated_at: metadata.updated_at().naive_utc(),
         revision: metadata.revision(),
     })
 }

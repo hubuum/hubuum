@@ -11,9 +11,6 @@ use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::lifecycle::spawn_background_worker;
-use crate::models::backup::{
-    BACKUP_STATE_SECTIONS, backup_history_sections, is_backup_history_section,
-};
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::retention::FutureRetention;
 use crate::models::{
@@ -25,11 +22,13 @@ use crate::models::{
 use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
 use crate::storage::{
-    OperationalStateStorage, RestoreStorage, StorageBackupSnapshot, StorageContext,
-    StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDocument, StorageRestoreDocumentMetadata,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJob, StorageRestoreJobStatus,
-    StorageRestoreJobSummary, StorageRestoreStageCreate, StorageRestoreStatus,
+    OperationalStateStorage, RestoreStorage, StorageBackupHistorySection, StorageBackupRow,
+    StorageBackupSnapshot, StorageBackupStateSection, StorageContext, StorageRestoreApply,
+    StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDocument, StorageRestoreDocumentMetadata, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreInitiatorParts, StorageRestoreJob,
+    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
+    StorageRestoreStatus, StorageRestoreTimestampParts,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
@@ -82,9 +81,20 @@ fn restore_status_from_storage(status: StorageRestoreJobStatus) -> RestoreJobSta
 
 fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJobSummaryData {
     let (id, status, initiator, artifact, error, timestamps) = summary.into_parts();
-    let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
-    let (byte_size, sha256) = artifact.into_parts();
-    let (expires_at, confirmed_at, finished_at, created_at, updated_at) = timestamps.into_parts();
+    let StorageRestoreInitiatorParts {
+        principal_id: requested_by,
+        identity_scope: requested_by_identity_scope,
+        name: requested_by_name,
+    } = initiator.into_parts();
+    let crate::storage::StorageRestoreArtifactSummaryParts { byte_size, sha256 } =
+        artifact.into_parts();
+    let StorageRestoreTimestampParts {
+        expires_at,
+        confirmed_at,
+        finished_at,
+        created_at,
+        updated_at,
+    } = timestamps.into_parts();
     RestoreJobSummaryData {
         id: id.id(),
         status: restore_status_from_storage(status),
@@ -94,11 +104,11 @@ fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJob
         byte_size,
         sha256,
         error,
-        expires_at,
-        confirmed_at,
-        finished_at,
-        created_at,
-        updated_at,
+        expires_at: expires_at.naive_utc(),
+        confirmed_at: confirmed_at.map(|timestamp| timestamp.naive_utc()),
+        finished_at: finished_at.map(|timestamp| timestamp.naive_utc()),
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
     }
 }
 
@@ -218,41 +228,13 @@ fn invalid_restore_capability() -> ApiError {
 
 fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
-    for required in BACKUP_STATE_SECTIONS {
-        if !document.state.sections.contains_key(*required) {
-            return Err(ApiError::BadRequest(format!(
-                "Full backup is missing required state section '{required}'"
-            )));
-        }
-    }
-    if let Some(unknown) = document
-        .state
-        .sections
-        .keys()
-        .find(|name| !BACKUP_STATE_SECTIONS.contains(&name.as_str()))
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Full backup contains unknown state section '{unknown}'"
-        )));
-    }
-    if let Some(history) = &document.history {
-        for required in backup_history_sections() {
-            if !history.sections.contains_key(required) {
-                return Err(ApiError::BadRequest(format!(
-                    "Full backup history is missing required section '{required}'"
-                )));
-            }
-        }
-        if let Some(unknown) = history
-            .sections
-            .keys()
-            .find(|name| !is_backup_history_section(name))
-        {
-            return Err(ApiError::BadRequest(format!(
-                "Full backup contains unknown history section '{unknown}'"
-            )));
-        }
-    }
+    StorageBackupSnapshot::try_new(
+        document.state.sections.clone(),
+        document
+            .history
+            .as_ref()
+            .map(|history| history.sections.clone()),
+    )?;
     validate_required_seed_rows(document)?;
     validate_backup_revisions(document)?;
     validate_backup_class_schemas(document)?;
@@ -283,11 +265,15 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
 }
 
 fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiError> {
-    let current_classes = required_state_section(document, "hubuumclass")?;
+    let current_classes = required_state_section(document, StorageBackupStateSection::Classes)?;
     let historical_classes = document
         .history
         .as_ref()
-        .and_then(|history| history.sections.get("hubuumclass_history"))
+        .and_then(|history| {
+            history
+                .sections
+                .get(&StorageBackupHistorySection::ClassHistory)
+        })
         .map(Vec::as_slice)
         .unwrap_or(&[]);
 
@@ -317,35 +303,56 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
     Ok(())
 }
 
-const REVISION_STATE_SECTIONS: &[&str] = &[
-    "identity_scopes",
-    "groups",
-    "principals",
-    "group_memberships",
-    "collections",
-    "collection_authorization_state",
-    "hubuumclass",
-    "computed_field_definitions",
-    "hubuumclass_relation",
-    "hubuumobject",
-    "hubuumobject_relation",
-    "export_templates",
-    "remote_targets",
-    "event_sinks",
-    "event_subscriptions",
+const REVISION_STATE_SECTIONS: &[StorageBackupStateSection] = &[
+    StorageBackupStateSection::IdentityScopes,
+    StorageBackupStateSection::Groups,
+    StorageBackupStateSection::Principals,
+    StorageBackupStateSection::GroupMemberships,
+    StorageBackupStateSection::Collections,
+    StorageBackupStateSection::CollectionAuthorization,
+    StorageBackupStateSection::Classes,
+    StorageBackupStateSection::ComputedFieldDefinitions,
+    StorageBackupStateSection::ClassRelations,
+    StorageBackupStateSection::Objects,
+    StorageBackupStateSection::ObjectRelations,
+    StorageBackupStateSection::ExportTemplates,
+    StorageBackupStateSection::RemoteTargets,
+    StorageBackupStateSection::EventSinks,
+    StorageBackupStateSection::EventSubscriptions,
 ];
 
-const REVISION_HISTORY_SECTIONS: &[&str] = &[
-    "collections_history",
-    "hubuumclass_history",
-    "hubuumclass_relation_history",
-    "hubuumobject_history",
-    "hubuumobject_relation_history",
-    "export_templates_history",
-    "remote_targets_history",
+const REVISION_HISTORY_SECTIONS: &[(StorageBackupHistorySection, StorageBackupStateSection)] = &[
+    (
+        StorageBackupHistorySection::CollectionHistory,
+        StorageBackupStateSection::Collections,
+    ),
+    (
+        StorageBackupHistorySection::ClassHistory,
+        StorageBackupStateSection::Classes,
+    ),
+    (
+        StorageBackupHistorySection::ClassRelationHistory,
+        StorageBackupStateSection::ClassRelations,
+    ),
+    (
+        StorageBackupHistorySection::ObjectHistory,
+        StorageBackupStateSection::Objects,
+    ),
+    (
+        StorageBackupHistorySection::ObjectRelationHistory,
+        StorageBackupStateSection::ObjectRelations,
+    ),
+    (
+        StorageBackupHistorySection::ExportTemplateHistory,
+        StorageBackupStateSection::ExportTemplates,
+    ),
+    (
+        StorageBackupHistorySection::RemoteTargetHistory,
+        StorageBackupStateSection::RemoteTargets,
+    ),
 ];
 
-fn row_revision(section: &str, row: &Value) -> Result<i64, ApiError> {
+fn row_revision(section: &str, row: &StorageBackupRow) -> Result<i64, ApiError> {
     row.get("revision")
         .and_then(Value::as_i64)
         .filter(|revision| (1..i64::MAX).contains(revision))
@@ -356,7 +363,7 @@ fn row_revision(section: &str, row: &Value) -> Result<i64, ApiError> {
         })
 }
 
-fn row_i64(section: &str, row: &Value, field: &str) -> Result<i64, ApiError> {
+fn row_i64(section: &str, row: &StorageBackupRow, field: &str) -> Result<i64, ApiError> {
     row.get(field).and_then(Value::as_i64).ok_or_else(|| {
         ApiError::BadRequest(format!(
             "Full backup section '{section}' contains an invalid {field}"
@@ -366,8 +373,8 @@ fn row_i64(section: &str, row: &Value, field: &str) -> Result<i64, ApiError> {
 
 fn validate_backup_revisions(document: &BackupDocument) -> Result<(), ApiError> {
     for section in REVISION_STATE_SECTIONS {
-        for row in required_state_section(document, section)? {
-            row_revision(section, row)?;
+        for row in required_state_section(document, *section)? {
+            row_revision(section.as_str(), row)?;
         }
     }
 
@@ -376,29 +383,30 @@ fn validate_backup_revisions(document: &BackupDocument) -> Result<(), ApiError> 
     let Some(history) = &document.history else {
         return validate_event_revisions(document);
     };
-    for section in REVISION_HISTORY_SECTIONS {
-        let rows = history.sections.get(*section).ok_or_else(|| {
+    for (history_section, state_section) in REVISION_HISTORY_SECTIONS {
+        let rows = history.sections.get(history_section).ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Full backup history is missing required section '{section}'"
+                "Full backup history is missing required section '{history_section}'"
             ))
         })?;
         for row in rows {
-            row_revision(section, row)?;
+            row_revision(history_section.as_str(), row)?;
         }
-        validate_live_history_revisions(document, section, rows)?;
+        validate_live_history_revisions(document, *history_section, *state_section, rows)?;
     }
     validate_event_revisions(document)
 }
 
 fn validate_authorization_state_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    let collection_ids = required_state_section(document, "collections")?
+    let collection_ids = required_state_section(document, StorageBackupStateSection::Collections)?
         .iter()
         .map(|row| row_i64("collections", row, "id"))
         .collect::<Result<HashSet<_>, _>>()?;
-    let authorization_ids = required_state_section(document, "collection_authorization_state")?
-        .iter()
-        .map(|row| row_i64("collection_authorization_state", row, "collection_id"))
-        .collect::<Result<Vec<_>, _>>()?;
+    let authorization_ids =
+        required_state_section(document, StorageBackupStateSection::CollectionAuthorization)?
+            .iter()
+            .map(|row| row_i64("collection_authorization", row, "collection_id"))
+            .collect::<Result<Vec<_>, _>>()?;
     let unique_authorization_ids = authorization_ids.iter().copied().collect::<HashSet<_>>();
     if authorization_ids.len() != unique_authorization_ids.len()
         || unique_authorization_ids != collection_ids
@@ -412,16 +420,16 @@ fn validate_authorization_state_revisions(document: &BackupDocument) -> Result<(
 
 fn validate_live_history_revisions(
     document: &BackupDocument,
-    history_section: &str,
-    history_rows: &[Value],
+    history_section: StorageBackupHistorySection,
+    state_section: StorageBackupStateSection,
+    history_rows: &[StorageBackupRow],
 ) -> Result<(), ApiError> {
-    let state_section = history_section.trim_end_matches("_history");
     let live = required_state_section(document, state_section)?
         .iter()
         .map(|row| {
             Ok((
-                row_i64(state_section, row, "id")?,
-                row_revision(state_section, row)?,
+                row_i64(state_section.as_str(), row, "id")?,
+                row_revision(state_section.as_str(), row)?,
             ))
         })
         .collect::<Result<HashMap<_, _>, ApiError>>()?;
@@ -430,9 +438,10 @@ fn validate_live_history_revisions(
         .iter()
         .filter(|row| row.get("valid_to").is_some_and(Value::is_null))
     {
-        let id = row_i64(history_section, row, "id")?;
-        let revision = row_revision(history_section, row)?;
-        if row.get("op").and_then(Value::as_str) == Some("D") || open.insert(id, revision).is_some()
+        let id = row_i64(history_section.as_str(), row, "id")?;
+        let revision = row_revision(history_section.as_str(), row)?;
+        if row.get("operation").and_then(Value::as_str) == Some("delete")
+            || open.insert(id, revision).is_some()
         {
             return Err(ApiError::BadRequest(format!(
                 "Full backup history section '{history_section}' has an invalid open snapshot"
@@ -448,11 +457,11 @@ fn validate_live_history_revisions(
 }
 
 fn validate_event_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    let Some(events) = document
-        .history
-        .as_ref()
-        .and_then(|history| history.sections.get("events"))
-    else {
+    let Some(events) = document.history.as_ref().and_then(|history| {
+        history
+            .sections
+            .get(&StorageBackupHistorySection::AuditEvents)
+    }) else {
         return Ok(());
     };
     for event in events {
@@ -510,12 +519,11 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
     let mut personal_counts = HashMap::<(i32, i32), usize>::new();
     let mut shared_keys = HashSet::<(i32, String)>::new();
     let mut personal_keys = HashSet::<(i32, i32, String)>::new();
-    for row in required_state_section(document, "computed_field_definitions")? {
-        let object = row.as_object().ok_or_else(|| {
-            ApiError::BadRequest(
-                "Full backup contains a non-object computed-field definition".to_string(),
-            )
-        })?;
+    for row in required_state_section(
+        document,
+        StorageBackupStateSection::ComputedFieldDefinitions,
+    )? {
+        let object = row.fields();
         let string = |field: &str| {
             object
                 .get(field)
@@ -603,11 +611,11 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
         match visibility.as_str() {
             COMPUTED_FIELD_VISIBILITY_SHARED => {
                 if object
-                    .get("owner_user_id")
+                    .get("owner_principal_id")
                     .is_some_and(|value| !value.is_null())
                 {
                     return Err(ApiError::BadRequest(
-                        "Full backup shared computed-field definition must not have an owner_user_id"
+                        "Full backup shared computed-field definition must not have an owner_principal_id"
                             .to_string(),
                     ));
                 }
@@ -625,7 +633,7 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
                 }
             }
             COMPUTED_FIELD_VISIBILITY_PERSONAL => {
-                let owner_id = positive_id("owner_user_id")?;
+                let owner_id = positive_id("owner_principal_id")?;
                 if !personal_keys.insert((owner_id, class_id, key)) {
                     return Err(ApiError::BadRequest(format!(
                         "Full backup user {owner_id} contains a duplicate personal computed-field key for class {class_id}"
@@ -649,24 +657,24 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
     Ok(())
 }
 
-fn required_state_section<'a>(
-    document: &'a BackupDocument,
-    name: &str,
-) -> Result<&'a [Value], ApiError> {
+fn required_state_section(
+    document: &BackupDocument,
+    section: StorageBackupStateSection,
+) -> Result<&[StorageBackupRow], ApiError> {
     document
         .state
         .sections
-        .get(name)
+        .get(&section)
         .map(Vec::as_slice)
         .ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Full backup is missing required state section '{name}'"
+                "Full backup is missing required state section '{section}'"
             ))
         })
 }
 
 fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError> {
-    let local_scopes = required_state_section(document, "identity_scopes")?
+    let local_scopes = required_state_section(document, StorageBackupStateSection::IdentityScopes)?
         .iter()
         .filter(|row| row.get("name").and_then(Value::as_str) == Some(LOCAL_IDENTITY_SCOPE))
         .collect::<Vec<_>>();
@@ -678,7 +686,7 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
         )));
     }
 
-    let roots = required_state_section(document, "collections")?
+    let roots = required_state_section(document, StorageBackupStateSection::Collections)?
         .iter()
         .filter(|row| row.get("parent_collection_id").is_some_and(Value::is_null))
         .collect::<Vec<_>>();
@@ -690,13 +698,14 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
     let root_id = roots[0].get("id").and_then(Value::as_i64).ok_or_else(|| {
         ApiError::BadRequest("Full backup root collection has an invalid id".to_string())
     })?;
-    let has_root_closure = required_state_section(document, "collection_closure")?
-        .iter()
-        .any(|row| {
-            row.get("ancestor_collection_id").and_then(Value::as_i64) == Some(root_id)
-                && row.get("descendant_collection_id").and_then(Value::as_i64) == Some(root_id)
-                && row.get("depth").and_then(Value::as_i64) == Some(0)
-        });
+    let has_root_closure =
+        required_state_section(document, StorageBackupStateSection::CollectionHierarchy)?
+            .iter()
+            .any(|row| {
+                row.get("ancestor_collection_id").and_then(Value::as_i64) == Some(root_id)
+                    && row.get("descendant_collection_id").and_then(Value::as_i64) == Some(root_id)
+                    && row.get("depth").and_then(Value::as_i64) == Some(0)
+            });
     if !has_root_closure {
         return Err(ApiError::BadRequest(
             "Full backup must contain the root collection's depth-zero closure row".to_string(),
@@ -734,19 +743,19 @@ pub async fn stage_restore(
     let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
     let job = storage_handle(pool)
         .stage_restore(StorageRestoreStageCreate::new(
-            StorageRestoreInitiator::new(
+            StorageRestoreInitiator::try_new(
                 requested_by.map(|id| {
                     hubuum_domain::PrincipalId::new(id)
                         .expect("validated restore initiator id must be positive")
                 }),
                 requested_by_identity_scope,
                 requested_by_name,
-            ),
+            )?,
             document_bytes,
-            StorageRestoreArtifactSummary::new(byte_size, document_sha.clone()),
+            StorageRestoreArtifactSummary::try_new(byte_size, document_sha.clone())?,
             capability_hash,
             validation_json,
-            expires_at,
+            expires_at.and_utc(),
         ))
         .await
         .map(restore_job_from_storage)?;
@@ -841,17 +850,16 @@ async fn apply_restore(
     job_id: RestoreJobID,
     document: BackupDocument,
 ) -> Result<StorageRestoreCompletion, ApiError> {
-    let document = StorageRestoreDocument::new(
-        StorageRestoreDocumentMetadata::new(
-            document.backup_version,
-            document.created_at,
-            document.source_version,
-        ),
-        StorageBackupSnapshot::new(
-            document.state.sections,
-            document.history.map(|history| history.sections),
-        ),
+    let metadata = StorageRestoreDocumentMetadata::new(
+        document.backup_version,
+        document.created_at,
+        document.source_version,
     );
+    let snapshot = StorageBackupSnapshot::try_new(
+        document.state.sections,
+        document.history.map(|history| history.sections),
+    )?;
+    let document = StorageRestoreDocument::new(metadata, snapshot);
     storage_handle(pool)
         .apply_restore(StorageRestoreApply::new(job_id, document))
         .await
@@ -972,11 +980,11 @@ pub async fn confirm_restore(
         byte_size: job.byte_size,
         expires_at: job.expires_at,
         error: None,
-        confirmed_at: Some(confirmed_at),
-        started_at: Some(started_at),
-        finished_at: Some(finished_at),
+        confirmed_at: Some(confirmed_at.naive_utc()),
+        started_at: Some(started_at.naive_utc()),
+        finished_at: Some(finished_at.naive_utc()),
         created_at: job.created_at,
-        updated_at: finished_at,
+        updated_at: finished_at.naive_utc(),
         validation,
         restore_capability: None,
     })
@@ -1052,7 +1060,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     };
-    if !confirmation_is_stale(confirmed_at, snapshot.backend_now()) {
+    if !confirmation_is_stale(confirmed_at, snapshot.backend_now().naive_utc()) {
         return Ok(());
     }
 
@@ -1098,7 +1106,7 @@ async fn wait_for_instances_drained(
 ) -> Result<(), ApiError> {
     let deadline = Instant::now() + StdDuration::from_secs(RESTORE_DRAIN_TIMEOUT_SECONDS);
     loop {
-        let cutoff = Utc::now().naive_utc() - Duration::seconds(10);
+        let cutoff = Utc::now() - Duration::seconds(10);
         let (generation, instances) = storage_handle(pool)
             .get_restore_drain_state(cutoff)
             .await?
@@ -1236,12 +1244,23 @@ mod tests {
     use crate::models::{
         BackupDocument, BackupHistory, BackupManifest, BackupState, CURRENT_BACKUP_VERSION,
     };
+    use crate::storage::{
+        StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection,
+    };
+
+    fn backup_instant() -> chrono::DateTime<chrono::Utc> {
+        NaiveDate::from_ymd_opt(2026, 7, 16)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+    }
 
     fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
         json!({
             "class_id": class_id,
             "visibility": if owner_id.is_some() { "personal" } else { "shared" },
-            "owner_user_id": owner_id,
+            "owner_principal_id": owner_id,
             "key": key,
             "label": "Restored field",
             "description": "",
@@ -1256,13 +1275,17 @@ mod tests {
     fn document_with_computed_definitions(definitions: Vec<serde_json::Value>) -> BackupDocument {
         BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
-            created_at: NaiveDate::from_ymd_opt(2026, 7, 16)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
+            created_at: backup_instant(),
             source_version: "test".to_string(),
             state: BackupState {
-                sections: BTreeMap::from([("computed_field_definitions".to_string(), definitions)]),
+                sections: BTreeMap::from([(
+                    StorageBackupStateSection::ComputedFieldDefinitions,
+                    definitions
+                        .into_iter()
+                        .map(StorageBackupRow::try_from_value)
+                        .collect::<Result<_, _>>()
+                        .unwrap(),
+                )]),
             },
             history: None,
             manifest: BackupManifest::default(),
@@ -1272,14 +1295,14 @@ mod tests {
     fn document_with_event(event: serde_json::Value) -> BackupDocument {
         BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
-            created_at: NaiveDate::from_ymd_opt(2026, 7, 16)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
+            created_at: backup_instant(),
             source_version: "test".to_string(),
             state: BackupState::default(),
             history: Some(BackupHistory {
-                sections: BTreeMap::from([("events".to_string(), vec![event])]),
+                sections: BTreeMap::from([(
+                    StorageBackupHistorySection::AuditEvents,
+                    vec![StorageBackupRow::try_from_value(event).unwrap()],
+                )]),
             }),
             manifest: BackupManifest::default(),
         }
@@ -1417,7 +1440,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::validation(
+    #[case::validation_failed(
         ApiError::ValidationError("Backup manifest is invalid".to_string()),
         "Backup manifest is invalid"
     )]

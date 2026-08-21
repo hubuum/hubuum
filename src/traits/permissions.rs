@@ -7,8 +7,8 @@ use crate::models::{GroupID, Permission, Permissions, PermissionsList};
 use crate::permissions::{grant_from_storage, permission_to_storage};
 use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
-    AuthorizationCollectionAccessQuery, AuthorizationGrantDelete, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationStorage, StorageContext, storage_handle,
+    AuthorizationCollectionAccessQuery, AuthorizationDataStorage, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, StorageContext, storage_handle,
 };
 
 use super::{AuthzSubject, CollectionAccessors, scope_allows};

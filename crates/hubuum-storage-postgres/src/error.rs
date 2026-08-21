@@ -22,22 +22,6 @@ pub struct PostgresStorageError {
 }
 
 impl PostgresStorageError {
-    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
-        Self::invalid_input(message)
-    }
-
-    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
-        Self::permission_denied(message)
-    }
-
-    pub(crate) fn payload_too_large(message: impl Into<String>) -> Self {
-        Self::input_too_large(message)
-    }
-
-    pub(crate) fn too_many_requests(message: impl Into<String>) -> Self {
-        Self::rate_limited(message)
-    }
-
     pub(crate) fn precondition_failed(
         message: impl Into<String>,
         current_revision: Option<ResourceRevision>,
@@ -107,8 +91,8 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn validation(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::Validation, message, None)
+    pub fn validation_failed(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::ValidationFailed, message, None)
     }
 
     #[must_use]
@@ -122,8 +106,8 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn unsupported(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::Unsupported, message, None)
+    pub fn unsupported_operation(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::UnsupportedOperation, message, None)
     }
 
     #[must_use]
@@ -149,7 +133,7 @@ impl From<JsonSchemaError> for PostgresStorageError {
         let (kind, message) = error.into_parts();
         match kind {
             JsonSchemaErrorKind::InvalidSchema => Self::invalid_input(message),
-            JsonSchemaErrorKind::InvalidValue => Self::validation(message),
+            JsonSchemaErrorKind::InvalidValue => Self::validation_failed(message),
         }
     }
 }
@@ -185,19 +169,21 @@ impl From<StorageError> for PostgresStorageError {
             StorageErrorKind::PermissionDenied => Self::permission_denied(message),
             StorageErrorKind::Internal => Self::internal(message),
             StorageErrorKind::NotFound => Self::not_found(message),
-            StorageErrorKind::Unsupported => Self::unsupported(message),
+            StorageErrorKind::UnsupportedOperation => Self::unsupported_operation(message),
             StorageErrorKind::InputTooLarge => Self::input_too_large(message),
-            StorageErrorKind::RevisionConflict => Self::revision_conflict(
-                message,
-                current_revision.expect("revision conflicts always carry a current revision"),
-            ),
+            StorageErrorKind::RevisionConflict => match current_revision {
+                Some(revision) => Self::revision_conflict(message, revision),
+                None => Self::internal(
+                    "Storage revision conflict crossed the adapter boundary without a revision",
+                ),
+            },
             StorageErrorKind::PreconditionFailed => {
                 Self::precondition_failed(message, current_revision)
             }
             StorageErrorKind::RateLimited => Self::rate_limited(message),
             StorageErrorKind::Unavailable => Self::unavailable(message),
             StorageErrorKind::AuthenticationRequired => Self::authentication_required(message),
-            StorageErrorKind::Validation => Self::validation(message),
+            StorageErrorKind::ValidationFailed => Self::validation_failed(message),
         }
     }
 }
@@ -277,14 +263,14 @@ impl From<PostgresStorageError> for StorageError {
             StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),
             StorageErrorKind::Internal => Self::internal(error.message),
             StorageErrorKind::NotFound => Self::not_found(error.message),
-            StorageErrorKind::Unsupported => Self::unsupported(error.message),
+            StorageErrorKind::UnsupportedOperation => Self::unsupported_operation(error.message),
             StorageErrorKind::InputTooLarge => Self::input_too_large(error.message),
-            StorageErrorKind::RevisionConflict => Self::revision_conflict(
-                error.message,
-                error
-                    .current_revision
-                    .expect("revision conflicts always carry a current revision"),
-            ),
+            StorageErrorKind::RevisionConflict => match error.current_revision {
+                Some(revision) => Self::revision_conflict(error.message, revision),
+                None => Self::internal(
+                    "PostgreSQL revision conflict crossed the storage boundary without a revision",
+                ),
+            },
             StorageErrorKind::PreconditionFailed => {
                 Self::precondition_failed(error.message, error.current_revision)
             }
@@ -293,7 +279,7 @@ impl From<PostgresStorageError> for StorageError {
             StorageErrorKind::AuthenticationRequired => {
                 Self::authentication_required(error.message)
             }
-            StorageErrorKind::Validation => Self::validation(error.message),
+            StorageErrorKind::ValidationFailed => Self::validation_failed(error.message),
         }
     }
 }

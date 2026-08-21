@@ -21,6 +21,13 @@ the more detailed families below are semantic subgroups, not a one-to-one
 module map. Neither form represents separately versioned or negotiable runtime
 features.
 
+Each discovery module reexports one method-free family bound with the matching
+singular name: `ResourceStorage`, `IdentityStorage`, `QueryStorage`,
+`WorkflowStorage`, `EventStorage`, or `OperationalStorage`. These bounds are
+convenient views over the operation traits, not additional implementation
+interfaces. Computed-field lifecycle belongs to `WorkflowStorage`; computed
+object projection belongs to `QueryStorage`.
+
 Persistence ports use the suffix `Storage`: for example,
 `CollectionStorage`, `CatalogStorage`, `EventRetentionStorage`, and
 `ExecutionStorage`. Collaborators that are not backend capabilities use role
@@ -44,7 +51,6 @@ StorageBackend
 |-- read models
 |   |-- catalog queries
 |   |-- computed object queries
-|   |-- computed-field lifecycle
 |   |-- object aggregates
 |   |-- relation queries
 |   |-- temporal history
@@ -53,6 +59,7 @@ StorageBackend
 |
 |-- workflows
 |   |-- remote targets
+|   |-- computed-field lifecycle
 |   |-- task queue
 |   |-- task execution
 |   |-- backup snapshots
@@ -136,15 +143,20 @@ or a query builder.
 Required traits:
 
 - `AuthenticationStorage`;
-- `BootstrapStorage`, `IdentityScopeStorage`, `IdentityMembershipStorage`,
+- `LocalIdentityCredentialStorage`, `IdentityScopeStorage`, `IdentityMembershipStorage`,
   `ServiceAccountStorage`, `ExternalIdentityStorage`, `UserStorage`, and
   `TokenStorage`;
-- `AuthorizationStorage` and `CollectionAuthorizationStorage`; and
+- `AuthorizationDataStorage` and `CollectionAuthorizationQueryStorage`; and
 - `GroupStorage` and `PrincipalStorage`.
 
 This family owns authentication projections, identity scopes, humans, service
 accounts, tokens, groups, memberships, local grants, authorization facts, and
 the candidate or snapshot data required by external policy engines.
+
+Resource ownership follows the trait name: `GroupStorage` owns group listing
+and lifecycle, `TokenStorage` owns retained-token listing and lifecycle, and
+`IdentityMembershipStorage` owns only principal/group membership facts. This
+keeps point, list, and mutation methods for one resource on the same trait.
 
 The application still owns token-policy interpretation, administrator policy,
 external policy evaluation, public authorization resources, and conversion to
@@ -170,11 +182,11 @@ Required trait: `ComputedObjectStorage`.
 
 Owns computed filtering, sorting, exact counts, cursor snapshots, and computed
 value enrichment. It consumes definitions and materialized values managed by
-the computed-field lifecycle family.
+the computed-fields family.
 
-### `computed_field_lifecycle`
+### `computed_fields`
 
-Required trait: `ComputedFieldLifecycleStorage`.
+Required trait: `ComputedFieldStorage`.
 
 Owns shared and personal definition lifecycle, per-class computation state,
 rebuild scheduling, and rebuild execution under a task lease. Definition
@@ -301,7 +313,7 @@ syntax, query, source-composition, permission, and API PATCH validation.
 Required traits:
 
 - `AuditEventStorage`;
-- `EventSubscriptionStorage`; and
+- `EventConfigurationStorage`; and
 - `EventDeliveryAdministrationStorage`.
 
 This family owns visibility-scoped audit reads, sink and subscription
@@ -313,7 +325,7 @@ Sink and subscription mutations include their lifecycle events atomically.
 Required traits:
 
 - `MetricsStorage` and `OperationalStateStorage`;
-- `EventDeliveryStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
+- `EventDeliveryWorkerStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
   `EventRetentionStorage`;
 - `TokenRetentionStorage`; and
 - `ExecutionStorage`.
@@ -335,7 +347,7 @@ Event workers form a pipeline:
 audited mutation
       |
       v
-EventFanoutStorage -> durable deliveries -> EventDeliveryStorage
+EventFanoutStorage -> durable deliveries -> EventDeliveryWorkerStorage
                                               |
                                               v
                                       external transport

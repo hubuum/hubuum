@@ -41,11 +41,11 @@ impl ObjectAggregateJsonBound {
 
     pub(super) fn overflow_error(self) -> PostgresStorageError {
         match self {
-            Self::CandidateBatch => PostgresStorageError::payload_too_large(format!(
+            Self::CandidateBatch => PostgresStorageError::input_too_large(format!(
                 "An object snapshot exceeds the {}-byte grouped-query source batch limit",
                 self.max_bytes()
             )),
-            Self::Accumulator => PostgresStorageError::payload_too_large(format!(
+            Self::Accumulator => PostgresStorageError::input_too_large(format!(
                 "Object aggregate cardinality and values exceed the {}-byte intermediate storage limit; narrow the source filters or grouping dimensions",
                 self.max_bytes()
             )),

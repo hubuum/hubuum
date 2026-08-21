@@ -9,14 +9,15 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
+use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::storage::{
     collection_from_storage, grant_from_storage, group_grant_from_storage, permission_to_storage,
 };
 use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
 use crate::storage::{
     AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
-    AuthorizationCollectionsQuery, AuthorizationGrantDelete, AuthorizationGrantKey,
-    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationStorage,
+    AuthorizationCollectionsQuery, AuthorizationDataStorage, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupMembershipQuery,
     StorageHandle,
 };
 
@@ -187,14 +188,17 @@ impl PermissionBackend for LocalPermissionBackend {
             .into_iter()
             .map(group_grant_from_storage)
             .collect::<Result<Vec<_>, _>>()?;
+        let observed_total = total
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(rows.len());
         record_reverse_query(
             BACKEND_KIND,
             "groups_with_permissions_on",
-            total as usize,
+            observed_total,
             rows.len(),
             start.elapsed(),
         );
-        Ok((rows, total))
+        Ok((rows, total.unwrap_or(SKIPPED_TOTAL_COUNT)))
     }
 
     async fn group_permission_on(

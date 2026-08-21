@@ -245,8 +245,8 @@ impl StorageIdentityGroupBuilder {
             external_key: self.external_key,
             last_sync_attempted_at: self.last_sync_attempted_at,
             last_sync_success_at: self.last_sync_success_at,
-            created_at: self.metadata.created_at(),
-            updated_at: self.metadata.updated_at(),
+            created_at: self.metadata.created_at().naive_utc(),
+            updated_at: self.metadata.updated_at().naive_utc(),
             revision: self.metadata.revision(),
         }
     }
@@ -1544,7 +1544,7 @@ impl StorageSyncedHuman {
 
 /// Initial local-identity bootstrap and credential-recovery operations.
 #[async_trait]
-pub trait BootstrapStorage: Send + Sync {
+pub trait LocalIdentityCredentialStorage: Send + Sync {
     /// Return whether the backend is empty enough to require its initial local
     /// administrator. This is an optimization; the atomic bootstrap operation
     /// must repeat the check under its backend-native coordination primitive.
@@ -1593,7 +1593,7 @@ pub trait IdentityScopeStorage: Send + Sync {
     ) -> Result<Vec<(IdentityScopeId, String)>, StorageError>;
 }
 
-/// Administrative membership and retained-token read models.
+/// Administrative effective-membership read models.
 #[async_trait]
 pub trait IdentityMembershipStorage: Send + Sync {
     /// Load one effective principal-to-group membership with its authoritative
@@ -1611,20 +1611,6 @@ pub trait IdentityMembershipStorage: Send + Sync {
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StoragePage<StorageIdentityGroup>, StorageError>;
 
-    /// List groups with stable filtering, cursor pagination, and an optional
-    /// exact total in one operation-shaped backend capability.
-    async fn list_groups(
-        &self,
-        query: StorageGroupListQuery,
-    ) -> Result<StoragePage<StorageIdentityGroup>, StorageError>;
-
-    /// Return hash-free retained token metadata using the requested lifecycle
-    /// state, filters, stable cursor page, and optional exact total.
-    async fn list_retained_tokens(
-        &self,
-        query: StorageTokenListQuery,
-    ) -> Result<StoragePage<StorageTokenMetadata>, StorageError>;
-
     /// Return whether the principal is both human and an effective member of
     /// the service account owner group.
     async fn is_human_owner_group_member(
@@ -1640,7 +1626,10 @@ pub trait ServiceAccountStorage: Send + Sync {
     /// Return `true` only for a disabled service-account principal.
     ///
     /// Human principals and IDs without a service-account row return `false`.
-    async fn is_principal_disabled(&self, principal_id: PrincipalId) -> Result<bool, StorageError>;
+    async fn is_service_account_disabled(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<bool, StorageError>;
 
     /// Load the service-account row for one principal ID.
     async fn get_service_account(
@@ -1727,12 +1716,13 @@ mod tests {
         let created_at = NaiveDateTime::default();
         let updated_at = created_at + chrono::Duration::seconds(1);
         let group = StorageIdentityGroup::builder(
-            StorageRecordMetadata::new(
+            StorageRecordMetadata::try_new(
                 hubuum_domain::ResourceId::new(7).unwrap(),
-                created_at,
-                updated_at,
+                created_at.and_utc(),
+                updated_at.and_utc(),
                 hubuum_domain::ResourceRevision::new(3).unwrap(),
-            ),
+            )
+            .unwrap(),
             "operators",
             "Operations team",
             IdentityScopeId::new(2).unwrap(),

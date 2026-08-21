@@ -79,13 +79,13 @@ pub(super) async fn load_computed_aggregate_definitions(
                 }
             })
             .ok_or_else(|| {
-                PostgresStorageError::bad_request(format!(
+                PostgresStorageError::invalid_input(format!(
                     "Computed aggregate field '{}' does not name an accessible field in class {class_id_value}",
                     selector.canonical()
                 ))
             })?;
         if !definition.enabled() {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Computed aggregate field '{}' is disabled",
                 selector.canonical()
             )));
@@ -101,7 +101,7 @@ pub(super) async fn load_computed_aggregate_definitions(
                 ComputedQueryValueType::Number | ComputedQueryValueType::Integer
             )
         {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Computed aggregate measure '{}' must select a numeric field",
                 selector.canonical()
             )));

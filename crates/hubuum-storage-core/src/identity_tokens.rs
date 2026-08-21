@@ -6,8 +6,8 @@ use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    AuthenticationTokenScope, MutationOutcome, StorageError, StorageTokenMetadata,
-    StorageTokenObservation,
+    AuthenticationTokenScope, MutationOutcome, StorageError, StoragePage, StorageTokenListQuery,
+    StorageTokenMetadata, StorageTokenObservation,
 };
 
 /// Named token-creation fields exposed to an adapter.
@@ -387,6 +387,13 @@ impl fmt::Debug for StoragePrincipalTokensRevoke {
 /// Complete bearer-token lifecycle required of every selectable backend.
 #[async_trait]
 pub trait TokenStorage: Send + Sync {
+    /// Return hash-free retained token metadata using the requested lifecycle
+    /// state, filters, stable cursor page, and optional exact total.
+    async fn list_retained_tokens(
+        &self,
+        query: StorageTokenListQuery,
+    ) -> Result<StoragePage<StorageTokenMetadata>, StorageError>;
+
     async fn create_token(
         &self,
         request: StorageTokenCreate,
@@ -405,7 +412,7 @@ pub trait TokenStorage: Send + Sync {
     ) -> Result<StorageTokenMetadata, StorageError>;
 
     /// Load metadata for token IDs in the same order, including duplicates.
-    async fn get_token_metadata_batch(
+    async fn get_token_metadata_by_ids(
         &self,
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,

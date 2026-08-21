@@ -447,7 +447,7 @@ async fn repair_stale_materializations(
 
 fn validate_owner_id(personal_owner_id: Option<i32>) -> Result<(), PostgresStorageError> {
     if personal_owner_id.is_some_and(|owner_id| owner_id <= 0) {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "computed field owner id must be greater than zero",
         ));
     }

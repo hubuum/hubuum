@@ -359,7 +359,7 @@ async fn unique_collection_by_name_on_connection(
     match matches.as_slice() {
         [] => Ok(None),
         [collection] => Ok(Some(collection.clone())),
-        _ => Err(PostgresStorageError::bad_request(format!(
+        _ => Err(PostgresStorageError::invalid_input(format!(
             "Collection name '{name}' is ambiguous; use collection_key.path"
         ))),
     }
@@ -398,7 +398,7 @@ fn normalized_pair(left: i32, right: i32, label: &str) -> Result<(i32, i32), Pos
     validate_positive_id(left, &format!("left {label} id"))?;
     validate_positive_id(right, &format!("right {label} id"))?;
     if left == right {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "{label} relation endpoints must be distinct"
         )));
     }
@@ -411,7 +411,7 @@ fn normalized_pair(left: i32, right: i32, label: &str) -> Result<(i32, i32), Pos
 
 fn validate_positive_id(value: i32, label: &str) -> Result<(), PostgresStorageError> {
     if value <= 0 {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{label} must be greater than zero"
         )))
     } else {
@@ -421,7 +421,7 @@ fn validate_positive_id(value: i32, label: &str) -> Result<(), PostgresStorageEr
 
 fn validate_name(value: &str, label: &str) -> Result<(), PostgresStorageError> {
     if value.trim().is_empty() {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{label} must not be empty"
         )))
     } else {
@@ -447,11 +447,11 @@ fn validate_collection_key_parts(
     validate_names(path, "collection path segment")?;
     match path.last() {
         Some(last) if last == name => Ok(()),
-        Some(_) => Err(PostgresStorageError::bad_request(format!(
+        Some(_) => Err(PostgresStorageError::invalid_input(format!(
             "collection_key.path must end with collection name '{name}'"
         ))),
         None if name == "root" => Ok(()),
-        None => Err(PostgresStorageError::bad_request(
+        None => Err(PostgresStorageError::invalid_input(
             "collection_key.path may be empty only for the root collection",
         )),
     }

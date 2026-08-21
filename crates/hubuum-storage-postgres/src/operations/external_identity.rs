@@ -194,7 +194,7 @@ pub async fn sync_external_user(
         validate_required(group.key(), "external group key")?;
         validate_required(group.name(), "external group name")?;
         if !seen_group_keys.insert(group.key().to_string()) {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "duplicate external group key '{}'",
                 group.key()
             )));
@@ -539,7 +539,7 @@ async fn database_now(
 
 fn validate_required(value: &str, field: &str) -> Result<(), PostgresStorageError> {
     if value.trim().is_empty() {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must not be empty"
         )))
     } else {
@@ -551,7 +551,7 @@ fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }

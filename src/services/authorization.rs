@@ -7,7 +7,7 @@ use crate::errors::ApiError;
 use crate::models::CollectionPermissionSet;
 use crate::permissions::grant_from_storage;
 use crate::services::storage_boundary::{collection_id_to_storage, group_id_to_storage};
-use crate::storage::{AuthorizationPermissionSetQuery, AuthorizationStorage, StorageHandle};
+use crate::storage::{AuthorizationDataStorage, AuthorizationPermissionSetQuery, StorageHandle};
 
 pub(crate) async fn collection_permission_set(
     storage: &StorageHandle,

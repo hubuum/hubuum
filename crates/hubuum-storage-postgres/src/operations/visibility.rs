@@ -63,7 +63,7 @@ pub(crate) fn required_permissions(
         if parameter.field == FilterField::Permissions {
             permissions.push(
                 AuthorizationPermission::from_name(&parameter.value)
-                    .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?,
+                    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?,
             );
         }
     }

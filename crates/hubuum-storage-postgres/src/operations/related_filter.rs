@@ -102,7 +102,7 @@ fn related_filter_groups(
                 if let Some(data_type) = object_field.data_type()
                     && !filter.operator.is_applicable_to(data_type)
                 {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Operator '{}' is not applicable to related object field '{}'",
                         filter.operator,
                         object_field.as_str()
@@ -114,7 +114,7 @@ fn related_filter_groups(
         }
     }
     if groups.len() > MAX_RELATED_FILTER_GROUPS {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "query accepts at most {MAX_RELATED_FILTER_GROUPS} related filter groups"
         )));
     }
@@ -123,35 +123,35 @@ fn related_filter_groups(
         .into_iter()
         .map(|(alias, group)| {
             if group.class_filters.len() != 1 {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Related filter group '{alias}' requires exactly one class.id or class.name selector"
                 )));
             }
             let class_filter = group.class_filters[0];
             if class_filter.operator != (SearchOperator::Equals { is_negated: false }) {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Related filter group '{alias}' requires an unnegated equality class selector"
                 )));
             }
             if group.depth_filters.len() > 1 {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Related filter group '{alias}' accepts at most one depth__lte filter"
                 )));
             }
             let max_depth = match group.depth_filters.first() {
                 Some(filter) => {
                     if filter.operator != (SearchOperator::Lte { is_negated: false }) {
-                        return Err(PostgresStorageError::bad_request(format!(
+                        return Err(PostgresStorageError::invalid_input(format!(
                             "Related filter group '{alias}' only supports depth__lte"
                         )));
                     }
                     let depth = filter.value.parse::<u8>().map_err(|_| {
-                        PostgresStorageError::bad_request(format!(
+                        PostgresStorageError::invalid_input(format!(
                             "Related filter depth must be an integer from 1 to {MAX_RELATED_FILTER_DEPTH}"
                         ))
                     })?;
                     if !(1..=MAX_RELATED_FILTER_DEPTH).contains(&depth) {
-                        return Err(PostgresStorageError::bad_request(format!(
+                        return Err(PostgresStorageError::invalid_input(format!(
                             "Related filter depth must be an integer from 1 to {MAX_RELATED_FILTER_DEPTH}"
                         )));
                     }
@@ -244,7 +244,7 @@ fn build_related_object_filter_sql(
             RelatedClassField::Id => {
                 let values = parse_integer_values(group.class_filter)?;
                 if values.len() != 1 {
-                    return Err(PostgresStorageError::bad_request(
+                    return Err(PostgresStorageError::invalid_input(
                         "related.<alias>.class.id requires exactly one integer",
                     ));
                 }
@@ -393,7 +393,7 @@ fn related_target_object_clause(
     let (operator, negated) = parameter.operator.op_and_neg();
     if operator == Operator::IsNull {
         let should_be_null = hubuum_query::parse_boolean_value(&parameter.value)
-            .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?
+            .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
             != negated;
         return Ok(format!(
             "{column} IS {}NULL",
@@ -423,7 +423,7 @@ fn related_integer_clause(
 ) -> Result<String, PostgresStorageError> {
     let values = parse_integer_values(parameter)?;
     let minimum = *values.iter().min().ok_or_else(|| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Searching on field '{}' requires a value",
             parameter.field
         ))
@@ -433,7 +433,7 @@ fn related_integer_clause(
     let sql = match operator {
         Operator::Equals | Operator::In => {
             if values.len() > 50 {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Operator '{operator}' is limited to 50 values, got {}",
                     values.len()
                 )));
@@ -451,7 +451,7 @@ fn related_integer_clause(
             format!("{column} BETWEEN ? AND ?")
         }
         Operator::Between => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Operator 'between' requires 2 values for field '{}'",
                 parameter.field
             )));
@@ -470,14 +470,14 @@ fn related_revision_clause(
         &parameter.value,
         MAX_INTEGER_FILTER_VALUES,
     )
-    .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let (operator, negated) = parameter.operator.op_and_neg();
     let sql = match operator {
         Operator::Equals if values.len() == 1 => {
             bound_comparison(column, "=", SqlValue::BigInteger(values[0]), bind_variables)
         }
         Operator::Equals => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Operator '{operator}' requires exactly 1 value for field '{}'",
                 parameter.field
             )));
@@ -507,7 +507,7 @@ fn related_revision_clause(
             format!("{column} BETWEEN ? AND ?")
         }
         Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte | Operator::Between => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Operator '{operator}' has the wrong number of values for field '{}'",
                 parameter.field
             )));
@@ -523,9 +523,9 @@ fn related_date_clause(
     bind_variables: &mut Vec<SqlValue>,
 ) -> Result<String, PostgresStorageError> {
     let values = hubuum_query::parse_datetime_list(&parameter.value)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let minimum = *values.iter().min().ok_or_else(|| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Searching on field '{}' requires a value",
             parameter.field
         ))
@@ -551,7 +551,7 @@ fn related_date_clause(
             format!("{column} BETWEEN ? AND ?")
         }
         Operator::Between => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Operator 'between' requires 2 values for field '{}'",
                 parameter.field
             )));
@@ -614,7 +614,7 @@ fn related_string_clause(
 
 fn parse_integer_values(parameter: &ParsedQueryParam) -> Result<Vec<i32>, PostgresStorageError> {
     hubuum_query::parse_integer_list(&parameter.value)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn bound_comparison(
@@ -635,7 +635,7 @@ fn unsupported_related_operator(
     parameter: &ParsedQueryParam,
     data_type: &str,
 ) -> PostgresStorageError {
-    PostgresStorageError::bad_request(format!(
+    PostgresStorageError::invalid_input(format!(
         "Operator '{}' is not implemented for related {data_type} field '{}'",
         parameter.operator, parameter.field
     ))

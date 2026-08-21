@@ -16,15 +16,13 @@ use hubuum_storage_core::{
     AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPermission,
     AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, StorageCountedPage,
+    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, StoragePage,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 use super::rows::{CollectionRow, GroupRow, PermissionRow};
-
-const SKIPPED_TOTAL_COUNT: i64 = -1;
 
 pub async fn get_authorization_principal(
     runtime: &PostgresRuntime,
@@ -79,7 +77,7 @@ pub async fn is_authorization_principal_group_member(
         .await
 }
 
-pub async fn get_authorization_classes(
+pub async fn list_authorization_classes(
     runtime: &PostgresRuntime,
     query: AuthorizationResourceIds,
 ) -> Result<Vec<AuthorizationClassResource>, PostgresStorageError> {
@@ -110,7 +108,7 @@ pub async fn get_authorization_classes(
         .await
 }
 
-pub async fn get_authorization_objects(
+pub async fn list_authorization_objects(
     runtime: &PostgresRuntime,
     query: AuthorizationResourceIds,
 ) -> Result<Vec<AuthorizationObjectResource>, PostgresStorageError> {
@@ -334,7 +332,7 @@ pub async fn list_authorization_group_candidates(
                     }
                     FilterField::Permissions => {}
                     _ => {
-                        return Err(PostgresStorageError::bad_request(format!(
+                        return Err(PostgresStorageError::invalid_input(format!(
                             "Field '{}' isn't searchable (or does not exist) for permissions",
                             parameter.field
                         )));
@@ -450,7 +448,7 @@ pub async fn list_all_principal_collection_permissions(
 pub async fn list_principal_collection_permissions_page(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionPageQuery,
-) -> Result<StorageCountedPage<AuthorizationGroupGrant>, PostgresStorageError> {
+) -> Result<StoragePage<AuthorizationGroupGrant>, PostgresStorageError> {
     if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
@@ -459,14 +457,14 @@ pub async fn list_principal_collection_permissions_page(
                     .get_result::<i64>(connection)
                     .await?;
                 let items = load_principal_grants(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, total))
+                StoragePage::try_new(items, Some(total)).map_err(PostgresStorageError::from)
             })
             .await
     } else {
         runtime
             .with_connection(async move |connection| {
                 let items = load_principal_grants(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, SKIPPED_TOTAL_COUNT))
+                StoragePage::try_new(items, None).map_err(PostgresStorageError::from)
             })
             .await
     }
@@ -657,7 +655,7 @@ pub async fn list_groups_with_collection_permission(
 pub async fn list_groups_with_collection_permission_page(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGroupsPageQuery,
-) -> Result<StorageCountedPage<AuthorizationGroup>, PostgresStorageError> {
+) -> Result<StoragePage<AuthorizationGroup>, PostgresStorageError> {
     if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
@@ -666,14 +664,14 @@ pub async fn list_groups_with_collection_permission_page(
                     .get_result::<i64>(connection)
                     .await?;
                 let groups = load_groups_page(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(StorageCountedPage::new(groups, total))
+                StoragePage::try_new(groups, Some(total)).map_err(PostgresStorageError::from)
             })
             .await
     } else {
         runtime
             .with_connection(async move |connection| {
                 let groups = load_groups_page(connection, &query).await?;
-                Ok::<_, PostgresStorageError>(StorageCountedPage::new(groups, SKIPPED_TOTAL_COUNT))
+                StoragePage::try_new(groups, None).map_err(PostgresStorageError::from)
             })
             .await
     }
@@ -792,7 +790,7 @@ fn build_principal_grant_query(
                 apply_permission_filter!(records, permission, true);
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
                     parameter.field
                 )));
@@ -866,7 +864,7 @@ fn build_groups_page_query(
                 crate::postgres_revision_filter!(groups, parameter, groups::revision)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for groups",
                     parameter.field
                 )));
@@ -903,7 +901,7 @@ fn group_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSto
         FilterField::UpdatedAt => cursor_field("groups.updated_at", CursorSqlType::DateTime),
         FilterField::Revision => cursor_field("groups.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for groups"
             )));
         }
@@ -913,7 +911,7 @@ fn group_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSto
 pub async fn list_local_collection_grants(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGrantListQuery,
-) -> Result<StorageCountedPage<AuthorizationGroupGrant>, PostgresStorageError> {
+) -> Result<StoragePage<AuthorizationGroupGrant>, PostgresStorageError> {
     let permissions = grant_query_permissions(&query)?;
     if query.query_options().include_total() {
         runtime
@@ -923,14 +921,14 @@ pub async fn list_local_collection_grants(
                     .get_result::<i64>(connection)
                     .await?;
                 let items = load_group_grants(connection, &query, &permissions).await?;
-                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, total))
+                StoragePage::try_new(items, Some(total)).map_err(PostgresStorageError::from)
             })
             .await
     } else {
         runtime
             .with_connection(async |connection| {
                 let items = load_group_grants(connection, &query, &permissions).await?;
-                Ok::<_, PostgresStorageError>(StorageCountedPage::new(items, SKIPPED_TOTAL_COUNT))
+                StoragePage::try_new(items, None).map_err(PostgresStorageError::from)
             })
             .await
     }
@@ -992,7 +990,7 @@ fn build_group_grant_query<'a>(
             }
             FilterField::Permissions => {}
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
                     parameter.field
                 )));
@@ -1020,7 +1018,7 @@ fn parse_permission_filter(
     parameter: &hubuum_query::ParsedQueryParam,
 ) -> Result<AuthorizationPermission, PostgresStorageError> {
     AuthorizationPermission::from_name(&parameter.value)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn group_grant_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStorageError> {
@@ -1032,7 +1030,7 @@ fn group_grant_cursor_field(field: &FilterField) -> Result<CursorSqlField, Postg
         FilterField::CreatedAt => cursor_field("permissions.created_at", CursorSqlType::DateTime),
         FilterField::UpdatedAt => cursor_field("permissions.updated_at", CursorSqlType::DateTime),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for group permissions"
             )));
         }

@@ -7,7 +7,7 @@ use hubuum_query::QueryOptions;
 use crate::{
     AuthenticationTokenScope, AuthorizationCollection, AuthorizationCollectionGrantListQuery,
     AuthorizationGrant, AuthorizationGroup, AuthorizationGroupGrant, AuthorizationPermission,
-    AuthorizationPolicySnapshotRow, StorageCountedPage, StorageError,
+    AuthorizationPolicySnapshotRow, StorageError, StoragePage,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -321,7 +321,7 @@ impl AuthorizationEffectiveGroupGrant {
 /// Collection-oriented authorization projections required by legacy and
 /// administration APIs. Policy decisions remain outside this data contract.
 #[async_trait]
-pub trait CollectionAuthorizationStorage: Send + Sync {
+pub trait CollectionAuthorizationQueryStorage: Send + Sync {
     async fn list_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionQuery,
@@ -335,7 +335,7 @@ pub trait CollectionAuthorizationStorage: Send + Sync {
     async fn list_principal_collection_permissions_page(
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
-    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError>;
+    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
 
     async fn list_effective_principal_collection_permissions(
         &self,
@@ -366,7 +366,7 @@ pub trait CollectionAuthorizationStorage: Send + Sync {
     async fn list_groups_with_collection_permission_page(
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<StorageCountedPage<AuthorizationGroup>, StorageError>;
+    ) -> Result<StoragePage<AuthorizationGroup>, StorageError>;
 
     async fn list_collection_group_permissions(
         &self,
@@ -376,7 +376,7 @@ pub trait CollectionAuthorizationStorage: Send + Sync {
     async fn list_collection_group_permissions_page(
         &self,
         query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StorageCountedPage<AuthorizationGroupGrant>, StorageError>;
+    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
 
     async fn get_collection_group_permission(
         &self,

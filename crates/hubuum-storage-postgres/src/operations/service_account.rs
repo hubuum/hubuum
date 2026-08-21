@@ -64,7 +64,7 @@ macro_rules! apply_service_account_filters {
                     crate::schema::principals::revision
                 ),
                 _ => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable for service accounts",
                         parameter.field
                     )));
@@ -241,7 +241,7 @@ pub async fn list_manageable_service_accounts(
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(rows, total))
+            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -639,7 +639,7 @@ fn service_account_cursor_field(
         }
         FilterField::Revision => cursor_field("principals.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for service accounts"
             )));
         }
@@ -680,7 +680,7 @@ fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }

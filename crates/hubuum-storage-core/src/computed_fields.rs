@@ -787,7 +787,7 @@ impl StorageComputedFieldRebuildRequest {
 
 /// Mandatory backend contract for computed-field definitions and rebuild state.
 #[async_trait]
-pub trait ComputedFieldLifecycleStorage: Send + Sync {
+pub trait ComputedFieldStorage: Send + Sync {
     async fn get_computed_field_state(
         &self,
         class_id: ClassId,
@@ -859,12 +859,13 @@ mod tests {
     fn definition_debug_redacts_identifiers_and_expression_content() {
         let now = chrono::Utc::now().naive_utc();
         let definition = StorageComputedFieldDefinition::new(
-            StorageRecordMetadata::new(
+            StorageRecordMetadata::try_new(
                 hubuum_domain::ResourceId::new(71).unwrap(),
-                now,
-                now,
+                now.and_utc(),
+                now.and_utc(),
                 hubuum_domain::ResourceRevision::new(5).unwrap(),
-            ),
+            )
+            .unwrap(),
             ClassId::new(72).unwrap(),
             StorageComputedFieldVisibility::Personal {
                 owner_id: PrincipalId::new(73).unwrap(),

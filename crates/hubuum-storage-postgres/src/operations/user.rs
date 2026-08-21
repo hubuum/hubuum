@@ -65,7 +65,7 @@ macro_rules! apply_user_filters {
                     crate::schema::principals::revision
                 ),
                 _ => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
                         parameter.field
                     )));
@@ -279,7 +279,7 @@ pub async fn list_users(
                     },
                 )
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(items, total))
+            StoragePage::try_new(items, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -291,7 +291,7 @@ pub async fn create_user(
     let (identity_scope, name, password, proper_name, email, context) = request.into_parts();
     let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     if identity_scope != LOCAL_IDENTITY_SCOPE {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "users in non-local identity scopes are managed by their identity provider",
         ));
     }
@@ -622,7 +622,7 @@ async fn ensure_user_allows_local_write(
         .first::<bool>(connection)
         .await?;
     if provider_managed {
-        Err(PostgresStorageError::forbidden(
+        Err(PostgresStorageError::permission_denied(
             "Provider-managed users are read-only in Hubuum",
         ))
     } else {
@@ -660,7 +660,7 @@ fn user_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStor
         FilterField::UpdatedAt => cursor_field("users.updated_at", CursorSqlType::DateTime, false),
         FilterField::Revision => cursor_field("principals.revision", CursorSqlType::BigInt, false),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for users"
             )));
         }
@@ -700,7 +700,7 @@ fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }

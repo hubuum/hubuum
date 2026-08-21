@@ -13,7 +13,7 @@ use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, principal_id_to_storage,
 };
 use crate::storage::{
-    ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
+    ComputedFieldStorage, StorageClassComputationState, StorageComputedFieldDefinition,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldMutation, StorageComputedFieldRebuildRequest,
     StorageComputedFieldVisibility, StorageContext, StoragePersonalComputedFieldCreate,
@@ -298,8 +298,8 @@ fn definition_from_storage(
         semantics_version: definition.semantics_version(),
         created_by: definition.created_by().map(|id| id.id()),
         updated_by: definition.updated_by().map(|id| id.id()),
-        created_at: metadata.created_at(),
-        updated_at: metadata.updated_at(),
+        created_at: metadata.created_at().naive_utc(),
+        updated_at: metadata.updated_at().naive_utc(),
     })
 }
 

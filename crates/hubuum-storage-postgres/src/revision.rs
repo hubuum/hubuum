@@ -132,12 +132,13 @@ pub(crate) fn record_metadata(
     updated_at: chrono::NaiveDateTime,
     revision: PostgresRevision,
 ) -> Result<StorageRecordMetadata, PostgresStorageError> {
-    Ok(StorageRecordMetadata::new(
+    StorageRecordMetadata::try_new(
         ResourceId::new(id)?,
-        created_at,
-        updated_at,
+        created_at.and_utc(),
+        updated_at.and_utc(),
         revision.into_domain(),
-    ))
+    )
+    .map_err(PostgresStorageError::from)
 }
 
 pub(crate) fn record_metadata_from_raw_revision(

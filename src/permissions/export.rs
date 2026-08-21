@@ -14,7 +14,7 @@ use std::io::Write;
 
 use crate::errors::ApiError;
 use crate::models::{Collection, Group, Permission};
-use crate::storage::{AuthorizationStorage, storage_handle};
+use crate::storage::{AuthorizationDataStorage, storage_handle};
 
 use super::storage::{collection_from_storage, grant_from_storage, group_from_storage};
 

@@ -106,7 +106,7 @@ pub(crate) async fn resolve_computed_query_fields(
             .iter()
             .any(|(scope, _)| *scope == ComputedFieldScope::Personal)
     {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "Personal computed fields can only be filtered or sorted by their owning human user",
         ));
     }
@@ -170,7 +170,7 @@ pub(crate) async fn resolve_computed_query_fields(
         let definition = definitions_by_key
             .get(&(*scope, key.clone()))
             .ok_or_else(|| {
-                PostgresStorageError::bad_request(format!(
+                PostgresStorageError::invalid_input(format!(
                     "Enabled {} computed field '{}' was not found for this class",
                     scope.as_str(),
                     key
@@ -236,7 +236,7 @@ pub(super) fn resolve_query_option_types(
 
 fn validate_computed_filter_count(filter_count: usize) -> Result<(), PostgresStorageError> {
     if filter_count > MAX_FILTERS_WITH_COMPUTED {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Computed filtering supports at most {MAX_FILTERS_WITH_COMPUTED} computed filter parameters per request"
         )));
     }
@@ -245,7 +245,7 @@ fn validate_computed_filter_count(filter_count: usize) -> Result<(), PostgresSto
 
 pub(super) fn validate_explicit_sort_count(sort_count: usize) -> Result<(), PostgresStorageError> {
     if sort_count > MAX_SORT_FIELDS_WITH_COMPUTED {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Computed sorting supports at most {MAX_SORT_FIELDS_WITH_COMPUTED} explicit sort fields per request"
         )));
     }
@@ -395,7 +395,7 @@ pub(crate) fn computed_filter_sql_component(
     snapshot: &ComputedQuerySnapshot,
 ) -> Result<SqlComponent, PostgresStorageError> {
     if parameter.value.contains('\0') {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Filter value for computed field '{}' contains a null character",
             parameter.field
         )));
@@ -441,7 +441,7 @@ pub(crate) fn computed_filter_sql_component(
 
 fn validate_positive_id(id: i32, name: &str) -> Result<(), PostgresStorageError> {
     if id <= 0 {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "{name} must be greater than zero"
         )));
     }
@@ -513,7 +513,7 @@ fn computed_numeric_filter(
         .iter()
         .map(|value| {
             hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
-                PostgresStorageError::bad_request(format!(
+                PostgresStorageError::invalid_input(format!(
                     "Invalid numeric value '{}' for computed field '{}'",
                     value, parameter.field
                 ))
@@ -582,13 +582,13 @@ fn computed_json_filter(
     }
     if operator == Operator::ArrayLength && value_type == ComputedQueryValueType::Array {
         let length = parameter.value.parse::<i32>().map_err(|_| {
-            PostgresStorageError::bad_request(format!(
+            PostgresStorageError::invalid_input(format!(
                 "array_length requires an integer, got '{}'",
                 parameter.value
             ))
         })?;
         if length < 0 {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "array_length requires a non-negative integer",
             ));
         }
@@ -602,7 +602,7 @@ fn computed_json_filter(
     }
 
     let value: serde_json::Value = serde_json::from_str(&parameter.value).map_err(|error| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Invalid JSON value for computed field '{}': {error}",
             parameter.field
         ))
@@ -613,7 +613,7 @@ fn computed_json_filter(
             | (ComputedQueryValueType::Array, serde_json::Value::Array(_))
     );
     if !type_matches {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Filter value for computed field '{}' must be a JSON {}",
             parameter.field,
             value_type.as_str()
@@ -637,12 +637,12 @@ fn validate_computed_filter_json(value: &serde_json::Value) -> Result<(), Postgr
     match hubuum_domain::validate_storage_json_value(value) {
         Ok(()) => Ok(()),
         Err(hubuum_domain::StorageJsonValidationError::UnsupportedValue) => {
-            Err(PostgresStorageError::bad_request(
+            Err(PostgresStorageError::invalid_input(
                 "Computed filter contains JSON that PostgreSQL JSONB cannot represent",
             ))
         }
         Err(hubuum_domain::StorageJsonValidationError::NestingTooDeep) => {
-            Err(PostgresStorageError::bad_request(format!(
+            Err(PostgresStorageError::invalid_input(format!(
                 "Computed filter JSON exceeds the maximum nesting depth of {}",
                 hubuum_domain::MAX_STORAGE_JSON_NESTING_DEPTH
             )))
@@ -683,13 +683,13 @@ fn validate_comma_separated_values(
     values: &[String],
 ) -> Result<(), PostgresStorageError> {
     if values.is_empty() || values.iter().any(String::is_empty) {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Filtering computed field '{}' requires a value",
             parameter.field
         )));
     }
     if values.len() > maximum {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Filtering computed field '{}' accepts at most {maximum} values",
             parameter.field
         )));
@@ -703,7 +703,7 @@ fn require_computed_value_count(
     expected: usize,
 ) -> Result<(), PostgresStorageError> {
     if actual != expected {
-        return Err(PostgresStorageError::bad_request(format!(
+        return Err(PostgresStorageError::invalid_input(format!(
             "Operator '{}' requires {expected} value(s) for field '{}'",
             parameter.operator, parameter.field
         )));
@@ -715,7 +715,7 @@ fn value_as_boolean(parameter: &ParsedQueryParam) -> Result<bool, PostgresStorag
     match parameter.value.as_str() {
         "true" | "1" => Ok(true),
         "false" | "0" => Ok(false),
-        _ => Err(PostgresStorageError::bad_request(format!(
+        _ => Err(PostgresStorageError::invalid_input(format!(
             "Invalid boolean value '{}' for field '{}'",
             parameter.value, parameter.field
         ))),
@@ -730,7 +730,7 @@ fn computed_operator_mismatch(
     parameter: &ParsedQueryParam,
     value_type: &str,
 ) -> PostgresStorageError {
-    PostgresStorageError::bad_request(format!(
+    PostgresStorageError::invalid_input(format!(
         "Operator '{}' is not applicable to computed field '{}' (type: {value_type})",
         parameter.operator, parameter.field
     ))

@@ -11,7 +11,7 @@ use hubuum_storage_core::{
     AuditReceipt, MutationOutcome, StoragePage, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
     StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    StorageRemoteTargetTransport, StorageRemoteTargetTransportParts, StorageRemoteTargetUpdate,
 };
 use serde_json::{Value, json};
 
@@ -82,19 +82,19 @@ impl RemoteTargetRow {
             self.name,
             StorageRemoteTargetDefinition::new(
                 self.description,
-                StorageRemoteTargetTransport::new(
+                StorageRemoteTargetTransport::try_new(
                     self.method,
                     self.url_template,
                     self.headers_template,
                     self.body_template,
                     self.auth_config,
                     self.timeout_ms,
-                ),
-                StorageRemoteTargetPolicy::new(
+                )?,
+                StorageRemoteTargetPolicy::try_new(
                     self.class_id.map(ClassId::new).transpose()?,
                     allowed_subject_types,
                     self.enabled,
-                ),
+                )?,
             ),
         ))
     }
@@ -292,8 +292,14 @@ impl RemoteTargetDefinitionParts {
         definition: StorageRemoteTargetDefinition,
     ) -> Result<Self, PostgresStorageError> {
         let (description, transport, policy) = definition.into_parts();
-        let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
-            transport.into_parts();
+        let StorageRemoteTargetTransportParts {
+            method,
+            url_template,
+            headers_template,
+            body_template,
+            auth_config,
+            timeout_ms,
+        } = transport.into_parts();
         let (class_id, allowed_subject_types, enabled) = policy.into_parts();
         Ok(Self {
             class_id: class_id.map(|id| id.id()),
@@ -342,7 +348,7 @@ pub async fn list_remote_targets(
                     .await?;
                 let targets =
                     load_remote_target_rows(connection, &allowed_collection_ids, &options).await?;
-                Ok::<_, PostgresStorageError>(StoragePage::new(targets, Some(total)))
+                StoragePage::try_new(targets, Some(total)).map_err(PostgresStorageError::from)
             })
             .await
     } else {
@@ -350,7 +356,7 @@ pub async fn list_remote_targets(
             .with_connection(async |connection| {
                 let targets =
                     load_remote_target_rows(connection, &allowed_collection_ids, &options).await?;
-                Ok::<_, PostgresStorageError>(StoragePage::new(targets, None))
+                StoragePage::try_new(targets, None).map_err(PostgresStorageError::from)
             })
             .await
     }
@@ -598,7 +604,7 @@ fn build_list_query<'a>(
                 crate::postgres_revision_filter!(query, parameter, revision)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable for remote targets",
                     parameter.field
                 )));
@@ -626,7 +632,7 @@ fn remote_target_cursor_field(field: &FilterField) -> Result<CursorSqlField, Pos
         }
         FilterField::Revision => cursor_field("remote_targets.revision", CursorSqlType::BigInt),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for remote targets"
             )));
         }
@@ -645,7 +651,7 @@ fn ensure_positive_target_id(target_id: i32) -> Result<(), PostgresStorageError>
     if target_id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "Remote target id must be greater than zero",
         ))
     }

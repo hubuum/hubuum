@@ -1,11 +1,11 @@
 use crate::{
-    AuditEventStorage, AuthenticationStorage, AuthorizationStorage, BackupSnapshotStorage,
-    BootstrapStorage, CatalogStorage, ClassRelationStorage, ClassStorage,
-    CollectionAuthorizationStorage, CollectionStorage, ComputedFieldLifecycleStorage,
-    ComputedObjectStorage, EventDeliveryAdministrationStorage, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, EventSubscriptionStorage,
-    ExecutionStorage, ExportTemplateStorage, ExternalIdentityStorage, GroupStorage, HistoryStorage,
-    IdentityMembershipStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
+    AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
+    CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage,
+    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, EventConfigurationStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
+    ExternalIdentityStorage, GroupStorage, HistoryStorage, IdentityMembershipStorage,
+    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
     MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
     RestoreStorage, ServiceAccountStorage, TaskExecutionStorage, TaskQueueStorage,
@@ -28,23 +28,23 @@ pub trait StorageBackend:
     + ClassRelationStorage
     + ObjectRelationStorage
     + AuthenticationStorage
-    + BootstrapStorage
+    + LocalIdentityCredentialStorage
     + IdentityScopeStorage
     + IdentityMembershipStorage
     + ServiceAccountStorage
     + ExternalIdentityStorage
     + UserStorage
     + TokenStorage
-    + AuthorizationStorage
+    + AuthorizationDataStorage
     + CatalogStorage
-    + ComputedFieldLifecycleStorage
+    + ComputedFieldStorage
     + ComputedObjectStorage
     + ObjectAggregateStorage
     + RelationQueryStorage
     + AuditEventStorage
-    + EventSubscriptionStorage
+    + EventConfigurationStorage
     + EventDeliveryAdministrationStorage
-    + EventDeliveryStorage
+    + EventDeliveryWorkerStorage
     + EventFanoutStorage
     + EventHealthStorage
     + EventRetentionStorage
@@ -56,7 +56,7 @@ pub trait StorageBackend:
     + UnifiedSearchStorage
     + GroupStorage
     + PrincipalStorage
-    + CollectionAuthorizationStorage
+    + CollectionAuthorizationQueryStorage
     + RemoteTargetStorage
     + TaskQueueStorage
     + TaskExecutionStorage

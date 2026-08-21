@@ -80,13 +80,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   PostgreSQL is the only selectable production backend, and compatibility tests
   exercise every required family for every selectable backend. Validated domain
   identifiers now live in the backend-neutral domain crate, and their OpenAPI
-  schemas explicitly declare the existing positive-integer invariant. Public
-  HTTP request and response shapes are unchanged; the deprecated administrator
-  configuration field `exports.database_statement_timeout_ms` remains as an
-  alias for `exports.storage_query_budget_ms`.
-  No client migration is required because the token-resource and
-  remote-invocation `oneOf` variants are schema-identical to v0.0.9 and
-  optional provenance task IDs retain the same integer-or-null representation.
+  schemas explicitly declare the existing positive-integer invariant. The
+  deprecated administrator configuration field
+  `exports.database_statement_timeout_ms` remains as an alias for
+  `exports.storage_query_budget_ms`.
 - **Breaking (workspace storage API):** complete storage adapters must now
   implement `TransactionStorage` in addition to the existing capability
   traits. Capability traits consistently use the `<Domain>Storage` suffix;
@@ -95,8 +92,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   split into focused bootstrap, scope, membership, service-account, and
   external-identity traits; `TransactionStorage::with_transaction` owns atomic
   callbacks; archive destinations implement async `EventArchiveSink`; and
-  paginated operations use `StoragePage<T>` or `StorageCountedPage<T>`
-  instead of domain-specific wrappers. `WorkerNotificationProvider` is now an
+  paginated operations use `StoragePage<T>` instead of domain-specific
+  wrappers. `WorkerNotificationProvider` is now an
   optional application-composition provider rather than a required
   `StorageBackend` supertrait. Long positional parts aliases are replaced by
   named private-field types, token issuance policy construction validates its
@@ -129,6 +126,56 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   methods instead of `from_db`; and update matches to the semantic
   `StorageErrorKind` names. HTTP shapes, database schemas, and persisted event
   documents are unchanged by this Rust boundary cleanup.
+- **Breaking (workspace storage API):** capability ownership and naming now
+  align across traits, discovery modules, family bounds, and observer labels.
+  Adapters must rename `AuthorizationStorage` to `AuthorizationDataStorage`,
+  `CollectionAuthorizationStorage` to
+  `CollectionAuthorizationQueryStorage`, `ComputedFieldLifecycleStorage` to
+  `ComputedFieldStorage`, `EventSubscriptionStorage` to
+  `EventConfigurationStorage`, `EventDeliveryStorage` to
+  `EventDeliveryWorkerStorage`, and `BootstrapStorage` to
+  `LocalIdentityCredentialStorage`. Group listing belongs to `GroupStorage`,
+  retained-token listing belongs to `TokenStorage`, and renamed operations use
+  consistent `list_*`, `resolve_*`, `update_*`, and service-account-specific
+  names. The coarse cross-cutting family is `OperationalStorage`, matching the
+  other singular family bounds. Observer capabilities are typed
+  `StorageCapability` values; storage
+  metrics users must update label selectors such as `authorization` to
+  `authorization_data`, `event_subscriptions` to `event_configuration`, and
+  `event_delivery` to either `event_delivery_administration` or
+  `event_delivery_worker`.
+- **Breaking (workspace storage API):** storage pages now use one
+  `StoragePage<T>` with an optional non-negative exact total instead of a
+  negative sentinel or a second counted-page type. Persisted record metadata
+  uses explicit UTC timestamps and rejects reversed creation/update order.
+  Restore identities, artifact digests, lifecycle timestamps, remote-target
+  transports, retained events, and backup rows validate their invariants at
+  construction; history metadata uses typed semantic operations, validates its
+  validity window, and exposes named parts instead of a positional tuple.
+  Other long positional decompositions likewise use named parts structs.
+  `StorageErrorKind::UnsupportedOperation` and
+  `StorageErrorKind::ValidationFailed` now distinguish unsupported behavior
+  from semantically invalid content, and malformed persisted conflict metadata
+  becomes an internal storage error instead of panicking.
+- **Breaking (backup/restore):** full backups are version 5 and restore rejects
+  version 4. Version 5 uses stable logical resource and history section names,
+  semantic class/object/principal fields, permission-name arrays,
+  `history_entry_id`, `create`/`update`/`delete` history operations, and
+  explicit RFC 3339 UTC timestamps. PostgreSQL tables, legacy columns, trigger
+  operation codes, credentials, and worker-claim fields are mapped or excluded
+  privately by its adapter. Operators must create new backups after upgrading;
+  adapters must project their persistence layout to the version 5 logical
+  schema.
+- Administrator configuration responses add `database.backend` and
+  `exports.storage_query_budget_ms`; the deprecated
+  `exports.database_statement_timeout_ms` alias remains with the same value.
+  Database diagnostics document the backend-unavailable `404` response. The
+  token-resource and remote-invocation `oneOf` variants remain JSON-compatible
+  with v0.0.9, and optional provenance task IDs still accept the same
+  integer-or-null values. No client migration is required because the
+  token-resource and remote-invocation `oneOf` variants are schema-identical to
+  v0.0.9 and optional provenance task IDs retain the same integer-or-null
+  representation.
 - **Breaking (storage operations):** event retention now uses durable
   claim/archive/complete batches. `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` names a
   directory, not an append-only JSONL file; operators using local archival must
@@ -163,6 +210,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Mitigated RUSTSEC-2026-0258 by disabling Actix's optional HTTP/2 feature, so
+  vulnerable `h2` 0.3 code is not compiled. HTTP/1.1, TLS, compression,
+  cookies, and WebSockets remain enabled. Deployments requiring HTTP/2 must
+  terminate it at a reverse proxy until Actix supports the fixed `h2` 0.4
+  series; the owned advisory exception exists only because Cargo records the
+  disabled optional package in `Cargo.lock`.
 - Treetop authorization failures now redact transport details, response bodies,
   URL credentials, and failed batch-item diagnostics from public errors. A
   pinned, hermetic real-service conformance gate now exercises these failure

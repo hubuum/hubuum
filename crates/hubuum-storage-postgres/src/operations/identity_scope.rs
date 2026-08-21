@@ -168,7 +168,7 @@ fn validate_scope_id(scope_id: i32) -> Result<(), PostgresStorageError> {
     if scope_id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "Invalid identity scope id: expected a positive integer",
         ))
     }

@@ -7,7 +7,10 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StorageIdentityGroup, StoragePrincipalGroup, StorageRecordMetadata};
+use crate::{
+    StorageError, StorageGroupListQuery, StorageIdentityGroup, StoragePage, StoragePrincipalGroup,
+    StorageRecordMetadata,
+};
 
 /// Portable principal record returned by identity-resource operations.
 #[derive(Clone, PartialEq)]
@@ -170,8 +173,8 @@ impl StoragePrincipalBuilder {
             id: PrincipalId::from(self.metadata.id()),
             kind: self.kind,
             name: self.name,
-            created_at: self.metadata.created_at(),
-            updated_at: self.metadata.updated_at(),
+            created_at: self.metadata.created_at().naive_utc(),
+            updated_at: self.metadata.updated_at().naive_utc(),
             identity_scope_id: self.identity_scope_id,
             provider_managed: self.provider_managed,
             settings: self.settings,
@@ -279,6 +282,13 @@ pub enum StoragePrincipalSettingsMutation {
 /// Complete group lifecycle and membership behavior required from a backend.
 #[async_trait]
 pub trait GroupStorage: Send + Sync {
+    /// List groups with stable filtering, cursor pagination, and an optional
+    /// exact total.
+    async fn list_groups(
+        &self,
+        query: StorageGroupListQuery,
+    ) -> Result<StoragePage<StorageIdentityGroup>, StorageError>;
+
     async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError>;
 
     async fn resolve_group_identity_scope_name(
@@ -355,7 +365,7 @@ pub trait PrincipalStorage: Send + Sync {
         principal_id: PrincipalId,
     ) -> Result<StoragePrincipalSettings, StorageError>;
 
-    async fn mutate_principal_settings(
+    async fn update_principal_settings(
         &self,
         principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,

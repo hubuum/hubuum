@@ -94,7 +94,7 @@ pub async fn get_principal_settings(
 }
 
 /// Atomically mutate principal settings and append their audit event.
-pub async fn mutate_principal_settings(
+pub async fn update_principal_settings(
     runtime: &PostgresRuntime,
     principal_id: i32,
     mutation: StoragePrincipalSettingsMutation,
@@ -187,7 +187,7 @@ fn apply_settings_mutation(
         }
         StoragePrincipalSettingsMutation::JsonPatch(document) => {
             let patch = serde_json::from_value::<BoundedJsonPatch>(document)
-                .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
             let after = patch.apply(&before).map_err(|error| {
                 let (kind, message) = error.into_parts();
                 match kind {
@@ -233,7 +233,7 @@ fn validate_input_settings(document: Value) -> Result<Value, PostgresStorageErro
     if document.is_object() {
         Ok(document)
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "principal settings must be a JSON object",
         ))
     }
@@ -266,7 +266,7 @@ fn validate_principal_id(principal_id: i32) -> Result<(), PostgresStorageError> 
     if principal_id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "Invalid principal ID: expected a positive integer",
         ))
     }

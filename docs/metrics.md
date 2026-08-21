@@ -226,6 +226,20 @@ metrics describe logical use cases, while `hubuum_db_*` metrics describe the
 PostgreSQL implementation. Do not sum the two as though they were the same
 operation count.
 
+Storage capability labels follow the capability trait vocabulary. The bounded
+values are `audit_events`, `authentication`, `authorization_data`,
+`backup_snapshots`, `catalog`, `classes`, `class_relations`,
+`collection_authorization`, `collections`, `computed_fields`,
+`computed_objects`, `event_configuration`,
+`event_delivery_administration`, `event_delivery_worker`, `event_fanout`,
+`event_health`, `event_retention`, `export_templates`, `external_identity`,
+`groups`, `history`, `identity_membership`, `identity_scopes`, `imports`,
+`inventory`, `local_identity_credentials`, `metrics`, `object_aggregates`,
+`object_relations`, `objects`, `operational_state`, `principals`,
+`relation_queries`, `remote_targets`, `restores`, `service_accounts`,
+`task_execution`, `tasks`, `token_retention`, `tokens`, `transactions`,
+`unified_search`, and `users`.
+
 The standard unprefixed `process_*` families are available on Linux, macOS, and
 Windows. The names intentionally match the Prometheus ecosystem so existing
 process dashboards and alerts can be reused. File-descriptor or handle gauges

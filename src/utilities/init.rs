@@ -3,7 +3,7 @@
 
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::services::identity::ensure_identity_scope;
-use crate::storage::{BootstrapStorage, StorageDefaultAdminBootstrap, StorageHandle};
+use crate::storage::{LocalIdentityCredentialStorage, StorageDefaultAdminBootstrap, StorageHandle};
 use crate::utilities::auth::{generate_random_password, hash_password_async};
 
 use tracing::{error, warn};
@@ -58,7 +58,7 @@ pub(crate) async fn init(storage: &StorageHandle, settings: &InitializationSetti
 }
 
 async fn bootstrap_default_admin_if_required<F, Fut>(
-    storage: &impl BootstrapStorage,
+    storage: &impl LocalIdentityCredentialStorage,
     settings: &InitializationSettings,
     hash_default_password: F,
 ) -> Result<bool, InitError>

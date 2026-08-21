@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use hubuum_domain::RestoreJobId;
 use uuid::Uuid;
 
@@ -49,7 +49,7 @@ impl RestoreStorage for PostgresStorage {
     async fn start_restore_draining(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<NaiveDateTime, StorageError> {
+    ) -> Result<DateTime<Utc>, StorageError> {
         crate::operations::restore_lifecycle::start_restore_draining(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
@@ -111,7 +111,7 @@ impl RestoreStorage for PostgresStorage {
 
     async fn get_restore_drain_state(
         &self,
-        heartbeat_cutoff: NaiveDateTime,
+        heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError> {
         crate::operations::restore_lifecycle::get_restore_drain_state(
             self.runtime(),

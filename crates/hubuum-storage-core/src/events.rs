@@ -321,7 +321,7 @@ impl EventDeliveryBatch {
 /// return fully enriched delivery DTOs. Acknowledgements must verify the opaque
 /// claim so a stale worker cannot overwrite a newer attempt.
 #[async_trait]
-pub trait EventDeliveryStorage: Send + Sync {
+pub trait EventDeliveryWorkerStorage: Send + Sync {
     async fn claim_event_delivery_batch(
         &self,
         settings: hubuum_domain::EventDeliverySettings,
@@ -352,12 +352,17 @@ pub struct RetainedEvent {
 }
 
 impl RetainedEvent {
-    #[must_use]
-    pub fn new(id: EventSequence, json: impl Into<String>) -> Self {
-        Self {
-            id,
-            json: json.into(),
+    pub fn try_new(id: EventSequence, json: impl Into<String>) -> Result<Self, StorageError> {
+        let json = json.into();
+        let document: serde_json::Value = serde_json::from_str(&json).map_err(|error| {
+            StorageError::internal(format!("Retained event is not valid JSON: {error}"))
+        })?;
+        if !document.is_object() {
+            return Err(StorageError::internal(
+                "Retained event JSON must be an object",
+            ));
         }
+        Ok(Self { id, json })
     }
 
     #[must_use]
@@ -538,15 +543,23 @@ mod tests {
 
     #[test]
     fn retained_event_debug_output_redacts_the_serialized_payload() {
-        let event = RetainedEvent::new(
+        let event = RetainedEvent::try_new(
             EventSequence::new(11).unwrap(),
             r#"{"metadata":"payload-secret"}"#,
-        );
+        )
+        .unwrap();
 
         let debug = format!("{event:?}");
 
         assert!(debug.contains("11"));
         assert!(!debug.contains("payload-secret"));
+    }
+
+    #[test]
+    fn retained_events_reject_non_object_json() {
+        let error = RetainedEvent::try_new(EventSequence::new(11).unwrap(), "[]").unwrap_err();
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
     }
 
     #[test]

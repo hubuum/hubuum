@@ -72,7 +72,7 @@ impl StorageComputedFieldSelector {
                     (_, _) => false,
                 });
         if !valid {
-            return Err(StorageError::bad_request(format!(
+            return Err(StorageError::invalid_input(format!(
                 "Invalid computed aggregate field key '{key}'"
             )));
         }
@@ -139,7 +139,7 @@ impl FromStr for StorageObjectAggregateDimension {
         if let Some(path) = value.strip_prefix("json_data.") {
             return JsonFieldPath::new(path)
                 .map(Self::JsonData)
-                .map_err(|error| StorageError::bad_request(error.to_string()));
+                .map_err(|error| StorageError::invalid_input(error.to_string()));
         }
         if let Some(key) = value.strip_prefix("computed.shared.") {
             return StorageComputedFieldSelector::new(ComputedFieldScope::Shared, key)
@@ -149,7 +149,7 @@ impl FromStr for StorageObjectAggregateDimension {
             return StorageComputedFieldSelector::new(ComputedFieldScope::Personal, key)
                 .map(Self::Computed);
         }
-        Err(StorageError::bad_request(format!(
+        Err(StorageError::invalid_input(format!(
             "Invalid object aggregate dimension '{value}'; use an allowed object field, json_data path, or computed selector"
         )))
     }
@@ -184,7 +184,7 @@ impl FromStr for StorageObjectAggregateMeasureOperation {
             "average" => Ok(Self::Average),
             "min" => Ok(Self::Min),
             "max" => Ok(Self::Max),
-            _ => Err(StorageError::bad_request(format!(
+            _ => Err(StorageError::invalid_input(format!(
                 "Invalid object aggregate operation '{value}'; use sum, average, min, or max"
             ))),
         }
@@ -222,7 +222,7 @@ impl FromStr for StorageObjectAggregateMeasureField {
         if let Some(path) = value.strip_prefix("json_data.") {
             return JsonFieldPath::new(path)
                 .map(Self::JsonData)
-                .map_err(|error| StorageError::bad_request(error.to_string()));
+                .map_err(|error| StorageError::invalid_input(error.to_string()));
         }
         if let Some(key) = value.strip_prefix("computed.shared.") {
             return StorageComputedFieldSelector::new(ComputedFieldScope::Shared, key)
@@ -232,7 +232,7 @@ impl FromStr for StorageObjectAggregateMeasureField {
             return StorageComputedFieldSelector::new(ComputedFieldScope::Personal, key)
                 .map(Self::Computed);
         }
-        Err(StorageError::bad_request(format!(
+        Err(StorageError::invalid_input(format!(
             "Invalid object aggregate measure field '{value}'; use a json_data path or computed selector"
         )))
     }
@@ -279,7 +279,7 @@ impl FromStr for StorageObjectAggregateMeasure {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let (operation, field) = value.split_once(':').ok_or_else(|| {
-            StorageError::bad_request(format!(
+            StorageError::invalid_input(format!(
                 "Invalid object aggregate measure '{value}'; use operation:field"
             ))
         })?;
@@ -350,17 +350,17 @@ impl StorageObjectAggregateSpec {
         let dimensions = dimensions.into_iter().collect::<Vec<_>>();
         let measures = measures.into_iter().collect::<Vec<_>>();
         if dimensions.is_empty() && measures.is_empty() {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "Object aggregation requires at least one group_by dimension or aggregate measure",
             ));
         }
         if dimensions.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
-            return Err(StorageError::bad_request(format!(
+            return Err(StorageError::invalid_input(format!(
                 "Object aggregation supports at most {MAX_OBJECT_AGGREGATE_DIMENSIONS} group_by dimensions"
             )));
         }
         if measures.len() > MAX_OBJECT_AGGREGATE_MEASURES {
-            return Err(StorageError::bad_request(format!(
+            return Err(StorageError::invalid_input(format!(
                 "Object aggregation supports at most {MAX_OBJECT_AGGREGATE_MEASURES} aggregate measures"
             )));
         }
@@ -370,7 +370,7 @@ impl StorageObjectAggregateSpec {
             .map(StorageObjectAggregateDimension::canonical)
             .find(|field| !seen.insert(field.clone()))
         {
-            return Err(StorageError::bad_request(format!(
+            return Err(StorageError::invalid_input(format!(
                 "Duplicate object aggregate dimension '{duplicate}'"
             )));
         }
@@ -380,7 +380,7 @@ impl StorageObjectAggregateSpec {
             .map(StorageObjectAggregateMeasure::canonical)
             .find(|measure| !seen.insert(measure.clone()))
         {
-            return Err(StorageError::bad_request(format!(
+            return Err(StorageError::invalid_input(format!(
                 "Duplicate object aggregate measure '{duplicate}'"
             )));
         }
@@ -466,18 +466,18 @@ impl StorageObjectAggregateSpec {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(cursor)
             .map_err(|error| {
-                StorageError::bad_request(format!("invalid aggregate cursor: {error}"))
+                StorageError::invalid_input(format!("invalid aggregate cursor: {error}"))
             })?;
         let token: StorageObjectAggregateCursorToken =
             serde_json::from_slice(&bytes).map_err(|error| {
-                StorageError::bad_request(format!("invalid aggregate cursor: {error}"))
+                StorageError::invalid_input(format!("invalid aggregate cursor: {error}"))
             })?;
         if token.version != 1
             || token.dimensions != self.dimension_names()
             || token.measures != self.measure_names()
             || token.sort != self.sort
         {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "aggregate cursor does not match the current dimensions, measures, and sort",
             ));
         }
@@ -489,7 +489,7 @@ impl StorageObjectAggregateSpec {
                     .all(|(value, dimension)| valid_cursor_dimension_value(value, dimension))
         });
         if !sort_key_is_valid || token.object_count <= 0 {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "aggregate cursor contains invalid ordering values",
             ));
         }
@@ -749,7 +749,7 @@ impl ObjectAggregateStorageQueryBuilder {
             StorageError::internal("Object aggregate query is missing required permissions")
         })?;
         if required_permissions.is_empty() {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "Object aggregate query requires at least one permission",
             ));
         }
@@ -757,7 +757,7 @@ impl ObjectAggregateStorageQueryBuilder {
             StorageError::internal("Object aggregate query is missing its page limit")
         })?;
         if page_limit == 0 {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "Object aggregate page limit must be positive",
             ));
         }
@@ -765,7 +765,7 @@ impl ObjectAggregateStorageQueryBuilder {
             StorageError::internal("Object aggregate query is missing its cursor budget")
         })?;
         if cursor_max_encoded_bytes == 0 {
-            return Err(StorageError::bad_request(
+            return Err(StorageError::invalid_input(
                 "Object aggregate cursor budget must be positive",
             ));
         }

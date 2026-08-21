@@ -521,7 +521,7 @@ pub(crate) fn normalize_class_relation_create(
     command: StorageClassRelationCreate,
 ) -> Result<StorageClassRelationCreate, PostgresStorageError> {
     if command.from_class_id() == command.to_class_id() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "from_hubuum_class_id and to_hubuum_class_id cannot be the same",
         ));
     }
@@ -550,7 +550,7 @@ fn normalize_object_relation_create(
     command: StorageObjectRelationCreate,
 ) -> Result<StorageObjectRelationCreate, PostgresStorageError> {
     if command.from_object_id() == command.to_object_id() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "from_hubuum_object_id and to_hubuum_object_id cannot be the same",
         ));
     }
@@ -567,14 +567,14 @@ fn normalize_alias(value: Option<&str>) -> Result<Option<String>, PostgresStorag
     value
         .map(normalize_template_alias)
         .transpose()
-        .map_err(|error| PostgresStorageError::bad_request(error.into_message()))
+        .map_err(|error| PostgresStorageError::invalid_input(error.into_message()))
 }
 
 fn validate_relation_limit(value: Option<i32>, field: &str) -> Result<(), PostgresStorageError> {
     if value.is_none_or(|value| value > 0) {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }
@@ -609,12 +609,12 @@ fn validate_relation_endpoints(
     to: &StorageObjectRelationEndpoint,
 ) -> Result<(), PostgresStorageError> {
     if from.object_id() == to.object_id() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "from_hubuum_object_id and to_hubuum_object_id cannot be the same",
         ));
     }
     if from.class_id() == to.class_id() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "from_hubuum_object_id and to_hubuum_object_id must not have the same class",
         ));
     }
@@ -672,7 +672,7 @@ fn validate_object_relation_membership(
     if matches_class_relation {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "objects do not match the specified class relation",
         ))
     }
@@ -683,7 +683,7 @@ fn validate_direct_object_endpoints(
     to_object: &ObjectRow,
 ) -> Result<(), PostgresStorageError> {
     if from_object.hubuum_class_id == to_object.hubuum_class_id {
-        Err(PostgresStorageError::bad_request(
+        Err(PostgresStorageError::invalid_input(
             "from_hubuum_object_id and to_hubuum_object_id must not have the same class",
         ))
     } else {
@@ -1019,7 +1019,7 @@ fn validate_positive_id(value: i32, noun: &str) -> Result<(), PostgresStorageErr
     if value > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "Invalid {noun}: expected a positive integer"
         )))
     }

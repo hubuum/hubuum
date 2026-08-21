@@ -12,7 +12,7 @@ use crate::storage::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryStorage,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    StorageContext, storage_handle,
+    StorageContext, StorageHistoryOperation, StorageRemoteTargetTransportParts, storage_handle,
 };
 
 /// Collection visibility applied before history rows are counted or paged.
@@ -20,6 +20,14 @@ use crate::storage::{
 pub enum HistoryCollectionFilter<'a> {
     All,
     Visible(&'a [i32]),
+}
+
+fn exact_history_total(total: Option<i64>) -> Result<i64, ApiError> {
+    total.ok_or_else(|| {
+        ApiError::InternalServerError(
+            "Storage history query omitted its required exact total".to_string(),
+        )
+    })
 }
 
 impl TryFrom<HistoryCollectionFilter<'_>> for HistoryCollectionScope {
@@ -53,27 +61,25 @@ struct AppHistoryMetadata {
 
 impl From<HistoryMetadata> for AppHistoryMetadata {
     fn from(value: HistoryMetadata) -> Self {
-        let (
-            operation,
-            valid_from,
-            valid_to,
-            actor_id,
-            history_id,
-            actor_kind,
-            initiator_principal_id,
-            task_id,
-            revision,
-        ) = value.into_parts();
+        let parts = value.into_parts();
+        // Preserve the established HTTP history representation while the
+        // storage contract uses semantic operation values.
+        let operation = match parts.operation {
+            StorageHistoryOperation::Create => "I",
+            StorageHistoryOperation::Update => "U",
+            StorageHistoryOperation::Delete => "D",
+        }
+        .to_string();
         Self {
             operation,
-            valid_from,
-            valid_to,
-            actor_id: actor_id.map(|id| id.id()),
-            history_id: history_id.id(),
-            actor_kind,
-            initiator_principal_id: initiator_principal_id.map(|id| id.id()),
-            task_id: task_id.map(|id| id.id()),
-            revision,
+            valid_from: parts.valid_from,
+            valid_to: parts.valid_to,
+            actor_id: parts.actor_id.map(|id| id.id()),
+            history_id: parts.history_entry_id.id(),
+            actor_kind: parts.actor_kind,
+            initiator_principal_id: parts.initiator_principal_id.map(|id| id.id()),
+            task_id: parts.task_id.map(|id| id.id()),
+            revision: parts.revision,
         }
     }
 }
@@ -186,8 +192,8 @@ fn export_template_from_storage(
         relation_context: definition.relation_context().cloned(),
         default_missing_data_policy: definition.default_missing_data_policy().map(str::to_string),
         default_limits: definition.default_limits().cloned(),
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         op: metadata.operation,
         valid_from: metadata.valid_from,
         valid_to: metadata.valid_to,
@@ -206,8 +212,14 @@ fn remote_target_from_storage(
     let (record, metadata) = row.into_parts();
     let (record_metadata, collection_id, name, definition) = record.into_parts();
     let (description, transport, policy) = definition.into_parts();
-    let (method, url_template, headers_template, body_template, auth_config, timeout_ms) =
-        transport.into_parts();
+    let StorageRemoteTargetTransportParts {
+        method,
+        url_template,
+        headers_template,
+        body_template,
+        auth_config,
+        timeout_ms,
+    } = transport.into_parts();
     let (class_id, allowed_subject_types, enabled) = policy.into_parts();
     let (id, created_at, updated_at, _) = record_metadata.into_parts();
     let (allowed_subject_types, metadata) =
@@ -227,8 +239,8 @@ fn remote_target_from_storage(
         allowed_subject_types,
         timeout_ms,
         enabled,
-        created_at,
-        updated_at,
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
         op: metadata.operation,
         valid_from: metadata.valid_from,
         valid_to: metadata.valid_to,
@@ -278,7 +290,7 @@ macro_rules! history_service {
                 .into_parts();
             Ok((
                 rows.into_iter().map($from).collect::<Result<_, _>>()?,
-                total_count,
+                exact_history_total(total_count)?,
             ))
         }
 
@@ -349,7 +361,7 @@ pub async fn object_history_paginated_with_total_count(
         rows.into_iter()
             .map(object_from_storage)
             .collect::<Result<_, _>>()?,
-        total_count,
+        exact_history_total(total_count)?,
     ))
 }
 

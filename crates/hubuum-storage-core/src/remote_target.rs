@@ -19,36 +19,67 @@ pub struct StorageRemoteTargetTransport {
     timeout_ms: i32,
 }
 
+/// Named HTTP transport components used by adapters and application mappers.
+pub struct StorageRemoteTargetTransportParts {
+    pub method: String,
+    pub url_template: String,
+    pub headers_template: Value,
+    pub body_template: Option<String>,
+    pub auth_config: Value,
+    pub timeout_ms: i32,
+}
+
 impl StorageRemoteTargetTransport {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         method: impl Into<String>,
         url_template: impl Into<String>,
         headers_template: Value,
         body_template: Option<String>,
         auth_config: Value,
         timeout_ms: i32,
-    ) -> Self {
-        Self {
-            method: method.into(),
-            url_template: url_template.into(),
+    ) -> Result<Self, StorageError> {
+        let method = method.into();
+        let url_template = url_template.into();
+        if method.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Remote target HTTP method must not be empty",
+            ));
+        }
+        if url_template.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Remote target URL template must not be empty",
+            ));
+        }
+        if !headers_template.is_object() || !auth_config.is_object() {
+            return Err(StorageError::invalid_input(
+                "Remote target headers and authentication configuration must be JSON objects",
+            ));
+        }
+        if timeout_ms <= 0 {
+            return Err(StorageError::invalid_input(
+                "Remote target timeout must be greater than zero",
+            ));
+        }
+        Ok(Self {
+            method,
+            url_template,
             headers_template,
             body_template,
             auth_config,
             timeout_ms,
-        }
+        })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (String, String, Value, Option<String>, Value, i32) {
-        (
-            self.method,
-            self.url_template,
-            self.headers_template,
-            self.body_template,
-            self.auth_config,
-            self.timeout_ms,
-        )
+    pub fn into_parts(self) -> StorageRemoteTargetTransportParts {
+        StorageRemoteTargetTransportParts {
+            method: self.method,
+            url_template: self.url_template,
+            headers_template: self.headers_template,
+            body_template: self.body_template,
+            auth_config: self.auth_config,
+            timeout_ms: self.timeout_ms,
+        }
     }
 }
 
@@ -73,17 +104,43 @@ pub struct StorageRemoteTargetPolicy {
 }
 
 impl StorageRemoteTargetPolicy {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         class_id: Option<ClassId>,
         allowed_subject_types: Vec<String>,
         enabled: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        if allowed_subject_types.is_empty() {
+            return Err(StorageError::invalid_input(
+                "Remote target policy must allow at least one subject type",
+            ));
+        }
+        let mut unique_subject_types = std::collections::HashSet::new();
+        for subject_type in &allowed_subject_types {
+            if !matches!(
+                subject_type.as_str(),
+                "collection" | "class" | "object" | "class_relation" | "object_relation"
+            ) {
+                return Err(StorageError::invalid_input(format!(
+                    "Remote target policy contains unknown subject type '{subject_type}'"
+                )));
+            }
+            if !unique_subject_types.insert(subject_type.as_str()) {
+                return Err(StorageError::invalid_input(format!(
+                    "Remote target policy contains duplicate subject type '{subject_type}'"
+                )));
+            }
+        }
+        let allows_objects = unique_subject_types.contains("object");
+        if allows_objects != class_id.is_some() {
+            return Err(StorageError::invalid_input(
+                "Remote target class scope must be present exactly when object subjects are allowed",
+            ));
+        }
+        Ok(Self {
             class_id,
             allowed_subject_types,
             enabled,
-        }
+        })
     }
 
     #[must_use]
@@ -654,15 +711,16 @@ mod tests {
     fn definition() -> StorageRemoteTargetDefinition {
         StorageRemoteTargetDefinition::new(
             "secret description",
-            StorageRemoteTargetTransport::new(
+            StorageRemoteTargetTransport::try_new(
                 "post",
                 "https://secret.invalid/{{ secret }}",
                 serde_json::json!({"x-secret": "{{ secret }}"}),
                 Some("{{ secret }}".to_string()),
                 serde_json::json!({"type": "bearer_secret", "secret": "secret-ref"}),
                 1_000,
-            ),
-            StorageRemoteTargetPolicy::new(None, vec!["collection".to_string()], true),
+            )
+            .unwrap(),
+            StorageRemoteTargetPolicy::try_new(None, vec!["collection".to_string()], true).unwrap(),
         )
     }
 
@@ -672,12 +730,13 @@ mod tests {
             .expect("valid timestamp")
             .naive_utc();
         let target = StorageRemoteTarget::new(
-            StorageRecordMetadata::new(
+            StorageRecordMetadata::try_new(
                 hubuum_domain::ResourceId::new(1).unwrap(),
-                now,
-                now,
+                now.and_utc(),
+                now.and_utc(),
                 hubuum_domain::ResourceRevision::new(1).unwrap(),
-            ),
+            )
+            .unwrap(),
             CollectionId::new(2).unwrap(),
             "secret target name",
             definition(),
@@ -701,5 +760,21 @@ mod tests {
         ] {
             assert!(!debug.contains(secret));
         }
+    }
+
+    #[test]
+    fn remote_target_policy_accepts_every_supported_subject_type() {
+        let policy = StorageRemoteTargetPolicy::try_new(
+            None,
+            vec![
+                "collection".to_string(),
+                "class".to_string(),
+                "class_relation".to_string(),
+                "object_relation".to_string(),
+            ],
+            true,
+        );
+
+        assert!(policy.is_ok());
     }
 }

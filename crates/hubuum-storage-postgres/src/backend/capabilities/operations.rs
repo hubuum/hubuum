@@ -89,7 +89,7 @@ impl AuditEventStorage for PostgresStorage {
 }
 
 #[async_trait]
-impl EventSubscriptionStorage for PostgresStorage {
+impl EventConfigurationStorage for PostgresStorage {
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         crate::operations::event_subscription::count_enabled_event_sinks(self.runtime())
             .await
@@ -235,7 +235,7 @@ impl EventDeliveryAdministrationStorage for PostgresStorage {
 }
 
 #[async_trait]
-impl EventDeliveryStorage for PostgresStorage {
+impl EventDeliveryWorkerStorage for PostgresStorage {
     async fn claim_event_delivery_batch(
         &self,
         settings: EventDeliverySettings,

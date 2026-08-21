@@ -27,7 +27,8 @@ use crate::models::{
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
 use crate::services::identity::{
-    get_service_account, is_human_owner_group_member, is_principal_disabled, list_retained_tokens,
+    get_service_account, is_human_owner_group_member, is_service_account_disabled,
+    list_retained_tokens,
 };
 use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
@@ -217,7 +218,7 @@ pub async fn create_token(
     ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     // A disabled service account cannot mint credentials.
-    if is_principal_disabled(&context, principal.id).await? {
+    if is_service_account_disabled(&context, principal.id).await? {
         return Err(ApiError::Conflict(
             "Service account is disabled".to_string(),
         ));

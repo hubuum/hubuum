@@ -781,8 +781,9 @@ const fn order_clause(sort: StorageObjectAggregateSort) -> &'static str {
 }
 
 fn page_query_limit(effective_limit: usize) -> Result<i64, PostgresStorageError> {
-    i64::try_from(effective_limit.saturating_add(1))
-        .map_err(|_| PostgresStorageError::bad_request("Object aggregate page limit is too large"))
+    i64::try_from(effective_limit.saturating_add(1)).map_err(|_| {
+        PostgresStorageError::invalid_input("Object aggregate page limit is too large")
+    })
 }
 
 #[cfg(test)]

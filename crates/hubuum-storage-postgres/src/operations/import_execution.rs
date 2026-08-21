@@ -35,7 +35,7 @@ use super::authorization::{NewPermission, UpdatePermission};
 use super::class::ClassRow;
 use super::collection::{CollectionRow, insert_collection_closure_rows};
 use super::computed_definition::ComputedDefinitionRow;
-use super::computed_lifecycle::advance_revision_and_enqueue_on_connection;
+use super::computed_fields::advance_revision_and_enqueue_on_connection;
 use super::computed_materialization::materialize_object_on_connection;
 use super::group::GroupRow;
 use super::import_workflow::{
@@ -352,7 +352,7 @@ async fn resolve_collection(
                 .get(reference)
                 .cloned()
                 .ok_or_else(|| {
-                    PostgresStorageError::bad_request(format!(
+                    PostgresStorageError::invalid_input(format!(
                         "Unknown collection ref '{reference}'"
                     ))
                 })
@@ -365,7 +365,7 @@ async fn resolve_collection(
                     collection_key_label(key)
                 ))
             }),
-        _ => Err(PostgresStorageError::bad_request(
+        _ => Err(PostgresStorageError::invalid_input(
             "Exactly one of collection_ref or collection_key must be provided",
         )),
     }
@@ -394,7 +394,7 @@ async fn resolve_class(
 ) -> Result<StorageClassRecord, PostgresStorageError> {
     match (reference, key) {
         (Some(reference), None) => state.classes_by_ref.get(reference).cloned().ok_or_else(|| {
-            PostgresStorageError::bad_request(format!("Unknown class ref '{reference}'"))
+            PostgresStorageError::invalid_input(format!("Unknown class ref '{reference}'"))
         }),
         (None, Some(key)) => {
             let parts = key.clone().into_parts();
@@ -415,7 +415,7 @@ async fn resolve_class(
                     ))
                 })
         }
-        _ => Err(PostgresStorageError::bad_request(
+        _ => Err(PostgresStorageError::invalid_input(
             "Exactly one of class_ref or class_key must be provided",
         )),
     }
@@ -429,7 +429,7 @@ async fn resolve_object(
 ) -> Result<StorageObject, PostgresStorageError> {
     match (reference, key) {
         (Some(reference), None) => state.objects_by_ref.get(reference).cloned().ok_or_else(|| {
-            PostgresStorageError::bad_request(format!("Unknown object ref '{reference}'"))
+            PostgresStorageError::invalid_input(format!("Unknown object ref '{reference}'"))
         }),
         (None, Some(key)) => {
             let parts = key.clone().into_parts();
@@ -450,7 +450,7 @@ async fn resolve_object(
                     ))
                 })
         }
-        _ => Err(PostgresStorageError::bad_request(
+        _ => Err(PostgresStorageError::invalid_input(
             "Exactly one of object_ref or object_key must be provided",
         )),
     }
@@ -1228,7 +1228,7 @@ async fn resolve_identity_scope(
         .map(StorageImportIdentityScopeKey::into_parts)
         .map(|parts| parts.name)
         .ok_or_else(|| {
-            PostgresStorageError::bad_request(
+            PostgresStorageError::invalid_input(
                 "Identity-scope reference was not resolved and no identity_scope_key was supplied",
             )
         })?;
@@ -1256,7 +1256,7 @@ async fn resolve_group(
         .cloned()
         .map(StorageImportGroupKey::into_parts)
         .ok_or_else(|| {
-            PostgresStorageError::bad_request(
+            PostgresStorageError::invalid_input(
                 "Group reference was not resolved and no group_key was supplied",
             )
         })?;
@@ -1287,7 +1287,7 @@ async fn resolve_principal(
         .cloned()
         .map(StorageImportPrincipalKey::into_parts)
         .ok_or_else(|| {
-            PostgresStorageError::bad_request(
+            PostgresStorageError::invalid_input(
                 "Principal reference was not resolved and no principal_key was supplied",
             )
         })?;
@@ -1493,7 +1493,9 @@ async fn upsert_principal(
             ..
         } => {
             let owner_group_id = owner_group_id.ok_or_else(|| {
-                PostgresStorageError::bad_request("Service-account import requires an owner group")
+                PostgresStorageError::invalid_input(
+                    "Service-account import requires an owner group",
+                )
             })?;
             let existing = crate::schema::service_accounts::table
                 .filter(crate::schema::service_accounts::id.eq(principal_id))
@@ -1684,13 +1686,13 @@ fn validate_principal_credentials(
         return Ok(());
     };
     if password.is_some() && password_hash.is_some() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "A human principal import accepts password or password_hash, not both",
         ));
     }
     if let Some(hash) = password_hash {
         let parsed = PasswordHash::new(hash).map_err(|_| {
-            PostgresStorageError::bad_request(
+            PostgresStorageError::invalid_input(
                 "Imported password_hash must be a valid Argon2 password hash",
             )
         })?;
@@ -1698,7 +1700,7 @@ fn validate_principal_credentials(
             parsed.algorithm.as_str(),
             "argon2d" | "argon2i" | "argon2id"
         ) {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "Imported password_hash must use an Argon2 algorithm",
             ));
         }
@@ -1851,12 +1853,12 @@ fn validate_computed_field(
     enabled: bool,
 ) -> Result<(), PostgresStorageError> {
     let key = FieldKey::new(key.to_string())
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let operation = serde_json::from_value::<Operation>(operation.clone()).map_err(|error| {
-        PostgresStorageError::bad_request(format!("Invalid computed-field operation: {error}"))
+        PostgresStorageError::invalid_input(format!("Invalid computed-field operation: {error}"))
     })?;
     let result_type = computed_result_type(result_type).ok_or_else(|| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Invalid computed-field result type '{result_type}'"
         ))
     })?;
@@ -1869,7 +1871,7 @@ fn validate_computed_field(
         enabled,
     )
     .map(|_| ())
-    .map_err(|error| PostgresStorageError::bad_request(error.to_string()))
+    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn computed_result_type(value: &str) -> Option<ResultType> {
@@ -2056,7 +2058,7 @@ async fn create_object_relation(
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
     if from.id().id() == to.id().id() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "from and to object ids cannot be the same",
         ));
     }
@@ -2432,7 +2434,7 @@ async fn validate_import_template_composition(
         TemplateLimits::new(IMPORT_TEMPLATE_RECURSION_LIMIT, IMPORT_TEMPLATE_FUEL),
     )
     .map_err(|error| {
-        PostgresStorageError::bad_request(format!(
+        PostgresStorageError::invalid_input(format!(
             "Invalid export template composition '{name}': {error}"
         ))
     })
@@ -2486,7 +2488,7 @@ async fn upsert_remote_target(
         )));
     }
     let allowed_subject_types = serde_json::to_value(parts.allowed_subject_types)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     match existing {
         Some((id, old_created_at, old_updated_at, _)) => {
             let (created_at, updated_at) = parts
@@ -2665,9 +2667,9 @@ async fn upsert_event_subscription(
         )));
     }
     let entity_types = serde_json::to_value(parts.entity_types)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let actions = serde_json::to_value(parts.actions)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     match existing {
         Some((id, old_created_at, old_updated_at, _)) => {
             let (created_at, updated_at) = parts
@@ -2735,7 +2737,7 @@ async fn resolve_event_sink(
         .map(StorageImportEventSinkKey::into_parts)
         .map(|parts| parts.name)
         .ok_or_else(|| {
-            PostgresStorageError::bad_request(
+            PostgresStorageError::invalid_input(
                 "Event-sink reference was not resolved and no sink_key was supplied",
             )
         })?;
@@ -2766,7 +2768,7 @@ fn ensure_class_collection(
     if class.collection_id().id() == collection.id().id() {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{resource} class {} belongs to collection {}, not target collection {}",
             class.id(),
             class.collection_id(),
@@ -2782,22 +2784,24 @@ fn validate_event_subscription(
     routing: &serde_json::Value,
 ) -> Result<(), PostgresStorageError> {
     if entity_types.is_empty() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "Event subscription entity_types must not be empty",
         ));
     }
     if actions.is_empty() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "Event subscription actions must not be empty",
         ));
     }
     serde_json::from_value::<hubuum_events_core::EventSubscriptionFilter>(filter.clone()).map_err(
         |error| {
-            PostgresStorageError::bad_request(format!("Invalid event subscription filter: {error}"))
+            PostgresStorageError::invalid_input(format!(
+                "Invalid event subscription filter: {error}"
+            ))
         },
     )?;
     if !routing.is_object() {
-        return Err(PostgresStorageError::bad_request(
+        return Err(PostgresStorageError::invalid_input(
             "Event subscription routing must be an object",
         ));
     }

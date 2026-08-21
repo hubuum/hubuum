@@ -15,7 +15,7 @@ where
 macro_rules! postgres_is_null_filter {
     ($query:ident, $param:expr, $operator:expr, $field:expr) => {{
         let is_null = hubuum_query::parse_boolean_value(&$param.value)
-            .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+            .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
         let (_, negated) = $operator.op_and_neg();
         if is_null != negated {
             $query = $query.filter($field.is_null());
@@ -37,14 +37,14 @@ macro_rules! postgres_string_filter {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
         } else {
             if !operator.is_applicable_to(DataType::String) {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
                     $param.field
                 )));
             }
             let value = $param.value.clone();
             if value.is_empty() {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Searching on field '{}' requires a value",
                     $param.field
                 )));
@@ -109,7 +109,7 @@ macro_rules! postgres_string_filter {
                     $query = $query.filter(not($crate::filters::regex_match($field, value)))
                 }
                 _ => {
-                    return Err($crate::PostgresStorageError::bad_request(format!(
+                    return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operator:?}' not implemented for field '{}' (type: string)",
                         $param.field
                     )));
@@ -130,22 +130,22 @@ macro_rules! postgres_datetime_filter {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
         } else {
             if !operator.is_applicable_to(DataType::NumericOrDate) {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
                     $param.field
                 )));
             }
             let values = hubuum_query::parse_datetime_list(&$param.value)
-                .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+                .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             let Some(minimum) = values.iter().min().copied() else {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Searching on field '{}' requires a value",
                     $param.field
                 )));
             };
             let maximum = values.iter().max().copied().unwrap_or(minimum);
             if operation == Operator::Between && values.len() != 2 {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator 'between' requires 2 values (min,max) for field '{}'",
                     $param.field
                 )));
@@ -172,7 +172,7 @@ macro_rules! postgres_datetime_filter {
                     $query = $query.filter(not($field.between(values[0], values[1])))
                 }
                 _ => {
-                    return Err($crate::PostgresStorageError::bad_request(format!(
+                    return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operator:?}' not implemented for field '{}' (type: date)",
                         $param.field
                     )));
@@ -193,28 +193,28 @@ macro_rules! postgres_integer_filter {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
         } else {
             if !operator.is_applicable_to(DataType::NumericOrDate) {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
                     $param.field
                 )));
             }
             let values = hubuum_query::parse_integer_list(&$param.value)
-                .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+                .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             let Some(minimum) = values.iter().min().copied() else {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Searching on field '{}' requires a value",
                     $param.field
                 )));
             };
             let maximum = values.iter().max().copied().unwrap_or(minimum);
             if operation == Operator::Between && values.len() != 2 {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator 'between' requires 2 values (min,max) for field '{}'",
                     $param.field
                 )));
             }
             if matches!(operation, Operator::Equals | Operator::In) && values.len() > 50 {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operation}' is limited to 50 values, got {} (use between?)",
                     values.len()
                 )));
@@ -241,7 +241,7 @@ macro_rules! postgres_integer_filter {
                     $query = $query.filter(not($field.between(values[0], values[1])))
                 }
                 _ => {
-                    return Err($crate::PostgresStorageError::bad_request(format!(
+                    return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operation}' not implemented for field '{}' (type: numeric)",
                         $param.field
                     )));
@@ -262,7 +262,7 @@ macro_rules! postgres_revision_filter {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
         } else {
             if !operator.is_applicable_to(DataType::NumericOrDate) {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
                     $param.field
                 )));
@@ -271,9 +271,9 @@ macro_rules! postgres_revision_filter {
                 &$param.value,
                 hubuum_query::MAX_INTEGER_FILTER_VALUES,
             )
-            .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+            .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             if operation == Operator::Between && values.len() != 2 {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator 'between' requires 2 values (min,max) for field '{}'",
                     $param.field
                 )));
@@ -283,7 +283,7 @@ macro_rules! postgres_revision_filter {
                 Operator::Equals | Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte
             ) && values.len() != 1
             {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operation}' requires exactly 1 value for field '{}'",
                     $param.field
                 )));
@@ -310,7 +310,7 @@ macro_rules! postgres_revision_filter {
                     $query = $query.filter(not($field.between(values[0], values[1])))
                 }
                 _ => {
-                    return Err($crate::PostgresStorageError::bad_request(format!(
+                    return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operation}' is not implemented for revision field '{}'",
                         $param.field
                     )));
@@ -331,18 +331,18 @@ macro_rules! postgres_boolean_filter {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
         } else {
             if !operator.is_applicable_to(DataType::Boolean) {
-                return Err($crate::PostgresStorageError::bad_request(format!(
+                return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
                     $param.field
                 )));
             }
             let value = hubuum_query::parse_boolean_value(&$param.value)
-                .map_err(|error| $crate::PostgresStorageError::bad_request(error.to_string()))?;
+                .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             match (operation, negated) {
                 (Operator::Equals, false) => $query = $query.filter($field.eq(value)),
                 (Operator::Equals, true) => $query = $query.filter(not($field.eq(value))),
                 _ => {
-                    return Err($crate::PostgresStorageError::bad_request(format!(
+                    return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operator:?}' not implemented for field '{}' (type: boolean)",
                         $param.field
                     )));

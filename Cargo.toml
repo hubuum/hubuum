@@ -41,8 +41,17 @@ members = [
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
-actix-web = { version = "4" }
-actix-http = { version = "3" }
+actix-web = { version = "4", default-features = false, features = [
+    "macros",
+    "compress-brotli",
+    "compress-gzip",
+    "compress-zstd",
+    "cookies",
+    "unicode",
+    "compat",
+    "ws",
+] }
+actix-http = { version = "3", default-features = false }
 argon2 = "0.6.0-rc.8"
 async-trait = "0.1"
 bytes = "1"

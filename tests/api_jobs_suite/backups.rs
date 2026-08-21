@@ -15,6 +15,7 @@ mod tests {
     use crate::tests::{
         TestContext, TestMutex, lock_test_mutex, scoped_token, test_context, test_mutex,
     };
+    use hubuum_storage_core::StorageBackupStateSection;
 
     static BACKUP_TASK_TEST_LOCK: TestMutex = test_mutex();
 
@@ -111,13 +112,22 @@ mod tests {
         );
 
         let document: BackupDocument = serde_json::from_slice(&bytes).unwrap();
+        let state_json = serde_json::to_value(&document.state).unwrap();
         assert_eq!(
             (
                 document.history.is_none(),
-                document.state.sections.contains_key("identity_scopes"),
-                document.state.sections.contains_key("collections"),
-                document.state.sections.contains_key("tokens"),
-                document.state.sections.contains_key("backup_task_outputs"),
+                document
+                    .state
+                    .sections
+                    .contains_key(&StorageBackupStateSection::IdentityScopes),
+                document
+                    .state
+                    .sections
+                    .contains_key(&StorageBackupStateSection::Collections),
+                state_json.pointer("/sections/tokens").is_some(),
+                state_json
+                    .pointer("/sections/backup_task_outputs")
+                    .is_some(),
             ),
             (true, true, true, false, false)
         );

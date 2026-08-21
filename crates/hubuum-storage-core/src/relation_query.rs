@@ -116,8 +116,8 @@ impl StorageClassRelation {
             self.to_class_id,
             self.forward_template_alias,
             self.reverse_template_alias,
-            created_at,
-            updated_at,
+            created_at.naive_utc(),
+            updated_at.naive_utc(),
             self.from_max_relations,
             self.to_max_relations,
             revision,
@@ -187,8 +187,8 @@ impl StorageObjectRelation {
             self.from_object_id,
             self.to_object_id,
             self.class_relation_id,
-            created_at,
-            updated_at,
+            created_at.naive_utc(),
+            updated_at.naive_utc(),
             revision,
         )
     }
@@ -274,8 +274,8 @@ impl StorageGraphClass {
             self.json_schema,
             self.validate_schema,
             description,
-            created_at,
-            updated_at,
+            created_at.naive_utc(),
+            updated_at.naive_utc(),
             revision,
         )
     }
@@ -322,8 +322,8 @@ impl StorageGraphObject {
             self.class_id,
             description,
             self.data,
-            created_at,
-            updated_at,
+            created_at.naive_utc(),
+            updated_at.naive_utc(),
             revision,
         )
     }

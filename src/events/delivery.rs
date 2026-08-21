@@ -22,8 +22,9 @@ use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
-    EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
-    StorageHandle, StorageNotification, spawn_storage_notification_listener, storage_handle,
+    EventDeliverySink, EventDeliverySubscription, EventDeliveryWorkItem,
+    EventDeliveryWorkerStorage, StorageHandle, StorageNotification,
+    spawn_storage_notification_listener, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 

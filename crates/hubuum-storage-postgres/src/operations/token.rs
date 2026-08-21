@@ -160,7 +160,7 @@ macro_rules! apply_token_filters {
                     crate::schema::tokens::revision
                 ),
                 _ => {
-                    return Err(PostgresStorageError::bad_request(format!(
+                    return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for tokens",
                         parameter.field
                     )));
@@ -199,7 +199,7 @@ pub async fn list_retained_tokens(
                 .load::<TokenRow>(connection)
                 .await?;
             let metadata = metadata_for_rows(connection, rows, observation).await?;
-            Ok::<_, PostgresStorageError>(StoragePage::new(metadata, total))
+            StoragePage::try_new(metadata, total).map_err(PostgresStorageError::from)
         })
         .await
 }
@@ -329,7 +329,7 @@ pub async fn get_token_metadata(
         .await
 }
 
-pub async fn get_token_metadata_batch(
+pub async fn get_token_metadata_by_ids(
     runtime: &PostgresRuntime,
     token_ids: Vec<i32>,
     observation: StorageTokenObservation,
@@ -705,10 +705,10 @@ async fn create_token_row(
     .await?;
     let (default_hours, maximum_hours) = policy.into_parts();
     let policy = TokenIssuancePolicy::from_hours(default_hours, maximum_hours)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let effective_expiry = policy
         .resolve_expiry(issued_at, expires_at)
-        .map_err(|error| PostgresStorageError::bad_request(error.to_string()))?;
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
 
     if !principal_already_checked {
         ensure_principal_can_mint(connection, principal_id).await?;
@@ -794,7 +794,7 @@ async fn validate_resource_ids(
             .get_result::<i64>(connection)
             .await?;
         if found != collection_ids.len() as i64 {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "scope.resources contains an unknown collection id",
             ));
         }
@@ -806,7 +806,7 @@ async fn validate_resource_ids(
             .get_result::<i64>(connection)
             .await?;
         if found != class_ids.len() as i64 {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "scope.resources contains an unknown class id",
             ));
         }
@@ -818,7 +818,7 @@ async fn validate_resource_ids(
             .get_result::<i64>(connection)
             .await?;
         if found != object_ids.len() as i64 {
-            return Err(PostgresStorageError::bad_request(
+            return Err(PostgresStorageError::invalid_input(
                 "scope.resources contains an unknown object id",
             ));
         }
@@ -1164,7 +1164,7 @@ fn token_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSto
         }
         FilterField::Revision => cursor_field("tokens.revision", CursorSqlType::BigInt, false),
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for tokens"
             )));
         }
@@ -1187,7 +1187,7 @@ fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError
     if id > 0 {
         Ok(())
     } else {
-        Err(PostgresStorageError::bad_request(format!(
+        Err(PostgresStorageError::invalid_input(format!(
             "{field} must be greater than zero"
         )))
     }

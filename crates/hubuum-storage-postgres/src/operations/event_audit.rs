@@ -76,7 +76,7 @@ pub async fn list_audit_events(
                         event.into_audit_event(&principal_names, !directly_visible)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(StoragePage::new(rows, total))
+                StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
             },
         )
         .await
@@ -190,7 +190,7 @@ fn build_audit_event_query(
                 crate::postgres_revision_filter!(query, parameter, after_revision)
             }
             _ => {
-                return Err(PostgresStorageError::bad_request(format!(
+                return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for events",
                     parameter.field
                 )));
@@ -213,7 +213,7 @@ fn audit_event_cursor_field(field: &FilterField) -> Result<CursorSqlField, Postg
             nullable: false,
         },
         _ => {
-            return Err(PostgresStorageError::bad_request(format!(
+            return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{field}' is not orderable for events"
             )));
         }
