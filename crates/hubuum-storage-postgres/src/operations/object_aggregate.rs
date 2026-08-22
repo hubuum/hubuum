@@ -311,85 +311,67 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
         return empty_aggregate_page(&execution.paging.query_options);
     }
 
-    let authorizer = DelegatedObjectAggregateAuthorization::new(
-        authorizer,
-        execution.required_permissions.clone(),
-    );
-    let authorization_target = execution
-        .runtime
-        .with_connection(async |connection| {
-            authorizer
-                .load_authorization_target(connection, &execution.target)
-                .await
-        })
-        .await?;
-    let target_is_authorized = authorizer.authorize_target(authorization_target).await?;
-    if !target_is_authorized {
-        return empty_aggregate_page(&execution.paging.query_options);
-    }
     let ObjectAggregateExecution {
         runtime,
         target,
         mut paging,
         personal_owner_id,
         visibility,
-        ..
+        required_permissions,
     } = execution;
-    let mut computed_definitions =
-        (!paging.spec.has_computed_field()).then(ComputedAggregateDefinitions::default);
-    let mut accumulator = ExternalAggregateAccumulator::default();
-    let filters_computed_values = paging.has_computed_filter();
-    let mut chunk_options = object_aggregate_authorization_chunk_options(&paging.query_options);
-    let mut object_cursor = None;
+    let authorizer = DelegatedObjectAggregateAuthorization::new(authorizer, required_permissions);
 
-    loop {
-        chunk_options.set_validated_cursor(object_cursor.clone());
-        let database_options = candidate_execution_options(&chunk_options)?;
-        let candidate_query = ObjectAggregateCandidateQuery::new(
-            &database_options,
-            target.collection_id,
-            &paging.spec,
-        )
-        .resource_scope(visibility.resources());
-        let candidate_query = if filters_computed_values {
-            candidate_query.include_computed_filter_data()
-        } else {
-            candidate_query
-        };
-        let candidates = runtime
-            .with_connection(async |connection| {
-                load_aggregate_candidate_batch(connection, candidate_query).await
-            })
-            .await?;
-        let candidate_page = candidates.into_page(&chunk_options)?;
-        validate_candidate_target(&candidate_page.items, &target)?;
-        let authorized = authorizer.authorize_objects(candidate_page.items).await?;
-
-        if !authorized.is_empty()
-            && filters_computed_values
-            && paging.computed_filter_snapshot.is_none()
-        {
-            let mut filters = std::mem::take(paging.query_options.filters_mut());
-            let snapshot = runtime
-                .with_read_only_snapshot(async |connection| {
-                    let mut no_sorts = Default::default();
-                    resolve_computed_query_fields(
-                        connection,
-                        target.class_id,
-                        personal_owner_id,
-                        &mut filters,
-                        &mut no_sorts,
-                    )
-                    .await
-                })
+    // Candidate paging, computed-definition resolution, aggregation, and final
+    // page construction must observe one native snapshot. The delegated policy
+    // calls therefore run while this read-only transaction remains open. The
+    // temporary accumulator keeps memory bounded and is the only state mutated
+    // by the transaction.
+    runtime
+        .with_read_only_snapshot(async move |connection| {
+            let authorization_target = authorizer
+                .load_authorization_target(connection, &target)
                 .await?;
-            paging.query_options.set_filters(filters);
-            paging.computed_filter_snapshot = Some(snapshot);
-        }
-        if !authorized.is_empty() && computed_definitions.is_none() {
-            computed_definitions = Some(
-                runtime
-                    .with_read_only_snapshot(async |connection| {
+            if !authorizer.authorize_target(authorization_target).await? {
+                return empty_aggregate_page(&paging.query_options);
+            }
+
+            let mut computed_definitions =
+                (!paging.spec.has_computed_field()).then(ComputedAggregateDefinitions::default);
+            let mut accumulator = ExternalAggregateAccumulator::default();
+            let filters_computed_values = paging.has_computed_filter();
+            let mut chunk_options =
+                object_aggregate_authorization_chunk_options(&paging.query_options);
+            let mut object_cursor = None;
+            loop {
+                chunk_options.set_validated_cursor(object_cursor.clone());
+                let database_options = candidate_execution_options(&chunk_options)?;
+                let candidate_query = ObjectAggregateCandidateQuery::new(
+                    &database_options,
+                    target.collection_id,
+                    &paging.spec,
+                )
+                .resource_scope(visibility.resources());
+                let candidate_query = if filters_computed_values {
+                    candidate_query.include_computed_filter_data()
+                } else {
+                    candidate_query
+                };
+                let candidates =
+                    load_aggregate_candidate_batch(connection, candidate_query).await?;
+                let candidate_page = candidates.into_page(&chunk_options)?;
+                validate_candidate_target(&candidate_page.items, &target)?;
+                let authorized = authorizer.authorize_objects(candidate_page.items).await?;
+
+                if !authorized.is_empty()
+                    && filters_computed_values
+                    && paging.computed_filter_snapshot.is_none()
+                {
+                    paging
+                        .resolve_computed_filters(connection, target.class_id, personal_owner_id)
+                        .await?;
+                }
+                if !authorized.is_empty() && computed_definitions.is_none() {
+                    computed_definitions = Some(
                         load_computed_aggregate_definitions(
                             connection,
                             target.class_id,
@@ -397,43 +379,41 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
                             personal_owner_id,
                             paging.computed_filter_snapshot.as_ref(),
                         )
-                        .await
-                    })
-                    .await?,
-            );
-        }
-        if let Some(definitions) = computed_definitions.as_ref() {
-            let plan = SnapshotAggregatePlan::new(runtime, &paging.spec, definitions);
-            let plan = if let Some(snapshot) = paging.computed_filter_snapshot.as_ref() {
-                plan.computed_filters(&paging.query_options, snapshot)
-            } else {
-                plan
-            };
-            let grouped = runtime
-                .with_connection(async |connection| {
-                    aggregate_snapshot_rows(connection, authorized, plan).await
-                })
-                .await?;
-            accumulator.add_rows(runtime, grouped, &paging.spec).await?;
-        }
+                        .await?,
+                    );
+                }
+                if let Some(definitions) = computed_definitions.as_ref() {
+                    let plan = SnapshotAggregatePlan::new(runtime, &paging.spec, definitions);
+                    let plan = if let Some(snapshot) = paging.computed_filter_snapshot.as_ref() {
+                        plan.computed_filters(&paging.query_options, snapshot)
+                    } else {
+                        plan
+                    };
+                    let grouped = aggregate_snapshot_rows(connection, authorized, plan).await?;
+                    accumulator
+                        .add_rows(connection, grouped, &paging.spec)
+                        .await?;
+                }
 
-        object_cursor = candidate_page
-            .next_cursor
-            .map(TryInto::try_into)
-            .transpose()
-            .map_err(|error: hubuum_query::QueryError| {
-                PostgresStorageError::internal(error.to_string())
-            })?;
-        if object_cursor.is_none() {
-            break;
-        }
-    }
+                object_cursor = candidate_page
+                    .next_cursor
+                    .map(TryInto::try_into)
+                    .transpose()
+                    .map_err(|error: hubuum_query::QueryError| {
+                        PostgresStorageError::internal(error.to_string())
+                    })?;
+                if object_cursor.is_none() {
+                    break;
+                }
+            }
 
-    let groups = accumulator.finish(runtime, &paging.spec).await?;
-    if groups.is_empty() {
-        return empty_aggregate_page(&paging.query_options);
-    }
-    page_external_aggregates(runtime, groups, &paging).await
+            let groups = accumulator.finish(connection, &paging.spec).await?;
+            if groups.is_empty() {
+                return empty_aggregate_page(&paging.query_options);
+            }
+            page_external_aggregates(connection, groups, &paging).await
+        })
+        .await
 }
 
 fn object_aggregate_chunk_options(query_options: &QueryOptions) -> QueryOptions {
@@ -477,11 +457,11 @@ fn object_aggregate_authorization_chunk_options(query_options: &QueryOptions) ->
 fn empty_aggregate_page(
     query_options: &QueryOptions,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
-    Ok(StorageObjectAggregatePage::new(
+    Ok(StorageObjectAggregatePage::try_new(
         Vec::new(),
         query_options.include_total().then_some(0),
         None,
-    ))
+    )?)
 }
 
 fn validate_candidate_target(

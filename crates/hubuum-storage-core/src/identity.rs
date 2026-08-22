@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    ClassId, CollectionId, IdentityScopeId, ObjectId, PrincipalId, ResourceRevision, TokenId,
-    UserId,
+    ClassId, CollectionId, IdentityScopeId, ObjectId, PrincipalId, PrincipalKind, ResourceRevision,
+    TokenId, UserId,
 };
 
 use crate::StorageError;
@@ -291,37 +291,6 @@ impl AuthenticatedTokenBuilder {
     }
 }
 
-/// Principal kinds understood by authentication and authorization storage.
-///
-/// This enum belongs to the backend-neutral contract. Adapters must reject an
-/// unknown persisted kind instead of passing a storage-specific string to the
-/// application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AuthenticationPrincipalKind {
-    Human,
-    ServiceAccount,
-}
-
-impl AuthenticationPrincipalKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Human => "human",
-            Self::ServiceAccount => "service_account",
-        }
-    }
-
-    #[must_use]
-    pub const fn is_human(self) -> bool {
-        matches!(self, Self::Human)
-    }
-
-    #[must_use]
-    pub const fn is_service_account(self) -> bool {
-        matches!(self, Self::ServiceAccount)
-    }
-}
-
 /// Minimal principal data required after bearer-token validation.
 ///
 /// Persistence metadata, settings documents, revisions, and provider sync
@@ -329,7 +298,7 @@ impl AuthenticationPrincipalKind {
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthenticationPrincipal {
     id: PrincipalId,
-    kind: AuthenticationPrincipalKind,
+    kind: PrincipalKind,
     name: String,
     identity_scope_id: IdentityScopeId,
 }
@@ -350,7 +319,7 @@ impl AuthenticationPrincipal {
     #[must_use]
     pub fn new(
         id: PrincipalId,
-        kind: AuthenticationPrincipalKind,
+        kind: PrincipalKind,
         name: impl Into<String>,
         identity_scope_id: IdentityScopeId,
     ) -> Self {
@@ -368,7 +337,7 @@ impl AuthenticationPrincipal {
     }
 
     #[must_use]
-    pub const fn kind(&self) -> AuthenticationPrincipalKind {
+    pub const fn kind(&self) -> PrincipalKind {
         self.kind
     }
 
@@ -704,7 +673,7 @@ mod tests {
     fn authentication_dto_debug_output_redacts_identity_values() {
         let principal = AuthenticationPrincipal::new(
             PrincipalId::new(42).unwrap(),
-            AuthenticationPrincipalKind::Human,
+            PrincipalKind::Human,
             "sensitive-name",
             IdentityScopeId::new(17).unwrap(),
         );

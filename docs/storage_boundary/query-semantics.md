@@ -7,15 +7,25 @@ these rules.
 
 ## Naming and Result Shapes
 
-Pageable operations use `list_*` and return `StoragePage<T>` or a documented
-capability-specific page. Operations named `load_*` intentionally return a
-complete non-paged projection for policy evaluation or application composition;
-they do not silently apply cursor pagination. Point reads use `get_*` when a
-missing durable resource is `NotFound` and `resolve_*` when the operation
-normalizes or combines an address before loading it.
+`get_*` names one point lookup or named snapshot. A required point lookup
+returns `NotFound` when absent; a method whose result type is `Option<T>` or a
+domain lookup enum exposes absence as part of its documented protocol.
 
-Legacy `list_all_*` names are explicit complete reads. New contract methods
-should use `load_*` or a domain-specific snapshot name instead.
+`list_*` returns a collection. Pageable list methods return `StoragePage<T>` or
+a documented capability-specific page. A bounded or naturally scoped complete
+collection may return `Vec<T>` when the trait documents that shape; therefore
+the `list_*` prefix alone does not promise pagination.
+
+`load_*` is reserved for a complete, non-paged projection used for policy
+evaluation or application composition. It never silently applies cursor
+pagination. `resolve_*` normalizes or combines an address, resolves names in a
+batch, or loads an endpoint aggregate before returning the authoritative
+result; its result type defines whether absence is optional or `NotFound`.
+
+Legacy `list_all_*` names are explicit complete reads. New complete projections
+should use `load_*`; new aggregate observations should use a domain-specific
+`*_snapshot` name. Renaming the remaining stable legacy methods solely for
+style is deferred until the external crate publication surface is selected.
 
 ## Common Page Contract
 
@@ -34,8 +44,8 @@ For every pageable operation:
    not reuse it with different sorts, visibility, or resource scope, and an
    adapter must not expose or require a native cursor representation.
 6. Malformed cursors, unknown filters, unknown sorts, and operators that are
-   invalid for a recognized field return `InvalidInput`. `UnsupportedOperation`
-   does not mean that an adapter omitted required query behavior.
+   invalid for a recognized field return `InvalidInput`. Every documented
+   query behavior is mandatory for a complete backend.
 7. Limits and cursor byte budgets are enforced before native query execution.
    Contract-specific oversized input uses `InputTooLarge` where documented.
 8. An empty match returns an empty page and an exact total of zero when a total

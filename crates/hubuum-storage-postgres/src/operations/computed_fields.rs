@@ -553,15 +553,15 @@ pub async fn delete_shared_computed_field(
 pub async fn create_personal_computed_field(
     runtime: &PostgresRuntime,
     request: StoragePersonalComputedFieldCreate,
-) -> Result<StorageComputedFieldDefinition, PostgresStorageError> {
-    let (class_id, owner_id, definition) = request.into_parts();
+) -> Result<MutationOutcome<StorageComputedFieldDefinition>, PostgresStorageError> {
+    let (class_id, owner_id, definition, context) = request.into_parts();
     let class_id = class_id.id();
     let owner_id = owner_id.id();
     let input = NewComputedDefinitionRow::personal(class_id, owner_id, definition)?;
-    let definition = runtime
+    let (definition, audit) = runtime
         .with_transaction(async move |connection| {
             acquire_personal_definition_scope_lock(connection, class_id, owner_id).await?;
-            load_class(connection, class_id).await?;
+            let class = load_class(connection, class_id).await?;
             use crate::schema::computed_field_definitions::dsl as definitions;
             let count = definitions::computed_field_definitions
                 .filter(definitions::class_id.eq(class_id))
@@ -575,25 +575,39 @@ pub async fn create_personal_computed_field(
                     "A user may have at most {MAX_PERSONAL_DEFINITIONS} personal computed fields per class"
                 )));
             }
-            diesel::insert_into(definitions::computed_field_definitions)
+            let definition = diesel::insert_into(definitions::computed_field_definitions)
                 .values(input)
                 .returning(ComputedDefinitionRow::as_returning())
                 .get_result::<ComputedDefinitionRow>(connection)
-                .await
-                .map_err(PostgresStorageError::from)
+                .await?;
+            let event = computed_field_event(
+                &definition,
+                &class,
+                Action::Created,
+                &context,
+                format!("Personal computed field '{}' created", definition.key()),
+            )?
+            .with_after(definition.snapshot());
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>((definition, audit))
         })
         .await?;
-    definition.into_storage()
+    Ok(MutationOutcome::committed(
+        definition.into_storage()?,
+        audit,
+    ))
 }
 
 pub async fn update_personal_computed_field(
     runtime: &PostgresRuntime,
     request: StoragePersonalComputedFieldUpdate,
-) -> Result<StorageComputedFieldDefinition, PostgresStorageError> {
-    let (owner_id, definition_id, patch) = request.into_parts();
+) -> Result<MutationOutcome<StorageComputedFieldDefinition>, PostgresStorageError> {
+    let (owner_id, definition_id, patch, context) = request.into_parts();
     let owner_id = owner_id.id();
     let definition_id = definition_id.id();
-    let definition = runtime
+    let (definition, audit) = runtime
         .with_transaction(async move |connection| {
             let current = locked_definition(connection, definition_id).await?;
             assert_locked_revision_precondition(
@@ -609,22 +623,41 @@ pub async fn update_personal_computed_field(
             }
             let validated = validate_patch(&current, &patch)?;
             if !definition_changes(&current, &validated) {
-                return Ok(current);
+                return Ok((current, None));
             }
-            apply_definition_patch(connection, &current, &validated, owner_id).await
+            let class = load_class(connection, current.class_id()).await?;
+            let definition =
+                apply_definition_patch(connection, &current, &validated, owner_id).await?;
+            let event = computed_field_event(
+                &definition,
+                &class,
+                Action::Updated,
+                &context,
+                format!("Personal computed field '{}' updated", definition.key()),
+            )?
+            .with_before(current.snapshot())
+            .with_after(definition.snapshot());
+            let audit = append_event(connection, &event)
+                .await?
+                .into_audit_receipt()?;
+            Ok::<_, PostgresStorageError>((definition, Some(audit)))
         })
         .await?;
-    definition.into_storage()
+    let definition = definition.into_storage()?;
+    Ok(match audit {
+        Some(audit) => MutationOutcome::committed(definition, audit),
+        None => MutationOutcome::unchanged(definition),
+    })
 }
 
 pub async fn delete_personal_computed_field(
     runtime: &PostgresRuntime,
     request: StoragePersonalComputedFieldDelete,
-) -> Result<(), PostgresStorageError> {
-    let (owner_id, definition_id) = request.into_parts();
+) -> Result<MutationOutcome<()>, PostgresStorageError> {
+    let (owner_id, definition_id, context) = request.into_parts();
     let owner_id = owner_id.id();
     let definition_id = definition_id.id();
-    runtime
+    let audit = runtime
         .with_transaction(async move |connection| {
             let current = locked_definition(connection, definition_id).await?;
             assert_locked_revision_precondition(
@@ -638,15 +671,29 @@ pub async fn delete_personal_computed_field(
                     "Personal computed field {definition_id} was not found"
                 )));
             }
+            let class = load_class(connection, current.class_id()).await?;
             use crate::schema::computed_field_definitions::dsl as definitions;
             diesel::delete(
                 definitions::computed_field_definitions.filter(definitions::id.eq(definition_id)),
             )
             .execute(connection)
             .await?;
-            Ok::<_, PostgresStorageError>(())
+            let event = computed_field_event(
+                &current,
+                &class,
+                Action::Deleted,
+                &context,
+                format!("Personal computed field '{}' deleted", current.key()),
+            )?
+            .with_before(current.snapshot());
+            Ok::<_, PostgresStorageError>(
+                append_event(connection, &event)
+                    .await?
+                    .into_audit_receipt()?,
+            )
         })
-        .await
+        .await?;
+    Ok(MutationOutcome::committed((), audit))
 }
 
 pub async fn request_computed_field_rebuild(

@@ -3,7 +3,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{GroupID, ResourceRevision};
+use crate::models::{GroupID, PrincipalKind, ResourceRevision};
 use crate::storage::StorageContext;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{CursorPaginated, CursorValue};
@@ -14,7 +14,7 @@ use crate::traits::{CursorPaginated, CursorValue};
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct ServiceAccount {
     pub id: i32,
-    pub kind: String,
+    pub kind: PrincipalKind,
     pub description: String,
     pub owner_group_id: i32,
     pub created_by: Option<i32>,

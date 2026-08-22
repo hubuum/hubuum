@@ -226,19 +226,19 @@ metrics describe logical use cases, while `hubuum_db_*` metrics describe the
 PostgreSQL implementation. Do not sum the two as though they were the same
 operation count.
 
-Storage capability labels follow the capability trait vocabulary. The bounded
-values are `audit_events`, `authentication`, `authorization_data`,
-`backup_snapshots`, `catalog`, `classes`, `class_relations`,
-`collection_authorization`, `collections`, `computed_fields`,
-`computed_objects`, `event_configuration`,
+Storage capability labels follow the singular capability trait vocabulary: the
+trait's `Storage` suffix is removed and its remaining stem becomes snake case.
+The bounded values are `audit_event`, `authentication`, `authorization_data`,
+`backup_snapshot`, `catalog`, `class`, `class_relation`,
+`collection_authorization`, `collection`, `computed_field`, `computed_object`,
+`event_configuration`,
 `event_delivery_administration`, `event_delivery_worker`, `event_fanout`,
-`event_health`, `event_retention`, `export_templates`, `external_identity`,
-`groups`, `history`, `group_membership`, `identity_scopes`, `imports`,
-`inventory`, `local_identity_credentials`, `metrics`, `object_aggregates`,
-`object_relations`, `objects`, `operational_state`, `principals`,
-`relation_queries`, `remote_targets`, `restores`, `service_accounts`,
-`task_execution`, `tasks`, `token_retention`, `tokens`, `transactions`,
-`unified_search`, and `users`.
+`event_health`, `event_retention`, `export_template`, `external_identity`,
+`group`, `history`, `group_membership`, `identity_scope`, `import`, `inventory`,
+`local_identity_credential`, `metrics`, `object_aggregate`, `object_relation`,
+`object`, `operational_state`, `principal`, `relation_query`, `remote_target`,
+`restore`, `service_account`, `task_execution`, `task_queue`, `token_retention`,
+`token`, `transaction`, `unified_search`, and `user`.
 
 The standard unprefixed `process_*` families are available on Linux, macOS, and
 Windows. The names intentionally match the Prometheus ecosystem so existing

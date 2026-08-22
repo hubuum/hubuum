@@ -101,13 +101,21 @@ pub struct EventDeliveryClaim {
 }
 
 impl EventDeliveryClaim {
-    #[must_use]
-    pub const fn new(delivery_id: EventDeliveryId, attempts: i32, token: Uuid) -> Self {
-        Self {
+    pub fn try_new(
+        delivery_id: EventDeliveryId,
+        attempts: i32,
+        token: Uuid,
+    ) -> Result<Self, StorageError> {
+        if attempts < 0 {
+            return Err(StorageError::internal(
+                "An event delivery claim cannot have a negative attempt count",
+            ));
+        }
+        Ok(Self {
             delivery_id,
             attempts,
             token,
-        }
+        })
     }
 
     #[must_use]
@@ -519,7 +527,8 @@ mod tests {
     #[test]
     fn delivery_dto_debug_output_redacts_claim_and_transport_secrets() {
         let token = Uuid::new_v4();
-        let claim = EventDeliveryClaim::new(EventDeliveryId::new(7).unwrap(), 2, token);
+        let claim =
+            EventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), 2, token).unwrap();
         let sink = EventDeliverySink::new(
             EventSinkId::new(8).unwrap(),
             "webhook",
@@ -539,6 +548,14 @@ mod tests {
         assert!(!debug.contains("config-secret"));
         assert!(!debug.contains("secret-reference"));
         assert!(!debug.contains("routing-secret"));
+    }
+
+    #[test]
+    fn delivery_claim_rejects_negative_attempts() {
+        assert!(
+            EventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), -1, Uuid::new_v4(),)
+                .is_err()
+        );
     }
 
     #[test]

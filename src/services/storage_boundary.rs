@@ -152,7 +152,7 @@ pub(crate) fn group_update_to_storage(update: &UpdateGroup) -> StorageGroupUpdat
 pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal, ApiError> {
     Ok(Principal {
         id: row.id().id(),
-        kind: row.kind().to_owned(),
+        kind: row.kind(),
         name: row.name().to_owned(),
         created_at: row.created_at().naive_utc(),
         updated_at: row.updated_at().naive_utc(),

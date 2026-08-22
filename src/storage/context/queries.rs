@@ -238,7 +238,7 @@ impl ComputedObjectStorage for StorageHandle {
     ) -> Result<ComputedObjectPage, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ComputedObjects,
+            StorageCapability::ComputedObject,
             "list_computed_objects",
             async {
                 dispatch_backend!(self, |backend| {
@@ -255,7 +255,7 @@ impl ComputedObjectStorage for StorageHandle {
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ComputedObjects,
+            StorageCapability::ComputedObject,
             "enrich_objects_with_computed",
             async {
                 dispatch_backend!(self, |backend| {

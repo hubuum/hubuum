@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
 
+pub use hubuum_domain::PrincipalKind;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::ResourceRevision;
@@ -20,48 +22,13 @@ use crate::storage::{
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{CursorPaginated, CursorValue};
 
-/// The kind of a principal: a human user or a non-human service account.
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PrincipalKind {
-    Human,
-    ServiceAccount,
-}
-
-impl PrincipalKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PrincipalKind::Human => "human",
-            PrincipalKind::ServiceAccount => "service_account",
-        }
-    }
-
-    pub fn from_db(value: &str) -> Result<Self, ApiError> {
-        match value {
-            "human" => Ok(PrincipalKind::Human),
-            "service_account" => Ok(PrincipalKind::ServiceAccount),
-            other => Err(ApiError::InternalServerError(format!(
-                "Unknown principal kind '{other}'"
-            ))),
-        }
-    }
-
-    pub fn is_human(self) -> bool {
-        matches!(self, PrincipalKind::Human)
-    }
-
-    pub fn is_service_account(self) -> bool {
-        matches!(self, PrincipalKind::ServiceAccount)
-    }
-}
-
 /// The identity parent shared by both users and service accounts. A principal id
 /// IS the user/service-account id (class-table inheritance), and `(identity_scope_id,
 /// name)` is the race-safe authority for cross-kind identity-name uniqueness.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Principal {
     pub id: i32,
-    pub kind: String,
+    pub kind: PrincipalKind,
     pub name: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -200,16 +167,16 @@ fn empty_principal_settings_value() -> serde_json::Value {
 
 impl Principal {
     /// The typed kind of this principal.
-    pub fn principal_kind(&self) -> Result<PrincipalKind, ApiError> {
-        PrincipalKind::from_db(&self.kind)
+    pub const fn principal_kind(&self) -> PrincipalKind {
+        self.kind
     }
 
     pub fn is_human(&self) -> bool {
-        matches!(self.principal_kind(), Ok(kind) if kind.is_human())
+        self.kind.is_human()
     }
 
     pub fn is_service_account(&self) -> bool {
-        matches!(self.principal_kind(), Ok(kind) if kind.is_service_account())
+        self.kind.is_service_account()
     }
 
     pub fn is_provider_managed(&self) -> bool {
@@ -232,7 +199,7 @@ impl Principal {
 pub struct MembershipPrincipalResponse {
     pub principal_id: i32,
     pub identity_scope: String,
-    pub kind: String,
+    pub kind: PrincipalKind,
     pub name: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -400,7 +367,7 @@ impl InstanceAdapter<Principal> for Principal {
 /// serial sequence; subtype tables (users/service_accounts) reference it.
 pub struct NewPrincipal<'a> {
     pub identity_scope_id: i32,
-    pub kind: &'a str,
+    pub kind: PrincipalKind,
     pub name: &'a str,
 }
 

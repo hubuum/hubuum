@@ -57,20 +57,20 @@ pub async fn list_computed_objects(
             let resolved_options = request_options;
             let (visibility, authorized_object_ids) = query_visibility(&options, visibility)?;
             let Some(visibility) = visibility else {
-                return Ok(ComputedObjectPage::new(
+                return Ok(ComputedObjectPage::try_new(
                     Vec::new(),
                     include_total.then_some(0),
                     Vec::new(),
                     resolved_options,
-                ));
+                )?);
             };
             if authorized_object_ids.as_ref().is_some_and(Vec::is_empty) {
-                return Ok(ComputedObjectPage::new(
+                return Ok(ComputedObjectPage::try_new(
                     Vec::new(),
                     include_total.then_some(0),
                     Vec::new(),
                     resolved_options,
-                ));
+                )?);
             }
 
             let permissions = required_permissions(
@@ -141,12 +141,12 @@ pub async fn list_computed_objects(
             )
             .await?;
 
-            Ok::<_, PostgresStorageError>(ComputedObjectPage::new(
+            Ok::<_, PostgresStorageError>(ComputedObjectPage::try_new(
                 objects,
                 total,
                 computed,
                 resolved_options,
-            ))
+            )?)
         })
         .await
 }

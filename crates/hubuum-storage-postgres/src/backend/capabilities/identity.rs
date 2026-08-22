@@ -53,7 +53,7 @@ impl LocalIdentityCredentialStorage for PostgresStorage {
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         crate::operations::identity_credentials::reset_local_password(self.runtime(), request)
             .await
             .map_err(StorageError::from)

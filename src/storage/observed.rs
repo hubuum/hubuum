@@ -135,7 +135,7 @@ where
 {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "get_collection",
             self.inner.get_collection(id),
         )
@@ -148,7 +148,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "create_collection",
             self.inner.create_collection(command, context),
         )
@@ -162,7 +162,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "update_collection",
             self.inner.update_collection(id, changes, context),
         )
@@ -175,7 +175,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "delete_collection",
             self.inner.delete_collection(id, context),
         )
@@ -187,7 +187,7 @@ where
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "list_collection_children",
             self.inner.list_collection_children(id),
         )
@@ -199,7 +199,7 @@ where
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "list_collection_ancestors",
             self.inner.list_collection_ancestors(id),
         )
@@ -213,7 +213,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
         self.call(
-            StorageCapability::Collections,
+            StorageCapability::Collection,
             "move_collection",
             self.inner.move_collection(id, new_parent_id, context),
         )
@@ -231,7 +231,7 @@ where
         selector: StorageClassSelector,
     ) -> Result<StorageResolvedClass, StorageError> {
         self.call(
-            StorageCapability::Classes,
+            StorageCapability::Class,
             "resolve_class",
             self.inner.resolve_class(selector),
         )
@@ -244,7 +244,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.call(
-            StorageCapability::Classes,
+            StorageCapability::Class,
             "create_class",
             self.inner.create_class(command, context),
         )
@@ -258,7 +258,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
         self.call(
-            StorageCapability::Classes,
+            StorageCapability::Class,
             "update_class",
             self.inner.update_class(target, changes, context),
         )
@@ -271,7 +271,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
-            StorageCapability::Classes,
+            StorageCapability::Class,
             "delete_class",
             self.inner.delete_class(target, context),
         )
@@ -283,7 +283,7 @@ where
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
         self.call(
-            StorageCapability::Classes,
+            StorageCapability::Class,
             "resolve_class_names",
             self.inner.resolve_class_names(class_ids),
         )
@@ -298,7 +298,7 @@ where
 {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "get_object",
             self.inner.get_object(object_id),
         )
@@ -310,7 +310,7 @@ where
         selector: StorageObjectSelector,
     ) -> Result<StorageResolvedObject, StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "resolve_object",
             self.inner.resolve_object(selector),
         )
@@ -324,7 +324,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "create_object",
             self.inner.create_object(class, command, context),
         )
@@ -338,7 +338,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "update_object",
             self.inner.update_object(target, changes, context),
         )
@@ -352,7 +352,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageObject>, StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "patch_object_data",
             self.inner.patch_object_data(target, patch, context),
         )
@@ -365,7 +365,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "delete_object",
             self.inner.delete_object(target, context),
         )
@@ -374,7 +374,7 @@ where
 
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "validate_object",
             self.inner.validate_object(object),
         )
@@ -386,7 +386,7 @@ where
         command: StorageObjectCreate,
     ) -> Result<(), StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "validate_object_create",
             self.inner.validate_object_create(command),
         )
@@ -399,7 +399,7 @@ where
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
         self.call(
-            StorageCapability::Objects,
+            StorageCapability::Object,
             "validate_object_update",
             self.inner.validate_object_update(object_id, changes),
         )
@@ -417,7 +417,7 @@ where
         command: StorageClassRelationCreate,
     ) -> Result<StoragePreparedClassRelation, StorageError> {
         self.call(
-            StorageCapability::ClassRelations,
+            StorageCapability::ClassRelation,
             "prepare_class_relation",
             self.inner.prepare_class_relation(command),
         )
@@ -429,7 +429,7 @@ where
         id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
         self.call(
-            StorageCapability::ClassRelations,
+            StorageCapability::ClassRelation,
             "resolve_class_relation",
             self.inner.resolve_class_relation(id),
         )
@@ -442,7 +442,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
         self.call(
-            StorageCapability::ClassRelations,
+            StorageCapability::ClassRelation,
             "create_class_relation",
             self.inner.create_class_relation(prepared, context),
         )
@@ -455,7 +455,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
-            StorageCapability::ClassRelations,
+            StorageCapability::ClassRelation,
             "delete_class_relation",
             self.inner.delete_class_relation(target, context),
         )
@@ -473,7 +473,7 @@ where
         selector: StorageObjectRelationCreateSelector,
     ) -> Result<StoragePreparedObjectRelation, StorageError> {
         self.call(
-            StorageCapability::ObjectRelations,
+            StorageCapability::ObjectRelation,
             "prepare_object_relation",
             self.inner.prepare_object_relation(selector),
         )
@@ -485,7 +485,7 @@ where
         selector: StorageObjectRelationSelector,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
         self.call(
-            StorageCapability::ObjectRelations,
+            StorageCapability::ObjectRelation,
             "resolve_object_relation",
             self.inner.resolve_object_relation(selector),
         )
@@ -498,7 +498,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         self.call(
-            StorageCapability::ObjectRelations,
+            StorageCapability::ObjectRelation,
             "create_object_relation",
             self.inner.create_object_relation(prepared, context),
         )
@@ -511,7 +511,7 @@ where
         context: &EventContext,
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.call(
-            StorageCapability::ObjectRelations,
+            StorageCapability::ObjectRelation,
             "delete_object_relation",
             self.inner.delete_object_relation(target, context),
         )

@@ -2,7 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ResourceRevision};
+use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, PrincipalKind, ResourceRevision};
 use hubuum_events_core::EventContext;
 use serde_json::Value;
 
@@ -15,7 +15,7 @@ use crate::{
 #[derive(Clone, PartialEq)]
 pub struct StoragePrincipal {
     id: PrincipalId,
-    kind: String,
+    kind: PrincipalKind,
     name: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -32,13 +32,13 @@ impl StoragePrincipal {
     #[must_use]
     pub fn builder(
         metadata: StorageRecordMetadata,
-        kind: impl Into<String>,
+        kind: PrincipalKind,
         name: impl Into<String>,
         identity_scope_id: IdentityScopeId,
     ) -> StoragePrincipalBuilder {
         StoragePrincipalBuilder {
             metadata,
-            kind: kind.into(),
+            kind,
             name: name.into(),
             identity_scope_id,
             provider_managed: false,
@@ -55,8 +55,8 @@ impl StoragePrincipal {
     }
 
     #[must_use]
-    pub fn kind(&self) -> &str {
-        &self.kind
+    pub const fn kind(&self) -> PrincipalKind {
+        self.kind
     }
 
     #[must_use]
@@ -125,7 +125,7 @@ impl fmt::Debug for StoragePrincipal {
 /// Builder for optional principal record fields.
 pub struct StoragePrincipalBuilder {
     metadata: StorageRecordMetadata,
-    kind: String,
+    kind: PrincipalKind,
     name: String,
     identity_scope_id: IdentityScopeId,
     provider_managed: bool,

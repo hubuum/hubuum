@@ -82,7 +82,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn create_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldCreate,
-    ) -> Result<StorageComputedFieldDefinition, StorageError> {
+    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         postgres_computed_fields::create_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -91,7 +91,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn update_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldUpdate,
-    ) -> Result<StorageComputedFieldDefinition, StorageError> {
+    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         postgres_computed_fields::update_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -100,7 +100,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn delete_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldDelete,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MutationOutcome<()>, StorageError> {
         postgres_computed_fields::delete_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)

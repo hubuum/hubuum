@@ -1,7 +1,7 @@
 //! Compile-time checks for the API an out-of-tree storage adapter consumes.
 
 use chrono::NaiveDateTime;
-use hubuum_domain::{IdentityScopeId, ResourceId, ResourceRevision};
+use hubuum_domain::{IdentityScopeId, PrincipalKind, ResourceId, ResourceRevision};
 use hubuum_events_core::EventContext;
 use hubuum_query::{QueryOptions, parse_query_parameter};
 use hubuum_storage_core::{
@@ -93,7 +93,7 @@ fn principal_records_expose_typed_identity_through_accessors() {
     .unwrap();
     let principal = StoragePrincipal::builder(
         metadata,
-        "user",
+        PrincipalKind::Human,
         "adapter-user",
         IdentityScopeId::new(3).unwrap(),
     )

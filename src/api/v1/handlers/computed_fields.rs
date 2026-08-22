@@ -501,6 +501,7 @@ pub async fn create_personal_computed_field(
     context: AppContext,
     requestor: Authenticated,
     request: web::Json<PersonalComputedFieldDefinitionRequest>,
+    http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let owner_id = require_human(&requestor)?;
     let request = request.into_inner();
@@ -513,8 +514,16 @@ pub async fn create_personal_computed_field(
         [Permissions::ReadClass],
         class
     );
+    let event_context = requestor.event_context(&http_request);
     ApiResponse::revisioned(
-        create_personal_definition(&context, class.id, owner_id, request.definition).await?,
+        create_personal_definition(
+            &context,
+            class.id,
+            owner_id,
+            request.definition,
+            &event_context,
+        )
+        .await?,
         StatusCode::CREATED,
     )
 }
@@ -559,10 +568,17 @@ pub async fn patch_personal_computed_field(
         class
     );
     let precondition = computed_field_precondition(&http_request, &definition)?;
+    let event_context = requestor.event_context(&http_request);
     let updated = with_revision_precondition(
         &context,
         precondition,
-        update_personal_definition(&context, owner_id, field_id.id(), request.into_inner()),
+        update_personal_definition(
+            &context,
+            owner_id,
+            field_id.id(),
+            request.into_inner(),
+            &event_context,
+        ),
     )
     .await?;
     ApiResponse::ok_revisioned(updated)
@@ -608,10 +624,11 @@ pub async fn delete_personal_computed_field(
         class
     );
     let precondition = computed_field_precondition(&http_request, &definition)?;
+    let event_context = requestor.event_context(&http_request);
     with_revision_precondition(
         &context,
         precondition,
-        delete_personal_definition(&context, owner_id, field_id.id()),
+        delete_personal_definition(&context, owner_id, field_id.id(), &event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(definition.entity_tag()?))

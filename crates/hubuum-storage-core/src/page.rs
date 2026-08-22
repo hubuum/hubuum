@@ -1,5 +1,19 @@
 use crate::StorageError;
 
+pub(crate) fn validate_page_total(
+    row_count: usize,
+    total: Option<i64>,
+) -> Result<(), StorageError> {
+    let row_count = i64::try_from(row_count)
+        .map_err(|_| StorageError::internal("A storage page contains too many rows"))?;
+    if total.is_some_and(|value| value < row_count) {
+        return Err(StorageError::internal(
+            "A storage page total must be at least the number of returned rows",
+        ));
+    }
+    Ok(())
+}
+
 /// Named components of a backend-selected page.
 pub struct StoragePageParts<T> {
     rows: Vec<T>,
@@ -33,11 +47,7 @@ pub struct StoragePage<T> {
 
 impl<T> StoragePage<T> {
     pub fn try_new(rows: Vec<T>, total: Option<i64>) -> Result<Self, StorageError> {
-        if total.is_some_and(|value| value < 0) {
-            return Err(StorageError::internal(
-                "A storage page total must not be negative",
-            ));
-        }
+        validate_page_total(rows.len(), total)?;
         Ok(Self { rows, total })
     }
 
@@ -85,5 +95,10 @@ mod tests {
     #[test]
     fn pages_reject_negative_totals() {
         assert!(StoragePage::<()>::try_new(Vec::new(), Some(-1)).is_err());
+    }
+
+    #[test]
+    fn pages_reject_totals_smaller_than_the_returned_page() {
+        assert!(StoragePage::try_new(vec![1, 2], Some(1)).is_err());
     }
 }

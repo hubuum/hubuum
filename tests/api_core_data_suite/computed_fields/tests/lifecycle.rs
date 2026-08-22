@@ -261,22 +261,27 @@ async fn concurrent_personal_creates_preserve_scope_capacity(
             fixture.class.id,
             test_context.normal_user.id,
             definition_request(&format!("existing_{index}")),
+            &EventContext::system(),
         )
         .await
         .unwrap();
     }
 
+    let first_context = EventContext::system();
     let first = create_personal_definition(
         &test_context.pool,
         fixture.class.id,
         test_context.normal_user.id,
         definition_request("concurrent_first"),
+        &first_context,
     );
+    let second_context = EventContext::system();
     let second = create_personal_definition(
         &test_context.pool,
         fixture.class.id,
         test_context.normal_user.id,
         definition_request("concurrent_second"),
+        &second_context,
     );
     let (first, second) = tokio::join!(first, second);
     assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);

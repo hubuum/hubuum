@@ -178,7 +178,6 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::PermissionDenied => Self::Forbidden(message),
             StorageErrorKind::Internal => Self::InternalServerError(message),
             StorageErrorKind::NotFound => Self::NotFound(message),
-            StorageErrorKind::UnsupportedOperation => Self::NotAcceptable(message),
             StorageErrorKind::InputTooLarge => Self::PayloadTooLarge(message),
             StorageErrorKind::RevisionConflict => Self::RevisionConflict(
                 message,

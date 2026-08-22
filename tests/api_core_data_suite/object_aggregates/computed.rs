@@ -183,6 +183,7 @@ async fn personal_computed_grouping_uses_the_requesting_owners_definition(
         fixture.class.id,
         test_context.normal_user.id,
         computed_definition("priority", "/bucket", true),
+        &EventContext::system(),
     )
     .await
     .unwrap();
@@ -216,6 +217,7 @@ async fn personal_computed_filters_use_the_requesting_owners_definition(
         fixture.class.id,
         test_context.normal_user.id,
         computed_definition("filter_priority", "/bucket", true),
+        &EventContext::system(),
     )
     .await
     .unwrap();
@@ -251,6 +253,7 @@ async fn personal_computed_grouping_rejects_another_owners_definition(
         fixture.class.id,
         test_context.admin_user.id,
         computed_definition("admin_only", "/status", true),
+        &EventContext::system(),
     )
     .await
     .unwrap();
@@ -292,6 +295,7 @@ async fn personal_computed_grouping_rejects_service_accounts(
         fixture.class.id,
         test_context.normal_user.id,
         computed_definition("priority", "/bucket", true),
+        &EventContext::system(),
     )
     .await
     .unwrap();
@@ -351,6 +355,7 @@ async fn invalid_computed_selectors_are_bad_requests(
             fixture.class.id,
             test_context.normal_user.id,
             computed_definition(key, "/bucket", false),
+            &EventContext::system(),
         )
         .await
         .unwrap();

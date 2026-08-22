@@ -10,7 +10,7 @@ use hubuum_domain::{
     GroupId, ObjectId, ObjectRelationId, PrincipalId, ResourceId, ResourceRevision,
 };
 use hubuum_task_core::IdempotencyKey;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -152,6 +152,45 @@ impl ObjectAggregateAuthorizer for AllowAllObjectAggregateAuthorizer {
         candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
         _required_permissions: Vec<AuthorizationPermission>,
     ) -> Result<Vec<bool>, StorageError> {
+        Ok(vec![true; candidates.len()])
+    }
+}
+
+struct PausingObjectAggregateAuthorizer {
+    authorization_calls: AtomicUsize,
+    first_batch_seen: Notify,
+    resume: Notify,
+}
+
+impl PausingObjectAggregateAuthorizer {
+    fn new() -> Self {
+        Self {
+            authorization_calls: AtomicUsize::new(0),
+            first_batch_seen: Notify::new(),
+            resume: Notify::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl ObjectAggregateAuthorizer for PausingObjectAggregateAuthorizer {
+    async fn authorize_target(
+        &self,
+        _target: StorageObjectAggregateAuthorizationTarget,
+        _required_permissions: Vec<AuthorizationPermission>,
+    ) -> Result<bool, StorageError> {
+        Ok(true)
+    }
+
+    async fn authorize_objects(
+        &self,
+        candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
+        _required_permissions: Vec<AuthorizationPermission>,
+    ) -> Result<Vec<bool>, StorageError> {
+        if self.authorization_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.first_batch_seen.notify_one();
+            self.resume.notified().await;
+        }
         Ok(vec![true; candidates.len()])
     }
 }
@@ -570,7 +609,7 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
     async fn observations(&self) -> Result<ObservationProbe, FixtureError> {
         Ok(ObservationProbe::new(
             self.logical_observer
-                .operation_count("collections", "create_collection"),
+                .operation_count("collection", "create_collection"),
             self.logical_observer
                 .operation_count("event_configuration", "create_event_subscription"),
             self.postgres_observer.operation_count(),
@@ -1830,16 +1869,17 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .into_parts();
         assert_eq!(token_total, Some(1));
         assert_eq!(tokens[0].principal_id(), principal_id(user.id));
-        assert_eq!(
-            backend
-                .reset_local_password(StorageLocalPasswordReset::new(
-                    &username,
-                    "identity-contract-password-hash",
-                ))
-                .await
-                .expect("certified backend should reset local credentials"),
-            1
-        );
+        let password_reset = backend
+            .reset_local_password(StorageLocalPasswordReset::new(
+                &username,
+                "identity-contract-password-hash",
+                event_context.clone(),
+            ))
+            .await
+            .expect("certified backend should reset local credentials");
+        assert!(password_reset.is_committed());
+        assert_eq!(password_reset.audits().map(|audits| audits.len()), Some(1));
+        assert_eq!(password_reset.into_value(), 1);
 
         let service_account_name = prefix("identity_contract_sa");
         let created = backend
@@ -4295,14 +4335,17 @@ async fn every_available_storage_backend_supplies_computed_fields() {
         assert_eq!(ready_state.rebuild_status().as_str(), "ready");
         assert_eq!(ready_state.active_task_id(), None);
 
-        let personal = backend
+        let personal_outcome = backend
             .create_personal_computed_field(StoragePersonalComputedFieldCreate::new(
                 class_id,
                 owner_id,
                 definition("compatibility_personal"),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should create a personal computed field");
+        assert!(personal_outcome.is_committed());
+        let personal = personal_outcome.into_value();
         assert_eq!(
             personal.visibility(),
             StorageComputedFieldVisibility::Personal { owner_id }
@@ -4323,24 +4366,29 @@ async fn every_available_storage_backend_supplies_computed_fields() {
 
         let personal_id = ComputedFieldDefinitionId::new(personal.metadata().id().id())
             .expect("persisted computed-field definition id must be positive");
-        let updated_personal = backend
+        let updated_personal_outcome = backend
             .update_personal_computed_field(StoragePersonalComputedFieldUpdate::new(
                 owner_id,
                 personal_id,
                 StorageComputedFieldDefinitionPatch::new()
                     .with_label(Some("Updated personal compatibility".to_string())),
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should update a personal computed field");
+        assert!(updated_personal_outcome.is_committed());
+        let updated_personal = updated_personal_outcome.into_value();
         assert_eq!(updated_personal.label(), "Updated personal compatibility");
 
-        backend
+        let deleted_personal = backend
             .delete_personal_computed_field(StoragePersonalComputedFieldDelete::new(
                 owner_id,
                 personal_id,
+                event_context.clone(),
             ))
             .await
             .expect("certified backend should delete a personal computed field");
+        assert!(deleted_personal.is_committed());
 
         let deleted_state = backend
             .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
@@ -4475,6 +4523,115 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
         .cleanup()
         .await
         .expect("object-aggregate compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_batches() {
+    use hubuum_storage_core::{StorageObjectAggregateDimension, StorageObjectAggregateScalarField};
+
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("delegated_object_aggregate_snapshot");
+    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
+    let initial_objects = (0..3)
+        .map(|index| NewHubuumObject {
+            name: format!("{needle}_object_{index}"),
+            collection_id: 0,
+            hubuum_class_id: 0,
+            data: serde_json::json!({"snapshot": true}),
+            description: "delegated object aggregate snapshot object".to_string(),
+        })
+        .collect();
+    let fixture = crate::tests::create_object_fixture(
+        pool.get_ref(),
+        collection,
+        NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "delegated object aggregate snapshot class".to_string(),
+        },
+        initial_objects,
+    )
+    .await
+    .expect("delegated aggregate snapshot fixture should be created");
+    let query = ObjectAggregateStorageQuery::builder(
+        StorageObjectAggregateTarget::new(
+            ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
+            fixture.class.name.clone(),
+            collection_id(fixture.class.collection_id),
+        ),
+        QueryOptions::new(Vec::new(), Vec::new(), Some(50), None, true)
+            .expect("snapshot aggregate query must be valid"),
+        StorageObjectAggregateSpec::new(
+            [StorageObjectAggregateDimension::Scalar(
+                StorageObjectAggregateScalarField::Name,
+            )],
+            [],
+            StorageObjectAggregateSort::DimensionsAscending,
+        )
+        .expect("snapshot aggregate spec must be valid"),
+        StorageVisibility::new(
+            principal_id(i32::MAX),
+            true,
+            None::<Vec<AuthorizationPermission>>,
+            None,
+        ),
+    )
+    .required_permissions([
+        AuthorizationPermission::ReadObject,
+        AuthorizationPermission::ReadCollection,
+    ])
+    .page_limit(50)
+    .cursor_max_encoded_bytes(4_096)
+    .build()
+    .expect("snapshot aggregate query must be valid");
+    let authorizer = Arc::new(PausingObjectAggregateAuthorizer::new());
+    let storage = StorageHandle::postgres(pool.get_ref().clone());
+    let aggregate_task = tokio::spawn({
+        let authorizer = Arc::clone(&authorizer);
+        async move {
+            storage
+                .aggregate_objects(
+                    query,
+                    ObjectAggregateAuthorization::Delegated(authorizer.as_ref()),
+                )
+                .await
+        }
+    });
+
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        authorizer.first_batch_seen.notified(),
+    )
+    .await
+    .expect("delegated authorization should receive its first candidate batch");
+    NewHubuumObject {
+        name: format!("{needle}_concurrent_object"),
+        collection_id: fixture.class.collection_id,
+        hubuum_class_id: fixture.class.id,
+        data: serde_json::json!({"snapshot": false}),
+        description: "concurrently inserted object".to_string(),
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("concurrent object should be committed while authorization is paused");
+    authorizer.resume.notify_one();
+
+    let page = aggregate_task
+        .await
+        .expect("delegated aggregate task should join")
+        .expect("delegated aggregate should succeed");
+    let (rows, total, next_cursor) = page.into_parts();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(total, Some(3));
+    assert!(next_cursor.is_none());
+
+    fixture
+        .cleanup()
+        .await
+        .expect("delegated aggregate snapshot fixture should be removed");
 }
 
 #[actix_web::test]

@@ -1469,14 +1469,20 @@ impl fmt::Debug for StorageDefaultAdminBootstrap {
 pub struct StorageLocalPasswordReset {
     principal_name: String,
     password_hash: String,
+    event_context: EventContext,
 }
 
 impl StorageLocalPasswordReset {
     #[must_use]
-    pub fn new(principal_name: impl Into<String>, password_hash: impl Into<String>) -> Self {
+    pub fn new(
+        principal_name: impl Into<String>,
+        password_hash: impl Into<String>,
+        event_context: EventContext,
+    ) -> Self {
         Self {
             principal_name: principal_name.into(),
             password_hash: password_hash.into(),
+            event_context,
         }
     }
 
@@ -1488,6 +1494,16 @@ impl StorageLocalPasswordReset {
     #[must_use]
     pub fn password_hash(&self) -> &str {
         &self.password_hash
+    }
+
+    #[must_use]
+    pub const fn event_context(&self) -> &EventContext {
+        &self.event_context
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, String, EventContext) {
+        (self.principal_name, self.password_hash, self.event_context)
     }
 }
 
@@ -1569,11 +1585,12 @@ pub trait LocalIdentityCredentialStorage: Send + Sync {
     ) -> Result<bool, StorageError>;
 
     /// Replace one local human credential and atomically revoke every active
-    /// bearer token owned by that principal. Returns the revoked token count.
+    /// bearer token owned by that principal. The credential change, token
+    /// revocations, and returned audit receipt share one commit boundary.
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
-    ) -> Result<usize, StorageError>;
+    ) -> Result<MutationOutcome<usize>, StorageError>;
 }
 
 /// Identity-provider scope discovery and reconciliation.
@@ -1838,8 +1855,11 @@ mod tests {
 
     #[test]
     fn local_password_reset_debug_redacts_name_and_hash() {
-        let request =
-            StorageLocalPasswordReset::new("sensitive-principal-name", "sensitive-password-hash");
+        let request = StorageLocalPasswordReset::new(
+            "sensitive-principal-name",
+            "sensitive-password-hash",
+            EventContext::system(),
+        );
         let debug = format!("{request:?}");
 
         assert!(!debug.contains("sensitive-principal-name"));

@@ -25494,7 +25494,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/PrincipalKind"
           },
           "name": {
             "type": "string"
@@ -26991,6 +26991,14 @@
             "type": "string"
           }
         }
+      },
+      "PrincipalKind": {
+        "type": "string",
+        "description": "Closed set of principal kinds understood by every Hubuum layer.\n\nAdapters must parse persisted values into this type before returning a\nprincipal so database corruption cannot cross the storage boundary as an\narbitrary string.",
+        "enum": [
+          "human",
+          "service_account"
+        ]
       },
       "PrincipalMemberResponse": {
         "type": "object",

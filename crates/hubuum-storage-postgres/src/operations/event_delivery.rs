@@ -340,11 +340,11 @@ async fn load_work_items(
             })?;
 
             Ok(EventDeliveryWorkItem::new(
-                EventDeliveryClaim::new(
+                EventDeliveryClaim::try_new(
                     EventDeliveryId::new(delivery.id)?,
                     delivery.attempts,
                     claim_token,
-                ),
+                )?,
                 event.into_envelope(&principal_names)?,
                 EventDeliverySubscription::new(
                     EventSubscriptionId::new(subscription.id)?,

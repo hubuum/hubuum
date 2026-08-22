@@ -2041,7 +2041,7 @@ mod tests {
         let body: MeResponse = serde_json::from_value(raw).unwrap();
 
         assert_eq!(body.principal.principal_id, sa.id);
-        assert_eq!(body.principal.kind, "service_account");
+        assert_eq!(body.principal.kind, PrincipalKind::ServiceAccount);
         let scope = body.token.scope.expect("token should expose its scope");
         assert_eq!(
             scope.permissions(),

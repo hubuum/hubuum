@@ -122,11 +122,6 @@ impl PostgresStorageError {
     }
 
     #[must_use]
-    pub fn unsupported_operation(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::UnsupportedOperation, message, None)
-    }
-
-    #[must_use]
     pub fn authentication_required(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::AuthenticationRequired, message, None)
     }
@@ -185,7 +180,6 @@ impl From<StorageError> for PostgresStorageError {
             StorageErrorKind::PermissionDenied => Self::permission_denied(message),
             StorageErrorKind::Internal => Self::internal(message),
             StorageErrorKind::NotFound => Self::not_found(message),
-            StorageErrorKind::UnsupportedOperation => Self::unsupported_operation(message),
             StorageErrorKind::InputTooLarge => Self::input_too_large(message),
             StorageErrorKind::RevisionConflict => match current_revision {
                 Some(revision) => Self::revision_conflict(message, revision),
@@ -286,7 +280,6 @@ impl From<PostgresStorageError> for StorageError {
             StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),
             StorageErrorKind::Internal => Self::internal(error.message),
             StorageErrorKind::NotFound => Self::not_found(error.message),
-            StorageErrorKind::UnsupportedOperation => Self::unsupported_operation(error.message),
             StorageErrorKind::InputTooLarge => Self::input_too_large(error.message),
             StorageErrorKind::RevisionConflict => match error.current_revision {
                 Some(revision) => Self::revision_conflict(error.message, revision),

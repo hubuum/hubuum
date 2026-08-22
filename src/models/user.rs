@@ -4,7 +4,9 @@ use crate::events::EventContext;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::{IssuedToken, PrincipalTokenCreateRequest, Token};
-use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
+use crate::models::{
+    PrincipalID, PrincipalKind, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -25,7 +27,7 @@ pub const MAX_LOGIN_PASSWORD_CHARACTERS: usize = 4096;
 pub struct User {
     pub id: i32,
     #[serde(skip_serializing)]
-    pub kind: String,
+    pub kind: PrincipalKind,
     #[serde(skip_serializing)]
     pub password: Option<String>,
     pub proper_name: Option<String>,
@@ -630,7 +632,7 @@ mod tests {
         let password_hash = "$argon2id$stored-password-hash";
         let user = User {
             id: 1,
-            kind: "human".to_string(),
+            kind: PrincipalKind::Human,
             password: Some(password_hash.to_string()),
             proper_name: Some("Alice".to_string()),
             email: Some("alice@example.com".to_string()),

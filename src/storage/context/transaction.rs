@@ -18,7 +18,7 @@ impl TransactionStorage for StorageHandle {
     {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Transactions,
+            StorageCapability::Transaction,
             "with_transaction",
             async {
                 dispatch_backend!(self, |backend| {

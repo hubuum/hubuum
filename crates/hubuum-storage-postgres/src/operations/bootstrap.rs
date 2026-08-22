@@ -2,8 +2,10 @@ use diesel::QueryableByName;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::sql_types::{BigInt, Bool};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE};
-use hubuum_storage_core::{AuthenticationPrincipalKind, StorageDefaultAdminBootstrap};
+use hubuum_domain::{
+    LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE, PrincipalKind,
+};
+use hubuum_storage_core::StorageDefaultAdminBootstrap;
 
 use crate::operations::identity_scope::identity_scope_id_by_name_on_connection;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
@@ -92,7 +94,7 @@ pub async fn bootstrap_default_admin(
             let principal_id = diesel::insert_into(crate::schema::principals::table)
                 .values((
                     crate::schema::principals::identity_scope_id.eq(local_scope_id),
-                    crate::schema::principals::kind.eq(AuthenticationPrincipalKind::Human.as_str()),
+                    crate::schema::principals::kind.eq(PrincipalKind::Human.as_str()),
                     crate::schema::principals::name.eq("admin"),
                 ))
                 .returning(crate::schema::principals::id)

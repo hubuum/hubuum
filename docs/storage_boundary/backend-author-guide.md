@@ -11,6 +11,12 @@ A selectable backend is a complete implementation of `StorageBackend`. It is
 not selectable when it supports only lifecycle operations, only HTTP-facing
 queries, or only the operations needed by one deployment.
 
+Application registration also requires `Clone + 'static`. Cloning must be
+cheap: put native pools, clients, caches, and other shared adapter state behind
+reference-counted handles so `clone()` duplicates only handles. Composition
+clones the adapter for observation, diagnostics, notifications, and opaque
+dispatch; it must not create a new pool, connection manager, worker, or cache.
+
 A partial implementation can be useful as a focused model or test double. Name
 and compose it through only the narrow traits it implements. Do not provide
 dummy methods, silent no-ops, or generic "unsupported" defaults. Do not add it
@@ -186,10 +192,10 @@ classification, message, and optional current revision.
 Treat the kind and structured fields as the portable contract. The message is
 safe human-readable diagnostic prose, not a stable code, and callers must not
 branch on it. Map known native constraints to deliberately selected portable
-messages; never forward arbitrary driver or server text. Use
-`UnsupportedOperation` only when a capability explicitly documents an optional
-request variant that can be unavailable. It must never replace a mandatory
-trait implementation.
+messages; never forward arbitrary driver or server text. The complete contract
+has no generic unsupported-operation error: every method and documented input
+variant is mandatory. Model genuinely optional behavior outside
+`StorageBackend`, as `WorkerNotificationProvider` does.
 
 Backend-neutral storage crates must not import `ApiError`. Application code
 must not convert `ApiError` back into `StorageError`. An adapter may convert a

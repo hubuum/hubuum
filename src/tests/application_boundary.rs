@@ -347,6 +347,46 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
         }
     }
 
+    let context_free_mutations = manifest
+        .get("context_free_mutations")
+        .and_then(toml::Value::as_table)
+        .expect("semantic coverage must classify context-free mutations");
+    let mutation_contract =
+        read_source(&root.join("docs/storage_boundary/transactions-and-events.md"))
+            .expect("context-free mutation contract should be readable");
+    let mut classified = BTreeSet::new();
+    for (classification, values) in context_free_mutations {
+        let values = values.as_array().unwrap_or_else(|| {
+            panic!("context-free mutation classification {classification} must be an array")
+        });
+        for value in values {
+            let qualified = value.as_str().unwrap_or_else(|| {
+                panic!("context-free mutation entries must be qualified method names")
+            });
+            assert!(
+                classified.insert(qualified.to_string()),
+                "context-free mutation {qualified} is classified more than once"
+            );
+            let (trait_name, method) = qualified.split_once("::").unwrap_or_else(|| {
+                panic!("context-free mutation {qualified} must use Trait::method syntax")
+            });
+            let trait_entry = traits
+                .get(trait_name)
+                .and_then(toml::Value::as_table)
+                .unwrap_or_else(|| {
+                    panic!("context-free mutation {qualified} names an unknown trait")
+                });
+            assert!(
+                toml_string_set(trait_entry, "methods").contains(method),
+                "context-free mutation {qualified} names an unknown method"
+            );
+            assert!(
+                mutation_contract.contains(qualified),
+                "context-free mutation {qualified} is missing from the normative documentation"
+            );
+        }
+    }
+
     let enums = manifest
         .get("enums")
         .and_then(toml::Value::as_table)

@@ -59,7 +59,7 @@ impl LocalIdentityCredentialStorage for StorageHandle {
     async fn is_default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::LocalIdentityCredentials,
+            StorageCapability::LocalIdentityCredential,
             "is_default_admin_bootstrap_required",
             async {
                 dispatch_backend!(self, |backend| {
@@ -76,7 +76,7 @@ impl LocalIdentityCredentialStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::LocalIdentityCredentials,
+            StorageCapability::LocalIdentityCredential,
             "bootstrap_default_admin",
             async {
                 dispatch_backend!(self, |backend| {
@@ -90,10 +90,10 @@ impl LocalIdentityCredentialStorage for StorageHandle {
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::LocalIdentityCredentials,
+            StorageCapability::LocalIdentityCredential,
             "reset_local_password",
             async {
                 dispatch_backend!(self, |backend| {
@@ -113,7 +113,7 @@ impl IdentityScopeStorage for StorageHandle {
     ) -> Result<StorageIdentityScope, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::IdentityScopes,
+            StorageCapability::IdentityScope,
             "ensure_identity_scope",
             async {
                 dispatch_backend!(self, |backend| {
@@ -130,7 +130,7 @@ impl IdentityScopeStorage for StorageHandle {
     ) -> Result<String, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::IdentityScopes,
+            StorageCapability::IdentityScope,
             "resolve_identity_scope_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -147,7 +147,7 @@ impl IdentityScopeStorage for StorageHandle {
     ) -> Result<Vec<(IdentityScopeId, String)>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::IdentityScopes,
+            StorageCapability::IdentityScope,
             "resolve_identity_scope_names",
             async {
                 dispatch_backend!(self, |backend| {
@@ -302,7 +302,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "is_service_account_disabled",
             async {
                 dispatch_backend!(self, |backend| {
@@ -319,7 +319,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<StorageServiceAccount, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "get_service_account",
             async {
                 dispatch_backend!(self, |backend| {
@@ -336,7 +336,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<StorageServiceAccountDetails, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "get_service_account_details",
             async {
                 dispatch_backend!(self, |backend| {
@@ -355,7 +355,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<StoragePage<StorageServiceAccountListItem>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "list_manageable_service_accounts",
             async {
                 dispatch_backend!(self, |backend| {
@@ -372,7 +372,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "create_service_account",
             async {
                 dispatch_backend!(self, |backend| {
@@ -389,7 +389,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "update_service_account",
             async {
                 dispatch_backend!(self, |backend| {
@@ -406,7 +406,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "disable_service_account",
             async {
                 dispatch_backend!(self, |backend| {
@@ -423,7 +423,7 @@ impl ServiceAccountStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ServiceAccounts,
+            StorageCapability::ServiceAccount,
             "delete_service_account",
             async {
                 dispatch_backend!(self, |backend| {
@@ -494,7 +494,7 @@ impl UserStorage for StorageHandle {
     async fn get_user(&self, id: UserId) -> Result<StorageUser, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "get_user",
             async { dispatch_backend!(self, |backend| backend.get_user(id).await) },
         )
@@ -508,7 +508,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<StorageUser, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "get_user_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -522,7 +522,7 @@ impl UserStorage for StorageHandle {
     async fn get_user_details(&self, id: UserId) -> Result<StorageUserDetails, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "get_user_details",
             async { dispatch_backend!(self, |backend| backend.get_user_details(id).await) },
         )
@@ -535,7 +535,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<StoragePage<StorageUserListItem>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "list_users",
             async { dispatch_backend!(self, |backend| backend.list_users(query).await) },
         )
@@ -548,7 +548,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageUser>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "create_user",
             async { dispatch_backend!(self, |backend| backend.create_user(request).await) },
         )
@@ -561,7 +561,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageUser>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "update_user",
             async { dispatch_backend!(self, |backend| backend.update_user(request).await) },
         )
@@ -574,7 +574,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "set_user_password",
             async {
                 dispatch_backend!(self, |backend| { backend.set_user_password(request).await })
@@ -589,7 +589,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "delete_user",
             async { dispatch_backend!(self, |backend| backend.delete_user(request).await) },
         )
@@ -602,7 +602,7 @@ impl UserStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Users,
+            StorageCapability::User,
             "anonymize_user",
             async { dispatch_backend!(self, |backend| backend.anonymize_user(request).await) },
         )
@@ -618,7 +618,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<StoragePage<StorageTokenMetadata>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "list_retained_tokens",
             async {
                 dispatch_backend!(self, |backend| {
@@ -635,7 +635,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "create_token",
             async { dispatch_backend!(self, |backend| backend.create_token(request).await) },
         )
@@ -648,7 +648,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "renew_token",
             async { dispatch_backend!(self, |backend| backend.renew_token(request).await) },
         )
@@ -663,7 +663,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<StorageTokenMetadata, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "get_token_metadata",
             async {
                 dispatch_backend!(self, |backend| {
@@ -683,7 +683,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "get_token_metadata_by_ids",
             async {
                 dispatch_backend!(self, |backend| {
@@ -702,7 +702,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "revoke_token",
             async { dispatch_backend!(self, |backend| backend.revoke_token(request).await) },
         )
@@ -715,7 +715,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "revoke_token_by_hash",
             async {
                 dispatch_backend!(self, |backend| {
@@ -732,7 +732,7 @@ impl TokenStorage for StorageHandle {
     ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Tokens,
+            StorageCapability::Token,
             "revoke_all_principal_tokens",
             async {
                 dispatch_backend!(self, |backend| backend

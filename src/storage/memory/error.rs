@@ -31,7 +31,7 @@ impl From<MemoryStorageModelError> for StorageError {
             ApiError::BadRequest(message)
             | ApiError::InvalidIntegerRange(message)
             | ApiError::OperatorMismatch(message) => Self::invalid_input(message),
-            ApiError::NotAcceptable(message) => Self::unsupported_operation(message),
+            ApiError::NotAcceptable(message) => Self::invalid_input(message),
             ApiError::ValidationError(message) => Self::validation_failed(message),
             ApiError::PayloadTooLarge(message) => Self::input_too_large(message),
             ApiError::Conflict(message) => Self::conflict(message),

@@ -3,11 +3,10 @@ use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::sql_types::{Bool, Nullable};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{IdentityScopeId, PrincipalId, UserId};
+use hubuum_domain::{IdentityScopeId, PrincipalId, PrincipalKind, UserId};
 use hubuum_storage_core::{
     AuthenticatedToken, AuthenticationAttempt, AuthenticationHuman, AuthenticationIdentity,
-    AuthenticationPrincipal, AuthenticationPrincipalKind, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery,
+    AuthenticationPrincipal, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
 };
 
 use crate::schema;
@@ -200,15 +199,9 @@ fn authentication_identity_from_row(
         updated_at,
         anonymized_at,
     ) = row;
-    let kind = match persisted_kind.as_str() {
-        "human" => AuthenticationPrincipalKind::Human,
-        "service_account" => AuthenticationPrincipalKind::ServiceAccount,
-        other => {
-            return Err(PostgresStorageError::database(format!(
-                "Unknown principal kind '{other}'"
-            )));
-        }
-    };
+    let kind = persisted_kind
+        .parse::<PrincipalKind>()
+        .map_err(|error| PostgresStorageError::database(error.to_string()))?;
     let principal = AuthenticationPrincipal::new(
         PrincipalId::new(principal_id)?,
         kind,
@@ -217,7 +210,7 @@ fn authentication_identity_from_row(
     );
     let human = human_id
         .map(|human_id| {
-            if kind != AuthenticationPrincipalKind::Human || human_id != principal_id {
+            if kind != PrincipalKind::Human || human_id != principal_id {
                 return Err(PostgresStorageError::database(format!(
                     "Principal '{principal_id}' has an inconsistent human identity row"
                 )));

@@ -401,37 +401,47 @@ pub async fn set_user_password(
     validate_positive_id(user_id, "user id")?;
     runtime
         .with_transaction(async move |connection| {
-            let before_revision = lock_principal_revision(connection, user_id).await?;
-            ensure_user_allows_local_write(connection, user_id).await?;
-            let (before, name) = load_user_with_name(connection, user_id).await?;
-            diesel::update(
-                crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)),
-            )
-            .set(crate::schema::users::password.eq(Some(password_hash)))
-            .execute(connection)
-            .await?;
-            let revoked = revoke_all_tokens(connection, user_id).await?;
-            let after = load_user_row(connection, user_id).await?;
-            let after_revision = principal_revision(connection, user_id).await?;
-            let event = user_event(
-                &after,
-                &name,
-                Action::Updated,
-                &context,
-                format!("User '{name}' password changed"),
-            )?
-            .with_before(before.snapshot(&name, before_revision))
-            .with_after(after.snapshot(&name, after_revision))
-            .with_metadata(json!({
-                "password_changed": true,
-                "revoked_token_count": revoked,
-            }));
-            let audit = append_event(connection, &event)
-                .await?
-                .into_audit_receipt()?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(revoked, audit))
+            set_user_password_on_connection(connection, user_id, password_hash, &context, false)
+                .await
         })
         .await
+}
+
+pub(crate) async fn set_user_password_on_connection(
+    connection: &mut PostgresConnection,
+    user_id: i32,
+    password_hash: String,
+    context: &EventContext,
+    credential_reset: bool,
+) -> Result<MutationOutcome<usize>, PostgresStorageError> {
+    let before_revision = lock_principal_revision(connection, user_id).await?;
+    ensure_user_allows_local_write(connection, user_id).await?;
+    let (before, name) = load_user_with_name(connection, user_id).await?;
+    diesel::update(crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)))
+        .set(crate::schema::users::password.eq(Some(password_hash)))
+        .execute(connection)
+        .await?;
+    let revoked = revoke_all_tokens(connection, user_id).await?;
+    let after = load_user_row(connection, user_id).await?;
+    let after_revision = principal_revision(connection, user_id).await?;
+    let event = user_event(
+        &after,
+        &name,
+        Action::Updated,
+        context,
+        format!("User '{name}' password changed"),
+    )?
+    .with_before(before.snapshot(&name, before_revision))
+    .with_after(after.snapshot(&name, after_revision))
+    .with_metadata(json!({
+        "password_changed": true,
+        "revoked_token_count": revoked,
+        "credential_reset": credential_reset,
+    }));
+    let audit = append_event(connection, &event)
+        .await?
+        .into_audit_receipt()?;
+    Ok(MutationOutcome::committed(revoked, audit))
 }
 
 pub async fn delete_user(

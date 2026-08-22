@@ -112,6 +112,75 @@ restore behavior belongs to explicit workflow capabilities because those
 operations preserve or reconstruct durable history rather than masquerading as
 ordinary user mutations.
 
+## Context-Free Mutation Inventory
+
+The following list is exhaustive for `StorageBackend` methods that may durably
+write without accepting an `EventContext`. They are deliberately outside the
+ordinary audited-mutation category. Any new context-free writer must be added
+to `semantic-coverage.toml`, placed in one of these semantic categories, and
+reviewed here; an ordinary resource or configuration mutation is not eligible
+for an exception.
+
+- Best-effort observation: `AuthenticationStorage::authenticate_bearer_token`
+  may throttle-write token use time. This does not change authorization or
+  lifecycle state, and a valid authentication does not fail solely because the
+  timestamp could not be refreshed.
+- Bootstrap and provider reconciliation:
+  `LocalIdentityCredentialStorage::bootstrap_default_admin` runs only while no
+  actor can yet exist; `IdentityScopeStorage::ensure_identity_scope` is
+  idempotent provider configuration reconciliation;
+  `ExternalIdentityStorage::mark_external_sync_attempted` is synchronization
+  telemetry; and `ExternalIdentityStorage::sync_external_user` is an
+  identity-provider reconciliation operation that emits a system-attributed
+  audit event and returns its `MutationOutcome`.
+- Workflow state machines:
+  `ComputedFieldStorage::request_computed_field_rebuild`,
+  `ComputedFieldStorage::execute_computed_field_rebuild`, and
+  `TaskQueueStorage::create_task` create or advance durable work whose task row,
+  submitter, claim, and task-event stream carry its provenance. Worker-only
+  transitions are `TaskExecutionStorage::claim_next_task`,
+  `TaskExecutionStorage::renew_task_lease`,
+  `TaskExecutionStorage::recover_expired_task_leases`,
+  `TaskExecutionStorage::append_task_event`,
+  `TaskExecutionStorage::update_task_state`,
+  `TaskExecutionStorage::complete_task`, `TaskExecutionStorage::fail_task`,
+  `TaskExecutionStorage::purge_expired_export_outputs`, and
+  `TaskExecutionStorage::purge_expired_backup_outputs`.
+- Event coordination:
+  `EventDeliveryAdministrationStorage::release_event_delivery_for_retry` and
+  `EventDeliveryAdministrationStorage::mark_event_delivery_dead` are explicit
+  administrator interventions on derived delivery state. Worker protocols use
+  `EventDeliveryWorkerStorage::claim_event_delivery_batch`,
+  `EventDeliveryWorkerStorage::mark_event_delivery_succeeded`,
+  `EventDeliveryWorkerStorage::mark_event_delivery_failed`,
+  `EventFanoutStorage::process_event_fanout_batch`,
+  `EventRetentionStorage::claim_event_retention_batch`, and
+  `EventRetentionStorage::complete_event_retention_batch`. Claims and task or
+  delivery state provide the concurrency evidence; none of these methods is an
+  ordinary domain lifecycle shortcut.
+- Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
+  expiry and emits the token-purge semantics owned by the retention worker.
+- Maintenance: `RestoreStorage::stage_restore`,
+  `RestoreStorage::expire_restore_stage`,
+  `RestoreStorage::start_restore_draining`, `RestoreStorage::apply_restore`,
+  `RestoreStorage::fail_restore_and_resume`,
+  `RestoreStorage::resume_maintenance_without_restore`,
+  `RestoreStorage::resume_terminal_restore`,
+  `RestoreStorage::tick_restore_coordinator`, and
+  `RestoreStorage::remove_restore_instance` form the capability-authenticated
+  restore and coordinator protocol. `ImportStorage::apply_import_strict`,
+  `ImportStorage::apply_import_best_effort`, and
+  `ImportStorage::record_import_results` preserve or reconstruct imported
+  state and results under the typed import workflow.
+
+`BackupSnapshotStorage::create_backup_snapshot` is not listed because it only
+reads a consistent projection. `ImportStorage::preflight_import` executes
+against rollback-only state and does not durably write. `ExecutionStorage`
+scope changes are native execution context, not durable storage mutations.
+Personal and shared computed-field definition lifecycle, administrator local
+password reset, and every other ordinary mutation require `EventContext` and
+return `MutationOutcome`.
+
 ## Example
 
 ```rust
@@ -190,7 +259,7 @@ runtime transaction mechanism.
 ## Observability and Performance
 
 The unit of work is one logical storage entrypoint with the bounded labels
-`transactions` and `run`. The PostgreSQL runtime separately measures pool
+`transaction` and `run`. The PostgreSQL runtime separately measures pool
 checkout and native transaction duration. Constituent calls do not create a
 second set of logical entrypoint metrics; query-level diagnostics remain an
 adapter concern.

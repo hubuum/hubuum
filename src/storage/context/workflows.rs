@@ -8,7 +8,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<StorageExportTemplate, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "get_export_template",
             async {
                 dispatch_backend!(self, |backend| {
@@ -25,7 +25,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<StoragePage<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "list_export_templates",
             async {
                 dispatch_backend!(self, |backend| {
@@ -43,7 +43,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<Vec<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "list_export_templates_in_collection",
             async {
                 dispatch_backend!(self, |backend| {
@@ -62,7 +62,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<Option<CollectionId>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "get_export_template_class_collection_id",
             async {
                 dispatch_backend!(self, |backend| {
@@ -81,7 +81,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "create_export_template",
             async {
                 dispatch_backend!(self, |backend| {
@@ -98,7 +98,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "replace_export_template",
             async {
                 dispatch_backend!(self, |backend| {
@@ -115,7 +115,7 @@ impl ExportTemplateStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::ExportTemplates,
+            StorageCapability::ExportTemplate,
             "delete_export_template",
             async {
                 dispatch_backend!(self, |backend| {
@@ -135,7 +135,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<StorageRemoteTarget, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::RemoteTargets,
+            StorageCapability::RemoteTarget,
             "get_remote_target",
             async {
                 dispatch_backend!(self, |backend| {
@@ -152,7 +152,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<StoragePage<StorageRemoteTarget>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::RemoteTargets,
+            StorageCapability::RemoteTarget,
             "list_remote_targets",
             async {
                 dispatch_backend!(self, |backend| { backend.list_remote_targets(query).await })
@@ -167,7 +167,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::RemoteTargets,
+            StorageCapability::RemoteTarget,
             "create_remote_target",
             async {
                 dispatch_backend!(self, |backend| {
@@ -184,7 +184,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::RemoteTargets,
+            StorageCapability::RemoteTarget,
             "update_remote_target",
             async {
                 dispatch_backend!(self, |backend| {
@@ -201,7 +201,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::RemoteTargets,
+            StorageCapability::RemoteTarget,
             "delete_remote_target",
             async {
                 dispatch_backend!(self, |backend| {
@@ -218,7 +218,7 @@ impl RemoteTargetStorage for StorageHandle {
     ) -> Result<MutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::RemoteTargets,
+            StorageCapability::RemoteTarget,
             "record_remote_target_invocation",
             async {
                 dispatch_backend!(self, |backend| {
@@ -235,7 +235,7 @@ impl ImportStorage for StorageHandle {
     async fn get_import_root_collection(&self) -> Result<StorageCollection, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "get_import_root_collection",
             async {
                 dispatch_backend!(self, |backend| {
@@ -252,7 +252,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Option<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "get_import_collection_by_id",
             async {
                 dispatch_backend!(self, |backend| {
@@ -269,7 +269,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Option<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "get_import_collection_by_key",
             async {
                 dispatch_backend!(self, |backend| {
@@ -286,7 +286,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "list_import_collections_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -304,7 +304,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Option<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "get_import_collection_child_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -324,7 +324,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Option<StorageClassRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "get_import_class_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -342,7 +342,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Vec<StorageClassRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "list_import_classes_by_names",
             async {
                 dispatch_backend!(self, |backend| {
@@ -362,7 +362,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Option<StorageObject>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "get_import_object_by_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -380,7 +380,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<Vec<StorageObject>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "list_import_objects_by_names",
             async {
                 dispatch_backend!(self, |backend| {
@@ -398,7 +398,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "has_import_class_relation",
             async {
                 dispatch_backend!(self, |backend| {
@@ -418,7 +418,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "has_import_object_relation",
             async {
                 dispatch_backend!(self, |backend| {
@@ -438,7 +438,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "has_import_group",
             async {
                 dispatch_backend!(self, |backend| {
@@ -456,7 +456,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<StorageImportPreflight, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "preflight_import",
             async {
                 dispatch_backend!(self, |backend| {
@@ -470,7 +470,7 @@ impl ImportStorage for StorageHandle {
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "apply_import_strict",
             async {
                 dispatch_backend!(self, |backend| { backend.apply_import_strict(plan).await })
@@ -486,7 +486,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<StorageImportApply, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "apply_import_best_effort",
             async {
                 dispatch_backend!(self, |backend| {
@@ -503,7 +503,7 @@ impl ImportStorage for StorageHandle {
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Imports,
+            StorageCapability::Import,
             "record_import_results",
             async {
                 dispatch_backend!(self, |backend| {
@@ -523,7 +523,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreJob, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "stage_restore",
             async { dispatch_backend!(self, |backend| backend.stage_restore(request).await) },
         )
@@ -536,7 +536,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreJob, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "get_restore_job",
             async { dispatch_backend!(self, |backend| backend.get_restore_job(job_id).await) },
         )
@@ -549,7 +549,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreStatus, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "get_restore_status",
             async {
                 dispatch_backend!(self, |backend| { backend.get_restore_status(job_id).await })
@@ -561,7 +561,7 @@ impl RestoreStorage for StorageHandle {
     async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "expire_restore_stage",
             async {
                 dispatch_backend!(self, |backend| {
@@ -578,7 +578,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<DateTime<Utc>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "start_restore_draining",
             async {
                 dispatch_backend!(self, |backend| {
@@ -595,7 +595,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreCompletion, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "apply_restore",
             async { dispatch_backend!(self, |backend| backend.apply_restore(request).await) },
         )
@@ -608,7 +608,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "fail_restore_and_resume",
             async {
                 dispatch_backend!(self, |backend| {
@@ -624,7 +624,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "get_restore_coordinator_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
@@ -638,7 +638,7 @@ impl RestoreStorage for StorageHandle {
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "resume_maintenance_without_restore",
             async {
                 dispatch_backend!(self, |backend| {
@@ -652,7 +652,7 @@ impl RestoreStorage for StorageHandle {
     async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "resume_terminal_restore",
             async {
                 dispatch_backend!(self, |backend| {
@@ -671,7 +671,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "tick_restore_coordinator",
             async {
                 dispatch_backend!(self, |backend| {
@@ -694,7 +694,7 @@ impl RestoreStorage for StorageHandle {
     ) -> Result<StorageRestoreDrainState, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "get_restore_drain_state",
             async {
                 dispatch_backend!(self, |backend| {
@@ -708,7 +708,7 @@ impl RestoreStorage for StorageHandle {
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Restores,
+            StorageCapability::Restore,
             "remove_restore_instance",
             async {
                 dispatch_backend!(self, |backend| {

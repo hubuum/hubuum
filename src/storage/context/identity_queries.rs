@@ -8,7 +8,7 @@ impl GroupStorage for StorageHandle {
     ) -> Result<StoragePage<StorageIdentityGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Groups,
+            StorageCapability::Group,
             "list_groups",
             async { dispatch_backend!(self, |backend| backend.list_groups(query).await) },
         )
@@ -18,7 +18,7 @@ impl GroupStorage for StorageHandle {
     async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Groups,
+            StorageCapability::Group,
             "get_group",
             async { dispatch_backend!(self, |backend| backend.get_group(group_id).await) },
         )
@@ -31,7 +31,7 @@ impl GroupStorage for StorageHandle {
     ) -> Result<String, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Groups,
+            StorageCapability::Group,
             "resolve_group_identity_scope_name",
             async {
                 dispatch_backend!(self, |backend| {
@@ -49,7 +49,7 @@ impl GroupStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Groups,
+            StorageCapability::Group,
             "create_group",
             async {
                 dispatch_backend!(self, |backend| {
@@ -68,7 +68,7 @@ impl GroupStorage for StorageHandle {
     ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Groups,
+            StorageCapability::Group,
             "update_group",
             async {
                 dispatch_backend!(self, |backend| {
@@ -86,7 +86,7 @@ impl GroupStorage for StorageHandle {
     ) -> Result<MutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Groups,
+            StorageCapability::Group,
             "delete_group",
             async {
                 dispatch_backend!(self, |backend| {
@@ -106,7 +106,7 @@ impl PrincipalStorage for StorageHandle {
     ) -> Result<StoragePrincipal, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Principals,
+            StorageCapability::Principal,
             "get_principal",
             async {
                 dispatch_backend!(self, |backend| {
@@ -123,7 +123,7 @@ impl PrincipalStorage for StorageHandle {
     ) -> Result<StoragePrincipalSettings, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Principals,
+            StorageCapability::Principal,
             "get_principal_settings",
             async {
                 dispatch_backend!(self, |backend| {
@@ -142,7 +142,7 @@ impl PrincipalStorage for StorageHandle {
     ) -> Result<MutationOutcome<StoragePrincipalSettings>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::Principals,
+            StorageCapability::Principal,
             "update_principal_settings",
             async {
                 dispatch_backend!(self, |backend| {

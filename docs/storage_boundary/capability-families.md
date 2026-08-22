@@ -13,11 +13,17 @@ For source locations, see the [maintainer guide](maintainer-guide.md).
 
 ## How Families and Traits Relate
 
-A **trait** is the Rust interface that makes an operation available. A
-**capability family** is a documentation grouping for related traits and
-semantics. `hubuum_storage_core::capabilities` exposes broader discovery
-modules for resources, identity, queries, workflows, events, and operational
-capabilities;
+A **trait** is the Rust interface that makes an operation available. Its
+canonical capability key removes the `Storage` suffix and converts the
+remaining singular trait stem to snake case: `CollectionStorage` is
+`collection`, and `TaskQueueStorage` is `task_queue`. These same keys are used
+by `StorageCapability` and logical storage metrics.
+
+A **capability family** is a documentation grouping for related traits and
+semantics. Family keys such as `domain_lifecycle` and `catalog_queries` are not
+operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
+exposes broader discovery modules for resources, identity, queries, workflows,
+events, and operational capabilities;
 the more detailed families below are semantic subgroups, not a one-to-one
 module map. Neither form represents separately versioned or negotiable runtime
 features.
@@ -185,15 +191,6 @@ Owns computed filtering, sorting, exact counts, cursor snapshots, and computed
 value enrichment. It consumes definitions and materialized values managed by
 the computed-fields family.
 
-### `computed_fields`
-
-Required trait: `ComputedFieldStorage`.
-
-Owns shared and personal definition lifecycle, per-class computation state,
-rebuild scheduling, and rebuild execution under a task lease. Definition
-mutations and audit events are atomic. A stale worker must not commit a rebuild
-after losing its claim.
-
 ### `object_aggregates`
 
 Required trait: `ObjectAggregateStorage`.
@@ -236,6 +233,15 @@ Owns ranked collection, class, and object search with stable per-kind cursors
 and token visibility pushdown. The three projections form one capability.
 
 ## Workflow Families
+
+### `computed_fields`
+
+Required trait: `ComputedFieldStorage`.
+
+Owns shared and personal definition lifecycle, per-class computation state,
+rebuild scheduling, and rebuild execution under a task lease. Definition
+mutations and audit events are atomic. A stale worker must not commit a rebuild
+after losing its claim.
 
 ### `remote_targets`
 

@@ -5,6 +5,60 @@
 # contract scenarios. `native_scenarios` identify adapter-only evidence for
 # mechanics that should not leak into the logical contract.
 
+# Exhaustive inventory of complete-backend methods that can durably write
+# without accepting an EventContext. Every entry is a non-ordinary mutation;
+# ordinary domain mutations are required to carry context and return a
+# MutationOutcome. Keep this inventory and transactions-and-events.md aligned.
+[context_free_mutations]
+best_effort_observation = [
+    "AuthenticationStorage::authenticate_bearer_token",
+]
+bootstrap_and_provider_reconciliation = [
+    "LocalIdentityCredentialStorage::bootstrap_default_admin",
+    "IdentityScopeStorage::ensure_identity_scope",
+    "ExternalIdentityStorage::mark_external_sync_attempted",
+    "ExternalIdentityStorage::sync_external_user",
+]
+workflow_state_machine = [
+    "ComputedFieldStorage::request_computed_field_rebuild",
+    "ComputedFieldStorage::execute_computed_field_rebuild",
+    "TaskQueueStorage::create_task",
+    "TaskExecutionStorage::claim_next_task",
+    "TaskExecutionStorage::renew_task_lease",
+    "TaskExecutionStorage::recover_expired_task_leases",
+    "TaskExecutionStorage::append_task_event",
+    "TaskExecutionStorage::update_task_state",
+    "TaskExecutionStorage::complete_task",
+    "TaskExecutionStorage::fail_task",
+    "TaskExecutionStorage::purge_expired_export_outputs",
+    "TaskExecutionStorage::purge_expired_backup_outputs",
+]
+event_coordination = [
+    "EventDeliveryAdministrationStorage::release_event_delivery_for_retry",
+    "EventDeliveryAdministrationStorage::mark_event_delivery_dead",
+    "EventDeliveryWorkerStorage::claim_event_delivery_batch",
+    "EventDeliveryWorkerStorage::mark_event_delivery_succeeded",
+    "EventDeliveryWorkerStorage::mark_event_delivery_failed",
+    "EventFanoutStorage::process_event_fanout_batch",
+    "EventRetentionStorage::claim_event_retention_batch",
+    "EventRetentionStorage::complete_event_retention_batch",
+]
+retention = ["TokenRetentionStorage::purge_expired_tokens"]
+maintenance = [
+    "RestoreStorage::stage_restore",
+    "RestoreStorage::expire_restore_stage",
+    "RestoreStorage::start_restore_draining",
+    "RestoreStorage::apply_restore",
+    "RestoreStorage::fail_restore_and_resume",
+    "RestoreStorage::resume_maintenance_without_restore",
+    "RestoreStorage::resume_terminal_restore",
+    "RestoreStorage::tick_restore_coordinator",
+    "RestoreStorage::remove_restore_instance",
+    "ImportStorage::apply_import_strict",
+    "ImportStorage::apply_import_best_effort",
+    "ImportStorage::record_import_results",
+]
+
 [traits.CollectionStorage]
 source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
 methods = ["get_collection", "create_collection", "update_collection", "delete_collection", "list_collection_children", "list_collection_ancestors", "move_collection"]

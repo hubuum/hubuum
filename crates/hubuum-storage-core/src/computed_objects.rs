@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use hubuum_domain::{ClassId, ObjectId, PrincipalId};
 use hubuum_query::QueryOptions;
 
+use crate::page::validate_page_total;
 use crate::{StorageComputationRevision, StorageError, StorageObject, StorageVisibility};
 
 /// Visibility already established for a computed-object query.
@@ -318,19 +319,19 @@ pub struct ComputedObjectPage {
 }
 
 impl ComputedObjectPage {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         rows: Vec<StorageObject>,
         total: Option<i64>,
         computed: Vec<StorageComputedObject>,
         resolved_options: QueryOptions,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        validate_page_total(rows.len(), total)?;
+        Ok(Self {
             rows,
             total,
             computed,
             resolved_options,
-        }
+        })
     }
 
     #[must_use]

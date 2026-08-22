@@ -1,7 +1,7 @@
 use diesel::prelude::{ExpressionMethods, JoinOnDsl, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::LOCAL_IDENTITY_SCOPE;
-use hubuum_storage_core::StorageLocalPasswordReset;
+use hubuum_storage_core::{MutationOutcome, StorageLocalPasswordReset};
 
 use crate::{PostgresRuntime, PostgresStorageError};
 
@@ -10,41 +10,31 @@ use crate::{PostgresRuntime, PostgresStorageError};
 pub async fn reset_local_password(
     runtime: &PostgresRuntime,
     request: StorageLocalPasswordReset,
-) -> Result<usize, PostgresStorageError> {
+) -> Result<MutationOutcome<usize>, PostgresStorageError> {
+    let (principal_name, password_hash, event_context) = request.into_parts();
     runtime
         .with_transaction(async move |connection| {
-            use crate::schema::{identity_scopes, principals, tokens, users};
+            use crate::schema::{identity_scopes, principals, users};
 
-            let (principal_id, provider_managed) = users::table
+            let principal_id = users::table
                 .inner_join(principals::table.on(users::id.eq(principals::id)))
                 .inner_join(
                     identity_scopes::table
                         .on(principals::identity_scope_id.eq(identity_scopes::id)),
                 )
-                .filter(principals::name.eq(request.principal_name()))
+                .filter(principals::name.eq(principal_name))
                 .filter(identity_scopes::name.eq(LOCAL_IDENTITY_SCOPE))
-                .select((users::id, principals::provider_managed))
-                .first::<(i32, bool)>(connection)
+                .select(users::id)
+                .first::<i32>(connection)
                 .await?;
-            if provider_managed {
-                return Err(PostgresStorageError::permission_denied(
-                    "Provider-managed users are read-only in Hubuum",
-                ));
-            }
-
-            diesel::update(users::table.filter(users::id.eq(principal_id)))
-                .set(users::password.eq(Some(request.password_hash())))
-                .execute(connection)
-                .await?;
-            diesel::update(
-                tokens::table
-                    .filter(tokens::principal_id.eq(principal_id))
-                    .filter(tokens::revoked_at.is_null()),
+            crate::operations::user::set_user_password_on_connection(
+                connection,
+                principal_id,
+                password_hash,
+                &event_context,
+                true,
             )
-            .set(tokens::revoked_at.eq(diesel::dsl::now))
-            .execute(connection)
             .await
-            .map_err(PostgresStorageError::from)
         })
         .await
 }

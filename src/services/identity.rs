@@ -47,8 +47,10 @@ pub(crate) async fn reset_local_password(
         .reset_local_password(StorageLocalPasswordReset::new(
             principal_name,
             password_hash,
+            EventContext::system(),
         ))
-        .await?)
+        .await?
+        .into_value())
 }
 
 fn identity_scope_from_storage(scope: StorageIdentityScope) -> Result<IdentityScope, ApiError> {
@@ -95,9 +97,7 @@ pub(super) fn identity_group_from_storage(group: StorageIdentityGroup) -> Result
 fn service_account_from_storage(account: StorageServiceAccount) -> ServiceAccount {
     ServiceAccount {
         id: account.id().id(),
-        kind: crate::models::PrincipalKind::ServiceAccount
-            .as_str()
-            .to_string(),
+        kind: crate::models::PrincipalKind::ServiceAccount,
         description: account.description().to_string(),
         owner_group_id: account.owner_group_id().id(),
         created_by: account.created_by().map(|id| id.id()),
@@ -192,7 +192,7 @@ fn user_from_storage(user: StorageUser) -> User {
     let user = user.into_parts();
     User {
         id: user.id().id(),
-        kind: crate::models::PrincipalKind::Human.as_str().to_string(),
+        kind: crate::models::PrincipalKind::Human,
         password: user.password_hash().map(str::to_string),
         proper_name: user.proper_name().map(str::to_string),
         email: user.email().map(str::to_string),
@@ -920,7 +920,7 @@ fn external_sync_request(
 fn synced_human_from_storage(human: StorageSyncedHuman) -> crate::models::User {
     crate::models::User {
         id: human.id().id(),
-        kind: crate::models::PrincipalKind::Human.as_str().to_string(),
+        kind: crate::models::PrincipalKind::Human,
         password: None,
         proper_name: human.proper_name().map(str::to_string),
         email: human.email().map(str::to_string),

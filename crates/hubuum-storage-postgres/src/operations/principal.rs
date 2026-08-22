@@ -1,6 +1,6 @@
 use diesel::{ExpressionMethods, QueryDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind};
+use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind, PrincipalKind};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     MutationOutcome, StoragePrincipal, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
@@ -11,9 +11,6 @@ use crate::operations::event_record::append_event;
 use crate::revision::{RevisionOwner, record_metadata};
 use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
-
-const HUMAN_PRINCIPAL_KIND: &str = "human";
-const SERVICE_ACCOUNT_PRINCIPAL_KIND: &str = "service_account";
 
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::principals)]
@@ -34,9 +31,13 @@ pub(crate) struct PrincipalRow {
 
 impl PrincipalRow {
     pub(crate) fn into_storage(self) -> Result<StoragePrincipal, PostgresStorageError> {
+        let kind = self
+            .kind
+            .parse::<PrincipalKind>()
+            .map_err(|error| PostgresStorageError::database(error.to_string()))?;
         Ok(StoragePrincipal::builder(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
-            self.kind,
+            kind,
             self.name,
             IdentityScopeId::new(self.identity_scope_id)?,
         )
@@ -121,6 +122,9 @@ pub async fn update_principal_settings(
                     .for_update()
                     .first::<(String, String, Value, PostgresRevision)>(connection)
                     .await?;
+                let kind = kind
+                    .parse::<PrincipalKind>()
+                    .map_err(|error| PostgresStorageError::database(error.to_string()))?;
                 assert_locked_revision_precondition(
                     connection,
                     &RevisionOwner::Principal.key(principal_id),
@@ -147,7 +151,7 @@ pub async fn update_principal_settings(
                 .get_result::<PostgresRevision>(connection)
                 .await?;
 
-                let entity_type = principal_entity_type(&kind)?;
+                let entity_type = principal_entity_type(kind);
                 let event = NewEvent::new(
                     entity_type,
                     Action::Updated,
@@ -258,13 +262,10 @@ fn validate_stored_settings(
     }
 }
 
-fn principal_entity_type(kind: &str) -> Result<EntityType, PostgresStorageError> {
+const fn principal_entity_type(kind: PrincipalKind) -> EntityType {
     match kind {
-        HUMAN_PRINCIPAL_KIND => Ok(EntityType::User),
-        SERVICE_ACCOUNT_PRINCIPAL_KIND => Ok(EntityType::ServiceAccount),
-        other => Err(PostgresStorageError::internal(format!(
-            "Unknown principal kind '{other}'"
-        ))),
+        PrincipalKind::Human => EntityType::User,
+        PrincipalKind::ServiceAccount => EntityType::ServiceAccount,
     }
 }
 

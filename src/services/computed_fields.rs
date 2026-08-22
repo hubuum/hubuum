@@ -156,16 +156,18 @@ pub async fn create_personal_definition(
     class_id: i32,
     owner_id: i32,
     definition: ComputedFieldDefinitionRequest,
+    event_context: &EventContext,
 ) -> Result<ComputedFieldDefinition, ApiError> {
     let request = StoragePersonalComputedFieldCreate::new(
         class_id_to_storage(class_id),
         principal_id_to_storage(owner_id),
         input_to_storage(definition)?,
+        event_context.clone(),
     );
     let definition = storage_handle(backend)
         .create_personal_computed_field(request)
         .await?;
-    definition_from_storage(definition)
+    definition_from_storage(definition.into_value())
 }
 
 pub(crate) async fn update_personal_definition(
@@ -173,31 +175,36 @@ pub(crate) async fn update_personal_definition(
     owner_id: i32,
     definition_id: i32,
     patch: ComputedFieldDefinitionPatch,
+    event_context: &EventContext,
 ) -> Result<ComputedFieldDefinition, ApiError> {
     let request = StoragePersonalComputedFieldUpdate::new(
         principal_id_to_storage(owner_id),
         hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
             .expect("validated computed field definition id must be positive"),
         patch_to_storage(patch),
+        event_context.clone(),
     );
     let definition = storage_handle(backend)
         .update_personal_computed_field(request)
         .await?;
-    definition_from_storage(definition)
+    definition_from_storage(definition.into_value())
 }
 
 pub(crate) async fn delete_personal_definition(
     backend: &impl StorageContext,
     owner_id: i32,
     definition_id: i32,
+    event_context: &EventContext,
 ) -> Result<(), ApiError> {
     storage_handle(backend)
         .delete_personal_computed_field(StoragePersonalComputedFieldDelete::new(
             principal_id_to_storage(owner_id),
             hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
                 .expect("validated computed field definition id must be positive"),
+            event_context.clone(),
         ))
-        .await?;
+        .await?
+        .into_value();
     Ok(())
 }
 

@@ -120,12 +120,12 @@ pub use history::{
     HistoryPrincipalName, HistoryStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectHistoryRecord, RemoteTargetHistoryRecord, StorageHistoryOperation,
 };
+pub use hubuum_domain::PrincipalKind;
 pub use identity::{
     AuthenticatedToken, AuthenticatedTokenBuilder, AuthenticationAttempt,
     AuthenticationAttemptError, AuthenticationCredential, AuthenticationHuman,
-    AuthenticationIdentity, AuthenticationPrincipal, AuthenticationPrincipalKind,
-    AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery,
+    AuthenticationIdentity, AuthenticationPrincipal, AuthenticationResourceScope,
+    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
 };
 pub use identity_operations::{
     ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
@@ -298,11 +298,6 @@ pub enum StorageErrorKind {
     Internal,
     /// The requested durable resource does not exist.
     NotFound,
-    /// A documented request option is unavailable for this operation.
-    ///
-    /// Complete backends must not use this variant as a substitute for an
-    /// unimplemented mandatory trait method.
-    UnsupportedOperation,
     /// Caller-supplied content exceeds a documented storage limit.
     InputTooLarge,
     /// An optimistic revision precondition conflicts with the current row.
@@ -330,7 +325,6 @@ impl StorageErrorKind {
             Self::PermissionDenied => "permission_denied",
             Self::Internal => "internal",
             Self::NotFound => "not_found",
-            Self::UnsupportedOperation => "unsupported_operation",
             Self::InputTooLarge => "input_too_large",
             Self::RevisionConflict => "revision_conflict",
             Self::PreconditionFailed => "precondition_failed",
@@ -398,11 +392,6 @@ impl StorageError {
     #[must_use]
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::NotFound, message, None)
-    }
-
-    #[must_use]
-    pub fn unsupported_operation(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::UnsupportedOperation, message, None)
     }
 
     #[must_use]

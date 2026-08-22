@@ -14,7 +14,7 @@ use hubuum_storage_core::{
     StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSpec,
 };
 
-use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
+use crate::{PostgresConnection, PostgresStorageError};
 
 const OBJECT_AGGREGATE_ACCUMULATOR_COMPACT_BYTES: usize = 1024 * 1024;
 
@@ -78,16 +78,16 @@ impl AggregateRows {
         Ok(())
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
     fn into_rows(self) -> Vec<PartialObjectAggregateRow> {
         self.rows
     }
 
     fn len(&self) -> usize {
         self.rows.len()
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.rows.is_empty()
     }
 }
 
@@ -100,7 +100,7 @@ pub(super) struct ExternalAggregateAccumulator {
 impl ExternalAggregateAccumulator {
     pub(super) async fn add_rows(
         &mut self,
-        runtime: &PostgresRuntime,
+        connection: &mut PostgresConnection,
         rows: AggregateRows,
         spec: &StorageObjectAggregateSpec,
     ) -> Result<(), PostgresStorageError> {
@@ -108,7 +108,7 @@ impl ExternalAggregateAccumulator {
             let row_bytes = serialized_row_len(&row)?;
             if self.total_bytes().saturating_add(row_bytes) > MAX_OBJECT_AGGREGATE_ACCUMULATOR_BYTES
             {
-                self.compact_pending(runtime, spec).await?;
+                self.compact_pending(connection, spec).await?;
             }
             if self.compacted.serialized_bytes.saturating_add(row_bytes)
                 > MAX_OBJECT_AGGREGATE_ACCUMULATOR_BYTES
@@ -116,7 +116,7 @@ impl ExternalAggregateAccumulator {
                 let mut incoming = AggregateRows::default();
                 incoming.push_measured(row, row_bytes)?;
                 self.compacted = compact_aggregate_rows(
-                    runtime,
+                    connection,
                     std::mem::take(&mut self.compacted),
                     incoming,
                     spec,
@@ -126,7 +126,7 @@ impl ExternalAggregateAccumulator {
             }
             self.pending.push_measured(row, row_bytes)?;
             if self.pending.serialized_bytes >= OBJECT_AGGREGATE_ACCUMULATOR_COMPACT_BYTES {
-                self.compact_pending(runtime, spec).await?;
+                self.compact_pending(connection, spec).await?;
             }
         }
         Ok(())
@@ -134,10 +134,10 @@ impl ExternalAggregateAccumulator {
 
     pub(super) async fn finish(
         mut self,
-        runtime: &PostgresRuntime,
+        connection: &mut PostgresConnection,
         spec: &StorageObjectAggregateSpec,
     ) -> Result<AggregateRows, PostgresStorageError> {
-        self.compact_pending(runtime, spec).await?;
+        self.compact_pending(connection, spec).await?;
         Ok(self.compacted)
     }
 
@@ -149,14 +149,14 @@ impl ExternalAggregateAccumulator {
 
     async fn compact_pending(
         &mut self,
-        runtime: &PostgresRuntime,
+        connection: &mut PostgresConnection,
         spec: &StorageObjectAggregateSpec,
     ) -> Result<(), PostgresStorageError> {
         if self.pending.is_empty() {
             return Ok(());
         }
         self.compacted = compact_aggregate_rows(
-            runtime,
+            connection,
             std::mem::take(&mut self.compacted),
             std::mem::take(&mut self.pending),
             spec,
@@ -229,18 +229,15 @@ SET object_count = object_aggregate_accumulator.object_count + EXCLUDED.object_c
 }
 
 async fn compact_aggregate_rows(
-    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
     compacted: AggregateRows,
     pending: AggregateRows,
     spec: &StorageObjectAggregateSpec,
 ) -> Result<AggregateRows, PostgresStorageError> {
-    runtime
-        .with_connection(
-            async |connection| -> Result<AggregateRows, PostgresStorageError> {
-                let measure_state = grouped_measure_state_sql(spec, "measure_state");
-                let query = ObjectAggregateSqlSpec {
-                    sql: format!(
-                        "WITH incoming AS (
+    let measure_state = grouped_measure_state_sql(spec, "measure_state");
+    let query = ObjectAggregateSqlSpec {
+        sql: format!(
+            "WITH incoming AS (
     SELECT *
     FROM jsonb_to_recordset(?::jsonb) AS rows(
         sort_key jsonb,
@@ -261,28 +258,25 @@ SELECT
     SUM(object_count)::bigint AS object_count
 FROM incoming
 GROUP BY sort_key"
-                    ),
-                    binds: vec![
-                        ObjectAggregateBindValue::Json(aggregate_rows_payload(compacted)),
-                        ObjectAggregateBindValue::Json(aggregate_rows_payload(pending)),
-                    ],
-                };
-                let stream = bind_object_aggregate_query!(query)
-                    .load_stream::<PartialObjectAggregateRow>(connection)
-                    .await?;
-                futures_util::pin_mut!(stream);
-                let mut groups = AggregateRows::default();
-                while let Some(row) = stream.try_next().await? {
-                    groups.push_bounded(row)?;
-                }
-                Ok(groups)
-            },
-        )
-        .await
+        ),
+        binds: vec![
+            ObjectAggregateBindValue::Json(aggregate_rows_payload(compacted)),
+            ObjectAggregateBindValue::Json(aggregate_rows_payload(pending)),
+        ],
+    };
+    let stream = bind_object_aggregate_query!(query)
+        .load_stream::<PartialObjectAggregateRow>(connection)
+        .await?;
+    futures_util::pin_mut!(stream);
+    let mut groups = AggregateRows::default();
+    while let Some(row) = stream.try_next().await? {
+        groups.push_bounded(row)?;
+    }
+    Ok(groups)
 }
 
 pub(super) async fn page_external_aggregates(
-    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
     groups: AggregateRows,
     paging: &ObjectAggregatePaging,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
@@ -291,9 +285,7 @@ pub(super) async fn page_external_aggregates(
     } else {
         None
     };
-    let database_rows = runtime
-        .with_connection(async |connection| page_aggregate_rows(connection, groups, paging).await)
-        .await?;
+    let database_rows = page_aggregate_rows(connection, groups, paging).await?;
     finish_aggregate_page(database_rows, total, paging)
 }
 
@@ -391,7 +383,11 @@ pub(super) fn finish_aggregate_page(
     } else {
         None
     };
-    Ok(StorageObjectAggregatePage::new(rows, total, next_cursor))
+    Ok(StorageObjectAggregatePage::try_new(
+        rows,
+        total,
+        next_cursor,
+    )?)
 }
 
 #[derive(serde::Deserialize)]
@@ -445,21 +441,21 @@ fn storage_row_from_database(
             "Database returned invalid object aggregate measure data",
         ));
     }
-    Ok(StorageObjectAggregateRow::new(
+    Ok(StorageObjectAggregateRow::try_new(
         measures
             .into_iter()
             .map(|measure| {
-                StorageObjectAggregateMeasureValue::new(
+                StorageObjectAggregateMeasureValue::try_new(
                     measure.state,
                     measure.value_count,
                     measure.skipped_count,
                     measure.value,
                 )
             })
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         object_count,
         sort_key,
-    ))
+    )?)
 }
 
 fn aggregate_rows_payload(groups: AggregateRows) -> serde_json::Value {

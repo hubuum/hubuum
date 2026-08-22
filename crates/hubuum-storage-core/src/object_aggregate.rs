@@ -9,6 +9,7 @@ use hubuum_query::{ComputedFieldScope, JsonFieldPath, QueryOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::page::validate_page_total;
 use crate::{AuthorizationPermission, StorageError, StorageVisibility};
 
 /// Authorization strategy for one object-aggregate operation.
@@ -506,10 +507,11 @@ impl StorageObjectAggregateSpec {
                 "aggregate cursor contains invalid ordering values",
             ));
         }
-        Ok(StorageObjectAggregateCursor::new(
-            token.sort_key,
-            token.object_count,
-        ))
+        // The contract-specific shape was checked above; retain the shared
+        // constructor check so this type cannot gain a second invalid path.
+        StorageObjectAggregateCursor::try_new(token.sort_key, token.object_count).map_err(|_| {
+            StorageError::invalid_input("aggregate cursor contains invalid ordering values")
+        })
     }
 
     pub fn encode_cursor(
@@ -598,12 +600,26 @@ pub struct StorageObjectAggregateCursor {
 }
 
 impl StorageObjectAggregateCursor {
-    #[must_use]
-    pub const fn new(sort_key: Value, object_count: i64) -> Self {
-        Self {
+    pub fn try_new(sort_key: Value, object_count: i64) -> Result<Self, StorageError> {
+        let Some(dimension_values) = sort_key.as_array() else {
+            return Err(StorageError::internal(
+                "An object aggregate cursor sort key must be an array",
+            ));
+        };
+        if dimension_values.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
+            return Err(StorageError::internal(
+                "An object aggregate cursor has too many dimension values",
+            ));
+        }
+        if object_count <= 0 {
+            return Err(StorageError::internal(
+                "An object aggregate cursor object count must be positive",
+            ));
+        }
+        Ok(Self {
             sort_key,
             object_count,
-        }
+        })
     }
 
     #[must_use]
@@ -878,19 +894,34 @@ pub struct StorageObjectAggregateMeasureValue {
 }
 
 impl StorageObjectAggregateMeasureValue {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         state: StorageObjectAggregateMeasureState,
         value_count: i64,
         skipped_count: i64,
         value: Option<Value>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        if value_count < 0 || skipped_count < 0 {
+            return Err(StorageError::internal(
+                "Object aggregate measure counts must not be negative",
+            ));
+        }
+        let value_matches_state = match state {
+            StorageObjectAggregateMeasureState::Value => {
+                value_count > 0 && value.as_ref().is_some_and(Value::is_number)
+            }
+            StorageObjectAggregateMeasureState::Empty => value_count == 0 && value.is_none(),
+        };
+        if !value_matches_state {
+            return Err(StorageError::internal(
+                "Object aggregate measure state contradicts its value and count",
+            ));
+        }
+        Ok(Self {
             state,
             value_count,
             skipped_count,
             value,
-        }
+        })
     }
 
     #[must_use]
@@ -907,17 +938,43 @@ pub struct StorageObjectAggregateRow {
 }
 
 impl StorageObjectAggregateRow {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         measures: Vec<StorageObjectAggregateMeasureValue>,
         object_count: i64,
         sort_key: Value,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        if object_count <= 0 {
+            return Err(StorageError::internal(
+                "An object aggregate row object count must be positive",
+            ));
+        }
+        let Some(dimension_values) = sort_key.as_array() else {
+            return Err(StorageError::internal(
+                "An object aggregate row sort key must be an array",
+            ));
+        };
+        if dimension_values.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
+            return Err(StorageError::internal(
+                "An object aggregate row has too many dimension values",
+            ));
+        }
+        if measures.len() > MAX_OBJECT_AGGREGATE_MEASURES {
+            return Err(StorageError::internal(
+                "An object aggregate row has too many measures",
+            ));
+        }
+        if measures.iter().any(|measure| {
+            measure.value_count.checked_add(measure.skipped_count) != Some(object_count)
+        }) {
+            return Err(StorageError::internal(
+                "Object aggregate measure counts must add up to the row object count",
+            ));
+        }
+        Ok(Self {
             measures,
             object_count,
             sort_key,
-        }
+        })
     }
 
     #[must_use]
@@ -934,17 +991,22 @@ pub struct StorageObjectAggregatePage {
 }
 
 impl StorageObjectAggregatePage {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         rows: Vec<StorageObjectAggregateRow>,
         total: Option<i64>,
         next_cursor: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        validate_page_total(rows.len(), total)?;
+        if next_cursor.as_ref().is_some_and(String::is_empty) {
+            return Err(StorageError::internal(
+                "An object aggregate page cursor must not be empty",
+            ));
+        }
+        Ok(Self {
             rows,
             total,
             next_cursor,
-        }
+        })
     }
 
     #[must_use]
@@ -1006,7 +1068,7 @@ mod tests {
     }
 
     fn aggregate_row(sort_key: Value) -> StorageObjectAggregateRow {
-        StorageObjectAggregateRow::new(Vec::new(), 1, sort_key)
+        StorageObjectAggregateRow::try_new(Vec::new(), 1, sort_key).unwrap()
     }
 
     fn encoded_cursor(dimension: &str, sort_key: Value, object_count: i64) -> String {
@@ -1102,6 +1164,57 @@ mod tests {
 
         assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
         assert!(error.to_string().contains("invalid ordering values"));
+    }
+
+    #[test]
+    fn aggregate_output_constructors_reject_contradictory_values() {
+        assert!(StorageObjectAggregateCursor::try_new(serde_json::json!({}), 1).is_err());
+        assert!(StorageObjectAggregateCursor::try_new(serde_json::json!([]), 0).is_err());
+        assert!(
+            StorageObjectAggregateMeasureValue::try_new(
+                StorageObjectAggregateMeasureState::Value,
+                0,
+                1,
+                Some(serde_json::json!(3)),
+            )
+            .is_err()
+        );
+        assert!(
+            StorageObjectAggregateMeasureValue::try_new(
+                StorageObjectAggregateMeasureState::Empty,
+                0,
+                1,
+                Some(serde_json::json!(3)),
+            )
+            .is_err()
+        );
+
+        let measure = StorageObjectAggregateMeasureValue::try_new(
+            StorageObjectAggregateMeasureState::Value,
+            1,
+            0,
+            Some(serde_json::json!(3)),
+        )
+        .unwrap();
+        assert!(
+            StorageObjectAggregateRow::try_new(
+                vec![measure],
+                2,
+                serde_json::json!([[0, "router"]]),
+            )
+            .is_err()
+        );
+        assert!(
+            StorageObjectAggregatePage::try_new(
+                vec![aggregate_row(serde_json::json!([[0, "router"]]))],
+                Some(0),
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            StorageObjectAggregatePage::try_new(Vec::new(), Some(0), Some(String::new())).is_err()
+        );
     }
 
     #[test]

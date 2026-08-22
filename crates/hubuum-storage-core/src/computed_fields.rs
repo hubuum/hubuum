@@ -768,6 +768,7 @@ pub struct StoragePersonalComputedFieldCreate {
     class_id: ClassId,
     owner_id: PrincipalId,
     definition: StorageComputedFieldDefinitionInput,
+    event_context: EventContext,
 }
 
 impl StoragePersonalComputedFieldCreate {
@@ -776,17 +777,31 @@ impl StoragePersonalComputedFieldCreate {
         class_id: ClassId,
         owner_id: PrincipalId,
         definition: StorageComputedFieldDefinitionInput,
+        event_context: EventContext,
     ) -> Self {
         Self {
             class_id,
             owner_id,
             definition,
+            event_context,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (ClassId, PrincipalId, StorageComputedFieldDefinitionInput) {
-        (self.class_id, self.owner_id, self.definition)
+    pub fn into_parts(
+        self,
+    ) -> (
+        ClassId,
+        PrincipalId,
+        StorageComputedFieldDefinitionInput,
+        EventContext,
+    ) {
+        (
+            self.class_id,
+            self.owner_id,
+            self.definition,
+            self.event_context,
+        )
     }
 }
 
@@ -795,6 +810,7 @@ pub struct StoragePersonalComputedFieldUpdate {
     owner_id: PrincipalId,
     definition_id: ComputedFieldDefinitionId,
     patch: StorageComputedFieldDefinitionPatch,
+    event_context: EventContext,
 }
 
 impl StoragePersonalComputedFieldUpdate {
@@ -803,11 +819,13 @@ impl StoragePersonalComputedFieldUpdate {
         owner_id: PrincipalId,
         definition_id: ComputedFieldDefinitionId,
         patch: StorageComputedFieldDefinitionPatch,
+        event_context: EventContext,
     ) -> Self {
         Self {
             owner_id,
             definition_id,
             patch,
+            event_context,
         }
     }
 
@@ -818,29 +836,41 @@ impl StoragePersonalComputedFieldUpdate {
         PrincipalId,
         ComputedFieldDefinitionId,
         StorageComputedFieldDefinitionPatch,
+        EventContext,
     ) {
-        (self.owner_id, self.definition_id, self.patch)
+        (
+            self.owner_id,
+            self.definition_id,
+            self.patch,
+            self.event_context,
+        )
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StoragePersonalComputedFieldDelete {
     owner_id: PrincipalId,
     definition_id: ComputedFieldDefinitionId,
+    event_context: EventContext,
 }
 
 impl StoragePersonalComputedFieldDelete {
     #[must_use]
-    pub const fn new(owner_id: PrincipalId, definition_id: ComputedFieldDefinitionId) -> Self {
+    pub const fn new(
+        owner_id: PrincipalId,
+        definition_id: ComputedFieldDefinitionId,
+        event_context: EventContext,
+    ) -> Self {
         Self {
             owner_id,
             definition_id,
+            event_context,
         }
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> (PrincipalId, ComputedFieldDefinitionId) {
-        (self.owner_id, self.definition_id)
+    pub fn into_parts(self) -> (PrincipalId, ComputedFieldDefinitionId, EventContext) {
+        (self.owner_id, self.definition_id, self.event_context)
     }
 }
 
@@ -912,17 +942,17 @@ pub trait ComputedFieldStorage: Send + Sync {
     async fn create_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldCreate,
-    ) -> Result<StorageComputedFieldDefinition, StorageError>;
+    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError>;
 
     async fn update_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldUpdate,
-    ) -> Result<StorageComputedFieldDefinition, StorageError>;
+    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError>;
 
     async fn delete_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldDelete,
-    ) -> Result<(), StorageError>;
+    ) -> Result<MutationOutcome<()>, StorageError>;
 
     async fn request_computed_field_rebuild(
         &self,

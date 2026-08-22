@@ -25,7 +25,7 @@ impl AuditEventStorage for StorageHandle {
     ) -> Result<StoragePage<StorageAuditEvent>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::AuditEvents,
+            StorageCapability::AuditEvent,
             "list_audit_events",
             async { dispatch_backend!(self, |backend| { backend.list_audit_events(query).await }) },
         )

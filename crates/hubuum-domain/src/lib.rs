@@ -29,7 +29,7 @@ pub use identifier::{
 };
 pub use identity::{
     EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,
-    MANUAL_MEMBERSHIP_SOURCE,
+    MANUAL_MEMBERSHIP_SOURCE, PrincipalKind, PrincipalKindParseError,
 };
 pub use json_patch::{
     BoundedJsonPatch, JsonPatchError, JsonPatchErrorKind, MAX_JSON_PATCH_BYTES,

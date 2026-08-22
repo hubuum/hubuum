@@ -4,8 +4,9 @@ use crate::models::token::Token;
 use crate::models::user::User;
 use crate::models::{
     CollectionID, HubuumClassID, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
-    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, Permissions, PrincipalSettings,
-    PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope, TokenScope,
+    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, Permissions, PrincipalKind,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope,
+    TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::storage::{
@@ -378,7 +379,7 @@ async fn human_unscoped_user_from_meta(
 fn authentication_human_to_user(human: AuthenticationHuman) -> User {
     User {
         id: human.id().id(),
-        kind: "human".to_string(),
+        kind: PrincipalKind::Human,
         password: None,
         proper_name: human.proper_name().map(str::to_string),
         email: human.email().map(str::to_string),

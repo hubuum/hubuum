@@ -142,7 +142,7 @@ async fn ensure_can_manage_principal(
     if requestor.user.is_admin(context).await? {
         return Ok(());
     }
-    let permitted = match principal.principal_kind()? {
+    let permitted = match principal.principal_kind() {
         PrincipalKind::Human => requestor.user.id == principal.id,
         PrincipalKind::ServiceAccount => {
             let sa = get_service_account(context, principal.id).await?;

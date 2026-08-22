@@ -154,6 +154,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `authorization_data`, `event_subscriptions` to `event_configuration`, and
   `event_delivery` to either `event_delivery_administration` or
   `event_delivery_worker`; the membership label is `group_membership`.
+  Capability labels now uniformly use the singular trait stem, for example
+  `collection`, `computed_field`, `task_queue`, and `transaction`.
 - **Breaking (workspace storage API):** object aggregation accepts one
   `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
   when required. The query no longer stores a separate authorization mode, so
@@ -172,10 +174,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   decomposition would be especially error-prone. Contract DTO timestamps use
   explicit UTC values; adapters must convert native timestamp representations
   at their private boundary.
-  `StorageErrorKind::UnsupportedOperation` and
-  `StorageErrorKind::ValidationFailed` now distinguish unsupported behavior
-  from semantically invalid content, and malformed persisted conflict metadata
-  becomes an internal storage error instead of panicking.
+  `StorageErrorKind::ValidationFailed` distinguishes semantically invalid
+  content, and malformed persisted conflict metadata becomes an internal
+  storage error instead of panicking. The complete storage contract no longer
+  exposes a generic unsupported-operation result; all mandatory behavior must
+  be implemented.
 - **Breaking (backup/restore):** full backups are version 5 and restore rejects
   version 4. Version 5 uses stable logical resource and history section names,
   semantic class/object/principal fields, permission-name arrays,
