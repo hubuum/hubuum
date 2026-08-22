@@ -5,19 +5,45 @@ use crate::config::{
     DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS, DEFAULT_RESTORE_MAX_UPLOAD_BYTES,
     DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
 };
-use crate::db::DbPool;
 use crate::middlewares::tracing::TracingMiddleware;
 use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
+use crate::storage::StorageHandle;
 use actix_web::{App, http, test, web::Data};
+use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings};
 use serde::Serialize;
 use std::sync::Arc;
 
-pub fn app_context(pool: &DbPool) -> Data<AppContext> {
+pub fn app_context(pool: &PostgresPool) -> Data<AppContext> {
     let config = crate::tests::integration_test_config()
         .expect("integration test configuration must be valid");
-    let permissions = LocalPermissionBackend::new(pool.clone(), config.admin_groupname.clone());
-    Data::new(AppContext::new(pool.clone(), Arc::new(permissions)))
+    let permissions = LocalPermissionBackend::new(
+        test_storage_handle(pool.clone()),
+        config.admin_groupname.clone(),
+    );
+    Data::new(app_context_with_permission_backend(
+        pool.clone(),
+        Arc::new(permissions),
+    ))
+}
+
+pub fn app_context_with_permission_backend(
+    pool: PostgresPool,
+    permissions: Arc<dyn PermissionBackend>,
+) -> AppContext {
+    AppContext::new(test_storage_handle(pool), permissions)
+}
+
+fn test_storage_handle(pool: PostgresPool) -> StorageHandle {
+    let config = crate::tests::integration_test_config()
+        .expect("integration test configuration must be valid");
+    let operational_pool_settings = PostgresPoolSettings::builder(config.database_url.clone())
+        .max_size(1)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .expect("test notification listener settings must be valid");
+    StorageHandle::postgres_with_operational_pool_settings(pool, operational_pool_settings)
 }
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
@@ -42,7 +68,7 @@ fn restore_settings() -> RestoreSettings {
 }
 
 pub async fn get_request_with_correlation(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     correlation_id: Option<&str>,
@@ -59,7 +85,7 @@ pub async fn get_request_with_correlation(
 }
 
 pub async fn get_request_with_headers(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     headers: Vec<(http::header::HeaderName, String)>,
@@ -68,7 +94,7 @@ pub async fn get_request_with_headers(
 }
 
 async fn get_request_with_headers_and_context(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     headers: Vec<(http::header::HeaderName, String)>,
@@ -98,7 +124,7 @@ async fn get_request_with_headers_and_context(
 }
 
 pub async fn get_request(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
 ) -> actix_web::dev::ServiceResponse {
@@ -106,17 +132,20 @@ pub async fn get_request(
 }
 
 pub async fn get_request_with_permission_backend(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     permissions: Arc<dyn PermissionBackend>,
 ) -> actix_web::dev::ServiceResponse {
-    let context = Data::new(AppContext::new(pool.clone(), permissions));
+    let context = Data::new(app_context_with_permission_backend(
+        pool.clone(),
+        permissions,
+    ));
     get_request_with_headers_and_context(pool, token, endpoint, Vec::new(), context).await
 }
 
 pub async fn post_request_with_headers<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -154,7 +183,7 @@ where
 }
 
 pub async fn post_request<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -166,7 +195,7 @@ where
 }
 
 pub async fn delete_request(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
 ) -> actix_web::dev::ServiceResponse {
@@ -191,7 +220,7 @@ pub async fn delete_request(
 }
 
 pub async fn patch_request<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -221,7 +250,7 @@ where
 }
 
 pub async fn patch_request_with_headers<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -256,7 +285,7 @@ where
 }
 
 pub async fn patch_request_with_content_type<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -270,7 +299,7 @@ where
 }
 
 pub async fn patch_request_with_raw_body(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     body: impl Into<actix_web::web::Bytes>,
@@ -299,7 +328,7 @@ pub async fn patch_request_with_raw_body(
 }
 
 pub async fn put_request<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,

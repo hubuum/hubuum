@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -74,7 +75,7 @@ class RustApiPolicyTests(unittest.TestCase):
 
     def run_checker(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [str(SCRIPT), "--root", str(self.root), *arguments],
+            [sys.executable, str(SCRIPT), "--root", str(self.root), *arguments],
             check=False,
             capture_output=True,
             text=True,

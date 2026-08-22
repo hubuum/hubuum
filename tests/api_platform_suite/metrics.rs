@@ -3,21 +3,18 @@ use std::time::Duration;
 
 use actix_web::{App, HttpResponse, http::StatusCode, test, web};
 use chrono::{NaiveDate, NaiveDateTime};
-use diesel::{ExpressionMethods, QueryDsl};
-use diesel_async::RunQueryDsl;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::bb8::Pool;
 use rstest::rstest;
 use tokio::sync::Mutex;
 
 use crate::config::RuntimeRole;
-use crate::db::{DbConnection, DbPool, with_connection};
 use crate::middlewares::TracingMiddleware;
-use crate::models::{ExportTemplateID, NewTaskRecord, TaskKind, TaskStatus};
+use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
 use crate::observability::metrics;
-use crate::schema::tasks;
 use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
+use hubuum_storage_postgres::{PostgresConnection, PostgresPool};
 
 static METRICS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -35,6 +32,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     let app = test::init_service(
         App::new()
             .app_data(context.pool.clone())
+            .app_data(crate::tests::app_context(&context.pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -90,9 +88,11 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
     metrics::init().unwrap();
     clear_metrics_scrape_cache();
 
+    let pool = web::Data::new(unreachable_pool());
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(unreachable_pool()))
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -109,6 +109,29 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
     assert!(body.contains("source=\"tasks\""));
     assert!(body.contains("source=\"events\""));
     assert!(body.contains("hubuum_tasks{kind=\"import\",status=\"queued\"} 0"));
+}
+
+#[actix_web::test]
+async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() {
+    let body = scrape_recorded_metrics(|| {
+        metrics::storage_backend_identity("postgresql");
+        metrics::storage_operation_finished(
+            "postgresql",
+            "objects",
+            "update",
+            "conflict",
+            Duration::from_millis(5),
+        );
+    })
+    .await;
+
+    assert!(body.contains("hubuum_storage_backend_info{backend=\"postgresql\"} 1"));
+    assert!(body.contains(
+        "hubuum_storage_operation_duration_seconds_bucket{backend=\"postgresql\",capability=\"objects\",operation=\"update\",result=\"conflict\""
+    ));
+    assert!(body.contains(
+        "hubuum_storage_operation_errors_total{backend=\"postgresql\",capability=\"objects\",operation=\"update\",result=\"conflict\"} 1"
+    ));
 }
 
 #[actix_web::test]
@@ -231,6 +254,7 @@ async fn task_gauges_export_zero_for_bounded_kind_status_pairs(
     let app = test::init_service(
         App::new()
             .app_data(context.pool.clone())
+            .app_data(crate::tests::app_context(&context.pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -276,23 +300,15 @@ async fn task_terminal_gauge_exports_latest_finished_timestamp(
         .unwrap()
         .and_hms_opt(0, 0, 0)
         .unwrap();
-    let records = [
-        terminal_task_record(&context, "older", older),
-        terminal_task_record(&context, "latest", latest),
+    let task_ids = vec![
+        terminal_task_record(&context, "older", older).await,
+        terminal_task_record(&context, "latest", latest).await,
     ];
-    let task_ids = with_connection(&context.pool, async |conn| {
-        diesel::insert_into(tasks::table)
-            .values(&records)
-            .returning(tasks::id)
-            .get_results::<i32>(conn)
-            .await
-    })
-    .await
-    .unwrap();
 
     let app = test::init_service(
         App::new()
             .app_data(context.pool.clone())
+            .app_data(crate::tests::app_context(&context.pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -301,13 +317,14 @@ async fn task_terminal_gauge_exports_latest_finished_timestamp(
     assert_eq!(response.status(), StatusCode::OK);
     let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
 
-    with_connection(&context.pool, async |conn| {
-        diesel::delete(tasks::table.filter(tasks::id.eq_any(task_ids)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
+    for task_id in task_ids {
+        hubuum_storage_postgres::test_support::delete_task(
+            context.pool.get_ref(),
+            hubuum_domain::TaskId::new(task_id).expect("persisted task id must be positive"),
+        )
+        .await
+        .expect("terminal metric task should be deleted");
+    }
     clear_metrics_scrape_cache();
 
     let metric = body
@@ -337,10 +354,12 @@ async fn tracing_metrics_keep_stable_route_templates() {
         HttpResponse::Ok().finish()
     }
 
+    let pool = web::Data::new(unreachable_pool());
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
-            .app_data(web::Data::new(unreachable_pool()))
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .route(
                 "/api/v1/classes/{class_id}/objects/{object_id}",
                 web::get().to(ok),
@@ -369,34 +388,34 @@ async fn tracing_metrics_keep_stable_route_templates() {
     assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
 }
 
-fn terminal_task_record(
+async fn terminal_task_record(
     context: &TestContext,
     label: &str,
     finished_at: NaiveDateTime,
-) -> NewTaskRecord {
-    NewTaskRecord {
-        kind: TaskKind::Backup.as_str().to_string(),
-        status: TaskStatus::Failed.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        idempotency_key: Some(context.scoped_name(&format!("terminal-metric-{label}"))),
-        request_hash: None,
-        request_payload: None,
-        summary: Some("terminal metric fixture".to_string()),
-        total_items: 1,
-        processed_items: 1,
-        success_items: 0,
-        failed_items: 1,
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        request_redacted_at: Some(finished_at),
-        started_at: Some(finished_at),
-        finished_at: Some(finished_at),
-    }
+) -> i32 {
+    crate::test_support::create_persisted_test_task(
+        context.pool.get_ref(),
+        crate::test_support::persisted_test_task_request(
+            TaskKind::Backup,
+            TaskStatus::Failed,
+            context.admin_user.id,
+        )
+        .expect("terminal metric task request must be valid")
+        .idempotency_key(Some(
+            context.scoped_name(&format!("terminal-metric-{label}")),
+        ))
+        .summary(Some("terminal metric fixture".to_string()))
+        .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 0, 1))
+        .request_payload(None)
+        .terminal_at(finished_at),
+    )
+    .await
+    .expect("terminal metric task should be created")
+    .id
 }
 
-fn unreachable_pool() -> DbPool {
-    let manager = AsyncDieselConnectionManager::<DbConnection>::new(
+fn unreachable_pool() -> PostgresPool {
+    let manager = AsyncDieselConnectionManager::<PostgresConnection>::new(
         "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_metrics_unreachable",
     );
     Pool::builder()
@@ -411,9 +430,11 @@ async fn scrape_recorded_metrics(record: impl FnOnce()) -> String {
     clear_metrics_scrape_cache();
     record();
 
+    let pool = web::Data::new(unreachable_pool());
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(unreachable_pool()))
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;

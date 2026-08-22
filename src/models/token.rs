@@ -2,14 +2,12 @@ use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
 
-use crate::db::prelude::*;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use utoipa::ToSchema;
 
 use crate::config::{get_config, token_hash_key_bytes};
-use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
@@ -17,15 +15,12 @@ use crate::models::{
     PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
     TokenScope, TokenScopeDetails,
 };
-use crate::schema::tokens;
-use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::storage::{AuthenticatedToken, StorageContext};
+use crate::traits::{CursorPaginated, CursorValue};
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
 /// `token` field stores the HMAC hash, never the raw value.
-#[derive(Queryable, Insertable, Selectable, Clone)]
-#[diesel(table_name = tokens)]
+#[derive(Clone)]
 pub struct PrincipalToken {
     pub id: i32,
     pub token: String,
@@ -60,11 +55,7 @@ impl fmt::Debug for PrincipalToken {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`PrincipalToken`].
-    pub struct TokenID;
-    noun = "token id";
-}
+pub use hubuum_domain::TokenId as TokenID;
 
 #[derive(Debug, Clone)]
 pub struct PrincipalTokenCreateRequest {
@@ -123,13 +114,9 @@ impl PrincipalTokenCreateRequest {
     /// The token row and every scope row are written in one transaction. Scope
     /// flags are stored on the token row before child rows are inserted, so a
     /// partial failure cannot create an unrestricted credential.
-    pub async fn create<C>(
-        self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<Token, ApiError>
+    pub async fn create<C>(self, backend: &C, context: &EventContext) -> Result<Token, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         Ok(self.create_issued(backend, context).await?.into_token())
     }
@@ -143,25 +130,13 @@ impl PrincipalTokenCreateRequest {
     pub async fn create_issued<C>(
         self,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<IssuedToken, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let issuance_policy = configured_token_issuance_policy()?;
-        let (token, persisted) = crate::db::traits::token::create_principal_token_request_db(
-            backend.db_pool(),
-            self,
-            issuance_policy,
-            context,
-        )
-        .await?;
-        let expires_at = persisted.expires_at.ok_or_else(|| {
-            ApiError::InternalServerError(
-                "newly issued token is missing its persisted expiry".to_string(),
-            )
-        })?;
-        Ok(IssuedToken::new(token, expires_at))
+        crate::services::identity::create_token(backend, self, issuance_policy, context).await
     }
 
     pub(crate) fn into_parts(self) -> PrincipalTokenCreateParts {
@@ -257,9 +232,9 @@ impl PrincipalTokenMetadata {
         tokens: &[PrincipalToken],
     ) -> Result<Vec<Self>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::token::principal_token_metadata_db(backend.db_pool(), tokens).await
+        crate::services::identity::get_token_metadata_by_ids(backend, tokens).await
     }
 
     /// Load one retained token by id, constrained to its owning principal.
@@ -273,103 +248,53 @@ impl PrincipalTokenMetadata {
         token_id: TokenID,
     ) -> Result<Self, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::token::principal_token_metadata_by_id_for_principal_db(
-            backend.db_pool(),
-            token_id.id(),
-            principal_id.id(),
-        )
-        .await
-    }
-
-    pub(crate) fn from_token_and_scope(
-        value: &PrincipalToken,
-        scope: Option<TokenScope>,
-        now: NaiveDateTime,
-        active_after: NaiveDateTime,
-    ) -> Result<Self, ApiError> {
-        let expired = value.is_expired_at(now, active_after);
-        Ok(Self {
-            id: value.metadata_id()?,
-            principal_id: value.metadata_principal_id()?,
-            name: value.name.clone(),
-            description: value.description.clone(),
-            issued: value.issued,
-            expires_at: value.expires_at,
-            last_used_at: value.last_used_at,
-            revoked_at: value.revoked_at,
-            active: value.revoked_at.is_none() && !expired,
-            expired,
-            scope: value.scope_details(scope)?,
-            revision: value.revision,
-        })
+        crate::services::identity::get_token_metadata(backend, principal_id.id(), token_id.id())
+            .await
     }
 }
 
 impl CurrentTokenMetadata {
     /// Project a validated persisted token and its loaded scope for `/iam/me`.
-    pub fn from_token_and_scope(
-        value: &PrincipalToken,
+    pub fn from_authenticated_token(
+        value: &AuthenticatedToken,
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         Ok(Self {
-            id: value.metadata_id()?,
-            name: value.name.clone(),
-            description: value.description.clone(),
-            issued: value.issued,
-            expires_at: value.expires_at,
-            last_used_at: value.last_used_at,
-            scope: value.scope_details(scope)?,
-            revision: value.revision,
+            id: TokenID::new(value.id().id()).map_err(|_| {
+                ApiError::InternalServerError(format!(
+                    "Authenticated token has invalid identifier {}",
+                    value.id().id()
+                ))
+            })?,
+            name: value.name().map(str::to_string),
+            description: value.description().map(str::to_string),
+            issued: value.issued().naive_utc(),
+            expires_at: value.expires_at().map(|timestamp| timestamp.naive_utc()),
+            last_used_at: value.last_used_at().map(|timestamp| timestamp.naive_utc()),
+            scope: token_scope_details(value.id().id(), value.is_scoped(), scope)?,
+            revision: value.revision(),
         })
     }
 }
 
-impl PrincipalToken {
-    pub fn is_scoped(&self) -> bool {
-        self.permission_scoped || self.resource_scoped
-    }
-
-    pub(crate) fn is_expired_at(&self, now: NaiveDateTime, active_after: NaiveDateTime) -> bool {
-        self.expires_at
-            .map_or(self.issued <= active_after, |expires_at| expires_at <= now)
-    }
-
-    fn metadata_id(&self) -> Result<TokenID, ApiError> {
-        TokenID::new(self.id).map_err(|_| {
-            ApiError::InternalServerError(format!(
-                "Stored token has invalid identifier {}",
-                self.id
-            ))
-        })
-    }
-
-    fn metadata_principal_id(&self) -> Result<PrincipalID, ApiError> {
-        PrincipalID::new(self.principal_id).map_err(|_| {
-            ApiError::InternalServerError(format!(
-                "Stored token has invalid principal identifier {}",
-                self.principal_id
-            ))
-        })
-    }
-
-    fn scope_details(
-        &self,
-        scope: Option<TokenScope>,
-    ) -> Result<Option<TokenScopeDetails>, ApiError> {
-        match (self.is_scoped(), scope) {
-            (false, None) => Ok(None),
-            (true, Some(scope)) => TokenScopeDetails::from_scope(scope).map(Some),
-            (false, Some(_)) => Err(ApiError::InternalServerError(format!(
-                "Unscoped token {} has stored scope rows",
-                self.id
-            ))),
-            (true, None) => Err(ApiError::InternalServerError(format!(
-                "Scoped token {} has no stored scope",
-                self.id
-            ))),
-        }
+fn token_scope_details(
+    token_id: i32,
+    is_scoped: bool,
+    scope: Option<TokenScope>,
+) -> Result<Option<TokenScopeDetails>, ApiError> {
+    match (is_scoped, scope) {
+        (false, None) => Ok(None),
+        (true, Some(scope)) => TokenScopeDetails::from_scope(scope).map(Some),
+        (false, Some(_)) => Err(ApiError::InternalServerError(format!(
+            "Unscoped token {} has stored scope rows",
+            token_id
+        ))),
+        (true, None) => Err(ApiError::InternalServerError(format!(
+            "Scoped token {} has no stored scope",
+            token_id
+        ))),
     }
 }
 
@@ -449,6 +374,15 @@ impl Token {
         self.0.clone()
     }
 
+    /// Validate this bearer token through the selected complete storage
+    /// backend and return its hash-free authentication projection.
+    pub async fn authenticate<C>(&self, backend: &C) -> Result<AuthenticatedToken, ApiError>
+    where
+        C: StorageContext,
+    {
+        crate::services::authentication::authenticate_bearer_token(backend, self).await
+    }
+
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
     pub fn obfuscate(&self) -> String {
@@ -464,9 +398,16 @@ impl Token {
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_token_record(backend.db_pool()).await
+        crate::services::identity::revoke_token_by_hash(
+            backend,
+            None,
+            self.storage_hash(),
+            &EventContext::system(),
+        )
+        .await?;
+        Ok(())
     }
 
     pub fn storage_hash(&self) -> String {
@@ -488,20 +429,21 @@ impl Token {
 /// ids prevents a manager of principal A from revoking principal B's token by
 /// guessing its id. Returns the number of rows updated (0 = not found / not theirs).
 ///
-/// This bypasses event emission and is intended only for internal
-/// infrastructure paths such as cleanup and event-system tests.
+/// The compatibility name is retained for internal callers; the mutation is
+/// attributed to the system actor and still emits its audit event.
 pub async fn revoke_token_by_id_for_principal_without_events<C>(
     backend: &C,
     token_id: TokenID,
     principal_id: PrincipalID,
 ) -> Result<usize, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    crate::db::traits::token::revoke_token_by_id_for_principal_without_events_db(
-        backend.db_pool(),
+    crate::services::identity::revoke_token(
+        backend,
         token_id.id(),
         principal_id.id(),
+        &EventContext::system(),
     )
     .await
 }
@@ -510,18 +452,13 @@ pub async fn revoke_token_by_id_for_principal<C>(
     backend: &C,
     token_id: TokenID,
     principal_id: PrincipalID,
-    context: Option<&EventContext>,
+    context: &EventContext,
 ) -> Result<usize, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    crate::db::traits::token::revoke_token_by_id_for_principal_db(
-        backend.db_pool(),
-        token_id.id(),
-        principal_id.id(),
-        context,
-    )
-    .await
+    crate::services::identity::revoke_token(backend, token_id.id(), principal_id.id(), context)
+        .await
 }
 
 /// Mint a fresh token by copying one retained token's descriptive metadata and
@@ -534,27 +471,21 @@ pub async fn renew_token_by_id_for_principal<C>(
     token_id: TokenID,
     principal_id: PrincipalID,
     expires_at: Option<NaiveDateTime>,
-    context: Option<&EventContext>,
+    context: &EventContext,
 ) -> Result<IssuedToken, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     let issuance_policy = configured_token_issuance_policy()?;
-    let (token, persisted) = crate::db::traits::token::renew_principal_token_db(
-        backend.db_pool(),
+    crate::services::identity::renew_token(
+        backend,
         token_id.id(),
         principal_id.id(),
         expires_at,
         issuance_policy,
         context,
     )
-    .await?;
-    let expires_at = persisted.expires_at.ok_or_else(|| {
-        ApiError::InternalServerError(
-            "newly renewed token is missing its persisted expiry".to_string(),
-        )
-    })?;
-    Ok(IssuedToken::new(token, expires_at))
+    .await
 }
 
 impl CursorPaginated for PrincipalTokenMetadata {
@@ -656,49 +587,6 @@ impl CursorPaginated for PrincipalToken {
             field: FilterField::Id,
             descending: false,
         }]
-    }
-}
-
-impl CursorSqlMapping for PrincipalToken {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "tokens.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "tokens.name",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::IssuedAt => CursorSqlField {
-                column: "tokens.issued",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::ExpiresAt => CursorSqlField {
-                column: "tokens.expires_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            FilterField::LastUsedAt => CursorSqlField {
-                column: "tokens.last_used_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "tokens.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for tokens",
-                    field
-                )));
-            }
-        })
     }
 }
 

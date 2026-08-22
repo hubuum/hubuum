@@ -2,20 +2,22 @@ use std::time::Instant;
 
 use opentelemetry::KeyValue;
 
-use crate::db::DbPool;
-use crate::db::traits::metrics::{InventoryGaugeSnapshot, MetricsRefreshBackend};
+use crate::storage::{InventoryGaugeSnapshot, MetricsStorage};
 
 use super::Metrics;
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 
-pub(super) async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) {
+pub(super) async fn refresh_inventory_gauges(
+    metrics: &Metrics,
+    backend: &(impl MetricsStorage + ?Sized),
+) {
     if let Some(row) = cached_inventory_snapshot(metrics) {
         record_inventory_snapshot(metrics, &row);
         return;
     }
 
     let refresh_started_at = Instant::now();
-    match pool.metrics_inventory_gauge_snapshot().await {
+    match backend.get_inventory_metrics_snapshot().await {
         Ok(row) => {
             record_refresh_attempt(
                 metrics,
@@ -64,20 +66,20 @@ fn store_inventory_snapshot(metrics: &Metrics, snapshot: InventoryGaugeSnapshot)
 }
 
 fn record_inventory_snapshot(metrics: &Metrics, snapshot: &InventoryGaugeSnapshot) {
-    let counts = &snapshot.counts;
-    record_inventory(metrics, "collections", counts.collections);
-    record_inventory(metrics, "classes", counts.classes);
-    record_inventory(metrics, "objects", counts.objects);
-    record_inventory(metrics, "users", counts.users);
-    record_inventory(metrics, "groups", counts.groups);
-    record_inventory(metrics, "service_accounts", counts.service_accounts);
-    record_inventory(metrics, "remote_targets", counts.remote_targets);
+    let counts = snapshot.counts();
+    record_inventory(metrics, "collections", counts.collections());
+    record_inventory(metrics, "classes", counts.classes());
+    record_inventory(metrics, "objects", counts.objects());
+    record_inventory(metrics, "users", counts.users());
+    record_inventory(metrics, "groups", counts.groups());
+    record_inventory(metrics, "service_accounts", counts.service_accounts());
+    record_inventory(metrics, "remote_targets", counts.remote_targets());
 
     metrics.export_template_info.reset();
-    for template in &snapshot.export_templates {
+    for template in snapshot.export_templates() {
         metrics
             .export_template_info
-            .with_label_values(&[&template.id.id().to_string(), &template.name])
+            .with_label_values(&[&template.id().to_string(), template.name()])
             .set(1);
     }
 }

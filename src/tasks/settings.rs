@@ -41,10 +41,6 @@ impl TaskWorkerSettings {
     pub const fn export_output_cleanup_interval(self) -> Duration {
         self.export_output_cleanup_interval
     }
-
-    pub(crate) const fn validated_lease_duration(self) -> TaskLeaseDuration {
-        self.lease_duration
-    }
 }
 
 /// Builder for the multi-field task-worker policy.
@@ -177,6 +173,7 @@ impl TaskLeaseDuration {
         self.duration
     }
 
+    #[cfg(test)]
     pub(crate) const fn database_milliseconds(self) -> i64 {
         self.database_milliseconds
     }
@@ -210,7 +207,9 @@ mod tests {
             Duration::from_secs(300)
         );
         assert_eq!(
-            settings.validated_lease_duration().database_milliseconds(),
+            TaskLeaseDuration::new(settings.lease_duration())
+                .unwrap()
+                .database_milliseconds(),
             60_000
         );
     }

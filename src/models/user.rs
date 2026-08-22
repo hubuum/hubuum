@@ -1,24 +1,19 @@
 use std::fmt;
 
-use crate::db::prelude::*;
-use crate::db::traits::user::{
-    AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
-    SetUserPasswordRecord, UpdateUserRecord,
-};
 use crate::events::EventContext;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
-use crate::models::token::{IssuedToken, PrincipalToken, PrincipalTokenCreateRequest, Token};
-use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
-use crate::schema::users;
+use crate::models::token::{IssuedToken, PrincipalTokenCreateRequest, Token};
+use crate::models::{
+    PrincipalID, PrincipalKind, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::storage::StorageContext;
+use crate::traits::{CursorPaginated, CursorValue};
 
 use tracing::{debug, error, warn};
 
@@ -28,12 +23,11 @@ pub const MAX_LOGIN_PASSWORD_CHARACTERS: usize = 4096;
 
 /// A human user. The id is the principal id; the login/display name lives on
 /// `principals.name`, not here.
-#[derive(Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Clone, ToSchema)]
-#[diesel(table_name = users)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, ToSchema)]
 pub struct User {
     pub id: i32,
     #[serde(skip_serializing)]
-    pub kind: String,
+    pub kind: PrincipalKind,
     #[serde(skip_serializing)]
     pub password: Option<String>,
     pub proper_name: Option<String>,
@@ -231,97 +225,41 @@ impl CursorPaginated for UserWithName {
     }
 }
 
-impl CursorSqlMapping for UserWithName {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "users.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::IdentityScope => CursorSqlField {
-                column: "identity_scopes.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::ProperName => CursorSqlField {
-                column: "users.proper_name",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::Email => CursorSqlField {
-                column: "users.email",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "users.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "users.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "principals.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for users",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl User {
     /// Resolve this user's name from the principals table.
     pub async fn name<C>(&self, backend: &C) -> Result<String, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        Ok(load_principal_by_id(backend.db_pool(), self.id).await?.name)
-    }
-
-    /// Build a [`UserResponse`], resolving the name from the principal.
-    pub async fn to_response<C>(&self, backend: &C) -> Result<UserResponse, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        crate::db::traits::principal::load_user_response(backend.db_pool(), self.id).await
+        Ok(load_principal_by_id(backend, self.id).await?.name)
     }
 
     /// Build the strongly tagged point representation in one database snapshot.
     pub async fn to_point_response<C>(&self, backend: &C) -> Result<UserPointResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::load_user_point_response(backend.db_pool(), self.id).await
+        crate::services::identity::get_user_point(backend, self.id).await
     }
 
     /// Set a new local password and revoke every active bearer token for this
     /// user in the same database transaction.
-    pub async fn set_password<C>(&self, backend: &C, new_password: &str) -> Result<(), ApiError>
+    pub async fn set_password<C>(
+        &self,
+        backend: &C,
+        new_password: &str,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         debug!(message = "Setting new password", user_id = self.id);
         let password_hash = crate::utilities::auth::hash_password_async(new_password.to_string())
             .await
             .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
-        let revoked_tokens = self
-            .set_password_record(backend.db_pool(), &password_hash)
-            .await?;
+        let revoked_tokens =
+            crate::services::identity::set_user_password(backend, self.id, password_hash, context)
+                .await?;
         debug!(
             message = "Password changed and active tokens revoked",
             user_id = self.id,
@@ -332,76 +270,68 @@ impl User {
 
     pub async fn create_token<C>(&self, backend: &C) -> Result<Token, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         Ok(self.create_issued_token(backend).await?.into_token())
     }
 
     pub async fn create_issued_token<C>(&self, backend: &C) -> Result<IssuedToken, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         PrincipalTokenCreateRequest::new(PrincipalID::new(self.id)?)
-            .create_issued(backend, None)
-            .await
-    }
-
-    pub async fn token_is_mine<C>(
-        &self,
-        token_param: Token,
-        backend: &C,
-    ) -> Result<PrincipalToken, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.load_owned_user_token_record(&token_param, backend.db_pool())
+            .create_issued(backend, &EventContext::system())
             .await
     }
 
     pub async fn delete_token<C>(&self, token_param: Token, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_owned_user_token_record(&token_param, backend.db_pool())
-            .await
+        crate::services::identity::revoke_token_by_hash(
+            backend,
+            Some(self.id),
+            token_param.storage_hash(),
+            &EventContext::system(),
+        )
+        .await
     }
 
     pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_all_user_tokens_record(backend.db_pool()).await
+        crate::services::identity::revoke_all_principal_tokens(
+            backend,
+            self.id,
+            &EventContext::system(),
+        )
+        .await
     }
 
-    /// Delete this user without emitting domain events.
+    /// Delete this user with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`User::delete`] so event subscribers observe the change.
+    /// This compatibility name is retained for internal callers; the mutation
+    /// still emits an audit event attributed to the system actor.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_user_record_without_events(backend.db_pool())
-            .await
+        crate::services::identity::delete_user(backend, self.id, &EventContext::system()).await
     }
 
-    pub async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    pub async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_user_record(backend.db_pool(), context).await
+        crate::services::identity::delete_user(backend, self.id, context).await
     }
 
-    pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    pub async fn anonymize<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.anonymize_user_record(backend.db_pool()).await
+        crate::services::identity::anonymize_user(backend, self.id, context).await
     }
 }
 
@@ -409,9 +339,8 @@ impl User {
 ///
 /// The password, if present, is expected to be plaintext. The name lives on the
 /// principal; renaming is handled via the principal, not here.
-#[derive(AsChangeset, Deserialize, Serialize, Clone, ToSchema)]
+#[derive(Deserialize, Serialize, Clone, ToSchema)]
 #[schema(example = update_user_example)]
-#[diesel(table_name = users)]
 pub struct UpdateUser {
     pub password: Option<String>,
     pub proper_name: Option<String>,
@@ -419,18 +348,6 @@ pub struct UpdateUser {
 }
 
 impl UpdateUser {
-    pub(crate) fn has_changes(&self, current: &User) -> bool {
-        self.password.is_some()
-            || self
-                .proper_name
-                .as_ref()
-                .is_some_and(|value| Some(value) != current.proper_name.as_ref())
-            || self
-                .email
-                .as_ref()
-                .is_some_and(|value| Some(value) != current.email.as_ref())
-    }
-
     pub async fn hash_password(mut self) -> Result<Self, ApiError> {
         if let Some(password) = self.password.take() {
             self.password = Some(
@@ -444,23 +361,19 @@ impl UpdateUser {
         Ok(self)
     }
 
-    /// Persist changes without emitting domain events.
+    /// Persist changes with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`UpdateUser::save`] so event subscribers observe the
-    /// change.
+    /// This compatibility name is retained for internal callers; the mutation
+    /// still emits an audit event attributed to the system actor.
     pub async fn save_without_events<C>(
         self,
         user_id: UserID,
         backend: &C,
     ) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed
-            .update_user_record_without_events(user_id.id(), backend.db_pool())
+        crate::services::identity::update_user(backend, user_id.id(), self, &EventContext::system())
             .await
     }
 
@@ -468,15 +381,12 @@ impl UpdateUser {
         self,
         user_id: UserID,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed
-            .update_user_record(user_id.id(), backend.db_pool(), context)
-            .await
+        crate::services::identity::update_user(backend, user_id.id(), self, context).await
     }
 }
 
@@ -507,31 +417,22 @@ impl fmt::Debug for NewUser {
 }
 
 impl NewUser {
-    /// Persist without emitting domain events.
+    /// Persist with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`NewUser::save`] so event subscribers observe the change.
+    /// This compatibility name is retained for internal callers; the mutation
+    /// still emits an audit event attributed to the system actor.
     pub async fn save_without_events<C>(self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed
-            .create_user_record_without_events(backend.db_pool())
-            .await
+        crate::services::identity::create_user(backend, self, &EventContext::system()).await
     }
 
-    pub async fn save<C>(
-        self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<User, ApiError>
+    pub async fn save<C>(self, backend: &C, context: &EventContext) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let hashed = self.hash_password().await?;
-        hashed.create_user_record(backend.db_pool(), context).await
+        crate::services::identity::create_user(backend, self, context).await
     }
 
     pub async fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -542,37 +443,43 @@ impl NewUser {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`User`].
-    pub struct UserID;
-    noun = "user id";
+pub use hubuum_domain::UserId as UserID;
+
+/// Application behavior for a backend-neutral user identifier.
+pub trait UserIdApplicationExt {
+    async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+    where
+        C: StorageContext;
+
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
+    where
+        C: StorageContext;
+
+    async fn anonymize<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
+    where
+        C: StorageContext;
 }
 
-impl UserID {
-    pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+impl UserIdApplicationExt for UserID {
+    async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        use crate::db::traits::user::LoadUserRecord;
-        self.load_user_record(backend.db_pool()).await
+        crate::services::identity::get_user(backend, self.id()).await
     }
 
-    pub async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_user_record(backend.db_pool(), context).await
+        crate::services::identity::delete_user(backend, self.id(), context).await
     }
 
-    pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
+    async fn anonymize<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.anonymize_user_record(backend.db_pool()).await
+        crate::services::identity::anonymize_user(backend, self.id(), context).await
     }
 }
 
@@ -605,7 +512,7 @@ impl LoginUser {
     /// matches the hashed password in the database.
     pub async fn login<C>(self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.validate()?;
         // We deliberately map "not found" to a generic auth failure (401) rather
@@ -615,19 +522,21 @@ impl LoginUser {
             .identity_scope
             .as_deref()
             .unwrap_or(LOCAL_IDENTITY_SCOPE);
-        let user = match User::get_by_name_in_scope(backend.db_pool(), identity_scope, &self.name)
-            .await
-        {
-            Ok(user) => user,
-            Err(_) => {
-                // Keep unknown-user and wrong-password paths comparable: both execute
-                // one Argon2 verification before returning the same public error.
-                let _ = crate::utilities::auth::verify_dummy_password_async(self.password.clone())
-                    .await;
-                warn!(message = "Login failed (user not found)", user = self.name);
-                return Err(auth_failure());
-            }
-        };
+        let user =
+            match crate::services::identity::get_user_by_name(backend, identity_scope, &self.name)
+                .await
+            {
+                Ok(user) => user,
+                Err(_) => {
+                    // Keep unknown-user and wrong-password paths comparable: both execute
+                    // one Argon2 verification before returning the same public error.
+                    let _ =
+                        crate::utilities::auth::verify_dummy_password_async(self.password.clone())
+                            .await;
+                    warn!(message = "Login failed (user not found)", user = self.name);
+                    return Err(auth_failure());
+                }
+            };
 
         let plaintext_password = &self.password;
         let Some(hashed_password) = &user.password else {
@@ -723,7 +632,7 @@ mod tests {
         let password_hash = "$argon2id$stored-password-hash";
         let user = User {
             id: 1,
-            kind: "human".to_string(),
+            kind: PrincipalKind::Human,
             password: Some(password_hash.to_string()),
             proper_name: Some("Alice".to_string()),
             email: Some("alice@example.com".to_string()),

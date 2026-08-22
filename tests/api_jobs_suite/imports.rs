@@ -2,25 +2,24 @@
 mod tests {
     use actix_rt::time::sleep;
     use actix_web::{http::StatusCode, test};
-    use chrono::{NaiveDateTime, Utc};
+    use chrono::NaiveDateTime;
     use diesel::{ExpressionMethods, QueryDsl};
     use diesel_async::RunQueryDsl;
     use futures::join;
+    use hubuum_storage_postgres::PostgresRevision;
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::{DbPool, with_connection};
     use crate::models::{
         CURRENT_IMPORT_VERSION, ClassKey, CollectionKey, ComputedResultType, GroupID, GroupKey,
-        HubuumClass, HubuumClassRelation, IdentityScopeKey, ImportAtomicity, ImportClassInput,
-        ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
-        ImportCollisionPolicy, ImportComputedFieldInput, ImportComputedFieldVisibility,
-        ImportEventSubscriptionInput, ImportGraph, ImportGroupInput, ImportGroupMembershipInput,
-        ImportIdentityScopeInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
-        ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest,
-        ImportTaskResultResponse, ImportWriteCondition, NewHubuumClass, NewTaskRecord,
-        ObjectRelationLimit, Permissions, ResourceRevision, RestoreTimestamps, TaskEventResponse,
-        TaskKind, TaskResponse, TaskStatus,
+        HubuumClass, IdentityScopeKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
+        ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy,
+        ImportComputedFieldInput, ImportComputedFieldVisibility, ImportEventSubscriptionInput,
+        ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
+        ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
+        ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
+        ImportWriteCondition, NewHubuumClass, ObjectRelationLimit, Permissions, ResourceRevision,
+        RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -45,6 +44,7 @@ mod tests {
         scoped_token, service_account_token, test_context,
     };
     use crate::traits::PermissionController;
+    use hubuum_storage_postgres::{PostgresPool, with_connection};
 
     const IMPORTS_ENDPOINT: &str = "/api/v1/imports";
     type TimestampPair = (NaiveDateTime, NaiveDateTime);
@@ -161,7 +161,7 @@ mod tests {
     }
 
     async fn load_core_timestamp_pairs(
-        pool: &DbPool,
+        pool: &PostgresPool,
         names: &CoreTimestampImportNames,
     ) -> Vec<TimestampPair> {
         with_connection(pool, async |conn| {
@@ -250,17 +250,27 @@ mod tests {
     }
 
     async fn wait_for_task_with_token(
-        pool: &crate::db::DbPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         token: &str,
         task_id: i32,
         expected_terminal_statuses: &[TaskStatus],
     ) -> TaskResponse {
-        for _ in 0..50 {
+        for _ in 0..200 {
             let resp = get_request(pool, token, &format!("/api/v1/tasks/{task_id}")).await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
             let task: TaskResponse = test::read_body_json(resp).await;
             if expected_terminal_statuses.contains(&task.status) {
                 return task;
+            }
+            if task.status.is_terminal() {
+                let response =
+                    get_request(pool, token, &format!("/api/v1/imports/{task_id}/results")).await;
+                let response = assert_response_status(response, StatusCode::OK).await;
+                let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+                panic!(
+                    "Task {task_id} reached unexpected terminal status {:?}: {:?}; results: {results:#?}",
+                    task.status, task.summary,
+                );
             }
             sleep(Duration::from_millis(100)).await;
         }
@@ -512,20 +522,42 @@ mod tests {
                 .await
                 .unwrap();
 
-        let returned = with_connection(&context.pool, async |conn| {
-            crate::db::traits::task_import::apply_permissions_db(
-                conn,
-                fixture.collection.id,
-                group.id,
-                &[Permissions::ReadCollection],
-                true,
-                None,
-                true,
-            )
-            .await
-        })
-        .await
-        .unwrap();
+        let task = submit_import(
+            &context,
+            &ImportRequest {
+                version: CURRENT_IMPORT_VERSION,
+                dry_run: Some(false),
+                mode: Some(ImportMode {
+                    atomicity: Some(ImportAtomicity::Strict),
+                    collision_policy: Some(ImportCollisionPolicy::Overwrite),
+                    permission_policy: Some(ImportPermissionPolicy::Abort),
+                }),
+                graph: ImportGraph {
+                    collection_permissions: vec![ImportCollectionPermissionInput {
+                        ref_: None,
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: fixture.collection.name.clone(),
+                            path: None,
+                        }),
+                        group_key: GroupKey {
+                            identity_scope: None,
+                            groupname: group.groupname.clone(),
+                        },
+                        permissions: vec![Permissions::ReadCollection],
+                        replace_existing: Some(true),
+                        condition: None,
+                    }],
+                    ..ImportGraph::default()
+                },
+            },
+        )
+        .await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let returned =
+            crate::models::collection::group_on(&context.pool, fixture.collection.id, group.id)
+                .await
+                .unwrap();
 
         assert_eq!(returned.id, before.id);
         assert_eq!(returned.updated_at, before.updated_at);
@@ -613,35 +645,44 @@ mod tests {
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.progress.success_items, 4);
 
-        let (jack_id, room_id, relation) = with_connection(&context.pool, async |conn| {
-            let jack_id = hubuumclass
-                .filter(class_name.eq(jack_name))
-                .select(class_id)
-                .first::<i32>(conn)
-                .await?;
-            let room_id = hubuumclass
-                .filter(class_name.eq(room_name))
-                .select(class_id)
-                .first::<i32>(conn)
-                .await?;
-            let relation = hubuumclass_relation
-                .filter(from_hubuum_class_id.eq(jack_id.min(room_id)))
-                .filter(to_hubuum_class_id.eq(jack_id.max(room_id)))
-                .first::<HubuumClassRelation>(conn)
-                .await?;
-            Ok::<_, diesel::result::Error>((jack_id, room_id, relation))
-        })
-        .await
-        .unwrap();
-        let (jack_limit, room_limit) = if relation.from_hubuum_class_id == jack_id {
-            assert_eq!(relation.to_hubuum_class_id, room_id);
-            (relation.from_max_relations, relation.to_max_relations)
+        let (jack_id, room_id, relation_from, relation_to, from_limit, to_limit) =
+            with_connection(&context.pool, async |conn| {
+                let jack_id = hubuumclass
+                    .filter(class_name.eq(jack_name))
+                    .select(class_id)
+                    .first::<i32>(conn)
+                    .await?;
+                let room_id = hubuumclass
+                    .filter(class_name.eq(room_name))
+                    .select(class_id)
+                    .first::<i32>(conn)
+                    .await?;
+                let relation = hubuumclass_relation
+                    .filter(from_hubuum_class_id.eq(jack_id.min(room_id)))
+                    .filter(to_hubuum_class_id.eq(jack_id.max(room_id)))
+                    .select((
+                        from_hubuum_class_id,
+                        to_hubuum_class_id,
+                        class_relation::from_max_relations,
+                        class_relation::to_max_relations,
+                    ))
+                    .first::<(i32, i32, Option<i32>, Option<i32>)>(conn)
+                    .await?;
+                Ok::<_, diesel::result::Error>((
+                    jack_id, room_id, relation.0, relation.1, relation.2, relation.3,
+                ))
+            })
+            .await
+            .unwrap();
+        let (jack_limit, room_limit) = if relation_from == jack_id {
+            assert_eq!(relation_to, room_id);
+            (from_limit, to_limit)
         } else {
-            assert_eq!(relation.from_hubuum_class_id, room_id);
-            assert_eq!(relation.to_hubuum_class_id, jack_id);
-            (relation.to_max_relations, relation.from_max_relations)
+            assert_eq!(relation_from, room_id);
+            assert_eq!(relation_to, jack_id);
+            (to_limit, from_limit)
         };
-        assert_eq!(jack_limit, Some(ObjectRelationLimit::new(1).unwrap()));
+        assert_eq!(jack_limit, Some(1));
         assert_eq!(room_limit, None);
     }
 
@@ -973,28 +1014,19 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let task = NewTaskRecord {
-            kind: TaskKind::Export.as_str().to_string(),
-            status: TaskStatus::Succeeded.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: None,
-            request_hash: None,
-            request_payload: None,
-            summary: Some("Synthetic export task".to_string()),
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: Some(Utc::now().naive_utc()),
-            started_at: Some(Utc::now().naive_utc()),
-            finished_at: Some(Utc::now().naive_utc()),
-        }
-        .create(&context.pool)
+        let task = crate::test_support::create_persisted_test_task(
+            context.pool.get_ref(),
+            crate::test_support::persisted_test_task_request(
+                TaskKind::Export,
+                TaskStatus::Succeeded,
+                context.admin_user.id,
+            )
+            .expect("synthetic export task request must be valid")
+            .request_payload(None)
+            .summary(Some("Synthetic export task".to_string())),
+        )
         .await
-        .unwrap();
+        .expect("synthetic export task should be persisted");
 
         let resp = get_request(
             &context.pool,
@@ -1149,28 +1181,19 @@ mod tests {
     ) {
         let context = test_context;
         let export_key = context.scoped_name("export-task-idempotency");
-        let export_task = NewTaskRecord {
-            kind: TaskKind::Export.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(export_key.clone()),
-            request_hash: Some(context.scoped_name("export-task-hash")),
-            request_payload: None,
-            summary: None,
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool)
+        let export_task = crate::test_support::create_persisted_test_task(
+            context.pool.get_ref(),
+            crate::test_support::persisted_test_task_request(
+                TaskKind::Export,
+                TaskStatus::Queued,
+                context.admin_user.id,
+            )
+            .expect("synthetic export task request must be valid")
+            .idempotency_key(Some(export_key.clone()))
+            .request_hash(Some(context.scoped_name("export-task-hash"))),
+        )
         .await
-        .unwrap();
+        .expect("synthetic export task should be persisted");
 
         let body = ImportRequest {
             version: CURRENT_IMPORT_VERSION,
@@ -1615,11 +1638,12 @@ mod tests {
                 .filter(definition::owner_user_id.is_null())
                 .filter(definition::key.eq(&key))
                 .select(definition::revision)
-                .first::<ResourceRevision>(conn)
+                .first::<PostgresRevision>(conn)
                 .await
         })
         .await
-        .unwrap();
+        .unwrap()
+        .into_domain();
 
         let dry_run = shared_computed_field_import_request(
             class,

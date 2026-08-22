@@ -2,6 +2,7 @@
 name = "hubuum-query"
 version = "0.0.1"
 edition = "2024"
+rust-version = "1.88"
 description = "App-neutral query parsing and search parameter types for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
@@ -11,9 +12,12 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
-chrono = "0.4"
+base64 = "0.23"
+bigdecimal = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 percent-encoding = "2"
-serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 [dev-dependencies]
 gungraun = "0.19.4"

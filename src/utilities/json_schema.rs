@@ -1,95 +1,26 @@
-use std::num::NonZeroUsize;
-use std::sync::{Arc, OnceLock, RwLock};
-
-use lru::LruCache;
+use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::errors::ApiError;
 
-const JSON_SCHEMA_CACHE_MAX_ENTRIES: usize = 128;
-
-type SchemaDigest = [u8; 32];
-
-static JSON_SCHEMA_CACHE: OnceLock<RwLock<LruCache<SchemaDigest, Arc<jsonschema::Validator>>>> =
-    OnceLock::new();
-
-fn schema_cache() -> &'static RwLock<LruCache<SchemaDigest, Arc<jsonschema::Validator>>> {
-    JSON_SCHEMA_CACHE.get_or_init(|| {
-        let capacity = NonZeroUsize::new(JSON_SCHEMA_CACHE_MAX_ENTRIES)
-            .expect("JSON_SCHEMA_CACHE_MAX_ENTRIES must be non-zero");
-        RwLock::new(LruCache::new(capacity))
-    })
-}
-
-fn schema_digest(schema: &Value) -> Result<SchemaDigest, ApiError> {
-    let encoded = serde_json::to_vec(schema).map_err(|error| {
-        ApiError::BadRequest(format!("JSON schema could not be encoded: {error}"))
-    })?;
-    Ok(Sha256::digest(encoded).into())
-}
-
-fn validate_reference_policy(value: &Value) -> Result<(), ApiError> {
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                validate_reference_policy(value)?;
-            }
-        }
-        Value::Object(object) => {
-            for (key, value) in object {
-                if matches!(key.as_str(), "$ref" | "$dynamicRef" | "$recursiveRef") {
-                    let reference = value.as_str().ok_or_else(|| {
-                        ApiError::BadRequest(format!("JSON schema {key} must be a string"))
-                    })?;
-                    if !reference.starts_with('#') {
-                        return Err(ApiError::BadRequest(format!(
-                            "JSON schema {key} must be a local fragment reference"
-                        )));
-                    }
-                }
-                validate_reference_policy(value)?;
-            }
-        }
-        _ => {}
+fn map_schema_error(error: JsonSchemaError) -> ApiError {
+    let (kind, message) = error.into_parts();
+    match kind {
+        JsonSchemaErrorKind::InvalidSchema => ApiError::BadRequest(message),
+        JsonSchemaErrorKind::InvalidValue => ApiError::ValidationError(message),
     }
-    Ok(())
 }
 
-pub fn compile_json_schema(schema: &Value) -> Result<Arc<jsonschema::Validator>, ApiError> {
-    validate_reference_policy(schema)?;
-    let digest = schema_digest(schema)?;
-
-    if let Some(validator) = schema_cache()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&digest)
-        .cloned()
-    {
-        return Ok(validator);
-    }
-
-    let validator = Arc::new(
-        jsonschema::options()
-            .build(schema)
-            .map_err(|error| ApiError::BadRequest(format!("Invalid JSON schema: {error}")))?,
-    );
-    schema_cache()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .put(digest, validator.clone());
-    Ok(validator)
+pub fn compile_json_schema(schema: &Value) -> Result<(), ApiError> {
+    hubuum_domain::validate_json_schema_for_instances(schema).map_err(map_schema_error)
 }
 
 pub fn validate_json_schema(schema: &Value) -> Result<(), ApiError> {
-    jsonschema::meta::validate(schema)
-        .map_err(|error| ApiError::BadRequest(format!("Invalid JSON schema: {error}")))
+    hubuum_domain::validate_json_schema(schema).map_err(map_schema_error)
 }
 
 pub fn validate_json_value(schema: &Value, value: &Value) -> Result<(), ApiError> {
-    compile_json_schema(schema)?
-        .validate(value)
-        .map_err(|error| ApiError::ValidationError(error.to_string()))
+    hubuum_domain::validate_json_value(schema, value).map_err(map_schema_error)
 }
 
 #[cfg(test)]

@@ -241,10 +241,16 @@ jobs:
           SUPPORTED_PACKAGES: ${{ steps.supported.outputs.packages }}
         run: |
           echo '### Rust API registry baselines' >> "$GITHUB_STEP_SUMMARY"
+          mapfile -t packages <<< "$SUPPORTED_PACKAGES"
+          package_args=()
+          for package in "${packages[@]}"; do
+            [[ -n "$package" ]] || continue
+            package_args+=(--package "$package")
+          done
+          cargo package --locked "${package_args[@]}"
           while IFS= read -r package; do
             [[ -n "$package" ]] || continue
             RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --all-features --package "$package"
-            cargo package --locked --package "$package"
             baseline="$(python3 scripts/check-crates-io-baseline.py "$package")"
             case "$baseline" in
               present)
@@ -515,6 +521,11 @@ jobs:
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Build (${{ matrix.feature.name }})
         run: cargo build ${{ matrix.feature.args }} --locked --release
+      - name: Test PostgreSQL adapter-native contracts
+        if: matrix.feature.name == 'default'
+        run: >-
+          cargo test -p hubuum-storage-postgres
+          -F integration-test-support --locked --release
       - name: Test (${{ matrix.feature.name }})
         run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 

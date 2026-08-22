@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::api::etag::{IfMatchCondition, RevisionedResource};
-    use crate::db::with_revision_precondition_scope;
     use crate::models::{
         Collection, CollectionID, CollectionPermissionSet, GroupID, GroupPermission, GroupResponse,
         NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
         UpdateGroup,
     };
+    use crate::storage::with_revision_precondition;
 
     use crate::pagination::{
         NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits,
@@ -154,7 +154,8 @@ mod tests {
         .await
         .unwrap();
 
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             fixture.collection.delete_without_events(&context.pool),
         )
@@ -162,7 +163,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            crate::errors::ApiError::PreconditionFailed(_, _)
+            crate::errors::ApiError::RevisionConflict(_, revision) if revision.get() == 2
         ));
 
         child.delete_without_events(&context.pool).await.unwrap();
@@ -188,7 +189,8 @@ mod tests {
             .delete_without_events(&context.pool)
             .await
             .unwrap();
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             fixture.collection.delete_without_events(&context.pool),
         )

@@ -6,6 +6,8 @@ use crate::errors::ApiError;
 use crate::models::json_patch::{
     BoundedJsonPatch, MAX_JSON_PATCH_BYTES, MAX_JSON_PATCH_OPERATIONS,
     MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
+    apply_bounded_json_patch, bounded_json_patch_openapi_schema,
+    register_bounded_json_patch_openapi_schemas,
 };
 
 /// Maximum number of operations accepted in one object-data JSON Patch document.
@@ -33,7 +35,7 @@ pub struct ObjectDataPatchDocument(BoundedJsonPatch);
 
 impl PartialSchema for ObjectDataPatchDocument {
     fn schema() -> RefOr<Schema> {
-        BoundedJsonPatch::openapi_schema(
+        bounded_json_patch_openapi_schema(
             "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
             serde_json::json!([
                 {"op": "add", "path": "/facts", "value": {"source": "inventory"}}
@@ -44,14 +46,18 @@ impl PartialSchema for ObjectDataPatchDocument {
 
 impl ToSchema for ObjectDataPatchDocument {
     fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
-        BoundedJsonPatch::register_openapi_schemas(schemas);
+        register_bounded_json_patch_openapi_schemas(schemas);
     }
 }
 
 impl ObjectDataPatchDocument {
     /// Apply the complete patch to `data`, returning a new value only if every operation succeeds.
     pub fn apply(&self, data: &serde_json::Value) -> Result<serde_json::Value, ApiError> {
-        self.0.apply(data)
+        apply_bounded_json_patch(&self.0, data)
+    }
+
+    pub(crate) fn into_bounded_patch(self) -> BoundedJsonPatch {
+        self.0
     }
 }
 

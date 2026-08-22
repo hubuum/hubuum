@@ -12,18 +12,6 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::computed_field::enrich_objects_with_computed;
-use crate::db::traits::history::{
-    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
-    object_history_paginated_with_total_count,
-};
-use crate::db::traits::relations::{
-    class_relation_authorization_resources, object_relation_authorization_resources,
-};
-use crate::db::traits::user::UserSearchBackend;
-use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
-use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ObjectDataPatchPayload};
 use crate::models::collection as collection_model;
@@ -37,22 +25,30 @@ use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
 };
-
-use crate::models::traits::{
-    CreateObjectInResolvedClass, DeleteResolvedClass, DeleteResolvedObject, PatchObjectData,
-    ResolveClassTarget, ResolveObjectTarget, UpdateResolvedClass, UpdateResolvedObject,
+use crate::services::authorization_resources::{
+    class_relation_authorization_resources, object_relation_authorization_resources,
 };
+use crate::services::catalog as catalog_service;
+use crate::services::computed_objects::enrich_objects_with_computed;
+use crate::services::history::{
+    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
+    object_history_paginated_with_total_count,
+};
+use crate::services::relation_queries;
+use crate::storage::with_revision_precondition;
+use crate::traits::{UserPermissions, scope_allows};
+
 use crate::models::{
     ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HistoryAuthorizationSnapshot,
     HubuumClass, HubuumClassExpanded, HubuumClassHistory, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObjectRelation, NewHubuumObjectRequest,
-    ObjectDataPatchDocument, ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph,
-    RelatedObjectGraphRow, ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateHubuumObjectRequest,
+    NewHubuumClassRelationFromClass, NewHubuumObjectRequest, ObjectDataPatchDocument,
+    ObjectRelationCreateSelector, ObjectRelationEndpoint, ObjectRelationSelector, ObjectSelector,
+    Permissions, RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, ResolvedClassTarget,
+    ResolvedObjectTarget, UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest,
 };
-use crate::traits::{BackendContext, CanDelete, CanSave, Search, SelfAccessors};
+use crate::traits::{Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
@@ -119,29 +115,33 @@ fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions,
     Ok((params, include_computed))
 }
 
-fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID) {
+fn scope_object_query_to_class(
+    params: &mut QueryOptions,
+    class: &HubuumClassID,
+) -> Result<(), ApiError> {
     params
-        .filters
-        .retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes));
-    params.filters.add_filter(
+        .filters_mut()
+        .try_retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes))?;
+    params.filters_mut().add_filter(
         FilterField::ClassId,
         SearchOperator::Equals { is_negated: false },
         &class.id().to_string(),
-    );
+    )?;
+    Ok(())
 }
 
 async fn computed_personal_owner(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
 ) -> Result<Option<i32>, ApiError> {
     if !requestor.principal.is_human() {
         return Ok(None);
     }
-    let resource = class.to_resource_ref(pool.db_pool()).await?;
+    let resource = class.to_resource_ref(&context).await?;
     match authorize_resources(
-        pool.permission_backend(),
-        pool,
+        context.permission_backend(),
+        &context,
         &requestor.principal,
         requestor.scopes(),
         vec![Permissions::ReadClass],
@@ -149,7 +149,7 @@ async fn computed_personal_owner(
     )
     .await
     {
-        Ok(()) => Ok(Some(requestor.principal.id)),
+        Ok(()) => Ok(Some(requestor.principal.id().id())),
         Err(ApiError::Forbidden(_)) => Ok(None),
         Err(error) => Err(error),
     }
@@ -269,14 +269,14 @@ fn ensure_object_update_stays_in_path_class(
 fn prepare_graph_query_options(
     mut params: QueryOptions,
 ) -> Result<(QueryOptions, usize), ApiError> {
-    if params.cursor.is_some() {
+    if params.cursor().is_some() {
         return Err(ApiError::BadRequest(
             "Graph endpoint does not support cursor".to_string(),
         ));
     }
 
-    let limit = page_limits()?.resolve(params.limit)?;
-    params.limit = Some(limit + 1);
+    let limit = page_limits()?.resolve(params.limit())?;
+    params.set_limit(Some(limit + 1));
 
     Ok((params, limit))
 }
@@ -311,7 +311,7 @@ fn ensure_graph_result_within_limit<T>(
 #[get("")]
 #[get("/")]
 async fn get_classes(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -323,36 +323,37 @@ async fn get_classes(
         Err(e) => return Err(e),
     };
 
-    debug!(message = "Listing classes", user_id = user.id());
+    debug!(message = "Listing classes", user_id = user.id().id());
 
-    let (classes, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
-        let total_count = if params.include_total {
-            user.count_classes(&pool, count_query_options(&params), requestor.scopes())
-                .await?
-        } else {
-            SKIPPED_TOTAL_COUNT
-        };
+    let (classes, total_count) = if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
+        let is_admin = crate::traits::AuthzSubject::is_admin(user, &context).await?;
         let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
-        let classes = user
-            .search_classes(&pool, search_params, requestor.scopes())
-            .await?;
+        let (classes, total_count) = catalog_service::list_classes(
+            &context,
+            user.id().id(),
+            is_admin,
+            requestor.scopes(),
+            search_params,
+        )
+        .await?;
+        let total_count = total_count.unwrap_or(SKIPPED_TOTAL_COUNT);
         (classes, total_count)
     } else {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadClass]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
-        let candidates = user
-            .search_classes_from_backend_with_admin_status(
-                &pool,
-                count_query_options(&params),
-                true,
-                None,
-            )
-            .await?;
-        let principal = PrincipalRef::load(&pool, user).await?;
+        let mut candidate_options = count_query_options(&params);
+        candidate_options.set_include_total(false);
+        let (candidates, _) =
+            catalog_service::list_classes(&context, user.id().id(), true, None, candidate_options)
+                .await?;
+        let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
         let page = authorize_cursor_page(
-            pool.permission_backend(),
+            context.permission_backend(),
             &principal,
             candidates,
             requestor.scopes(),
@@ -392,7 +393,7 @@ async fn get_classes(
 #[post("")]
 #[post("/")]
 async fn create_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_data: web::Json<NewHubuumClass>,
     req: HttpRequest,
@@ -402,13 +403,13 @@ async fn create_class(
 
     debug!(
         message = "Creating class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_name = class_data.name
     );
 
     let collection = CollectionID::new(class_data.collection_id)?;
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::CreateClass],
@@ -416,20 +417,23 @@ async fn create_class(
     );
 
     let event_context = requestor.event_context(&req);
-    let class = class_data.save(&pool, &event_context).await?;
-    let expanded = class.expand_collection(&pool).await?;
+    let class = context
+        .class_service()
+        .create(class_data, &event_context)
+        .await?;
+    let expanded = class.expand_collection(&context).await?;
 
     let location = api_locations::class(class.id)?;
     Ok(ApiResponse::created(expanded, location))
 }
 
 async fn read_resolved_class(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     target: ResolvedClassTarget,
 ) -> Result<HubuumClass, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadClass],
@@ -454,7 +458,7 @@ async fn read_resolved_class(
 )]
 #[get("/{class_id}")]
 async fn get_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
@@ -464,16 +468,17 @@ async fn get_class(
 
     debug!(
         message = "Getting class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id()
     );
 
-    let target = ClassSelector::by_id(class_id)
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id))
         .await?;
-    let class = read_resolved_class(&pool, &requestor, target).await?;
+    let class = read_resolved_class(&context, &requestor, target).await?;
     if parse_collection_include(req.query_string())? {
-        let expanded = class.expand_collection(&pool).await?;
+        let expanded = class.expand_collection(&context).await?;
         return Ok(Either::Right(ApiResponse::ok(expanded)));
     }
     Ok(Either::Left(ApiResponse::ok_revisioned(class)?))
@@ -495,31 +500,32 @@ async fn get_class(
 )]
 #[get("/by-name/{class_name}")]
 async fn get_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    let class = read_resolved_class(&pool, &requestor, target).await?;
+    let class = read_resolved_class(&context, &requestor, target).await?;
     if parse_collection_include(req.query_string())? {
-        let expanded = class.expand_collection(&pool).await?;
+        let expanded = class.expand_collection(&context).await?;
         return Ok(Either::Right(ApiResponse::ok(expanded)));
     }
     Ok(Either::Left(ApiResponse::ok_revisioned(class)?))
 }
 
 async fn apply_resolved_class_update(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedClassTarget,
     update: UpdateHubuumClass,
 ) -> Result<HubuumClass, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::UpdateClass],
@@ -530,7 +536,7 @@ async fn apply_resolved_class_update(
         && target_collection_id != target.class().collection_id
     {
         can!(
-            pool,
+            context,
             &requestor.principal,
             requestor.scopes(),
             [Permissions::CreateClass],
@@ -540,9 +546,12 @@ async fn apply_resolved_class_update(
 
     let precondition = revision_precondition(req, target.class())?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
-        update.update_resolved_class(pool, &target, &event_context),
+        context
+            .class_service()
+            .update(&target, update, &event_context),
     )
     .await
 }
@@ -565,7 +574,7 @@ async fn apply_resolved_class_update(
 )]
 #[patch("/{class_id}")]
 async fn update_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     class_data: web::Json<UpdateHubuumClass>,
@@ -577,15 +586,16 @@ async fn update_class(
 
     debug!(
         message = "Updating class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id()
     );
 
-    let target = ClassSelector::by_id(class_id)
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id))
         .await?;
-    let class = apply_resolved_class_update(&pool, &requestor, &req, target, class_data).await?;
-    let expanded = class.expand_collection(&pool).await?;
+    let class = apply_resolved_class_update(&context, &requestor, &req, target, class_data).await?;
+    let expanded = class.expand_collection(&context).await?;
     Ok(ApiResponse::ok(expanded))
 }
 
@@ -608,30 +618,31 @@ async fn update_class(
 )]
 #[patch("/by-name/{class_name}")]
 async fn update_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     class_data: web::Json<UpdateHubuumClass>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let class =
-        apply_resolved_class_update(&pool, &requestor, &req, target, class_data.into_inner())
+        apply_resolved_class_update(&context, &requestor, &req, target, class_data.into_inner())
             .await?;
-    let expanded = class.expand_collection(&pool).await?;
+    let expanded = class.expand_collection(&context).await?;
     Ok(ApiResponse::ok(expanded))
 }
 
 async fn delete_resolved_class(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedClassTarget,
 ) -> Result<crate::api::etag::EntityTag, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DeleteClass],
@@ -641,9 +652,10 @@ async fn delete_resolved_class(
     let etag = target.class().entity_tag()?;
     let precondition = revision_precondition_for_tag(req, &etag)?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
-        target.delete_resolved_class(pool, &event_context),
+        context.class_service().delete(&target, &event_context),
     )
     .await?;
     Ok(etag)
@@ -665,7 +677,7 @@ async fn delete_resolved_class(
 )]
 #[delete("/{class_id}")]
 async fn delete_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
@@ -675,14 +687,15 @@ async fn delete_class(
 
     debug!(
         message = "Deleting class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id()
     );
 
-    let target = ClassSelector::by_id(class_id)
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id))
         .await?;
-    let etag = delete_resolved_class(&pool, &requestor, &req, target).await?;
+    let etag = delete_resolved_class(&context, &requestor, &req, target).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
@@ -703,15 +716,16 @@ async fn delete_class(
 )]
 #[delete("/by-name/{class_name}")]
 async fn delete_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    let etag = delete_resolved_class(&pool, &requestor, &req, target).await?;
+    let etag = delete_resolved_class(&context, &requestor, &req, target).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
@@ -731,15 +745,16 @@ async fn delete_class_by_name(
 )]
 #[get("/{class_id}/permissions")]
 async fn get_class_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
-    read_resolved_class_permissions(pool, requestor, target, req).await
+    read_resolved_class_permissions(context, requestor, target, req).await
 }
 
 #[utoipa::path(
@@ -757,19 +772,20 @@ async fn get_class_permissions(
 )]
 #[get("/by-name/{class_name}/permissions")]
 async fn get_class_permissions_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    read_resolved_class_permissions(pool, requestor, target, req).await
+    read_resolved_class_permissions(context, requestor, target, req).await
 }
 
 async fn read_resolved_class_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     target: ResolvedClassTarget,
     req: HttpRequest,
@@ -780,12 +796,12 @@ async fn read_resolved_class_permissions(
 
     debug!(
         message = "Getting class permissions",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class.id
     );
 
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::ReadClass],
@@ -800,10 +816,10 @@ async fn read_resolved_class_permissions(
         Permissions::DeleteClass,
     ];
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let (permissions, total_count) = if pool.permission_backend().uses_sql_permission_store() {
-        let total_count = if params.include_total {
+    let (permissions, total_count) = if context.permission_backend().uses_local_permission_store() {
+        let total_count = if params.include_total() {
             collection_model::count_groups_on_paginated(
-                &pool,
+                &context,
                 target_collection_id,
                 class_permissions.to_vec(),
                 &count_query_options(&params),
@@ -813,7 +829,7 @@ async fn read_resolved_class_permissions(
             SKIPPED_TOTAL_COUNT
         };
         let permissions = collection_model::groups_on_paginated(
-            &pool,
+            &context,
             target_collection_id,
             class_permissions.to_vec(),
             &search_params,
@@ -821,7 +837,8 @@ async fn read_resolved_class_permissions(
         .await?;
         (permissions, total_count)
     } else {
-        pool.permission_backend()
+        context
+            .permission_backend()
             .groups_with_permissions_on(target_collection_id, &class_permissions, &search_params)
             .await?
     };

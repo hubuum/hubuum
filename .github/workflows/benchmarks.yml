@@ -42,8 +42,7 @@ jobs:
       )
     runs-on: ubuntu-24.04
     outputs:
-      run_self_contained: ${{ steps.policy.outputs.run_self_contained }}
-      run_postgres: ${{ steps.policy.outputs.run_postgres }}
+      run_benchmarks: ${{ steps.policy.outputs.run_benchmarks }}
       run_runtime: ${{ steps.policy.outputs.run_runtime }}
     steps:
       - name: Check out repository
@@ -69,8 +68,7 @@ jobs:
           IS_DRAFT: ${{ github.event.pull_request.draft }}
           FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
           FORCE_BENCHMARKS: ${{ contains(github.event.pull_request.labels.*.name, 'ci:benchmarks') }}
-          SELF_CONTAINED_CHANGED: ${{ steps.paths.outputs.benchmarks }}
-          POSTGRES_CHANGED: ${{ steps.paths.outputs.postgres_benchmark }}
+          BENCHMARKS_CHANGED: ${{ steps.paths.outputs.benchmarks }}
           RUNTIME_CHANGED: ${{ steps.paths.outputs.runtime_benchmark }}
         run: |
           requested=false
@@ -83,15 +81,11 @@ jobs:
             force_all=true
           fi
 
-          run_self_contained=false
-          run_postgres=false
+          run_benchmarks=false
           run_runtime=false
           if [[ "$requested" == "true" ]]; then
-            if [[ "$force_all" == "true" || "$SELF_CONTAINED_CHANGED" == "true" ]]; then
-              run_self_contained=true
-            fi
-            if [[ "$force_all" == "true" || "$POSTGRES_CHANGED" == "true" ]]; then
-              run_postgres=true
+            if [[ "$force_all" == "true" || "$BENCHMARKS_CHANGED" == "true" ]]; then
+              run_benchmarks=true
             fi
             if [[ "$force_all" == "true" || "$RUNTIME_CHANGED" == "true" ]]; then
               run_runtime=true
@@ -99,15 +93,14 @@ jobs:
           fi
 
           {
-            echo "run_self_contained=$run_self_contained"
-            echo "run_postgres=$run_postgres"
+            echo "run_benchmarks=$run_benchmarks"
             echo "run_runtime=$run_runtime"
           } >> "$GITHUB_OUTPUT"
 
   benchmarks:
-    name: Self-contained benchmarks
+    name: Benchmarks
     needs: changes
-    if: needs.changes.outputs.run_self_contained == 'true'
+    if: needs.changes.outputs.run_benchmarks == 'true'
     uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@0343a98c94e04d326c5fbfea753fad9934eee7be # v1.0.0
     secrets: inherit
     with:
@@ -122,223 +115,11 @@ jobs:
       fail_on_regression: true
       feature_sets_json: >-
         [
-          {"name":"default","features":""}
+          {"name":"default","features":"postgres-bench"}
         ]
 
-  postgres-storage:
-    name: PostgreSQL storage benchmarks
-    needs: changes
-    if: needs.changes.outputs.run_postgres == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    services:
-      postgres:
-        image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      BASE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_bench_base
-      HEAD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_bench_head
-      CARGO_TARGET_DIR: target
-      POSTGRES_BENCH_WARNING_PCT: 10
-      POSTGRES_BENCH_FAILURE_PCT: 20
-      POSTGRES_BENCH_FAILURE_ABSOLUTE_NS: 25000
-      POSTGRES_BENCH_STABILITY_PCT: 10
-    steps:
-      - name: Check out pull request
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-      - name: Cache Cargo and target directories
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Install PostgreSQL build tools
-        run: |
-          sudo apt-get update --yes
-          sudo apt-get install --yes libpq-dev
-      - name: Disable nondeterministic PostgreSQL background work
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql --host localhost --username postgres --dbname postgres \
-            --command "ALTER SYSTEM SET checkpoint_timeout = '30min'"
-          psql --host localhost --username postgres --dbname postgres \
-            --command "ALTER SYSTEM SET autovacuum = 'off'"
-          psql --host localhost --username postgres --dbname postgres \
-            --command "SELECT pg_reload_conf()"
-          autovacuum="$(
-            psql --host localhost --username postgres --dbname postgres \
-              --tuples-only --no-align --command "SELECT current_setting('autovacuum')"
-          )"
-          [[ "$autovacuum" == "off" ]]
-      - name: Create isolated benchmark databases
-        env:
-          PGPASSWORD: postgres
-        run: |
-          createdb --host localhost --username postgres hubuum_bench_base
-          createdb --host localhost --username postgres hubuum_bench_head
-      - name: Clear cached PostgreSQL benchmark results
-        run: rm -rf target/criterion/storage_postgres
-      - name: Detect an existing base benchmark
-        id: base_benchmark
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if git cat-file -e "$BASE_SHA:benches/postgres/storage_postgres_criterion.rs" 2>/dev/null; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Record base benchmark
-        if: steps.base_benchmark.outputs.available == 'true'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HUBUUM_BENCH_DATABASE_URL: ${{ env.BASE_DATABASE_URL }}
-        run: |
-          git checkout --detach "$BASE_SHA"
-          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
-            --migrate --database-url "$BASE_DATABASE_URL"
-          cargo bench --locked --features postgres-bench \
-            --bench storage_postgres_criterion -- \
-            --save-baseline pr-base --noplot --sample-size 40 --measurement-time 4
-      - name: Record and compare pull-request benchmark
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HUBUUM_BENCH_DATABASE_URL: ${{ env.HEAD_DATABASE_URL }}
-          BASE_AVAILABLE: ${{ steps.base_benchmark.outputs.available }}
-        run: |
-          git checkout --detach "$HEAD_SHA"
-          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
-            --migrate --database-url "$HEAD_DATABASE_URL"
-          if [[ "$BASE_AVAILABLE" == "true" ]]; then
-            cargo bench --locked --features postgres-bench \
-              --bench storage_postgres_criterion -- \
-              --baseline pr-base --noplot --sample-size 40 --measurement-time 4
-          else
-            cargo bench --locked --features postgres-bench \
-              --bench storage_postgres_criterion -- \
-              --save-baseline initial --noplot --sample-size 40 --measurement-time 4
-            echo "Initial PostgreSQL storage baseline recorded; base comparison starts after merge." \
-              >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - name: Assess initial PostgreSQL regressions
-        if: steps.base_benchmark.outputs.available == 'true'
-        id: initial_assessment
-        env:
-          POSTGRES_BENCH_INITIAL_FAILURES: ${{ runner.temp }}/postgres-benchmark-initial-failures.txt
-          POSTGRES_BENCH_INITIAL_RESULTS: ${{ runner.temp }}/postgres-criterion-initial
-        run: |
-          set +e
-          scripts/check-criterion-regressions.sh \
-            target/criterion/storage_postgres \
-            "$POSTGRES_BENCH_WARNING_PCT" \
-            "$POSTGRES_BENCH_FAILURE_PCT" \
-            "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            forward warning "$POSTGRES_BENCH_INITIAL_FAILURES" "" pr-base
-          assessment_status=$?
-          set -e
-
-          case "$assessment_status" in
-            0)
-              echo "suspected=false" >> "$GITHUB_OUTPUT"
-              ;;
-            1)
-              cp -R target/criterion/storage_postgres "$POSTGRES_BENCH_INITIAL_RESULTS"
-              echo "suspected=true" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              exit "$assessment_status"
-              ;;
-          esac
-      - name: Confirm PostgreSQL regressions in reverse order
-        if: steps.initial_assessment.outputs.suspected == 'true'
-        env:
-          PGPASSWORD: postgres
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          CONFIRMED_FAILURES: ${{ runner.temp }}/postgres-benchmark-confirmed-failures.txt
-          POSTGRES_BENCH_INITIAL_FAILURES: ${{ runner.temp }}/postgres-benchmark-initial-failures.txt
-          POSTGRES_BENCH_INITIAL_RESULTS: ${{ runner.temp }}/postgres-criterion-initial
-        run: |
-          dropdb --host localhost --username postgres --if-exists --force hubuum_bench_base
-          dropdb --host localhost --username postgres --if-exists --force hubuum_bench_head
-          createdb --host localhost --username postgres hubuum_bench_base
-          createdb --host localhost --username postgres hubuum_bench_head
-          rm -rf target/criterion/storage_postgres
-
-          git checkout --detach "$HEAD_SHA"
-          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
-            --migrate --database-url "$HEAD_DATABASE_URL"
-          HUBUUM_BENCH_DATABASE_URL="$HEAD_DATABASE_URL" \
-            cargo bench --locked --features postgres-bench \
-              --bench storage_postgres_criterion -- \
-              --save-baseline pr-head-confirmation \
-              --noplot --sample-size 40 --measurement-time 4
-
-          git checkout --detach "$BASE_SHA"
-          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
-            --migrate --database-url "$BASE_DATABASE_URL"
-          HUBUUM_BENCH_DATABASE_URL="$BASE_DATABASE_URL" \
-            cargo bench --locked --features postgres-bench \
-              --bench storage_postgres_criterion -- \
-              --baseline pr-head-confirmation \
-              --noplot --sample-size 40 --measurement-time 4
-
-          git checkout --detach "$HEAD_SHA"
-          set +e
-          scripts/check-criterion-regressions.sh \
-            target/criterion/storage_postgres \
-            "$POSTGRES_BENCH_WARNING_PCT" \
-            "$POSTGRES_BENCH_FAILURE_PCT" \
-            "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            reverse warning "$CONFIRMED_FAILURES" \
-            "$POSTGRES_BENCH_INITIAL_FAILURES" pr-head-confirmation
-          confirmation_status=$?
-          set -e
-
-          if [[ "$confirmation_status" -eq 2 ]]; then
-            exit 2
-          fi
-          if [[ "$confirmation_status" -eq 0 ]]; then
-            echo "::warning title=Inconclusive PostgreSQL benchmark::The reverse-order comparison did not reproduce the initial regression."
-            echo "The PostgreSQL benchmark was noisy: its reverse-order confirmation did not reproduce the initial regression." \
-              >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          set +e
-          scripts/check-criterion-stability.sh \
-            "$POSTGRES_BENCH_INITIAL_RESULTS" \
-            target/criterion/storage_postgres \
-            "$POSTGRES_BENCH_STABILITY_PCT" \
-            "$CONFIRMED_FAILURES" pr-base
-          stability_status=$?
-          set -e
-
-          if [[ "$stability_status" -eq 2 ]]; then
-            exit 2
-          fi
-          if [[ "$stability_status" -eq 1 ]]; then
-            echo "The PostgreSQL benchmark was inconclusive because its bracketing base measurements were unstable." \
-              >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          scripts/check-criterion-regressions.sh \
-            target/criterion/storage_postgres \
-            "$POSTGRES_BENCH_WARNING_PCT" \
-            "$POSTGRES_BENCH_FAILURE_PCT" \
-            "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            reverse error "" "$CONFIRMED_FAILURES" pr-head-confirmation
-
   runtime-behavior:
-    name: Runtime behavior benchmark
+    name: Runtime behavior validation
     needs: changes
     if: needs.changes.outputs.run_runtime == 'true'
     runs-on: ubuntu-24.04
@@ -368,23 +149,23 @@ jobs:
           fetch-depth: 0
       - name: Cache Cargo and target directories
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Install PostgreSQL build tools
+      - name: Verify PostgreSQL build tools
         run: |
-          sudo apt-get update --yes
-          sudo apt-get install --yes libpq-dev
-      - name: Create isolated runtime benchmark databases
+          command -v pg_config
+          pkg-config --exists libpq
+      - name: Create isolated runtime validation databases
         env:
           PGPASSWORD: postgres
         run: |
           createdb --host localhost --username postgres hubuum_runtime_base
           createdb --host localhost --username postgres hubuum_runtime_head
           mkdir -p "$RUNTIME_BEHAVIOR_REPORT_DIR"
-      - name: Detect an existing base runtime benchmark
+      - name: Detect an existing base runtime validator
         id: base_runtime
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if git cat-file -e "$BASE_SHA:benches/runtime_behavior.rs" 2>/dev/null; then
+          if git cat-file -e "$BASE_SHA:src/bin/runtime_behavior_check.rs" 2>/dev/null; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -397,9 +178,9 @@ jobs:
           git checkout --detach "$BASE_SHA"
           cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
             --migrate --database-url "$BASE_DATABASE_URL"
-          cargo build --locked --features runtime-behavior-bench --bin hubuum-server
-          cargo bench --profile dev --locked --features runtime-behavior-bench \
-            --bench runtime_behavior -- measure \
+          cargo build --locked --features runtime-behavior-check --bin hubuum-server
+          cargo run --profile dev --locked --features runtime-behavior-check \
+            --bin hubuum-runtime-behavior-check -- measure \
             --server-binary target/debug/hubuum-server \
             --database-url "$BASE_DATABASE_URL" \
             --sample-seconds "$RUNTIME_BEHAVIOR_SAMPLE_SECONDS" \
@@ -414,9 +195,9 @@ jobs:
           git checkout --detach "$HEAD_SHA"
           cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
             --migrate --database-url "$HEAD_DATABASE_URL"
-          cargo build --locked --features runtime-behavior-bench --bin hubuum-server
-          cargo bench --profile dev --locked --features runtime-behavior-bench \
-            --bench runtime_behavior -- measure \
+          cargo build --locked --features runtime-behavior-check --bin hubuum-server
+          cargo run --profile dev --locked --features runtime-behavior-check \
+            --bin hubuum-runtime-behavior-check -- measure \
             --server-binary target/debug/hubuum-server \
             --database-url "$HEAD_DATABASE_URL" \
             --sample-seconds "$RUNTIME_BEHAVIOR_SAMPLE_SECONDS" \
@@ -432,8 +213,8 @@ jobs:
           if [[ "$BASE_AVAILABLE" == "true" ]]; then
             base_args=(--base "$RUNTIME_BEHAVIOR_REPORT_DIR/base.json")
           fi
-          cargo bench --profile dev --locked --features runtime-behavior-bench \
-            --bench runtime_behavior -- assess \
+          cargo run --profile dev --locked --features runtime-behavior-check \
+            --bin hubuum-runtime-behavior-check -- assess \
             --head "$RUNTIME_BEHAVIOR_REPORT_DIR/head.json" \
             "${base_args[@]}" \
             --markdown-output "$GITHUB_STEP_SUMMARY" \

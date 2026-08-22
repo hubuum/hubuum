@@ -1,7 +1,6 @@
 use crate::models::token_scope::TokenScope;
 use std::{fmt, str::FromStr};
 
-use crate::db::prelude::*;
 use chrono::NaiveDateTime;
 use hubuum_outbound_http::OutboundHeaderName;
 use hubuum_templates::prepare_template;
@@ -11,8 +10,6 @@ use utoipa::ToSchema;
 use crate::config::{
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT, get_config,
 };
-use crate::db::DbPool;
-use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -20,17 +17,11 @@ use crate::models::{
     HubuumObjectRelationID, Permissions, REDACTED_DEBUG_VALUE, ResourceRevision,
     redacted_debug_option,
 };
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
-use crate::schema::{remote_call_results, remote_targets};
+use crate::pagination::{CursorPaginated, CursorValue};
+use crate::traits::UserPermissions;
 use crate::traits::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a remote target.
-    pub struct RemoteTargetID;
-    noun = "remote target id";
-}
+pub use hubuum_domain::RemoteTargetId as RemoteTargetID;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -178,65 +169,6 @@ macro_rules! impl_redacted_remote_call_result_debug {
     };
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = remote_targets)]
-pub(crate) struct RemoteTargetRow {
-    pub id: i32,
-    pub collection_id: i32,
-    pub class_id: Option<i32>,
-    pub name: String,
-    pub description: String,
-    pub method: String,
-    pub url_template: String,
-    pub headers_template: serde_json::Value,
-    pub body_template: Option<String>,
-    pub auth_config: serde_json::Value,
-    pub allowed_subject_types: serde_json::Value,
-    pub timeout_ms: i32,
-    pub enabled: bool,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-    pub revision: ResourceRevision,
-}
-
-impl_redacted_remote_target_debug!(
-    RemoteTargetRow,
-    id,
-    collection_id,
-    class_id,
-    name,
-    description,
-    method,
-    allowed_subject_types,
-    timeout_ms,
-    enabled,
-    created_at,
-    updated_at,
-);
-
-impl RemoteTargetRow {
-    pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
-        serde_json::json!({
-            "id": self.id,
-            "collection_id": self.collection_id,
-            "class_id": self.class_id,
-            "name": self.name,
-            "description": self.description,
-            "method": self.method,
-            "url_template": self.url_template,
-            "headers_template": self.headers_template,
-            "body_template": self.body_template,
-            "auth_config": "<redacted>",
-            "allowed_subject_types": self.allowed_subject_types,
-            "timeout_ms": self.timeout_ms,
-            "enabled": self.enabled,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "revision": self.revision,
-        })
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct RemoteTarget {
     pub id: i32,
@@ -343,111 +275,6 @@ impl_redacted_remote_target_debug!(
     timeout_ms,
     enabled,
 );
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = remote_targets)]
-pub(crate) struct NewRemoteTargetRow {
-    pub collection_id: i32,
-    pub class_id: Option<i32>,
-    pub name: String,
-    pub description: String,
-    pub method: String,
-    pub url_template: String,
-    pub headers_template: serde_json::Value,
-    pub body_template: Option<String>,
-    pub auth_config: serde_json::Value,
-    pub allowed_subject_types: serde_json::Value,
-    pub timeout_ms: i32,
-    pub enabled: bool,
-}
-
-impl_redacted_remote_target_debug!(
-    NewRemoteTargetRow,
-    collection_id,
-    class_id,
-    name,
-    description,
-    method,
-    allowed_subject_types,
-    timeout_ms,
-    enabled,
-);
-
-#[derive(Clone, AsChangeset)]
-#[diesel(table_name = remote_targets)]
-pub(crate) struct UpdateRemoteTargetRow {
-    pub collection_id: Option<i32>,
-    pub class_id: Option<Option<i32>>,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub method: Option<String>,
-    pub url_template: Option<String>,
-    pub headers_template: Option<serde_json::Value>,
-    pub body_template: Option<Option<String>>,
-    pub auth_config: Option<serde_json::Value>,
-    pub allowed_subject_types: Option<serde_json::Value>,
-    pub timeout_ms: Option<i32>,
-    pub enabled: Option<bool>,
-}
-
-impl_redacted_remote_target_debug!(
-    UpdateRemoteTargetRow,
-    collection_id,
-    class_id,
-    name,
-    description,
-    method,
-    allowed_subject_types,
-    timeout_ms,
-    enabled,
-);
-
-impl UpdateRemoteTargetRow {
-    pub(crate) fn has_changes(&self, current: &RemoteTargetRow) -> bool {
-        self.collection_id
-            .is_some_and(|value| value != current.collection_id)
-            || self
-                .class_id
-                .as_ref()
-                .is_some_and(|value| value != &current.class_id)
-            || self
-                .name
-                .as_ref()
-                .is_some_and(|value| value != &current.name)
-            || self
-                .description
-                .as_ref()
-                .is_some_and(|value| value != &current.description)
-            || self
-                .method
-                .as_ref()
-                .is_some_and(|value| value != &current.method)
-            || self
-                .url_template
-                .as_ref()
-                .is_some_and(|value| value != &current.url_template)
-            || self
-                .headers_template
-                .as_ref()
-                .is_some_and(|value| value != &current.headers_template)
-            || self
-                .body_template
-                .as_ref()
-                .is_some_and(|value| value != &current.body_template)
-            || self
-                .auth_config
-                .as_ref()
-                .is_some_and(|value| value != &current.auth_config)
-            || self
-                .allowed_subject_types
-                .as_ref()
-                .is_some_and(|value| value != &current.allowed_subject_types)
-            || self
-                .timeout_ms
-                .is_some_and(|value| value != current.timeout_ms)
-            || self.enabled.is_some_and(|value| value != current.enabled)
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RemoteTargetInvokeRequest {
@@ -648,8 +475,7 @@ impl RemoteTemplateContext {
     }
 }
 
-#[derive(Clone, Queryable, Selectable, Serialize, Deserialize, PartialEq, ToSchema)]
-#[diesel(table_name = remote_call_results)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RemoteCallResult {
     pub id: i32,
     pub task_id: i32,
@@ -681,89 +507,6 @@ impl_redacted_remote_call_result_debug!(
     created_at,
 );
 
-#[derive(Clone, Insertable)]
-#[diesel(table_name = remote_call_results)]
-pub struct NewRemoteCallResult {
-    pub task_id: i32,
-    pub target_id: Option<i32>,
-    pub subject_type: String,
-    pub subject_id: i32,
-    pub method: String,
-    pub rendered_url: String,
-    pub response_status: Option<i32>,
-    pub response_headers: Option<serde_json::Value>,
-    pub response_body_preview: Option<String>,
-    pub duration_ms: i32,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
-impl_redacted_remote_call_result_debug!(
-    NewRemoteCallResult,
-    task_id,
-    target_id,
-    subject_type,
-    subject_id,
-    method,
-    response_status,
-    duration_ms,
-    success,
-);
-
-impl TryFrom<RemoteTargetRow> for RemoteTarget {
-    type Error = ApiError;
-
-    fn try_from(row: RemoteTargetRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.id,
-            collection_id: row.collection_id,
-            class_id: row.class_id,
-            name: row.name,
-            description: row.description,
-            method: RemoteHttpMethod::from_str(&row.method)?,
-            url_template: row.url_template,
-            headers_template: row.headers_template,
-            body_template: row.body_template,
-            auth_config: serde_json::from_value(row.auth_config)?,
-            allowed_subject_types: serde_json::from_value(row.allowed_subject_types)?,
-            timeout_ms: row.timeout_ms,
-            enabled: row.enabled,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            revision: row.revision,
-        })
-    }
-}
-
-impl NewRemoteTarget {
-    pub(crate) fn into_row(self) -> Result<NewRemoteTargetRow, ApiError> {
-        validate_target_parts(
-            self.class_id.map(HubuumClassID::id),
-            &self.url_template,
-            &self.headers_template,
-            self.body_template.as_deref(),
-            &self.auth_config,
-            &self.allowed_subject_types,
-            self.timeout_ms,
-        )?;
-
-        Ok(NewRemoteTargetRow {
-            collection_id: self.collection_id.id(),
-            class_id: self.class_id.map(HubuumClassID::id),
-            name: self.name,
-            description: self.description,
-            method: self.method.as_str().to_string(),
-            url_template: self.url_template,
-            headers_template: self.headers_template,
-            body_template: self.body_template,
-            auth_config: serde_json::to_value(self.auth_config)?,
-            allowed_subject_types: serde_json::to_value(self.allowed_subject_types)?,
-            timeout_ms: self.timeout_ms,
-            enabled: self.enabled,
-        })
-    }
-}
-
 impl UpdateRemoteTarget {
     pub fn is_empty(&self) -> bool {
         self.collection_id.is_none()
@@ -778,68 +521,6 @@ impl UpdateRemoteTarget {
             && self.allowed_subject_types.is_none()
             && self.timeout_ms.is_none()
             && self.enabled.is_none()
-    }
-
-    pub(crate) fn into_row(
-        self,
-        existing: &RemoteTarget,
-    ) -> Result<UpdateRemoteTargetRow, ApiError> {
-        let url_template = self
-            .url_template
-            .clone()
-            .unwrap_or_else(|| existing.url_template.clone());
-        let headers_template = self
-            .headers_template
-            .clone()
-            .unwrap_or_else(|| existing.headers_template.clone());
-        let body_template = self
-            .body_template
-            .clone()
-            .unwrap_or_else(|| existing.body_template.clone());
-        let auth_config = self
-            .auth_config
-            .clone()
-            .unwrap_or_else(|| existing.auth_config.clone());
-        let allowed_subject_types = self
-            .allowed_subject_types
-            .clone()
-            .unwrap_or_else(|| existing.allowed_subject_types.clone());
-        let timeout_ms = self.timeout_ms.unwrap_or(existing.timeout_ms);
-        let class_id = match self.class_id {
-            Some(Some(class_id)) => Some(class_id.id()),
-            Some(None) => None,
-            None => existing.class_id,
-        };
-
-        validate_target_parts(
-            class_id,
-            &url_template,
-            &headers_template,
-            body_template.as_deref(),
-            &auth_config,
-            &allowed_subject_types,
-            timeout_ms,
-        )?;
-
-        Ok(UpdateRemoteTargetRow {
-            collection_id: self.collection_id.map(CollectionID::id),
-            class_id: self
-                .class_id
-                .map(|class_id| class_id.map(HubuumClassID::id)),
-            name: self.name,
-            description: self.description,
-            method: self.method.map(|method| method.as_str().to_string()),
-            url_template: self.url_template,
-            headers_template: self.headers_template,
-            body_template: self.body_template,
-            auth_config: self.auth_config.map(serde_json::to_value).transpose()?,
-            allowed_subject_types: self
-                .allowed_subject_types
-                .map(serde_json::to_value)
-                .transpose()?,
-            timeout_ms: self.timeout_ms,
-            enabled: self.enabled,
-        })
     }
 }
 
@@ -917,15 +598,15 @@ impl RemoteTarget {
 
 pub async fn authorize_remote_invocation<C>(
     backend: &C,
-    actor: &impl crate::db::traits::authz::AuthzSubject,
+    actor: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
     target: &RemoteTarget,
     subject: &RemoteInvocationSubject,
 ) -> Result<ResolvedRemoteInvocationSubject, ApiError>
 where
-    C: crate::traits::BackendContext + ?Sized,
+    C: crate::permissions::AuthorizationContext,
 {
-    let pool = backend.db_pool();
+    let pool = backend;
     let target_collection_id = CollectionID::new(target.collection_id)?;
     crate::can!(
         backend,
@@ -980,7 +661,7 @@ where
 impl RemoteInvocationSubject {
     pub async fn resolve(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
         match self {
             Self::Collection { collection_id } => {
@@ -1239,54 +920,6 @@ impl CursorPaginated for RemoteTarget {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for RemoteTarget {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "remote_targets.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "remote_targets.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "remote_targets.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CollectionId => CursorSqlField {
-                column: "remote_targets.collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "remote_targets.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "remote_targets.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "remote_targets.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for remote targets",
-                    field
-                )));
-            }
-        })
     }
 }
 
@@ -1559,7 +1192,8 @@ mod tests {
 
     #[test]
     fn remote_call_result_debug_redacts_url_headers_and_body() {
-        let result = NewRemoteCallResult {
+        let result = RemoteCallResult {
+            id: 1,
             task_id: 1,
             target_id: Some(2),
             subject_type: "object".to_string(),
@@ -1574,6 +1208,9 @@ mod tests {
             duration_ms: 12,
             success: true,
             error: Some("result-error-secret".to_string()),
+            created_at: chrono::NaiveDate::from_ymd_opt(2026, 8, 10)
+                .and_then(|date| date.and_hms_opt(12, 0, 0))
+                .expect("static test timestamp must be valid"),
         };
 
         let debug = format!("{result:?}");
@@ -1587,8 +1224,7 @@ mod tests {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, ToSchema)]
-#[diesel(table_name = crate::schema::remote_targets_history)]
+#[derive(serde::Serialize, Clone, ToSchema)]
 pub struct RemoteTargetHistory {
     pub id: i32,
     pub collection_id: i32,
@@ -1639,4 +1275,31 @@ impl_redacted_remote_target_debug!(
     task_id,
 );
 
-crate::impl_history_pagination!(RemoteTargetHistory, "remote_targets_history");
+impl CursorPaginated for RemoteTargetHistory {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::HistoryId | FilterField::Revision)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::HistoryId => CursorValue::Integer(self.history_id),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}

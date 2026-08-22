@@ -20,7 +20,10 @@ Every log record includes:
 
 Request-scoped records also include `request_id` and, when accepted from the client, `correlation_id`. Authenticated requests record `principal_id` on the request span after bearer token resolution.
 
-The server emits one `server startup` record at `INFO` after binding succeeds. It includes the package version, build Git SHA, bind address, TLS state, worker counts, database and authorization backends, log format and level, and the number of enabled event sinks. Release and container builds populate `git_sha`; local builds report `unknown` unless `HUBUUM_BUILD_GIT_SHA` is set while compiling.
+The server emits one `server startup` record at `INFO` after binding succeeds. It includes the package version, build Git SHA, bind address, TLS state, worker counts, storage and authorization backends, log format and level, and the number of enabled event sinks. Release and container builds populate `git_sha`; local builds report `unknown` unless `HUBUUM_BUILD_GIT_SHA` is set while compiling.
+
+`db_backend` remains as a compatibility alias for `storage_backend` while the
+only selectable implementation is PostgreSQL.
 
 ## Request Logs
 
@@ -74,6 +77,24 @@ Authorization decision logs use:
 | Denial | `WARN` |
 
 Authorization records include `event_type=authorization`, `decision`, `principal_id`, requested `permissions` as a JSON array, derived `action` and `entity_type` when the requested permissions share them, nullable `collection_id` and `collection_count`, and a short `reason`.
+
+## Storage Diagnostics
+
+Logical storage calls run inside a `storage_operation` debug span with the
+bounded fields `backend`, `capability`, and `operation`. Successful calls emit
+`storage operation complete` at `DEBUG`. Expected domain outcomes such as not
+found, conflict, validation, and stale preconditions emit
+`storage operation rejected` at `DEBUG`. Database, unavailable, and internal
+failures emit `storage operation failed` at `WARN`.
+
+PostgreSQL pool checkout and helper boundaries use the corresponding
+`storage backend connection acquired`, `storage backend operation complete`,
+and failure events. These include the bounded `caller` and `operation` fields,
+plus elapsed milliseconds. They do not include SQL text or arguments.
+
+Use the lifecycle events to debug application use cases and the PostgreSQL
+events to debug connection or transaction behavior. A lifecycle call may
+contain more than one implementation-level operation.
 
 ## Sensitive Data Rules
 

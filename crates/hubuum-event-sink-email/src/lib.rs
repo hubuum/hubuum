@@ -321,29 +321,29 @@ mod tests {
     }
     fn envelope() -> EventEnvelope {
         EventEnvelope {
-            id: 42,
+            id: hubuum_events_core::EventSequence::new(42).unwrap(),
             event_id: Uuid::new_v4(),
             occurred_at: Utc::now().naive_utc(),
             entity_type: "collection".to_string(),
-            entity_id: Some(7),
+            entity_id: Some(hubuum_events_core::EventEntityId::new(7).unwrap()),
             entity_name: Some("example".to_string()),
-            collection_id: Some(7),
+            collection_id: Some(hubuum_events_core::CollectionId::new(7).unwrap()),
             action: "created".to_string(),
-            actor_user_id: Some(1),
+            actor_user_id: Some(hubuum_events_core::PrincipalId::new(1).unwrap()),
             actor_kind: "user".to_string(),
             provenance: hubuum_events_core::Provenance {
                 actor: hubuum_events_core::ProvenanceActor {
                     kind: Some("user".to_string()),
                     principal: Some(hubuum_events_core::ProvenancePrincipal {
-                        principal_id: 1,
+                        principal_id: hubuum_events_core::PrincipalId::new(1).unwrap(),
                         name: Some("admin".to_string()),
                     }),
                 },
                 initiator: Some(hubuum_events_core::ProvenancePrincipal {
-                    principal_id: 1,
+                    principal_id: hubuum_events_core::PrincipalId::new(1).unwrap(),
                     name: Some("admin".to_string()),
                 }),
-                task_id: Some(99),
+                task_id: Some(hubuum_events_core::TaskId::new(99).unwrap()),
             },
             request_id: None,
             correlation_id: Some("corr-1".to_string()),

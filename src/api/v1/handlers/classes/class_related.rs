@@ -19,15 +19,16 @@ use super::*;
 #[get("/{class_id}/related/classes")]
 #[get("/{class_id}/related/classes/")]
 async fn get_related_classes(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
-    read_related_classes(pool, requestor, target, req).await
+    read_related_classes(context, requestor, target, req).await
 }
 
 #[utoipa::path(
@@ -46,19 +47,20 @@ async fn get_related_classes(
 )]
 #[get("/by-name/{class_name}/related/classes")]
 async fn get_related_classes_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    read_related_classes(pool, requestor, target, req).await
+    read_related_classes(context, requestor, target, req).await
 }
 
 async fn read_related_classes(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     target: ResolvedClassTarget,
     req: HttpRequest,
@@ -67,7 +69,7 @@ async fn read_related_classes(
     let params = parse_query_parameter(req.query_string())?;
     let class = target.class();
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::ReadClass],
@@ -76,7 +78,7 @@ async fn read_related_classes(
 
     let search_params = prepare_db_pagination::<ClassGraphRow>(&params)?;
     let (classes, total_count) = user
-        .classes_related_to_page(&pool, class.clone(), search_params, requestor.scopes())
+        .classes_related_to_page(&context, class.clone(), search_params, requestor.scopes())
         .await?;
 
     ApiResponse::mapped_paginated(classes, total_count, &params, |page| {
@@ -105,7 +107,7 @@ async fn read_related_classes(
 #[post("/{class_id}/relations")]
 #[post("/{class_id}/relations/")]
 async fn create_class_relation(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     relation_data: web::Json<NewHubuumClassRelationFromClass>,
@@ -117,17 +119,21 @@ async fn create_class_relation(
 
     debug!(
         message = "Creating class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         from_class = class_id.id(),
         to_class = partial_relation.to_hubuum_class_id,
     );
 
     let relation = partial_relation.into_relation(class_id);
 
-    let resource = relation.to_resource_ref(&pool).await?;
+    let prepared = context
+        .class_relation_service()
+        .prepare_create(relation)
+        .await?;
+    let resource = prepared.authorization_resource();
     authorize_resources(
-        pool.permission_backend(),
-        &pool,
+        context.permission_backend(),
+        &context,
         user,
         requestor.scopes(),
         vec![Permissions::CreateClassRelation],
@@ -136,7 +142,11 @@ async fn create_class_relation(
     .await?;
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, &event_context).await?;
+    let target = context
+        .class_relation_service()
+        .create(&prepared, &event_context)
+        .await?;
+    let relation = target.relation().clone();
 
     let location = api_locations::class_relation(class_id.id(), relation.id())?;
     ApiResponse::created_revisioned(relation, location)
@@ -159,28 +169,29 @@ async fn create_class_relation(
 )]
 #[get("/{class_id}/relations/{relation_id}")]
 async fn get_class_relation(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, relation_id) = paths.into_inner();
-    let relation = relation_id.instance(&pool).await?;
-    if relation.from_hubuum_class_id != class_id.id()
-        && relation.to_hubuum_class_id != class_id.id()
-    {
+    let target = context
+        .class_relation_service()
+        .resolve(relation_id)
+        .await?;
+    if !target.contains_class(class_id) {
         return Err(ApiError::NotFound("Class relation not found".to_string()));
     }
-    let resource = relation.to_resource_ref(&pool).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
-        pool.permission_backend(),
-        &pool,
+        context.permission_backend(),
+        &context,
         &requestor.principal,
         requestor.scopes(),
         vec![Permissions::ReadClassRelation],
         vec![resource],
     )
     .await?;
-    ApiResponse::ok_revisioned(relation)
+    ApiResponse::ok_revisioned(target.relation().clone())
 }
 
 #[utoipa::path(
@@ -201,7 +212,7 @@ async fn get_class_relation(
 )]
 #[delete("/{class_id}/relations/{relation_id}")]
 async fn delete_class_relation(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
     req: HttpRequest,
@@ -211,17 +222,21 @@ async fn delete_class_relation(
 
     debug!(
         message = "Deleting class relation",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         relation_id = relation_id.id()
     );
 
-    let relation = relation_id.instance(&pool).await?;
+    let target = context
+        .class_relation_service()
+        .resolve(relation_id)
+        .await?;
+    let relation = target.relation();
 
-    let resource = relation.to_resource_ref(&pool).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
-        pool.permission_backend(),
-        &pool,
+        context.permission_backend(),
+        &context,
         user,
         requestor.scopes(),
         vec![Permissions::DeleteClassRelation],
@@ -229,19 +244,23 @@ async fn delete_class_relation(
     )
     .await?;
 
-    if relation.from_hubuum_class_id == class_id.id()
-        || relation.to_hubuum_class_id == class_id.id()
-    {
+    if target.contains_class(class_id) {
         let etag = relation.entity_tag()?;
         let precondition = revision_precondition_for_tag(&req, &etag)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context))
-            .await?;
+        with_revision_precondition(
+            &context,
+            precondition,
+            context
+                .class_relation_service()
+                .delete(&target, &event_context),
+        )
+        .await?;
         Ok(ApiResponse::no_content_with_etag(etag))
     } else {
         info!(
             message = "Relation membership mismatch when deleting relation: class does not match either endpoint",
-            user_id = user.id(),
+            user_id = user.id().id(),
             class_id = class_id.id(),
             relation_id = relation_id.id(),
             relation_from_class = relation.from_hubuum_class_id,
@@ -274,15 +293,16 @@ async fn delete_class_relation(
 #[get("/{class_id}/related/relations")]
 #[get("/{class_id}/related/relations/")]
 async fn get_related_class_relations(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
-    read_related_class_relations(pool, requestor, target, req).await
+    read_related_class_relations(context, requestor, target, req).await
 }
 
 #[utoipa::path(
@@ -301,19 +321,20 @@ async fn get_related_class_relations(
 )]
 #[get("/by-name/{class_name}/related/relations")]
 async fn get_related_class_relations_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    read_related_class_relations(pool, requestor, target, req).await
+    read_related_class_relations(context, requestor, target, req).await
 }
 
 async fn read_related_class_relations(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     target: ResolvedClassTarget,
     req: HttpRequest,
@@ -322,7 +343,7 @@ async fn read_related_class_relations(
     let params = parse_query_parameter(req.query_string())?;
     let class = target.class();
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::ReadClass],
@@ -331,41 +352,47 @@ async fn read_related_class_relations(
 
     debug!(
         message = "Getting direct relations touching class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class.id
     );
 
-    let (relations, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
+    let (relations, total_count) = if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
         let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-        user.class_relations_touching_page(&pool, class.clone(), search_params, requestor.scopes())
-            .await?
+        user.class_relations_touching_page(
+            &context,
+            class.clone(),
+            search_params,
+            requestor.scopes(),
+        )
+        .await?
     } else {
-        let mut required = params.filters.permissions()?;
+        let mut required = params.filters().permissions()?;
         required.ensure_contains(&[Permissions::ReadClassRelation]);
         let required = required.iter().copied().collect::<Vec<_>>();
         if !scope_allows(requestor.scopes(), &required) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
-        let (candidates, _) = user
-            .class_relations_touching_page_from_backend_with_admin_status(
-                &pool,
-                class.clone(),
-                candidate_options,
-                true,
-                None,
-            )
-            .await?;
-        let resources = class_relation_authorization_resources(&pool, &candidates)
+        candidate_options.set_include_total(false);
+        let (candidates, _) = relation_queries::list_class_relations_touching(
+            &context,
+            relation_queries::RelationAccess::new(user.id().id(), true, None),
+            class.id,
+            candidate_options,
+        )
+        .await?;
+        let resources = class_relation_authorization_resources(&context, &candidates)
             .await?
             .into_iter()
             .map(|resource| (resource.id, resource))
             .collect::<HashMap<_, _>>();
-        let principal = PrincipalRef::load(&pool, user).await?;
+        let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
         let page = authorize_cursor_page(
-            pool.permission_backend(),
+            context.permission_backend(),
             &principal,
             candidates,
             requestor.scopes(),
@@ -403,15 +430,16 @@ async fn read_related_class_relations(
 #[get("/{class_id}/related/graph")]
 #[get("/{class_id}/related/graph/")]
 async fn get_related_class_graph(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
-    read_related_class_graph(pool, requestor, target, req).await
+    read_related_class_graph(context, requestor, target, req).await
 }
 
 #[utoipa::path(
@@ -430,19 +458,20 @@ async fn get_related_class_graph(
 )]
 #[get("/by-name/{class_name}/related/graph")]
 async fn get_related_class_graph_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    read_related_class_graph(pool, requestor, target, req).await
+    read_related_class_graph(context, requestor, target, req).await
 }
 
 async fn read_related_class_graph(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     target: ResolvedClassTarget,
     req: HttpRequest,
@@ -452,7 +481,7 @@ async fn read_related_class_graph(
         prepare_graph_query_options(parse_query_parameter(req.query_string())?)?;
     let class = target.class();
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::ReadClass],
@@ -461,7 +490,7 @@ async fn read_related_class_graph(
 
     let root_class = class_with_root_path(class);
     let connected_classes = user
-        .search_classes_related_to(&pool, class.clone(), params, requestor.scopes())
+        .search_classes_related_to(&context, class.clone(), params, requestor.scopes())
         .await?;
     ensure_graph_result_within_limit(&connected_classes, graph_limit, "classes")?;
     let mut classes = Vec::with_capacity(connected_classes.len() + 1);
@@ -470,7 +499,7 @@ async fn read_related_class_graph(
 
     let class_ids = classes.iter().map(|item| item.id).collect::<Vec<_>>();
     let relations = user
-        .search_class_relations_between_ids(&pool, &class_ids, requestor.scopes())
+        .search_class_relations_between_ids(&context, &class_ids, requestor.scopes())
         .await?;
 
     Ok(ApiResponse::new(

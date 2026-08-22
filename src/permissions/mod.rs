@@ -3,6 +3,7 @@ pub mod context;
 pub mod export;
 pub mod local;
 pub mod observability;
+mod storage;
 #[cfg(feature = "permissions-treetop")]
 pub mod treetop;
 pub mod types;
@@ -17,8 +18,15 @@ pub mod visibility;
 pub mod test_support;
 
 pub use backend::PermissionBackend;
-pub use context::AppContext;
+pub use context::{AppContext, AuthorizationContext};
 pub use local::LocalPermissionBackend;
+pub(crate) use storage::{
+    collection_from_storage as authorization_collection_from_storage,
+    effective_group_grant_from_storage as authorization_effective_group_grant_from_storage,
+    grant_from_storage, group_from_storage as authorization_group_from_storage,
+    group_grant_from_storage as authorization_group_grant_from_storage, permission_from_storage,
+    permission_to_storage,
+};
 pub use types::{
     AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
     ResourceRef,
@@ -27,15 +35,14 @@ pub use types::{
 use std::sync::Arc;
 
 use crate::config::{AppConfig, PermissionBackendKind};
-use crate::db::DbPool;
-use crate::db::traits::authz::{scope_allows, scope_allows_resources};
 use crate::errors::ApiError;
 use crate::models::{Permissions, TokenScope};
-use crate::traits::{AuthzSubject, BackendContext, PrincipalIdAccessor};
+use crate::storage::StorageHandle;
+use crate::traits::{AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resources};
 
 pub async fn authorize_resources<S>(
     backend: &dyn PermissionBackend,
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     subject: S,
     scopes: Option<&TokenScope>,
     permissions: Vec<Permissions>,
@@ -82,7 +89,7 @@ pub async fn require_unscoped_runtime_admin<C, S>(
     token_scoped: bool,
 ) -> Result<(), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: AuthorizationContext,
     S: AuthzSubject + ?Sized,
 {
     if token_scoped {
@@ -90,8 +97,7 @@ where
             "This operation requires an unscoped runtime administrator".to_string(),
         ));
     }
-
-    let pool = context.db_pool();
+    let pool = context;
     let is_admin = match context.permission_backend() {
         Some(backend) => {
             let principal = PrincipalRef::load(pool, subject).await?;
@@ -112,13 +118,13 @@ where
 /// Construct the permission backend selected by the active config.
 /// Called once at startup (from `main.rs` in Task 2.5) and once per test
 /// fixture that needs an `AppContext`.
-pub async fn build_permission_backend(
+pub(crate) async fn build_permission_backend(
     cfg: &AppConfig,
-    pool: DbPool,
+    storage: StorageHandle,
 ) -> Result<Arc<dyn PermissionBackend>, ApiError> {
     match cfg.permission_backend {
         PermissionBackendKind::Local => Ok(Arc::new(LocalPermissionBackend::new(
-            pool,
+            storage,
             cfg.admin_groupname.clone(),
         ))),
 
@@ -127,7 +133,7 @@ pub async fn build_permission_backend(
             let url = cfg.treetop_url.as_deref().ok_or_else(|| {
                 ApiError::BadRequest("HUBUUM_TREETOP_URL is required".to_string())
             })?;
-            let backend = treetop::TreetopPermissionBackend::connect(url, cfg, pool).await?;
+            let backend = treetop::TreetopPermissionBackend::connect(url, cfg, storage).await?;
             Ok(Arc::new(backend))
         }
 

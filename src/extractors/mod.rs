@@ -1,23 +1,22 @@
-use crate::db::DbPool;
-use crate::db::traits::Status;
-use crate::db::traits::authz::{AuthzSubject, load_token_scope};
-use crate::db::traits::principal::load_principal_with_user;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
-use crate::models::principal::{Principal, load_principal_by_id};
-use crate::models::token::{PrincipalToken, Token};
+use crate::models::token::Token;
 use crate::models::user::User;
 use crate::models::{
-    MAX_OBJECT_DATA_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument,
-    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenScope,
+    CollectionID, HubuumClassID, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
+    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, Permissions, PrincipalKind,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope,
+    TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::storage::{
+    AuthenticatedToken, AuthenticationHuman, AuthenticationPrincipal, AuthenticationResourceScope,
+    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery, StorageContext,
+    storage_handle,
+};
 
 use actix_web::{
-    FromRequest, HttpMessage, HttpRequest,
-    dev::Payload,
-    error::JsonPayloadError,
-    web::{Data, JsonBody},
+    FromRequest, HttpMessage, HttpRequest, dev::Payload, error::JsonPayloadError, web::JsonBody,
 };
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
@@ -185,8 +184,8 @@ fn patch_payload_error(error: JsonPayloadError, context: PatchPayloadErrorContex
 pub struct Authenticated {
     /// The raw bearer token (e.g. for current-token logout).
     pub token: Token,
-    pub token_meta: PrincipalToken,
-    pub principal: Principal,
+    pub token_meta: AuthenticatedToken,
+    pub principal: AuthenticationPrincipal,
     /// `None` = unscoped (full principal authority); `Some(..)` = the token's
     /// permission and/or resource narrowing boundary.
     pub scope: Option<TokenScope>,
@@ -230,7 +229,7 @@ pub trait AccessEventContext {
 
 impl AccessEventContext for Authenticated {
     fn event_context(&self, req: &HttpRequest) -> EventContext {
-        user_event_context(req, self.principal.id)
+        user_event_context(req, self.principal.id().id())
     }
 }
 
@@ -261,7 +260,14 @@ impl AccessEventContext for ManagementAccess {
 fn user_event_context(req: &HttpRequest, actor_user_id: i32) -> EventContext {
     RequestProvenance::from_request(req)
         .map(|provenance| provenance.user_event_context(actor_user_id))
-        .unwrap_or_else(|| EventContext::user(actor_user_id, None, None))
+        .unwrap_or_else(|| {
+            EventContext::user(
+                hubuum_domain::PrincipalId::new(actor_user_id)
+                    .expect("authenticated principal id must be positive"),
+                None,
+                None,
+            )
+        })
 }
 
 fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
@@ -277,42 +283,45 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
         .ok_or_else(|| ApiError::Unauthorized("No token provided".to_string()))
 }
 
-fn pool_from_req(req: &HttpRequest) -> Result<Data<DbPool>, ApiError> {
-    req.app_data::<Data<DbPool>>()
-        .cloned()
-        .ok_or_else(|| ApiError::InternalServerError("Pool not found".to_string()))
+fn backend_from_req(req: &HttpRequest) -> Result<AppContext, ApiError> {
+    AppContext::from_http_request(req)
 }
 
-fn permission_context_from_req(req: &HttpRequest) -> Option<Data<AppContext>> {
-    req.app_data::<Data<AppContext>>().cloned()
-}
-
-async fn selected_backend_is_admin(
-    context: Option<&AppContext>,
-    pool: &DbPool,
-    user: &User,
-) -> Result<bool, ApiError> {
-    let Some(context) = context else {
-        return user.is_admin(pool).await;
-    };
-    let principal = PrincipalRef::load(pool, user).await?;
+async fn selected_backend_is_admin(context: &AppContext, user: &User) -> Result<bool, ApiError> {
+    let principal = PrincipalRef::load(context, user).await?;
     context.permission_backend().is_admin(&principal).await
 }
 
 /// Build the full authenticated context (accepts scoped tokens).
-async fn build_authenticated(pool: &DbPool, token: Token) -> Result<Authenticated, ApiError> {
-    let token_meta = token.is_valid(pool).await?;
-    build_authenticated_from_meta(pool, token, token_meta).await
+async fn build_authenticated(
+    backend: &impl StorageContext,
+    token: Token,
+) -> Result<Authenticated, ApiError> {
+    let token_meta =
+        crate::services::authentication::authenticate_bearer_token(backend, &token).await?;
+    build_authenticated_from_meta(backend, token, token_meta).await
 }
 
 async fn build_authenticated_from_meta(
-    pool: &DbPool,
+    backend: &impl StorageContext,
     token: Token,
-    token_meta: PrincipalToken,
+    token_meta: AuthenticatedToken,
 ) -> Result<Authenticated, ApiError> {
-    crate::auth::refresh_principal_if_needed(pool, token_meta.principal_id).await?;
-    let principal = load_principal_by_id(pool, token_meta.principal_id).await?;
-    let scope = load_token_scope(pool, &token_meta).await?;
+    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
+    let storage = storage_handle(backend);
+    let identity = storage
+        .get_authentication_identity(token_meta.principal_id())
+        .await?;
+    let (principal, _) = identity.into_parts();
+    let scope = storage
+        .get_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+            token_meta.id(),
+            token_meta.is_permission_scoped(),
+            token_meta.is_resource_scoped(),
+        ))
+        .await?
+        .map(token_scope_from_storage)
+        .transpose()?;
     Ok(Authenticated {
         token,
         token_meta,
@@ -321,7 +330,7 @@ async fn build_authenticated_from_meta(
     })
 }
 
-fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<PrincipalToken> {
+fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<AuthenticatedToken> {
     match req.extensions().get::<ResolvedAuth>() {
         Some(ResolvedAuth::Authenticated {
             token: resolved_token,
@@ -338,8 +347,8 @@ fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<PrincipalToken> {
 /// decision, so a service account (even one in the admin group, even with an
 /// unscoped token) can never act through a human/IAM extractor.
 async fn human_unscoped_user_from_meta(
-    pool: &DbPool,
-    token_meta: PrincipalToken,
+    backend: &impl StorageContext,
+    token_meta: AuthenticatedToken,
 ) -> Result<User, ApiError> {
     if token_meta.is_scoped() {
         return Err(ApiError::Forbidden(
@@ -347,23 +356,87 @@ async fn human_unscoped_user_from_meta(
         ));
     }
 
-    crate::auth::refresh_principal_if_needed(pool, token_meta.principal_id).await?;
+    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
 
-    // Single round trip: fetch the principal and (when human) its `users` row
-    // together, rather than a separate principal load followed by a user load.
-    let (principal, user) = load_principal_with_user(pool, token_meta.principal_id).await?;
+    // Single round trip: fetch the backend-neutral principal projection and,
+    // when human, a password-free human projection from the same snapshot.
+    let storage = storage_handle(backend);
+    let identity = storage
+        .get_authentication_identity(token_meta.principal_id())
+        .await?;
+    let (principal, human) = identity.into_parts();
     if !principal.is_human() {
         return Err(ApiError::Forbidden(
             "Service accounts cannot use human/management endpoints".to_string(),
         ));
     }
 
-    user.ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
+    human
+        .map(authentication_human_to_user)
+        .ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
 }
 
-async fn human_unscoped_user(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
-    let token_meta = token.is_valid(pool).await?;
-    human_unscoped_user_from_meta(pool, token_meta).await
+fn authentication_human_to_user(human: AuthenticationHuman) -> User {
+    User {
+        id: human.id().id(),
+        kind: PrincipalKind::Human,
+        password: None,
+        proper_name: human.proper_name().map(str::to_string),
+        email: human.email().map(str::to_string),
+        created_at: human.created_at().naive_utc(),
+        updated_at: human.updated_at().naive_utc(),
+        anonymized_at: human.anonymized_at().map(|timestamp| timestamp.naive_utc()),
+    }
+}
+
+fn token_scope_from_storage(scope: AuthenticationTokenScope) -> Result<TokenScope, ApiError> {
+    let (permissions, resources) = scope.into_parts();
+    let permissions = permissions
+        .map(|permissions| {
+            permissions
+                .iter()
+                .map(|permission| Permissions::from_string(permission))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let resources = resources
+        .map(authentication_resources_from_storage)
+        .transpose()?;
+
+    TokenScope::from_stored_parts(permissions, resources)
+}
+
+fn authentication_resources_from_storage(
+    resources: AuthenticationResourceScope,
+) -> Result<Vec<TokenResourceScope>, ApiError> {
+    let (collection_ids, class_ids, object_ids) = resources.into_parts();
+    collection_ids
+        .into_iter()
+        .map(|id| {
+            CollectionID::new(id.id())
+                .map(TokenResourceScope::Collection)
+                .map_err(ApiError::from)
+        })
+        .chain(class_ids.into_iter().map(|id| {
+            HubuumClassID::new(id.id())
+                .map(TokenResourceScope::Class)
+                .map_err(ApiError::from)
+        }))
+        .chain(object_ids.into_iter().map(|id| {
+            HubuumObjectID::new(id.id())
+                .map(TokenResourceScope::Object)
+                .map_err(ApiError::from)
+        }))
+        .collect()
+}
+
+async fn human_unscoped_user(
+    backend: &impl StorageContext,
+    token: &Token,
+) -> Result<User, ApiError> {
+    let token_meta =
+        crate::services::authentication::authenticate_bearer_token(backend, token).await?;
+    human_unscoped_user_from_meta(backend, token_meta).await
 }
 
 /// Resolve the self-target principal id from the path (`principal_id` preferred,
@@ -382,18 +455,20 @@ impl FromRequest for Authenticated {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = pool_from_req(req);
+        let backend = backend_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
             .ok()
             .and_then(|token| resolved_auth(req, token));
         async move {
-            let pool = pool?;
+            let backend = backend?;
             let token = token_result?;
             match token_meta {
-                Some(token_meta) => build_authenticated_from_meta(&pool, token, token_meta).await,
-                None => build_authenticated(&pool, token).await,
+                Some(token_meta) => {
+                    build_authenticated_from_meta(&backend, token, token_meta).await
+                }
+                None => build_authenticated(&backend, token).await,
             }
         }
         .boxed_local()
@@ -405,18 +480,18 @@ impl FromRequest for UserAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = pool_from_req(req);
+        let backend = backend_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
             .ok()
             .and_then(|token| resolved_auth(req, token));
         async move {
-            let pool = pool?;
+            let backend = backend?;
             let token = token_result?;
             let user = match token_meta {
-                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
-                None => human_unscoped_user(&pool, &token).await?,
+                Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
+                None => human_unscoped_user(&backend, &token).await?,
             };
             Ok(UserAccess { user })
         }
@@ -429,18 +504,18 @@ impl FromRequest for ManagementAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = pool_from_req(req);
+        let backend = backend_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
             .ok()
             .and_then(|token| resolved_auth(req, token));
         async move {
-            let pool = pool?;
+            let backend = backend?;
             let token = token_result?;
             let user = match token_meta {
-                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
-                None => human_unscoped_user(&pool, &token).await?,
+                Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
+                None => human_unscoped_user(&backend, &token).await?,
             };
             Ok(ManagementAccess { user })
         }
@@ -453,28 +528,21 @@ impl FromRequest for AdminAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = pool_from_req(req);
-        let permission_context = permission_context_from_req(req);
+        let backend = backend_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
             .ok()
             .and_then(|token| resolved_auth(req, token));
         async move {
-            let pool = pool?;
+            let backend = backend?;
             let token = token_result?;
             let user = match token_meta {
-                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
-                None => human_unscoped_user(&pool, &token).await?,
+                Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
+                None => human_unscoped_user(&backend, &token).await?,
             };
 
-            if selected_backend_is_admin(
-                permission_context.as_ref().map(|context| context.get_ref()),
-                &pool,
-                &user,
-            )
-            .await?
-            {
+            if selected_backend_is_admin(&backend, &user).await? {
                 Ok(AdminAccess { user })
             } else {
                 Err(ApiError::Forbidden("Permission denied".to_string()))
@@ -489,8 +557,7 @@ impl FromRequest for AdminOrSelfAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = pool_from_req(req);
-        let permission_context = permission_context_from_req(req);
+        let backend = backend_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
@@ -499,22 +566,15 @@ impl FromRequest for AdminOrSelfAccess {
         let path_info = req.match_info().clone();
 
         async move {
-            let pool = pool?;
+            let backend = backend?;
             let token = token_result?;
             let user = match token_meta {
-                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
-                None => human_unscoped_user(&pool, &token).await?,
+                Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
+                None => human_unscoped_user(&backend, &token).await?,
             };
             let target_id = self_target_id(&path_info)?;
 
-            if selected_backend_is_admin(
-                permission_context.as_ref().map(|context| context.get_ref()),
-                &pool,
-                &user,
-            )
-            .await?
-                || user.id == target_id
-            {
+            if selected_backend_is_admin(&backend, &user).await? || user.id == target_id {
                 Ok(AdminOrSelfAccess { user })
             } else {
                 debug! {

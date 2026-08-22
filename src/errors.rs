@@ -1,21 +1,23 @@
 use actix_web::{
     HttpRequest, HttpResponse, ResponseError, error::JsonPayloadError, http::StatusCode,
 };
-use diesel::result::{DatabaseErrorKind, Error as DieselError};
-use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
 use std::num::ParseIntError;
 
-use tracing::{debug, error};
+use tracing::error;
 
+use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevision, ResourceRevisionError};
+use hubuum_events_core::{EventCatalogError, EventIdentifierError};
+
+use crate::models::TokenPolicyError;
 use crate::observability::metrics;
+use crate::storage::{StorageError, StorageErrorKind};
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
 const PUBLIC_PERMISSION_BACKEND_UNAVAILABLE: &str = "Permission backend temporarily unavailable";
-const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
 
 // Exit codes for startup/initialization failures.
 // These help shell scripts and orchestration systems determine the failure mode.
@@ -72,6 +74,7 @@ pub enum ApiError {
     DatabaseError(String),
     Conflict(String),
     PreconditionFailed(String, Option<String>),
+    RevisionConflict(String, ResourceRevision),
     TooManyRequests(String),
     ServiceUnavailable(String),
     NotFound(String),
@@ -96,6 +99,7 @@ impl ApiError {
             ApiError::DatabaseError(_) => "database_error",
             ApiError::Conflict(_) => "conflict",
             ApiError::PreconditionFailed(_, _) => "precondition_failed",
+            ApiError::RevisionConflict(_, _) => "revision_conflict",
             ApiError::TooManyRequests(_) => "too_many_requests",
             ApiError::ServiceUnavailable(_) => "service_unavailable",
             ApiError::NotImplemented(_) => "not_implemented",
@@ -148,6 +152,7 @@ impl ApiError {
             | ApiError::PayloadTooLarge(message)
             | ApiError::Conflict(message)
             | ApiError::PreconditionFailed(message, _)
+            | ApiError::RevisionConflict(message, _)
             | ApiError::TooManyRequests(message)
             | ApiError::NotFound(message)
             | ApiError::Gone(message)
@@ -160,6 +165,84 @@ impl ApiError {
     }
 }
 
+impl From<StorageError> for ApiError {
+    fn from(error: StorageError) -> Self {
+        let (kind, message, current_revision) = error.into_parts();
+        match kind {
+            StorageErrorKind::AuthorizationUnavailable => {
+                Self::PermissionBackendUnavailable(message)
+            }
+            StorageErrorKind::InvalidInput => Self::BadRequest(message),
+            StorageErrorKind::Conflict => Self::Conflict(message),
+            StorageErrorKind::Backend => Self::DatabaseError(message),
+            StorageErrorKind::PermissionDenied => Self::Forbidden(message),
+            StorageErrorKind::Internal => Self::InternalServerError(message),
+            StorageErrorKind::NotFound => Self::NotFound(message),
+            StorageErrorKind::InputTooLarge => Self::PayloadTooLarge(message),
+            StorageErrorKind::RevisionConflict => Self::RevisionConflict(
+                message,
+                current_revision.expect("revision conflicts always carry a current revision"),
+            ),
+            StorageErrorKind::PreconditionFailed => match current_revision {
+                Some(current_revision) => Self::RevisionConflict(message, current_revision),
+                None => Self::PreconditionFailed(message, None),
+            },
+            StorageErrorKind::RateLimited => Self::TooManyRequests(message),
+            StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
+            StorageErrorKind::AuthenticationRequired => Self::Unauthorized(message),
+            StorageErrorKind::ValidationFailed => Self::ValidationError(message),
+        }
+    }
+}
+
+impl From<TokenPolicyError> for ApiError {
+    fn from(error: TokenPolicyError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<EventPolicyError> for ApiError {
+    fn from(error: EventPolicyError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<EventCatalogError> for ApiError {
+    fn from(error: EventCatalogError) -> Self {
+        match error {
+            EventCatalogError::InvalidActionForType { .. } => {
+                Self::ValidationError(error.to_string())
+            }
+            _ => Self::BadRequest(error.to_string()),
+        }
+    }
+}
+
+impl From<EventIdentifierError> for ApiError {
+    fn from(error: EventIdentifierError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<ResourceRevisionError> for ApiError {
+    fn from(error: ResourceRevisionError) -> Self {
+        match error {
+            ResourceRevisionError::NonPositive => {
+                Self::BadRequest("Resource revision must be greater than zero".to_string())
+            }
+            ResourceRevisionError::Overflow => Self::Conflict(
+                "Resource revision cannot advance beyond the maximum 64-bit value".to_string(),
+            ),
+        }
+    }
+}
+
+impl From<PositiveIdError> for ApiError {
+    fn from(error: PositiveIdError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -168,6 +251,7 @@ impl fmt::Display for ApiError {
             ApiError::Gone(message) => write!(f, "{message}"),
             ApiError::Conflict(message) => write!(f, "{message}"),
             ApiError::PreconditionFailed(message, _) => write!(f, "{message}"),
+            ApiError::RevisionConflict(message, _) => write!(f, "{message}"),
             ApiError::TooManyRequests(message) => write!(f, "{message}"),
             ApiError::ServiceUnavailable(message) => write!(f, "{message}"),
             ApiError::NotImplemented(message) => write!(f, "{message}"),
@@ -206,6 +290,16 @@ impl ResponseError for ApiError {
                     "reason": "stale_resource",
                     "message": message,
                     "guidance": "Refetch the canonical resource and retry with its current ETag"
+                }))
+            }
+            ApiError::RevisionConflict(message, current_revision) => {
+                metrics::revision_condition("stale");
+                HttpResponse::PreconditionFailed().json(json!({
+                    "error": "Precondition Failed",
+                    "reason": "stale_resource",
+                    "message": message,
+                    "guidance": "Refetch the canonical resource and retry with its current ETag",
+                    "current_revision": current_revision.get()
                 }))
             }
             ApiError::TooManyRequests(message) => HttpResponse::TooManyRequests()
@@ -259,6 +353,7 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,
+            ApiError::RevisionConflict(_, _) => StatusCode::PRECONDITION_FAILED,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
@@ -303,75 +398,10 @@ impl From<argon2::Error> for ApiError {
     }
 }
 
-impl From<PoolError> for ApiError {
-    fn from(e: PoolError) -> Self {
-        error!(message = "Unable to get a connection from the pool", error = ?e);
-        ApiError::DbConnectionError(e.to_string())
-    }
-}
-
 impl From<ParseIntError> for ApiError {
     fn from(e: ParseIntError) -> Self {
         error!(message = "Error parsing integer", error = ?e);
         ApiError::BadRequest(e.to_string())
-    }
-}
-
-impl From<DieselError> for ApiError {
-    fn from(e: DieselError) -> Self {
-        match e {
-            DieselError::NotFound => {
-                let message = "Entity not found".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::NotFound(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-                let message = "Unique constraint not met".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::Conflict(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
-                let message = "Attempt to associate to a non-existent entity".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::NotFound(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
-                if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
-                    let message = info.message().to_string();
-                    debug!(message = message, error = ?e);
-                    return ApiError::Conflict(message);
-                }
-                let message = "Check constraint not met".to_string();
-                debug!(message = message, error = ?e);
-                ApiError::BadRequest(message)
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
-                let message = info.message();
-                if message == "hubuum_stale_resource" {
-                    debug!(message = "Conditional mutation rejected as stale");
-                    return ApiError::PreconditionFailed(
-                        "The resource changed since the supplied validator was issued".to_string(),
-                        None,
-                    );
-                }
-                if message.contains("resource revision")
-                    || message.contains("revision advancement")
-                    || message.contains("caller-supplied resource revision")
-                {
-                    metrics::revision_condition("invariant_failure");
-                }
-                if message.starts_with("Invalid object relation:") {
-                    debug!(message = message, error = ?e);
-                    return ApiError::BadRequest(message.to_string());
-                }
-                error!(message = "Database error", error = ?e);
-                ApiError::DatabaseError(e.to_string())
-            }
-            _ => {
-                error!(message = "Database error", error = ?e);
-                ApiError::DatabaseError(e.to_string())
-            }
-        }
     }
 }
 
@@ -431,6 +461,66 @@ mod tests {
     }
 
     #[test]
+    fn storage_errors_preserve_public_failure_categories() {
+        for (error, expected_class) in [
+            (
+                StorageError::authorization_unavailable("policy unavailable"),
+                "permission_backend_unavailable",
+            ),
+            (StorageError::invalid_input("invalid move"), "bad_request"),
+            (
+                StorageError::conflict("collection has children"),
+                "conflict",
+            ),
+            (
+                StorageError::permission_denied("access denied"),
+                "forbidden",
+            ),
+            (StorageError::not_found("collection missing"), "not_found"),
+            (
+                StorageError::validation_failed("object schema mismatch"),
+                "validation_error",
+            ),
+            (
+                StorageError::input_too_large("object data exceeds its limit"),
+                "payload_too_large",
+            ),
+            (
+                StorageError::revision_conflict(
+                    "stale collection",
+                    hubuum_domain::ResourceRevision::new(2).unwrap(),
+                ),
+                "revision_conflict",
+            ),
+            (
+                StorageError::rate_limited("task capacity reached"),
+                "too_many_requests",
+            ),
+            (
+                StorageError::authentication_required("login required"),
+                "unauthorized",
+            ),
+        ] {
+            assert_eq!(ApiError::from(error).class(), expected_class);
+        }
+    }
+
+    #[actix_web::test]
+    async fn revision_conflicts_preserve_the_authoritative_revision() {
+        use actix_web::body::to_bytes;
+
+        let error =
+            StorageError::revision_conflict("stale collection", ResourceRevision::new(7).unwrap());
+        let response = ApiError::from(error).error_response();
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["reason"], "stale_resource");
+        assert_eq!(body["current_revision"], 7);
+    }
+
+    #[test]
     fn test_fatal_error_type_signature() {
         // This test verifies that fatal_error has the correct type signature
         // and can be called with expected parameters (compile-time check)
@@ -439,31 +529,6 @@ mod tests {
         }
 
         // We don't actually call it (would exit), just verify it compiles
-    }
-
-    #[tokio::test]
-    async fn test_api_error_from_pool_error() {
-        let pool = crate::db::init_pool("postgres://invalid:5432/nonexistent", 1);
-        let result = crate::db::with_connection(&pool, async |_conn| Ok::<(), ApiError>(())).await;
-        match result {
-            Err(ApiError::DbConnectionError(_)) => {}
-            Err(other) => panic!("Expected DbConnectionError from pool error, got: {other:?}"),
-            Ok(_) => panic!("Expected pool connection to fail"),
-        }
-    }
-
-    #[test]
-    fn test_api_error_from_diesel_not_found() {
-        // Test that Diesel NotFound error converts correctly
-        let diesel_error = DieselError::NotFound;
-        let api_error = ApiError::from(diesel_error);
-
-        match api_error {
-            ApiError::NotFound(_) => {
-                // Expected
-            }
-            _ => panic!("Expected NotFound error, got: {:?}", api_error),
-        }
     }
 
     #[test]

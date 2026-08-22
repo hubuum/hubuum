@@ -10,14 +10,18 @@ use crate::config::{
     DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
 };
-use crate::db::traits::event_fanout::process_event_fanout_batch;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::EventFanoutSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::EventWorkerWakeupStats;
+use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
+use crate::storage::StorageContext;
+use crate::storage::{
+    EventFanoutStorage, StorageError, StorageHandle, StorageNotification,
+    spawn_storage_notification_listener, storage_handle,
+};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_LISTENER: Once = Once::new();
@@ -30,7 +34,7 @@ fn get_event_fanout_notify() -> &'static Notify {
     EVENT_FANOUT_NOTIFY.get_or_init(Notify::new)
 }
 
-fn wake_event_fanout_worker_from_postgres() {
+fn wake_event_fanout_worker_from_storage() {
     get_event_fanout_notify().notify_one();
 }
 
@@ -58,11 +62,11 @@ fn configured_event_fanout_settings() -> Result<EventFanoutSettings, ApiError> {
             DEFAULT_EVENT_FANOUT_BATCH_SIZE,
             DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
         )
-        .map_err(ApiError::BadRequest),
+        .map_err(Into::into),
     }
 }
 
-pub(super) fn fanout_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
+pub(super) fn fanout_worker_should_continue(result: &Result<usize, StorageError>) -> bool {
     match result {
         Ok(processed) => *processed > 0,
         Err(error) => {
@@ -90,7 +94,7 @@ async fn wait_for_event_fanout_wakeup(poll_interval: Duration, shutdown: &Shutdo
 }
 
 async fn event_fanout_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     settings: EventFanoutSettings,
     poll_interval: Duration,
     shutdown: ShutdownSignal,
@@ -100,9 +104,10 @@ async fn event_fanout_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_db_call_site(
-                DbCallSite::EventFanout,
-                process_event_fanout_batch(&pool, settings),
+            result = with_storage_call_site(
+                &pool,
+                StorageCallSite::EventFanout,
+                pool.process_event_fanout_batch(settings),
             ) => result,
         };
         drop(activity);
@@ -116,7 +121,7 @@ async fn event_fanout_worker_loop(
 }
 
 fn spawn_event_fanout_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     settings: EventFanoutSettings,
     poll_interval: Duration,
     worker_index: usize,
@@ -142,7 +147,11 @@ fn spawn_event_fanout_worker_loop(
     );
 }
 
-pub fn ensure_event_fanout_worker_running(pool: DbPool) {
+pub fn ensure_event_fanout_worker_running<C>(backend: C)
+where
+    C: StorageContext,
+{
+    let pool = storage_handle(&backend);
     let worker_count = configured_event_fanout_worker_count();
     if worker_count == 0 {
         return;
@@ -158,10 +167,11 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
     };
 
     EVENT_FANOUT_LISTENER.call_once(|| {
-        super::pg_notify::spawn_postgres_notification_listener(
-            super::pg_notify::EVENT_FANOUT_CHANNEL,
-            "event-fanout-pg-listener",
-            wake_event_fanout_worker_from_postgres,
+        spawn_storage_notification_listener(
+            pool.clone(),
+            StorageNotification::EventFanout,
+            "event-fanout-storage-listener",
+            wake_event_fanout_worker_from_storage,
         );
     });
 
@@ -179,8 +189,11 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
     });
 }
 
-pub fn kick_event_fanout_worker(pool: DbPool) {
-    ensure_event_fanout_worker_running(pool);
+pub fn kick_event_fanout_worker<C>(backend: C)
+where
+    C: StorageContext,
+{
+    ensure_event_fanout_worker_running(backend);
     EVENT_FANOUT_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);
     metrics::event_worker_wakeup("fanout", "notifications_sent");
     get_event_fanout_notify().notify_one();
@@ -191,5 +204,25 @@ pub fn event_fanout_wakeup_stats() -> EventWorkerWakeupStats {
         notifications_sent: EVENT_FANOUT_NOTIFICATIONS_SENT.load(Ordering::Relaxed),
         notification_wakeups: EVENT_FANOUT_NOTIFICATION_WAKEUPS.load(Ordering::Relaxed),
         poll_wakeups: EVENT_FANOUT_POLL_WAKEUPS.load(Ordering::Relaxed),
+    }
+}
+
+pub(crate) fn event_fanout_worker_health() -> EventWorkerHealth {
+    let config = get_config().ok();
+    EventWorkerHealth {
+        workers_configured: configured_event_fanout_worker_count(),
+        batch_size: config
+            .as_ref()
+            .map(|config| config.event_fanout_batch_size)
+            .unwrap_or(DEFAULT_EVENT_FANOUT_BATCH_SIZE),
+        poll_interval_ms: config
+            .as_ref()
+            .map(|config| config.event_fanout_poll_interval_ms)
+            .unwrap_or(DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS),
+        lock_timeout_ms: config
+            .as_ref()
+            .map(|config| config.event_fanout_lock_timeout_ms)
+            .unwrap_or(DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS),
+        wakeups: event_fanout_wakeup_stats(),
     }
 }

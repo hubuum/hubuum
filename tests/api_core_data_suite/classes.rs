@@ -2,8 +2,6 @@
 pub mod tests {
     use std::time::Duration;
 
-    use crate::db::prelude::*;
-    use crate::db::with_transaction;
     use crate::errors::ApiError;
     use crate::events::EventContext;
     use crate::models::traits::{ResolveClassTarget, UpdateResolvedClass};
@@ -13,6 +11,8 @@ pub mod tests {
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use actix_web::{http::StatusCode, test};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_transaction;
 
     use rstest::rstest;
 
@@ -733,8 +733,8 @@ pub mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_api_create_records_actor(#[future(awt)] test_context: TestContext) {
-        use crate::db::prelude::*;
-        use crate::db::with_connection;
+        use hubuum_storage_postgres::diesel_async_prelude::*;
+        use hubuum_storage_postgres::with_connection;
 
         let context = test_context;
         let collection_fixture = context.collection_fixture("actor_history").await;
@@ -949,8 +949,8 @@ pub mod tests {
     ) {
         use chrono::SecondsFormat;
 
-        use crate::db::with_connection;
         use crate::traits::{CanSave, CanUpdate};
+        use hubuum_storage_postgres::with_connection;
 
         let context = test_context;
         let collections = context

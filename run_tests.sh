@@ -7,8 +7,9 @@ DB_USER="${HUBUUM_TEST_DB_USER:-postgres}"  # Default to 'postgres' if not set
 DB_PASSWORD="${HUBUUM_TEST_DB_PASSWORD:-}"  # No default for password
 DB_HOST="${HUBUUM_TEST_DB_HOST:-localhost}" # Default to 'localhost' if not set
 DB_PORT="${HUBUUM_TEST_DB_PORT:-5432}"      # Default to '5432' if not set
+TEST_THREADS="${HUBUUM_TEST_THREADS:-16}"
 TEST_DB_PREFIX="hubuum_test_db_"
-MIGRATIONS_DIR="./migrations"               # Your migrations directory
+MIGRATIONS_DIR="./crates/hubuum-storage-postgres/migrations" # Adapter migrations
 CA_CERT="aiven.pem"
 
 # Check if HUBUUM_TEST_DB_PASSWORD is set
@@ -53,13 +54,20 @@ echo "Created test database: $TEST_DB_NAME"
 
 
 export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+# Every integration test owns a small connection pool. Bound parallelism so a
+# high-core test host cannot exhaust PostgreSQL while retaining parallel tests.
+export RUST_TEST_THREADS="$TEST_THREADS"
 
 
 # Run migrations, lock the schema as we define views in the sql and those go bye-bye with print-schema.
 # See https://github.com/diesel-rs/diesel/issues/1482.
 diesel migration run --migration-dir "$MIGRATIONS_DIR" --database-url "$HUBUUM_DATABASE_URL" --locked-schema
 
-# Run the tests
+# Run adapter-native tests before the application suite while the isolated,
+# migrated database is available.
+cargo test -p hubuum-storage-postgres --features integration-test-support "$@"
+
+# Run the application and request-level suites.
 if cargo test --features integration-test-support "$@"; then
     echo "Test database dropped: $TEST_DB_NAME"
 else

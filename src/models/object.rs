@@ -1,44 +1,25 @@
-use crate::db::prelude::*;
 use async_trait::async_trait;
-use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::object::{
-    objects_per_class_count_from_backend, total_object_count_from_backend,
-};
-#[cfg(test)]
-use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::computed_field::HubuumObjectComputedResponse;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::hubuumobject;
-use crate::traits::{BackendContext, SelfAccessors};
+use crate::traits::SelfAccessors;
 
-#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, QueryableByName, ToSchema)]
-#[diesel(table_name = hubuumobject)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, ToSchema)]
 pub struct HubuumObject {
-    #[diesel(sql_type = Integer)]
     pub id: i32,
-    #[diesel(sql_type = Text)]
     pub name: String,
-    #[diesel(sql_type = Integer)]
     pub collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub hubuum_class_id: i32,
-    #[diesel(sql_type = Jsonb)]
     pub data: serde_json::Value,
-    #[diesel(sql_type = Text)]
     pub description: String,
 
-    #[diesel(sql_type = Timestamp)]
     pub created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub revision: ResourceRevision,
 }
 
@@ -57,9 +38,8 @@ impl HubuumObject {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Insertable, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
 #[schema(example = new_hubuum_object_example)]
-#[diesel(table_name = hubuumobject)]
 pub struct NewHubuumObject {
     pub name: String,
     pub collection_id: i32,
@@ -68,6 +48,7 @@ pub struct NewHubuumObject {
     pub description: String,
 }
 
+#[cfg(test)]
 impl NewHubuumObject {
     pub(crate) fn validate_for_class(&self, class: &HubuumClass) -> Result<(), ApiError> {
         if self.hubuum_class_id != class.id {
@@ -83,22 +64,71 @@ impl NewHubuumObject {
             )));
         }
         if class.validate_schema
-            && let Some(ref schema) = class.json_schema
+            && let Some(schema) = class.json_schema.as_ref()
         {
             crate::utilities::json_schema::validate_json_value(schema, &self.data)?;
         }
         Ok(())
     }
 }
-#[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
+
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
 #[schema(example = update_hubuum_object_example)]
-#[diesel(table_name = hubuumobject)]
 pub struct UpdateHubuumObject {
     pub name: Option<String>,
     pub collection_id: Option<i32>,
     pub hubuum_class_id: Option<i32>,
     pub data: Option<serde_json::Value>,
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+impl UpdateHubuumObject {
+    pub(crate) fn validate_for_class(
+        &self,
+        current: &HubuumObject,
+        class: &HubuumClass,
+    ) -> Result<(), ApiError> {
+        let merged = current.merge_update(self);
+        if merged.hubuum_class_id != class.id {
+            return Err(ApiError::BadRequest(format!(
+                "Object hubuum_class_id {} does not match class {}",
+                merged.hubuum_class_id, class.id
+            )));
+        }
+        if merged.collection_id != class.collection_id {
+            return Err(ApiError::BadRequest(format!(
+                "Object collection_id {} does not match class collection_id {}",
+                merged.collection_id, class.collection_id
+            )));
+        }
+        if class.validate_schema
+            && let Some(schema) = class.json_schema.as_ref()
+        {
+            crate::utilities::json_schema::validate_json_value(schema, &merged.data)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_changes(&self, current: &HubuumObject) -> bool {
+        self.name
+            .as_ref()
+            .is_some_and(|value| value != &current.name)
+            || self
+                .collection_id
+                .is_some_and(|value| value != current.collection_id)
+            || self
+                .hubuum_class_id
+                .is_some_and(|value| value != current.hubuum_class_id)
+            || self
+                .data
+                .as_ref()
+                .is_some_and(|value| value != &current.data)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -194,59 +224,7 @@ impl UpdateHubuumObjectRequest {
     }
 }
 
-impl UpdateHubuumObject {
-    pub(crate) fn validate_for_class(
-        &self,
-        current: &HubuumObject,
-        class: &HubuumClass,
-    ) -> Result<(), ApiError> {
-        let merged = current.merge_update(self);
-        if merged.hubuum_class_id != class.id {
-            return Err(ApiError::BadRequest(format!(
-                "Object hubuum_class_id {} does not match class {}",
-                merged.hubuum_class_id, class.id
-            )));
-        }
-        if merged.collection_id != class.collection_id {
-            return Err(ApiError::BadRequest(format!(
-                "Object collection_id {} does not match class collection_id {}",
-                merged.collection_id, class.collection_id
-            )));
-        }
-        if class.validate_schema
-            && let Some(schema) = class.json_schema.as_ref()
-        {
-            crate::utilities::json_schema::validate_json_value(schema, &merged.data)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn has_changes(&self, current: &HubuumObject) -> bool {
-        self.name
-            .as_ref()
-            .is_some_and(|value| value != &current.name)
-            || self
-                .collection_id
-                .is_some_and(|value| value != current.collection_id)
-            || self
-                .hubuum_class_id
-                .is_some_and(|value| value != current.hubuum_class_id)
-            || self
-                .data
-                .as_ref()
-                .is_some_and(|value| value != &current.data)
-            || self
-                .description
-                .as_ref()
-                .is_some_and(|value| value != &current.description)
-    }
-}
-
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumObject`].
-    pub struct HubuumObjectID;
-    noun = "object id";
-}
+pub use hubuum_domain::ObjectId as HubuumObjectID;
 
 /// Explicit route-selected address for an object.
 ///
@@ -319,11 +297,9 @@ impl ResolvedObjectTarget {
 }
 
 // For objects per class.
-#[derive(QueryableByName, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ObjectsByClass {
-    #[diesel(sql_type = Integer)]
     pub hubuum_class_id: i32,
-    #[diesel(sql_type = BigInt)]
     pub count: i64,
 }
 
@@ -361,20 +337,6 @@ impl From<HubuumObjectComputedResponse> for HubuumObjectReadResponse {
     }
 }
 
-pub async fn total_object_count<C>(backend: &C) -> Result<i64, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    total_object_count_from_backend(backend.db_pool()).await
-}
-
-pub async fn objects_per_class_count<C>(backend: &C) -> Result<Vec<ObjectsByClass>, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    objects_per_class_count_from_backend(backend.db_pool()).await
-}
-
 fn new_hubuum_object_example() -> NewHubuumObject {
     NewHubuumObject {
         name: "srv-01".to_string(),
@@ -395,8 +357,7 @@ fn update_hubuum_object_example() -> UpdateHubuumObject {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::hubuumobject_history)]
+#[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct HubuumObjectHistory {
     pub id: i32,
     pub name: String,
@@ -417,18 +378,62 @@ pub struct HubuumObjectHistory {
     pub revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(HubuumObjectHistory, "hubuumobject_history");
+impl crate::traits::CursorPaginated for HubuumObjectHistory {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        matches!(
+            field,
+            crate::models::search::FilterField::HistoryId
+                | crate::models::search::FilterField::Revision
+        )
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorValue, ApiError> {
+        Ok(match field {
+            crate::models::search::FilterField::HistoryId => {
+                crate::traits::CursorValue::Integer(self.history_id)
+            }
+            crate::models::search::FilterField::Revision => {
+                crate::traits::CursorValue::Integer(self.revision.get())
+            }
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        vec![crate::models::search::SortParam {
+            field: crate::models::search::FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Self::default_sort()
+    }
+}
 
 #[async_trait]
 impl AuthzTarget for HubuumObject {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(self.authorization_resource())
     }
 }
 
 #[async_trait]
 impl AuthzTarget for HubuumObjectID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
@@ -436,7 +441,7 @@ impl AuthzTarget for HubuumObjectID {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::db::DbPool;
+
     use crate::models::class::tests::{create_class, verify_no_such_class};
     use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
@@ -503,16 +508,8 @@ pub mod tests {
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
 
-    pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {
-        use crate::schema::hubuumobject::dsl::*;
-
-        let result = with_connection(pool, async |conn| {
-            hubuumobject
-                .filter(id.eq(object_id))
-                .first::<HubuumObject>(conn)
-                .await
-        })
-        .await;
+    pub async fn verify_no_such_object(pool: &impl crate::storage::StorageContext, object_id: i32) {
+        let result = HubuumObjectID::new(object_id).unwrap().instance(pool).await;
 
         match result {
             Ok(_) => panic!("Object {object_id} should not exist"),
@@ -522,7 +519,7 @@ pub mod tests {
     }
 
     pub async fn create_object(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         hubuum_class_id: i32,
         collection_id: i32,
         object_name: &str,
@@ -538,8 +535,11 @@ pub mod tests {
         object.save_without_events(pool).await
     }
 
-    pub async fn get_object(pool: &DbPool, object_id: i32) -> HubuumObject {
-        let object = HubuumObjectID(object_id);
+    pub async fn get_object(
+        pool: &impl crate::storage::StorageContext,
+        object_id: i32,
+    ) -> HubuumObject {
+        let object = HubuumObjectID::new(object_id).unwrap();
         object.instance(pool).await.unwrap()
     }
 

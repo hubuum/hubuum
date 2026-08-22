@@ -2,7 +2,6 @@ use std::fmt;
 
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
@@ -10,6 +9,7 @@ use crate::middlewares::rate_limit::{
 };
 use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
+use crate::permissions::AppContext;
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -69,7 +69,7 @@ pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
 )]
 #[post("/login")]
 pub async fn login(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     req: HttpRequest,
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
@@ -97,7 +97,7 @@ pub async fn login(
     };
 
     debug!(message = "Login started", user = name);
-    let user = match crate::auth::login(&pool, login).await {
+    let user = match crate::auth::login(&context, login).await {
         Ok(user) => user,
         Err(e) => {
             let (outcome, metric_outcome) = if matches!(e, ApiError::Unauthorized(_)) {
@@ -113,7 +113,7 @@ pub async fn login(
 
     finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await?;
 
-    let token_generation_result = user.create_issued_token(&pool).await;
+    let token_generation_result = user.create_issued_token(&context).await;
 
     let token = match token_generation_result {
         Ok(token) => token,
@@ -149,14 +149,14 @@ pub async fn login(
 )]
 #[post("/logout")]
 pub async fn logout(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let token = requestor.token;
 
     debug!(message = "token logout requested");
 
-    let result = token.delete(&pool).await;
+    let result = token.delete(&context).await;
 
     match result {
         Ok(_) => Ok(ApiResponse::message("Logout successful.")),
@@ -182,7 +182,7 @@ pub async fn logout(
 )]
 #[post("/logout_all")]
 pub async fn logout_all(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_access: ManagementAccess,
 ) -> Result<impl Responder, ApiError> {
     debug!(
@@ -190,7 +190,7 @@ pub async fn logout_all(
         user_access.user.id
     );
 
-    let delete_result = user_access.user.delete_all_tokens(&pool).await;
+    let delete_result = user_access.user.delete_all_tokens(&context).await;
 
     match delete_result {
         Ok(_) => Ok(ApiResponse::message("Logout of all tokens successful.")),
@@ -221,14 +221,14 @@ pub async fn logout_all(
 )]
 #[post("/logout/token")]
 pub async fn logout_token(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_access: AdminAccess,
     token: web::Json<LogoutTokenRequest>,
 ) -> Result<impl Responder, ApiError> {
     let token = Token(token.into_inner().token);
     debug!(message = "administrative token logout requested");
 
-    let result = token.delete(&pool).await;
+    let result = token.delete(&context).await;
 
     match result {
         Ok(_) => Ok(ApiResponse::message("Logout of token successful.")),
@@ -261,7 +261,7 @@ pub async fn logout_token(
 )]
 #[post("/logout/uid/{user_id}")]
 pub async fn logout_other(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     admin_access: AdminAccess,
     user_id: web::Path<UserID>,
 ) -> Result<impl Responder, ApiError> {
@@ -274,9 +274,9 @@ pub async fn logout_other(
     );
 
     let delete_result = user_id
-        .instance(&pool)
+        .instance(&context)
         .await?
-        .delete_all_tokens(&pool)
+        .delete_all_tokens(&context)
         .await;
 
     match delete_result {
@@ -311,7 +311,7 @@ pub async fn logout_other(
 pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Token validation successful",
-        principal_id = user_access.principal.id,
+        principal_id = user_access.principal.id().id(),
     );
 
     Ok(ApiResponse::message("Token is valid."))

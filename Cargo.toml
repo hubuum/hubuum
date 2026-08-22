@@ -22,6 +22,7 @@ members = [
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
     "crates/hubuum-computed-fields",
+    "crates/hubuum-domain",
     "crates/hubuum-event-sink-amqp",
     "crates/hubuum-event-sink-email",
     "crates/hubuum-event-sink-valkey",
@@ -30,6 +31,9 @@ members = [
     "crates/hubuum-events-core",
     "crates/hubuum-outbound-http",
     "crates/hubuum-query",
+    "crates/hubuum-storage-core",
+    "crates/hubuum-storage-conformance",
+    "crates/hubuum-storage-postgres",
     "crates/hubuum-task-core",
     "crates/hubuum-templates",
 ]
@@ -37,8 +41,17 @@ members = [
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
-actix-web = { version = "4" }
-actix-http = { version = "3" }
+actix-web = { version = "4", default-features = false, features = [
+    "macros",
+    "compress-brotli",
+    "compress-gzip",
+    "compress-zstd",
+    "cookies",
+    "unicode",
+    "compat",
+    "ws",
+] }
+actix-http = { version = "3", default-features = false }
 argon2 = "0.6.0-rc.8"
 async-trait = "0.1"
 bytes = "1"
@@ -53,17 +66,13 @@ diesel = { version = "2", features = [
     "uuid",
 ] }
 diesel-async = { version = "0.9.2", features = ["postgres", "bb8"] }
-diesel_migrations = { version = "2.3.2", optional = true }
-pq-sys = { version = "0.7.5", optional = true }
 ipnet = "2.12"
 futures = "0.3"
 futures-util = "0.3"
-jsonschema = { version = "0.49", default-features = false }
 json-patch = { version = "4.2", default-features = false, features = ["utoipa"] }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 redis = { version = "1.3.0", default-features = false, features = ["connection-manager", "tokio-rustls-comp"], optional = true }
-rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
@@ -71,6 +80,7 @@ hmac = "0.13"
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }
+hubuum-domain = { path = "crates/hubuum-domain", features = ["openapi"] }
 hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
 hubuum-event-sink-email = { path = "crates/hubuum-event-sink-email", optional = true }
 hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional = true }
@@ -80,14 +90,14 @@ hubuum-templates = { path = "crates/hubuum-templates" }
 hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-query = { path = "crates/hubuum-query" }
+hubuum-storage-core = { path = "crates/hubuum-storage-core" }
+hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
 hubuum-task-core = { path = "crates/hubuum-task-core" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 opentelemetry-prometheus = "0.32"
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "signal"] }
-tokio-postgres = "0.7"
-tokio-postgres-rustls = "0.14"
 tracing = "0.1"
 tracing-serde = "0"
 tracing-subscriber = { version = "0.3", features = [
@@ -118,6 +128,8 @@ libc = "0.2"
 [dev-dependencies]
 criterion = "0.8.2"
 gungraun = "0.19.4"
+hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
+hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
 regex = "1"
 rstest = "0.26"
 tokio-rustls = "0.26"
@@ -132,19 +144,23 @@ tls-openssl = ["dep:openssl", "actix-web/openssl"]
 login-rate-limit-valkey = ["dep:redis"]
 valkey = ["dep:hubuum-event-sink-valkey", "login-rate-limit-valkey"]
 permissions-treetop = ["dep:treetop-client"]
-embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
+embedded-migrations = ["hubuum-storage-postgres/embedded-migrations"]
 vendored-openssl = ["openssl/vendored"]
 # Test/diagnostic-only Diesel instrumentation used by PostgreSQL query-budget
 # checks. Keeping this opt-in avoids adding instrumentation work to production
 # pool checkouts.
-query-capture = []
-# Enables the opt-in PostgreSQL Criterion target. It remains separate from the
-# self-contained benchmark fan-out because it needs a migrated database.
-postgres-bench = []
-# Enables the opt-in end-to-end runtime behavior benchmark. The target starts
-# real server processes and therefore remains separate from self-contained
-# benchmark auto-discovery.
-runtime-behavior-bench = []
+query-capture = ["hubuum-storage-postgres/query-capture"]
+# Enables the opt-in PostgreSQL Criterion target and its embedded migrations.
+# The benchmark provisions its own disposable database outside the measured
+# region so the shared benchmark action can discover and run it directly.
+postgres-bench = [
+    "hubuum-storage-postgres/benchmark-support",
+    "hubuum-storage-postgres/embedded-migrations",
+]
+# Enables the opt-in end-to-end runtime behavior validator. It starts real
+# server processes and enforces operational budgets rather than benchmarking a
+# library function, so it is intentionally a binary instead of a Cargo bench.
+runtime-behavior-check = ["hubuum-storage-postgres/benchmark-support"]
 production-all = [
     "amqp",
     "email",
@@ -156,7 +172,10 @@ production-all = [
     "embedded-migrations",
     "vendored-openssl",
 ]
-integration-test-support = []
+integration-test-support = [
+    "hubuum-storage-postgres/integration-test-support",
+    "hubuum-storage-postgres/query-capture",
+]
 
 [profile.release]
 codegen-units = 1
@@ -182,6 +201,12 @@ name = "hubuum-openapi"
 path = "src/bin/openapi.rs"
 test = false
 
+[[bin]]
+name = "hubuum-runtime-behavior-check"
+path = "src/bin/runtime_behavior_check.rs"
+test = false
+required-features = ["runtime-behavior-check"]
+
 [[test]]
 name = "api_core_data"
 path = "tests/api_core_data.rs"
@@ -200,6 +225,16 @@ required-features = ["integration-test-support"]
 [[test]]
 name = "api_platform"
 path = "tests/api_platform.rs"
+required-features = ["integration-test-support"]
+
+[[test]]
+name = "restore_roundtrip"
+path = "tests/restore_roundtrip.rs"
+required-features = ["integration-test-support"]
+
+[[test]]
+name = "admin_cli"
+path = "tests/admin_cli.rs"
 required-features = ["integration-test-support"]
 
 [[bench]]
@@ -239,17 +274,14 @@ name = "unified_search_cursor_callgrind"
 harness = false
 
 [[bench]]
+name = "storage_collection_boundary_callgrind"
+harness = false
+
+[[bench]]
 name = "password_hashing_criterion"
 harness = false
 
 [[bench]]
 name = "storage_postgres_criterion"
-path = "benches/postgres/storage_postgres_criterion.rs"
 harness = false
 required-features = ["postgres-bench"]
-
-[[bench]]
-name = "runtime_behavior"
-path = "benches/runtime/runtime_behavior.rs"
-harness = false
-required-features = ["runtime-behavior-bench"]

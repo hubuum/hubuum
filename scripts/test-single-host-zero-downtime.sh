@@ -379,7 +379,7 @@ old_primary_id="$(service_id hubuum-api)"
 initial_caddy_id="$(service_id caddy)"
 initial_postgres_id="$(service_id postgres)"
 old_migration_count="$(migration_count)"
-expected_migration_version="$(find "$REPOSITORY_ROOT/migrations" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tail -n 1 | cut -d_ -f1 | tr -d '-')"
+expected_migration_version="$(find "$REPOSITORY_ROOT/crates/hubuum-storage-postgres/migrations" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tail -n 1 | cut -d_ -f1 | tr -d '-')"
 [[ "$(migration_is_applied "$expected_migration_version")" == "f" ]] || {
   echo "ERROR: v0.0.1 unexpectedly applied candidate migration $expected_migration_version" >&2
   exit 1

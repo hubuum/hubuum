@@ -23,6 +23,7 @@ use crate::permissions::PermissionBackend;
 use crate::permissions::treetop::TreetopPermissionBackend;
 use crate::permissions::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 use crate::permissions::visibility::{AuthorizationPage, paginate_authorized};
+use crate::storage::StorageHandle;
 use crate::tests::get_test_pool;
 use crate::tests::permissions::conformance::{
     ConformanceBackend, ConformanceFixture, assert_backend_conformance,
@@ -72,7 +73,7 @@ async fn backend_with_config(config: &AppConfig) -> Result<TreetopPermissionBack
             .as_deref()
             .expect("the live test URL must be configured"),
         config,
-        pool,
+        StorageHandle::postgres(pool),
     )
     .await
 }
@@ -450,13 +451,13 @@ async fn live_in_flight_termination_fails_closed_and_service_recovers() {
 }
 
 async fn seed_collection_if_missing(collection_id: i32) {
-    use crate::db::prelude::*;
-    use crate::db::with_connection;
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
     use crate::schema::collections::{description, name};
     use diesel::dsl::exists;
     use diesel::result::Error as DieselError;
     use diesel::{insert_into, select};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
 
     let pool = get_test_pool();
     let exists: bool = with_connection(&pool, async |connection| {

@@ -16,12 +16,12 @@ enum TestDataForEndpoint {
 async fn test_endpoint_access() {
     use crate::config::get_config;
     use crate::config::running::RunningConfig;
-    use crate::db::init_pool;
     use crate::models::user::LoginUser;
+    use crate::tests::postgres_test_pool;
     use actix_web::{App, http::Method, test, web::Data};
 
     let config = get_config().unwrap();
-    let pool = init_pool(&config.database_url, config.db_pool_size);
+    let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
 
     let app = test::init_service(
         App::new()
@@ -30,6 +30,7 @@ async fn test_endpoint_access() {
             ))
             .app_data(Data::new(RunningConfig::from(&config)))
             .app_data(Data::new(pool.clone()))
+            .app_data(crate::tests::app_context(&pool))
             .configure(crate::api::config),
     )
     .await;

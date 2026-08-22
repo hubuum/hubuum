@@ -16,6 +16,7 @@ use crate::errors::ApiError;
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
+use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
 
 mod client_network;
@@ -170,6 +171,15 @@ pub struct AppConfig {
     /// Runtime role: combined API/workers, API-only, or worker-only.
     #[clap(long, env = "HUBUUM_RUNTIME_ROLE", default_value = "all")]
     pub runtime_role: RuntimeRole,
+
+    /// Storage adapter compiled into this application build.
+    #[clap(
+        long,
+        env = "HUBUUM_STORAGE_BACKEND",
+        value_enum,
+        default_value = "postgresql"
+    )]
+    pub storage_backend: StorageBackendKind,
 
     /// IP address to bind to
     #[clap(long, env = "HUBUUM_BIND_IP", default_value = "127.0.0.1")]
@@ -391,7 +401,7 @@ pub struct AppConfig {
     )]
     pub event_retention_file_archive_enabled: bool,
 
-    /// Optional JSONL archive path for events selected by the retention purge.
+    /// Optional directory for atomic per-claim JSONL event archive files.
     #[clap(
         long,
         env = "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
@@ -903,6 +913,18 @@ pub struct AppConfig {
     pub client_allowlist: ClientAllowlist,
 }
 
+impl AppConfig {
+    /// Backend-neutral export read budget used by the application boundary.
+    ///
+    /// The legacy PostgreSQL-named configuration field remains the operator
+    /// compatibility input. Only configuration and the selected adapter know
+    /// how the budget is implemented.
+    #[must_use]
+    pub const fn export_storage_query_budget_ms(&self) -> u64 {
+        self.export_db_statement_timeout_ms
+    }
+}
+
 impl std::fmt::Debug for AppConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -914,15 +936,18 @@ impl std::fmt::Debug for AppConfig {
 
 impl AppConfig {
     pub(crate) fn token_issuance_policy(&self) -> Result<TokenIssuancePolicy, ApiError> {
-        TokenIssuancePolicy::from_hours(self.token_lifetime_hours, self.max_token_lifetime_hours)
+        Ok(TokenIssuancePolicy::from_hours(
+            self.token_lifetime_hours,
+            self.max_token_lifetime_hours,
+        )?)
     }
 
     pub fn token_retention_settings(&self) -> Result<TokenRetentionSettings, ApiError> {
-        TokenRetentionSettings::builder()
+        Ok(TokenRetentionSettings::builder()
             .retention_days(self.token_retention_days)
             .token_lifetime_hours(self.token_lifetime_hours)
             .batch_size(self.token_retention_purge_batch_size)
-            .build()
+            .build()?)
     }
 
     pub fn task_worker_settings(&self) -> Result<TaskWorkerSettings, ApiError> {
@@ -940,32 +965,29 @@ impl AppConfig {
     }
 
     pub(crate) fn event_fanout_settings(&self) -> Result<EventFanoutSettings, ApiError> {
-        EventFanoutSettings::new(
+        Ok(EventFanoutSettings::new(
             self.event_fanout_batch_size,
             self.event_fanout_lock_timeout_ms,
-        )
-        .map_err(ApiError::BadRequest)
+        )?)
     }
 
     pub(crate) fn event_delivery_settings(&self) -> Result<EventDeliverySettings, ApiError> {
-        EventDeliverySettings::builder()
+        Ok(EventDeliverySettings::builder()
             .batch_size(self.event_delivery_batch_size)
             .lock_timeout_ms(self.event_delivery_lock_timeout_ms)
             .transport_timeout_ms(self.event_delivery_transport_timeout_ms)
             .retry_backoff_base_ms(self.event_delivery_retry_backoff_base_ms)
             .retry_backoff_max_ms(self.event_delivery_retry_backoff_max_ms)
             .max_attempts(self.event_delivery_max_attempts)
-            .build()
-            .map_err(ApiError::BadRequest)
+            .build()?)
     }
 
     pub(crate) fn event_retention_settings(&self) -> Result<EventRetentionSettings, ApiError> {
-        EventRetentionSettings::new(
+        Ok(EventRetentionSettings::new(
             self.event_retention_days,
             self.event_delivery_retention_days,
             self.event_retention_purge_batch_size,
-        )
-        .map_err(ApiError::BadRequest)
+        )?)
     }
 
     fn validate(self) -> Result<Self, ApiError> {
@@ -1447,6 +1469,21 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         })
     }
 
+    fn env_or_default_storage_backend(
+        key: &str,
+        default: StorageBackendKind,
+    ) -> StorageBackendKind {
+        env::var(key).map_or(default, |value| {
+            if value.is_empty() {
+                default
+            } else {
+                StorageBackendKind::from_str(&value, true).unwrap_or_else(|err| {
+                    panic!("Invalid storage backend in {key}: {value} ({err})")
+                })
+            }
+        })
+    }
+
     fn env_or_default_login_rate_limit_backend(
         key: &str,
         default: LoginRateLimitBackendKind,
@@ -1474,6 +1511,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
 
     let config = AppConfig {
         runtime_role: env_or_default_runtime_role("HUBUUM_RUNTIME_ROLE", RuntimeRole::All),
+        storage_backend: env_or_default_storage_backend(
+            "HUBUUM_STORAGE_BACKEND",
+            StorageBackendKind::Postgres,
+        ),
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
             .parse()
@@ -1855,9 +1896,9 @@ mod tests {
         DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_TASK_POLL_INTERVAL_MS,
         DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
         DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE, DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
-        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole, TEST_ENV_LOCK,
-        TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
-        token_hash_key_bytes, token_hash_key_is_ephemeral,
+        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole,
+        StorageBackendKind, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
+        get_config_from_env, token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -1995,6 +2036,40 @@ mod tests {
         assert_eq!(loaded.runtime_role, RuntimeRole::Worker);
         assert!(!loaded.runtime_role.serves_http());
         assert!(loaded.runtime_role.runs_background_workers());
+    }
+
+    #[test]
+    fn storage_backend_is_explicit_and_strict() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _unset_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", None);
+        let default = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let selected =
+            AppConfig::try_parse_from(["hubuum-server", "--storage-backend", "postgresql"])
+                .unwrap();
+        let empty = {
+            let _empty_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", Some(""));
+            let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+            let loaded = get_config_from_env().unwrap();
+            assert_eq!(loaded.storage_backend, StorageBackendKind::Postgres);
+            parsed
+        };
+        let error =
+            AppConfig::try_parse_from(["hubuum-server", "--storage-backend", "unsupported"])
+                .expect_err("an unregistered storage backend must be rejected");
+        let whitespace_error = {
+            let _whitespace_guard = EnvVarGuard::set("HUBUUM_STORAGE_BACKEND", Some(" "));
+            AppConfig::try_parse_from(["hubuum-server"])
+                .expect_err("a non-empty invalid storage backend must be rejected")
+        };
+
+        assert_eq!(default.storage_backend, StorageBackendKind::Postgres);
+        assert_eq!(selected.storage_backend, StorageBackendKind::Postgres);
+        assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        assert_eq!(
+            whitespace_error.kind(),
+            clap::error::ErrorKind::InvalidValue
+        );
     }
 
     #[rstest]
@@ -2144,7 +2219,7 @@ mod tests {
             EnvVarGuard::set("HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED", Some("true"));
         let _archive_guard = EnvVarGuard::set(
             "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
-            Some("/tmp/hubuum-events.jsonl"),
+            Some("/tmp/hubuum-event-archive"),
         );
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
@@ -2158,7 +2233,7 @@ mod tests {
         assert!(parsed.event_retention_file_archive_enabled);
         assert_eq!(
             parsed.event_retention_archive_path.as_deref(),
-            Some("/tmp/hubuum-events.jsonl")
+            Some("/tmp/hubuum-event-archive")
         );
         assert!(loaded.event_retention_purge_enabled);
         assert_eq!(loaded.event_retention_days, 90);
@@ -2168,7 +2243,7 @@ mod tests {
         assert!(loaded.event_retention_file_archive_enabled);
         assert_eq!(
             loaded.event_retention_archive_path.as_deref(),
-            Some("/tmp/hubuum-events.jsonl")
+            Some("/tmp/hubuum-event-archive")
         );
     }
 
@@ -2219,24 +2294,24 @@ mod tests {
     #[case::fanout_timeout(
         "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
         "18446744073709551615",
-        "event_fanout_lock_timeout_ms is too large for database timestamps"
+        "event_fanout_lock_timeout_ms is too large for timestamps"
     )]
     #[case::delivery_timeout(
         "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
         "18446744073709551615",
-        "event_delivery_lock_timeout_ms is too large for database timestamps"
+        "event_delivery_lock_timeout_ms is too large for timestamps"
     )]
     #[case::delivery_retry(
         "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
         "18446744073709551615",
-        "event_delivery_retry_backoff_max_ms is too large for database timestamps"
+        "event_delivery_retry_backoff_max_ms is too large for timestamps"
     )]
     #[case::retention_days(
         "HUBUUM_EVENT_RETENTION_DAYS",
         "9223372036854775807",
-        "event_retention_days is too large for database timestamps"
+        "event_retention_days is too large for timestamps"
     )]
-    fn event_worker_database_durations_must_be_representable(
+    fn event_worker_durations_must_be_representable(
         #[case] variable: &'static str,
         #[case] value: &str,
         #[case] expected: &str,

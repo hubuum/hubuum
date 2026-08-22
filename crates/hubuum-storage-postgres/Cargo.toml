@@ -1,0 +1,55 @@
+[package]
+name = "hubuum-storage-postgres"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "PostgreSQL storage adapter primitives for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+argon2 = "0.6.0-rc.8"
+async-trait = "0.1"
+chrono = "0.4"
+diesel = { version = "2", features = [
+    "postgres",
+    "serde_json",
+    "chrono",
+    "64-column-tables",
+    "uuid",
+] }
+diesel-async = { version = "0.9.2", features = ["postgres", "bb8"] }
+diesel_migrations = { version = "2.3.2", optional = true }
+futures-util = "0.3"
+hubuum-computed-fields = { path = "../hubuum-computed-fields" }
+hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
+hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+hubuum-templates = { version = "0.0.1", path = "../hubuum-templates" }
+ipnet = "2.12"
+rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
+rustls-platform-verifier = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.11"
+tokio = { version = "1", features = ["macros", "sync", "time"] }
+tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.14"
+tracing = "0.1"
+urlparse = "0.7"
+uuid = { version = "1", features = ["v4"] }
+pq-sys = { version = "0.7.5", optional = true }
+
+[features]
+query-capture = []
+integration-test-support = []
+benchmark-support = []
+embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
+
+[dev-dependencies]
+rstest = "0.26"

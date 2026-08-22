@@ -2,8 +2,8 @@ use actix_web::{App, http::StatusCode, test};
 use serde_json::Value;
 
 use crate::api as prod_api;
-use crate::db::capture_queries;
 use crate::tests::get_test_pool;
+use hubuum_storage_postgres::capture_queries;
 
 #[actix_web::test]
 async fn test_healthz_returns_ok_without_database_pool() {
@@ -20,9 +20,11 @@ async fn test_healthz_returns_ok_without_database_pool() {
 
 #[actix_web::test]
 async fn test_readyz_checks_database_connectivity() {
+    let pool = get_test_pool();
     let app = test::init_service(
         App::new()
-            .app_data(get_test_pool())
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .configure(prod_api::config),
     )
     .await;

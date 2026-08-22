@@ -7,10 +7,8 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     Collection, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded, Permission,
 };
-use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    SelfAccessors,
-};
+use crate::storage::StorageContext;
+use crate::traits::{CursorPaginated, CursorValue, SelfAccessors};
 
 /// Convert a `(Group, T)` tuple into a richer output type.
 pub trait FromTuple<T> {
@@ -24,13 +22,13 @@ pub trait FromTuple<T> {
 pub trait ExpandCollection<T> {
     async fn expand_collection<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 impl ExpandCollection<HubuumClassExpanded> for HubuumClass {
     async fn expand_collection<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let collection = CollectionID::new(self.collection_id)?
             .instance(backend)
@@ -162,54 +160,6 @@ impl CursorPaginated for HubuumClassExpanded {
     }
 }
 
-impl CursorSqlMapping for HubuumClassExpanded {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "hubuumclass.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "hubuumclass.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "hubuumclass.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
-                column: "hubuumclass.collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "hubuumclass.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "hubuumclass.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "hubuumclass.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for classes",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl CursorPaginated for GroupPermission {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
@@ -248,38 +198,5 @@ impl CursorPaginated for GroupPermission {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for GroupPermission {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "permissions.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Groupname => CursorSqlField {
-                column: "groups.groupname",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "permissions.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "permissions.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for group permissions",
-                    field
-                )));
-            }
-        })
     }
 }

@@ -122,14 +122,23 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
-pub(crate) fn validate_template_sources(
+pub(crate) fn validate_template_sources_with_limits(
     template_name: &str,
     template_source: &str,
     collection_templates: &[(String, String)],
     content_type: ExportContentType,
+    recursion_limit: usize,
+    fuel: u64,
 ) -> Result<(), ApiError> {
-    validate_template_syntax(template_name, template_source)?;
-    let (recursion_limit, fuel) = template_limits_from_config();
+    prepare_template(template_source)
+        .limit_recursion(recursion_limit)
+        .limit_fuel(fuel)
+        .validate()
+        .map_err(|error| {
+            ApiError::BadRequest(format!(
+                "Invalid export template '{template_name}': {error}"
+            ))
+        })?;
     let mut template_map = collection_templates
         .iter()
         .cloned()
@@ -599,11 +608,13 @@ mod tests {
         #[case] sources: Vec<(String, String)>,
         #[case] expected_valid: bool,
     ) {
-        let result = validate_template_sources(
+        let result = validate_template_sources_with_limits(
             "export.txt",
             "{% include \"fragment.txt\" %}",
             &sources,
             ExportContentType::TextPlain,
+            64,
+            50_000,
         );
 
         assert_eq!(result.is_ok(), expected_valid);

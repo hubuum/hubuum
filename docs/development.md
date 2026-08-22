@@ -45,48 +45,128 @@ cargo run --quiet --bin hubuum-openapi > docs/openapi.json
 
 ## Architecture Overview
 
-The codebase is intentionally split into model-facing APIs and database-facing implementations.
+The codebase is incrementally split into application services, backend-neutral
+storage capabilities, model-facing APIs, and database-facing implementations.
 The root Rust library is an internal application composition crate rather than
 a supported embedding interface. See [Rust API Boundary](rust_api_boundary.md)
 for package classifications, publishing policy, and promotion requirements.
 
+- `src/services/*`:
+  Application-facing use cases. Migrated handlers call services instead of
+  choosing persistence helpers directly.
+- `crates/hubuum-domain` and `crates/hubuum-storage-core`:
+  Backend-neutral values, storage DTOs, errors, and extracted capability
+  traits. These crates cannot depend on Actix, Diesel, global application
+  configuration, or `ApiError`.
+- `src/storage/*`:
+  Complete backend composition, exhaustive dispatch, common observation, and
+  the opaque application handle. `src/storage/factory.rs` is the only
+  process-composition path allowed to select a backend or inspect its
+  connection settings. The test-only memory resource model exercises focused
+  logical behavior. It is not a selectable backend and does not represent
+  partial application support.
+- `crates/hubuum-storage-postgres`:
+  The complete production PostgreSQL adapter: pool construction, TLS setup,
+  endpoint parsing, private rows and queries, native transactions, schema,
+  migrations, and operation implementations. It exposes private-field settings
+  and backend-specific initialization errors only at the application
+  composition edge.
+- `crates/hubuum-storage-conformance`:
+  The workspace-internal six-part behavioral verifier for audited mutation
+  receipts, no-ops, rollback, event delivery, telemetry, and exact revision
+  conflicts. Retention retry safety has its own protocol verifier. It is a
+  development dependency and is not linked into production binaries.
 - `src/models/*`:
   Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
 - `src/traits/*`:
   Behavioral interfaces used by handlers and models inside the application.
-  `BackendContext` is the boundary type that allows these APIs to accept either `DbPool` or wrappers (for example `web::Data<DbPool>`).
-- `src/db/traits/*`:
-  Diesel/Postgres-backed implementations behind the public traits.
-  This is where query details, joins, filters, and transactions belong.
+  `StorageContext` is a sealed, opaque persistence capability. Consumers pass
+  it to operations but cannot extract or select the database implementation.
+  Normalization returns the context's existing `StorageHandle`; it never
+  rebuilds a backend from a database pool. It deliberately has no authorization
+  methods; policy-aware workflows accept the stronger `AuthorizationContext`.
+- `crates/hubuum-storage-postgres/src/test_support.rs`:
+  Feature-gated, typed PostgreSQL fixtures for application integration tests.
+  Root tests must not recreate adapter rows or SQL helpers.
+
+Server, administration, and bootstrap entry points build validated
+`StorageSettings` and receive an opaque `StorageHandle`. They must not import
+PostgreSQL pools, Diesel, generated schemas, or adapter operations. Initial
+administrator creation, human-user lifecycle, local-password reset with token
+revocation, bearer-token lifecycle, complete template-audit reads, and
+export-template health aggregation are mandatory identity and operational
+contract methods, so a selectable backend cannot omit any process-lifecycle
+behavior.
+
+Collection, class, object, class-relation, and object-relation services each
+depend on their exact backend-neutral storage trait.
+Metrics, readiness, maintenance state, event persistence health, atomic event
+fan-out, delivery, event retention, and token retention are also expressed as
+required storage traits with backend-neutral inputs and results. Delivery
+workers receive enriched work-item DTOs and acknowledge opaque claims through
+the contract. Audit reads, sink and subscription lifecycle, enabled-sink
+discovery, and claim-free delivery administration form a separate mandatory
+event-administration family. Retention archives receive storage-owned event
+DTOs rather than PostgreSQL row models. Runtime worker settings and counters
+are enriched above the event-health storage boundary. Validated event-worker
+and retention policies live in
+`hubuum-domain`; adapter-only query limits are derived through neutral
+accessors rather than leaking database terminology to consumers. A selectable
+backend must nevertheless satisfy the complete application storage contract.
+See
+[Application and Storage Boundary](storage_boundary.md) for the required
+families, compatibility tests, performance gates, and opaque backend boundary.
 
 ### Practical layering rule
 
 When adding a feature:
 
-1. Extend or add a trait in `src/traits` (or `src/models/traits`) that expresses the behavior.
-2. Implement database details in `src/db/traits`.
-3. Keep model methods thin by delegating to backend traits.
+1. Put new use-case orchestration in `src/services` when the surrounding slice
+   has migrated.
+2. Express persistence as an aggregate- or query-shaped capability in
+   `hubuum-storage-core`; avoid generic table repositories.
+3. Implement database details in
+   `crates/hubuum-storage-postgres/src/operations` and delegate through its
+   complete PostgreSQL backend implementation.
+4. Keep model methods thin while they remain in unmigrated paths.
+5. Add shared logical contract tests and retain PostgreSQL-specific query,
+   transaction, migration, recovery, and concurrency tests.
+6. Do not register the implementation as selectable until it satisfies every
+   storage capability family and the available-backend compatibility suite.
 
 ### Module layout notes
 
-To keep backend code navigable, large trait backends are split into focused modules:
+To keep PostgreSQL adapter code navigable, production operations are split into
+focused modules under `crates/hubuum-storage-postgres/src/operations`, including:
 
-- `src/db/traits/user/`:
-  `auth.rs`, `membership.rs`, `permissions.rs`, `search.rs`
-- `src/db/traits/collection/`:
-  `relations.rs`, `records.rs`, `permissions.rs`
+- lifecycle modules such as `collection.rs`, `class.rs`, `object.rs`, and
+  `relation.rs`;
+- identity modules such as `user.rs`, `service_account.rs`, `token.rs`,
+  `group.rs`, and `authorization/*`; and
+- workflow and operational modules for tasks, imports, restores, events,
+  retention, metrics, and computed data.
 
-The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::collection::*`) keep working.
+Application code must use application services and mandatory storage contracts
+instead of importing these adapter-private modules directly.
 
 ### Collection hierarchy implementation
 
-Recursive collections are implemented in the database layer, not in a workspace
-crate. The implementation is coupled to Diesel schema modules, PostgreSQL
-closure-table SQL, temporal history, `ApiError`, and Hubuum's permission
-semantics. Keep hierarchy writes in `src/db/traits/collection/records.rs` and
-permission reads in `src/db/traits/collection/permissions.rs` or
-`src/db/traits/user/*`.
+Recursive collections are implemented in the PostgreSQL workspace adapter.
+The implementation is coupled to Diesel schema modules, PostgreSQL
+closure-table SQL, temporal history, and Hubuum's permission facts, while its
+public result remains `StorageError` and backend-neutral DTOs. Keep production
+hierarchy writes in
+`crates/hubuum-storage-postgres/src/operations/collection.rs` and permission
+queries under that crate's authorization operations.
+
+Normal collection and class lifecycle handlers enter this implementation
+through their service and storage capabilities. Do not bypass those services
+from a handler. Application permission and metadata paths likewise use the
+mandatory authorization and operational contracts; only backend code and
+test-only fixtures may select PostgreSQL operations. Internal adapter location
+does not make behavior optional: a selectable backend must supply every
+capability before it can be registered.
 
 When adding a collection creation path, use the shared collection insert helper
 from the collection backend so `collections` and `collection_closure` stay in
@@ -178,10 +258,9 @@ cargo bench --bench database_url_parsing_criterion -- --noplot
 cargo bench --bench password_hashing_criterion -- --noplot
 ```
 
-The self-contained CI job auto-discovers `benches/*.rs`. Feature-gated
-database benchmarks live in nested benchmark directories with explicit Cargo
-paths so they remain in their dedicated jobs without disabling autodiscovery.
-The container-build tests enforce this separation.
+The CI benchmark action auto-discovers every direct `benches/*.rs` target and
+reports both Criterion and Gungraun results. The container-build tests enforce
+that every Cargo benchmark remains directly discoverable.
 
 Gungraun requires `valgrind` and the matching benchmark runner to be installed
 locally:
@@ -190,40 +269,39 @@ locally:
 cargo install --locked --version 0.19.4 gungraun-runner
 ```
 
-The PostgreSQL storage benchmark is opt-in and requires an empty, migrated,
-disposable benchmark database. Fixture creation, cleanup, and warmup happen
-outside the timed regions. The create scenario intentionally leaves its
-append-only audit events behind:
+The PostgreSQL storage benchmark is opt-in and requires Docker. It provisions,
+migrates, and removes a disposable PostgreSQL container itself. Container
+startup, fixture creation, cleanup, and warmup happen outside the timed
+regions. The create scenario intentionally leaves its append-only audit events
+behind:
 
 ```bash
-export HUBUUM_BENCH_DATABASE_URL=postgres://postgres:postgres@localhost/hubuum_bench
-cargo run --features embedded-migrations --bin hubuum-admin -- \
-  --migrate --database-url "$HUBUUM_BENCH_DATABASE_URL"
 cargo bench --features postgres-bench \
   --bench storage_postgres_criterion -- --noplot
 ```
 
-The runtime behavior benchmark is also opt-in and requires a migrated,
-disposable database. It starts an all-role primary and an API-only standby,
-measures idle Prometheus counter deltas, sends fixed readiness traffic, and
-inserts one intentionally invalid export task to measure PostgreSQL
-notification-to-claim latency. Build the server before running the benchmark;
-the development profile avoids irrelevant release-link overhead:
+The runtime behavior validator is opt-in and requires a migrated, disposable
+database. It starts an all-role primary and an API-only standby, measures idle
+Prometheus counter deltas, sends fixed readiness traffic, and inserts one
+intentionally invalid export task to measure PostgreSQL notification-to-claim
+latency. This is an operational budget check rather than a Cargo benchmark.
+Build the server before running it; the development profile avoids irrelevant
+release-link overhead:
 
 ```bash
 export HUBUUM_BENCH_DATABASE_URL=postgres://postgres:postgres@localhost/hubuum_runtime
 cargo run --features embedded-migrations --bin hubuum-admin -- \
   --migrate --database-url "$HUBUUM_BENCH_DATABASE_URL"
-cargo build --features runtime-behavior-bench --bin hubuum-server
-cargo bench --profile dev --features runtime-behavior-bench \
-  --bench runtime_behavior -- measure \
+cargo build --features runtime-behavior-check --bin hubuum-server
+cargo run --profile dev --features runtime-behavior-check \
+  --bin hubuum-runtime-behavior-check -- measure \
   --server-binary target/debug/hubuum-server \
   --database-url "$HUBUUM_BENCH_DATABASE_URL" \
   --sample-seconds 60 \
   --label local \
   --output target/runtime-behavior/local.json
-cargo bench --profile dev --features runtime-behavior-bench \
-  --bench runtime_behavior -- assess \
+cargo run --profile dev --features runtime-behavior-check \
+  --bin hubuum-runtime-behavior-check -- assess \
   --head target/runtime-behavior/local.json
 ```
 
@@ -265,11 +343,9 @@ query nondeterministically to the next operation.
 - Gungraun's Callgrind measurements remain the practical gating signal with a
   low regression threshold.
 - Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
-- A separate PostgreSQL job runs storage Criterion benchmarks against
-  isolated base and pull-request databases. It warns above a 10% median change
-  and fails above 20% only when the 95% confidence interval also indicates a
-  regression.
-- A two-process runtime behavior job records base/head Prometheus counter
+- The shared benchmark action runs and reports all direct Criterion and
+  Gungraun targets, including the self-provisioning PostgreSQL storage target.
+- A two-process runtime behavior validation job records base/head Prometheus counter
   deltas and publishes both JSON reports plus a Markdown comparison. Absolute
   budgets guard idle polling, database checkout ratios, readiness behavior, and
   notification-driven task claims; a 25% base/head threshold catches larger
@@ -277,7 +353,7 @@ query nondeterministically to the next operation.
 - The PostgreSQL query-budget tests are the stricter gate: fixed operation
   totals, control/domain splits, query fingerprints, connection checkouts, and
   declared scaling slopes must remain stable.
-- On the harness's first pull request there is no base target to execute, so CI
+- On a target's first pull request there is no base result to compare, so CI
   records the initial baseline. Later pull requests compare base and head.
 
 ### Adding or modifying benchmarks
@@ -288,9 +364,9 @@ query nondeterministically to the next operation.
 - Include `callgrind` in the benchmark filename when it should be auto-discovered by the CI workflow.
 - Include `criterion` in the benchmark filename when it should be Criterion-only in CI autodiscovery.
 - Prefer deterministic library-level code paths such as parsers, query builders, and serialization helpers over handlers that require network or database setup.
-- Put database-backed targets behind the `postgres-bench` feature so the
-  self-contained benchmark fan-out does not try to execute them without a
-  database.
+- Put database-backed targets behind the `postgres-bench` feature and make
+  their external fixture setup self-contained so the shared action can run
+  them.
 - Seed, migrate, warm, and clean PostgreSQL fixtures outside measured regions.
   Mutation benchmarks run last against fresh isolated base/head databases;
   emitted audit events remain append-only, as they do in production.

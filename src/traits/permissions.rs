@@ -1,13 +1,17 @@
 use crate::models::token_scope::TokenScope;
 use serde::Serialize;
 
-use crate::db::traits::authz::AuthzSubject;
-use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{GroupID, Permission, Permissions, PermissionsList};
+use crate::permissions::{grant_from_storage, permission_to_storage};
+use crate::services::storage_boundary::principal_id_to_storage;
+use crate::storage::{
+    AuthorizationCollectionAccessQuery, AuthorizationDataStorage, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, StorageContext, storage_handle,
+};
 
-use super::{BackendContext, CollectionAccessors};
+use super::{AuthzSubject, CollectionAccessors, scope_allows};
 
 pub trait PermissionController: Serialize + CollectionAccessors {
     /// Check if the user has all the given permissions on the object.
@@ -65,11 +69,23 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<bool, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         S: AuthzSubject,
     {
-        self.user_can_all_from_backend(backend.db_pool(), subject, permission, scopes)
-            .await
+        if !scope_allows(scopes, &permission) {
+            return Ok(false);
+        }
+        if subject.is_admin(backend).await? {
+            return Ok(true);
+        }
+        let query = AuthorizationCollectionAccessQuery::new(
+            principal_id_to_storage(subject.principal_id()),
+            self.collection_id(backend).await?,
+            permission.into_iter().map(permission_to_storage),
+        );
+        Ok(storage_handle(backend)
+            .authorize_local_collection(query)
+            .await?)
     }
 
     /// Grant a set of permissions to a group.
@@ -90,10 +106,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// The permission object that holds the permissions for the group.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::grant`] so event subscribers observe the change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn grant_without_events<C>(
         &self,
@@ -102,10 +115,22 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.apply_permissions_without_events(backend, group_id_for_grant, permission_list, false)
-            .await
+        let key =
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_grant);
+        let mutation = AuthorizationGrantMutation::new(
+            key,
+            permission_list.iter().copied().map(permission_to_storage),
+            false,
+            EventContext::system(),
+        );
+        Ok(grant_from_storage(
+            storage_handle(backend)
+                .apply_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     async fn grant<C>(
@@ -113,10 +138,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         group_id_for_grant: GroupID,
         permission_list: PermissionsList,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions(backend, group_id_for_grant, permission_list, false, context)
             .await
@@ -127,11 +152,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// - When `replace_existing` is false, no permissions are removed from the group.
     /// - When `replace_existing` is true, any existing permissions are cleared first.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::apply_permissions`] so event subscribers observe
-    /// the change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn apply_permissions_without_events<C>(
         &self,
@@ -141,15 +162,22 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         replace_existing: bool,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.apply_permissions_from_backend_without_events(
-            backend.db_pool(),
-            group_id_for_grant,
-            permission_list,
+        let key =
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_grant);
+        let mutation = AuthorizationGrantMutation::new(
+            key,
+            permission_list.iter().copied().map(permission_to_storage),
             replace_existing,
-        )
-        .await
+            EventContext::system(),
+        );
+        Ok(grant_from_storage(
+            storage_handle(backend)
+                .apply_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     async fn apply_permissions<C>(
@@ -158,19 +186,25 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         group_id_for_grant: GroupID,
         permission_list: PermissionsList,
         replace_existing: bool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.apply_permissions_from_backend(
-            backend.db_pool(),
-            group_id_for_grant,
-            permission_list,
+        let key =
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_grant);
+        let mutation = AuthorizationGrantMutation::new(
+            key,
+            permission_list.iter().copied().map(permission_to_storage),
             replace_existing,
-            context,
-        )
-        .await
+            context.clone(),
+        );
+        Ok(grant_from_storage(
+            storage_handle(backend)
+                .apply_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     /// Revoke a set of permissions from a group.
@@ -193,10 +227,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// The permission object that holds the permissions for the group. If the group
     /// did not have any permissions, an ApiError::NotFound is returned.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::revoke`] so event subscribers observe the change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_without_events<C>(
         &self,
@@ -205,14 +236,22 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_permissions_from_backend_without_events(
-            backend.db_pool(),
-            group_id_for_revoke,
-            permission_list,
-        )
-        .await
+        let key =
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke);
+        let mutation = AuthorizationGrantMutation::new(
+            key,
+            permission_list.iter().copied().map(permission_to_storage),
+            false,
+            EventContext::system(),
+        );
+        Ok(grant_from_storage(
+            storage_handle(backend)
+                .revoke_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     async fn revoke<C>(
@@ -220,18 +259,25 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         group_id_for_revoke: GroupID,
         permission_list: PermissionsList,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_permissions_from_backend(
-            backend.db_pool(),
-            group_id_for_revoke,
-            permission_list,
-            context,
-        )
-        .await
+        let key =
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke);
+        let mutation = AuthorizationGrantMutation::new(
+            key,
+            permission_list.iter().copied().map(permission_to_storage),
+            false,
+            context.clone(),
+        );
+        Ok(grant_from_storage(
+            storage_handle(backend)
+                .revoke_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     /// Grant a specific permission to a group.
@@ -262,7 +308,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission: Permissions,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.grant_without_events(
             backend,
@@ -299,7 +345,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission: Permissions,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.revoke_without_events(
             backend,
@@ -328,11 +374,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// The permission object that holds the permissions for the group.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`PermissionController::set_permissions`] so event subscribers observe
-    /// the change.
+    /// This compatibility path emits an event attributed to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn set_permissions_without_events<C>(
         &self,
@@ -341,7 +383,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions_without_events(backend, group_identifier, permission_list, true)
             .await
@@ -352,10 +394,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         group_identifier: GroupID,
         permission_list: PermissionsList,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions(backend, group_identifier, permission_list, true, context)
             .await
@@ -376,11 +418,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// An empty result.
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture cleanup, and
-    /// event-system tests. Normal application code should use
-    /// [`PermissionController::revoke_all`] so event subscribers observe the
-    /// change.
+    /// This compatibility path attributes the audit event to the system actor.
     #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_all_without_events<C>(
         &self,
@@ -388,22 +426,36 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         group_id_for_revoke: GroupID,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_all_from_backend_without_events(backend.db_pool(), group_id_for_revoke)
-            .await
+        let request = AuthorizationGrantDelete::new(
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke),
+            EventContext::system(),
+        );
+        storage_handle(backend)
+            .revoke_all_local_collection_grants(request)
+            .await?
+            .into_value();
+        Ok(())
     }
 
     async fn revoke_all<C>(
         &self,
         backend: &C,
         group_id_for_revoke: GroupID,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke, context)
-            .await
+        let request = AuthorizationGrantDelete::new(
+            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke),
+            context.clone(),
+        );
+        storage_handle(backend)
+            .revoke_all_local_collection_grants(request)
+            .await?
+            .into_value();
+        Ok(())
     }
 }

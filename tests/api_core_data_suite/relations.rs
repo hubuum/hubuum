@@ -2,11 +2,10 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
-    use crate::db::{DbPool, with_transaction};
     use crate::errors::ApiError;
     use crate::models::{
         CollectionID, GroupID, HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
@@ -17,6 +16,7 @@ mod tests {
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
+    use hubuum_storage_postgres::{PostgresPool, with_transaction};
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::{
@@ -60,7 +60,7 @@ mod tests {
     }
 
     async fn create_relation(
-        pool: &DbPool,
+        pool: &PostgresPool,
         from_class: &HubuumClass,
         to_class: &HubuumClass,
     ) -> HubuumClassRelation {
@@ -77,7 +77,7 @@ mod tests {
     }
 
     async fn create_object_relation(
-        pool: &DbPool,
+        pool: &PostgresPool,
         from_object: &HubuumObject,
         to_object: &HubuumObject,
         relation: &HubuumClassRelation,
@@ -137,7 +137,7 @@ mod tests {
     }
 
     async fn create_objects_in_classes(
-        pool: &DbPool,
+        pool: &PostgresPool,
         classes: &[HubuumClass],
     ) -> Vec<HubuumObject> {
         let mut objects = Vec::new();
@@ -202,7 +202,7 @@ mod tests {
     }
 
     async fn create_relation_test_object(
-        pool: &DbPool,
+        pool: &PostgresPool,
         class: &HubuumClass,
         label: &str,
     ) -> HubuumObject {
@@ -234,13 +234,13 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
-        // Filter only on relations created from this test.
+        // Filter only on relations created from this test. Concurrent tests may
+        // create a cross-collection relation with one endpoint in this fixture.
         let relations_in_collection: Vec<HubuumClassRelation> = relations_fetched_all
             .iter()
             .filter(|r| {
-                classes
-                    .iter()
-                    .any(|c| c.id == r.from_hubuum_class_id || c.id == r.to_hubuum_class_id)
+                classes.iter().any(|c| c.id == r.from_hubuum_class_id)
+                    && classes.iter().any(|c| c.id == r.to_hubuum_class_id)
             })
             .cloned()
             .collect();
@@ -1019,21 +1019,31 @@ mod tests {
         let insert_pool = context.pool.clone();
 
         let held_insert = actix_web::rt::spawn(async move {
-            with_transaction(&insert_pool, async move |conn| -> Result<(), ApiError> {
-                use crate::schema::hubuumobject_relation;
+            with_transaction(
+                &insert_pool,
+                async move |conn| -> Result<(), diesel::result::Error> {
+                    use crate::schema::hubuumobject_relation::dsl::{
+                        class_relation_id, from_hubuum_object_id, hubuumobject_relation,
+                        to_hubuum_object_id,
+                    };
 
-                diesel::insert_into(hubuumobject_relation::table)
-                    .values(&held_relation)
-                    .execute(conn)
-                    .await?;
-                inserted_tx
-                    .send(())
-                    .expect("held insert should still be running");
-                release_rx
-                    .await
-                    .expect("test should release the held insert");
-                Ok(())
-            })
+                    diesel::insert_into(hubuumobject_relation)
+                        .values((
+                            from_hubuum_object_id.eq(held_relation.from_hubuum_object_id),
+                            to_hubuum_object_id.eq(held_relation.to_hubuum_object_id),
+                            class_relation_id.eq(held_relation.class_relation_id),
+                        ))
+                        .execute(conn)
+                        .await?;
+                    inserted_tx
+                        .send(())
+                        .expect("held insert should still be running");
+                    release_rx
+                        .await
+                        .expect("test should release the held insert");
+                    Ok(())
+                },
+            )
             .await
         });
 

@@ -14,9 +14,10 @@ and its committed OpenAPI document. Rust API consumers should use
 `hubuum-client-rust`, which wraps that HTTP contract. The Python client follows
 the same boundary.
 
-The root package and every current workspace crate set `publish = false`.
-Public Rust visibility in those packages is an implementation and workspace
-construction detail, not a semantic-version compatibility promise.
+Every workspace package currently sets `publish = false`. The backend-neutral
+boundary crates are being shaped as candidates for a later publication change,
+but this decision does not create a third-party SemVer promise. Public Rust
+visibility remains an implementation detail until a separate promotion review.
 
 ## Current consumers
 
@@ -76,6 +77,7 @@ manifest.
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
 | `hubuum-computed-fields` | Workspace-internal |
+| `hubuum-domain` | Workspace-internal |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |
 | `hubuum-event-sink-valkey` | Workspace-internal |
@@ -84,6 +86,9 @@ manifest.
 | `hubuum-events-core` | Workspace-internal |
 | `hubuum-outbound-http` | Workspace-internal |
 | `hubuum-query` | Workspace-internal |
+| `hubuum-storage-core` | Workspace-internal |
+| `hubuum-storage-conformance` | Workspace-internal |
+| `hubuum-storage-postgres` | Workspace-internal |
 | `hubuum-task-core` | Workspace-internal |
 | `hubuum-templates` | Workspace-internal |
 
@@ -129,6 +134,11 @@ focused test-support APIs, and application-owned command or service entrypoints.
 Public traits in internal crates are not third-party extension points. Backend,
 permission, provider, and storage traits become extension contracts only after
 an explicit promotion decision.
+
+The root crate's `services` and `storage` modules are therefore internal
+application boundaries even though Rust visibility is required by binaries and
+benchmarks. See [Application and Storage Boundary](storage_boundary.md) for the
+complete backend contract, exact service ports, and adapter rules.
 
 ## Promotion policy
 

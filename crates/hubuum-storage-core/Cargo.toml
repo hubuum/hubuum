@@ -1,0 +1,24 @@
+[package]
+name = "hubuum-storage-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Backend-neutral storage contracts and diagnostics for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+chrono = "0.4"
+hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
+hubuum-task-core = { version = "0.0.1", path = "../hubuum-task-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = "1"

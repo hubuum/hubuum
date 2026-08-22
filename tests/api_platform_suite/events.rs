@@ -4,9 +4,11 @@ mod tests {
     use rstest::rstest;
     use serde_json::json;
 
-    use crate::db::with_connection;
-    use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent, emit_event};
+    use crate::events::{
+        Action, ActorKind, CollectionId, EntityType, EventEntityId, EventResponse, NewEvent,
+    };
     use crate::models::{GroupID, NewHubuumClass, NewHubuumObject, Permissions, PermissionsList};
+    use crate::test_support::create_audit_event;
     use crate::tests::TestContext;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -15,11 +17,21 @@ mod tests {
 
     const EVENTS_ENDPOINT: &str = "/api/v1/events";
 
-    async fn emit_test_event(pool: &crate::db::DbPool, event: &NewEvent) -> EventResponse {
-        with_connection(pool, async |conn| emit_event(conn, event).await)
+    fn collection_id(id: i32) -> CollectionId {
+        CollectionId::new(id).expect("test collection id must be positive")
+    }
+
+    fn event_entity_id(id: i32) -> EventEntityId {
+        EventEntityId::new(id).expect("test event entity id must be positive")
+    }
+
+    async fn emit_test_event(
+        pool: &impl crate::test_support::AuditEventFixture,
+        event: &NewEvent,
+    ) -> EventResponse {
+        create_audit_event(pool, event)
             .await
             .expect("failed to emit test event")
-            .into()
     }
 
     #[actix_web::test]
@@ -30,7 +42,7 @@ mod tests {
             .await;
 
         let event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
                 Action::Created,
@@ -38,8 +50,8 @@ mod tests {
                 "collection audit permission test",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name(&collection.collection.name),
         )
         .await;
@@ -107,21 +119,21 @@ mod tests {
             .unwrap();
 
         let collectiond_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
-                Action::Created,
+                Action::Updated,
                 ActorKind::System,
                 "collection audit filter test",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name(&collection.collection.name),
         )
         .await;
         let collection_less_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Token,
                 Action::Created,
@@ -133,7 +145,7 @@ mod tests {
         .await;
 
         let endpoint = format!(
-            "{EVENTS_ENDPOINT}?entity_type=collection&action=created&collection_id={}",
+            "{EVENTS_ENDPOINT}?entity_type=collection&action=updated&collection_id={}",
             collection.collection.id
         );
         let resp = get_request(&context.pool, &user_token, &endpoint).await;
@@ -179,7 +191,7 @@ mod tests {
             .unwrap();
 
         let matching_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Collection,
                 Action::Created,
@@ -187,13 +199,13 @@ mod tests {
                 "collection route audit test",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name(&collection.collection.name),
         )
         .await;
         let other_event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::Object,
                 Action::Created,
@@ -201,8 +213,8 @@ mod tests {
                 "object should not appear in collection route",
             )
             .unwrap()
-            .with_collection_id(collection.collection.id)
-            .with_entity_id(collection.collection.id)
+            .with_collection_id(collection_id(collection.collection.id))
+            .with_entity_id(event_entity_id(collection.collection.id))
             .with_entity_name("not-the-collection"),
         )
         .await;
@@ -256,7 +268,7 @@ mod tests {
             json!(related_collection.id)
         };
         let event = emit_test_event(
-            &context.pool,
+            context.pool.get_ref(),
             &NewEvent::new(
                 EntityType::ClassRelation,
                 Action::Created,
@@ -264,8 +276,8 @@ mod tests {
                 "related collection audit test",
             )
             .unwrap()
-            .with_collection_id(source_collection.id)
-            .with_entity_id(source_collection.id)
+            .with_collection_id(collection_id(source_collection.id))
+            .with_entity_id(event_entity_id(source_collection.id))
             .with_before(json!({"secret": "source-before"}))
             .with_after(json!({"secret": "source-after"}))
             .with_metadata(json!({

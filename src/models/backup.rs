@@ -2,72 +2,17 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::NaiveDateTime;
-use diesel::{Insertable, Queryable, Selectable};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use hubuum_storage_core::{StorageBackupHistorySections, StorageBackupStateSections};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
-use crate::schema::{backup_task_outputs, restore_jobs, server_instances};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 4;
-
-pub(crate) const BACKUP_STATE_SECTIONS: &[&str] = &[
-    "identity_scopes",
-    "groups",
-    "principals",
-    "users",
-    "service_accounts",
-    "group_memberships",
-    "group_membership_sources",
-    "collections",
-    "collection_authorization_state",
-    "collection_closure",
-    "permissions",
-    "hubuumclass",
-    "computed_field_definitions",
-    "hubuumclass_relation",
-    "hubuumobject",
-    "hubuumobject_relation",
-    "export_templates",
-    "remote_targets",
-    "event_sinks",
-    "event_subscriptions",
-];
-
-pub(crate) const BACKUP_TEMPORAL_HISTORY_SECTIONS: &[&str] = &[
-    "collections_history",
-    "hubuumclass_history",
-    "hubuumclass_relation_history",
-    "hubuumobject_history",
-    "hubuumobject_relation_history",
-    "export_templates_history",
-    "remote_targets_history",
-];
-
-pub(crate) const BACKUP_AUXILIARY_HISTORY_SECTIONS: &[&str] = &[
-    "tasks",
-    "import_task_results",
-    "export_task_outputs",
-    "remote_call_results",
-    "events",
-    "event_deliveries",
-];
-
-pub(crate) fn backup_history_sections() -> impl Iterator<Item = &'static str> {
-    BACKUP_TEMPORAL_HISTORY_SECTIONS
-        .iter()
-        .chain(BACKUP_AUXILIARY_HISTORY_SECTIONS)
-        .copied()
-}
-
-pub(crate) fn is_backup_history_section(name: &str) -> bool {
-    backup_history_sections().any(|known| known == name)
-}
+pub const CURRENT_BACKUP_VERSION: i32 = 5;
 
 /// Immutable identity snapshot recorded with a restore stage and its provenance event.
 pub struct RestoreInitiator {
@@ -167,13 +112,15 @@ pub struct BackupManifest {
     pub exclusions: Vec<String>,
 }
 
-/// Privileged, restore-only table snapshots. In backup version 4, each section
-/// name and row shape corresponds to the PostgreSQL table restored from it.
-/// These are versioned disaster-recovery internals, not portable import data.
+/// Privileged, restore-only logical snapshots. Backup version 5 identifies
+/// sections by stable Hubuum resources rather than PostgreSQL tables. Each
+/// storage adapter explicitly maps its persistence layout to these versioned
+/// sections. These are disaster-recovery internals, not portable import data.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BackupHistory {
     #[schema(value_type = Object)]
-    pub sections: BTreeMap<String, Vec<serde_json::Value>>,
+    pub sections: StorageBackupHistorySections,
 }
 
 impl fmt::Debug for BackupHistory {
@@ -189,11 +136,12 @@ impl fmt::Debug for BackupHistory {
     }
 }
 
-/// Exact logical rows used by the destructive full-system restore path.
+/// Canonical logical rows used by the destructive full-system restore path.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BackupState {
     #[schema(value_type = Object)]
-    pub sections: BTreeMap<String, Vec<serde_json::Value>>,
+    pub sections: StorageBackupStateSections,
 }
 
 impl fmt::Debug for BackupState {
@@ -213,7 +161,8 @@ impl fmt::Debug for BackupState {
 #[serde(deny_unknown_fields)]
 pub struct BackupDocument {
     pub backup_version: i32,
-    pub created_at: NaiveDateTime,
+    /// RFC 3339 creation instant in UTC.
+    pub created_at: DateTime<Utc>,
     pub source_version: String,
     pub state: BackupState,
     pub history: Option<BackupHistory>,
@@ -296,57 +245,7 @@ mod tests {
     }
 }
 
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = backup_task_outputs)]
-pub struct BackupTaskOutputRecord {
-    pub id: i32,
-    pub task_id: i32,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub output_expires_at: NaiveDateTime,
-    pub created_at: NaiveDateTime,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = backup_task_outputs)]
-pub struct NewBackupTaskOutputRecord {
-    pub task_id: i32,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub output_expires_at: NaiveDateTime,
-}
-
-/// Identifier wrapper for a staged restore job.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
-#[schema(value_type = i64)]
-pub struct RestoreJobID(i64);
-
-impl RestoreJobID {
-    pub fn new(id: i64) -> Result<Self, ApiError> {
-        if id <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid restore job id '{id}': must be a positive integer"
-            )));
-        }
-        Ok(Self(id))
-    }
-
-    pub fn id(self) -> i64 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for RestoreJobID {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let id = <i64 as Deserialize>::deserialize(deserializer)?;
-        Self::new(id).map_err(serde::de::Error::custom)
-    }
-}
+pub use hubuum_domain::RestoreJobId as RestoreJobID;
 
 #[derive(Debug, Clone)]
 pub enum BackupOutputLookup<T> {
@@ -365,41 +264,6 @@ impl<T> BackupOutputLookup<T> {
             Self::Missing => BackupOutputLookup::Missing,
         }
     }
-}
-
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = restore_jobs)]
-pub struct RestoreJobRecord {
-    pub id: i64,
-    pub status: String,
-    pub requested_by: Option<i32>,
-    pub requested_by_identity_scope: String,
-    pub requested_by_name: String,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub capability_hash: String,
-    pub error: Option<String>,
-    pub expires_at: NaiveDateTime,
-    pub confirmed_at: Option<NaiveDateTime>,
-    pub finished_at: Option<NaiveDateTime>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = restore_jobs)]
-pub struct NewRestoreJobRecord {
-    pub status: String,
-    pub requested_by: Option<i32>,
-    pub requested_by_identity_scope: String,
-    pub requested_by_name: String,
-    pub document: Vec<u8>,
-    pub byte_size: i64,
-    pub sha256: String,
-    pub capability_hash: String,
-    pub validation_summary: serde_json::Value,
-    pub expires_at: NaiveDateTime,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -431,6 +295,7 @@ impl FromStr for RestoreJobStatus {
         match value {
             "validated" => Ok(Self::Validated),
             "confirmed" => Ok(Self::Confirmed),
+            "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "expired" => Ok(Self::Expired),
             _ => Err(ApiError::InternalServerError(format!(
@@ -522,19 +387,12 @@ impl fmt::Debug for RestoreConfirmRequest {
 
 pub const RESTORE_CONFIRMATION_PHRASE: &str = "REPLACE ALL HUBUUM DATA";
 
-#[derive(Debug, Clone, Queryable, Selectable, Insertable)]
-#[diesel(table_name = server_instances)]
-pub struct ServerInstanceRecord {
-    pub instance_id: Uuid,
-    pub maintenance_generation: i64,
-    pub drained: bool,
-    pub last_heartbeat_at: NaiveDateTime,
-    pub started_at: NaiveDateTime,
-}
-
 #[cfg(test)]
 mod sensitive_debug_tests {
     use super::*;
+    use hubuum_storage_core::{
+        StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection,
+    };
 
     fn timestamp() -> NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
@@ -542,22 +400,36 @@ mod sensitive_debug_tests {
             .naive_utc()
     }
 
+    fn instant() -> DateTime<Utc> {
+        timestamp().and_utc()
+    }
+
     #[test]
     fn backup_debug_reports_shape_without_snapshot_rows() {
         let document = BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
-            created_at: timestamp(),
+            created_at: instant(),
             source_version: "test".to_string(),
             state: BackupState {
                 sections: BTreeMap::from([(
-                    "users".to_string(),
-                    vec![serde_json::json!({"password": "backup-state-secret"})],
+                    StorageBackupStateSection::Users,
+                    vec![
+                        StorageBackupRow::try_from_value(
+                            serde_json::json!({"password": "backup-state-secret"}),
+                        )
+                        .unwrap(),
+                    ],
                 )]),
             },
             history: Some(BackupHistory {
                 sections: BTreeMap::from([(
-                    "remote_call_results".to_string(),
-                    vec![serde_json::json!({"body": "backup-history-secret"})],
+                    StorageBackupHistorySection::RemoteCallResults,
+                    vec![
+                        StorageBackupRow::try_from_value(
+                            serde_json::json!({"body": "backup-history-secret"}),
+                        )
+                        .unwrap(),
+                    ],
                 )]),
             }),
             manifest: BackupManifest::default(),

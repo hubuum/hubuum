@@ -4,12 +4,12 @@
 //! with backend-specific fixture identifiers. Intentional differences are
 //! explicit data in the corpus so a backend cannot silently omit a case.
 
-use crate::db::traits::authz::{scope_allows, scope_allows_resource};
 use crate::models::{CollectionID, HubuumClassID, Permissions, TokenResourceScope, TokenScope};
 use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
     ResourceKind, ResourceRef,
 };
+use crate::traits::{scope_allows, scope_allows_resource};
 
 const TREETOP_FIXTURE_SCHEMA: &str = include_str!("../../../docs/treetop/schema.json");
 

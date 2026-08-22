@@ -1,13 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::models::{
-    Collection, HubuumClass, HubuumObject, ImportClassInput, ImportClassRelationInput,
-    ImportCollectionInput, ImportCollectionPermissionInput, ImportComputedFieldInput,
-    ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
-    ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
-    ImportObjectRelationInput, ImportPrincipalInput, ImportRemoteTargetInput,
-    NewImportTaskResultRecord, Permissions, RestoreTimestamps, TaskResultCounts, TaskStatus,
-};
+use crate::models::{Permissions, TaskResultCounts, TaskStatus};
+use crate::storage::StorageImportResult;
+
+pub(super) use crate::storage::ApplicationImportOperation as PlannedExecution;
 
 #[derive(Clone, Debug)]
 pub(super) struct CollectionResolution {
@@ -98,18 +94,6 @@ impl PlanningState {
     }
 }
 
-#[derive(Default)]
-pub(super) struct RuntimeState {
-    pub(super) identity_scopes_by_ref: HashMap<String, i32>,
-    pub(super) groups_by_ref: HashMap<String, i32>,
-    pub(super) principals_by_ref: HashMap<String, i32>,
-    pub(super) collections_by_ref: HashMap<String, Collection>,
-    pub(super) classes_by_ref: HashMap<String, HubuumClass>,
-    pub(super) objects_by_ref: HashMap<String, HubuumObject>,
-    pub(super) event_sinks_by_ref: HashMap<String, i32>,
-    pub(super) import_export_templates: Vec<ImportExportTemplateInput>,
-}
-
 pub(super) struct TerminalTaskUpdate {
     pub(super) status: TaskStatus,
     pub(super) summary: String,
@@ -121,77 +105,6 @@ pub(super) struct TerminalTaskUpdate {
 pub(super) enum WorkerLoopAction {
     Continue,
     Sleep,
-}
-
-#[derive(Clone, Debug)]
-pub(super) enum PlannedExecution {
-    UpsertIdentityScope {
-        input: ImportIdentityScopeInput,
-        overwrite: bool,
-    },
-    UpsertGroup {
-        input: ImportGroupInput,
-        overwrite: bool,
-    },
-    UpsertPrincipal {
-        input: ImportPrincipalInput,
-        overwrite: bool,
-    },
-    UpsertGroupMembership {
-        input: ImportGroupMembershipInput,
-        overwrite: bool,
-    },
-    CreateCollection(ImportCollectionInput),
-    UpdateCollection {
-        collection_id: i32,
-        input: ImportCollectionInput,
-    },
-    CreateClass(ImportClassInput),
-    UpdateClass {
-        class_id: i32,
-        input: ImportClassInput,
-    },
-    CreateObject(ImportObjectInput),
-    UpdateObject {
-        object_id: i32,
-        input: ImportObjectInput,
-    },
-    UpsertComputedField {
-        input: ImportComputedFieldInput,
-        overwrite: bool,
-    },
-    CreateClassRelation(ImportClassRelationInput),
-    UpdateClassRelationTimestamps {
-        input: ImportClassRelationInput,
-        timestamps: RestoreTimestamps,
-    },
-    CheckClassRelationCondition(ImportClassRelationInput),
-    CreateObjectRelation(ImportObjectRelationInput),
-    UpdateObjectRelationTimestamps {
-        input: ImportObjectRelationInput,
-        timestamps: RestoreTimestamps,
-    },
-    CheckObjectRelationCondition(ImportObjectRelationInput),
-    ApplyCollectionPermissions {
-        input: ImportCollectionPermissionInput,
-        overwrite: bool,
-    },
-    UpsertExportTemplate {
-        input: ImportExportTemplateInput,
-        overwrite: bool,
-    },
-    UpsertRemoteTarget {
-        input: ImportRemoteTargetInput,
-        overwrite: bool,
-    },
-    UpsertEventSink {
-        input: ImportEventSinkInput,
-        overwrite: bool,
-    },
-    UpsertEventSubscription {
-        input: ImportEventSubscriptionInput,
-        overwrite: bool,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -226,26 +139,9 @@ pub(super) struct PlannedItem {
     pub(super) execution: Option<PlannedExecution>,
 }
 
-impl RuntimeState {
-    pub(super) fn for_planned_items(planned_items: &[PlannedItem]) -> Self {
-        let import_export_templates = planned_items
-            .iter()
-            .filter_map(|item| match &item.execution {
-                Some(PlannedExecution::UpsertExportTemplate { input, .. }) => Some(input.clone()),
-                _ => None,
-            })
-            .collect();
-
-        Self {
-            import_export_templates,
-            ..Self::default()
-        }
-    }
-}
-
 #[derive(Default)]
 pub(super) struct ExecutionAccumulator {
-    pub(super) results: Vec<NewImportTaskResultRecord>,
+    pub(super) results: Vec<StorageImportResult>,
     pub(super) processed: i32,
     pub(super) success: i32,
     pub(super) failed: i32,
@@ -262,16 +158,18 @@ impl ExecutionAccumulator {
     ) {
         self.processed += 1;
         self.success += 1;
-        self.results.push(NewImportTaskResultRecord {
-            task_id,
-            item_ref: planned.item_ref.clone(),
-            entity_kind: planned.entity_kind.clone(),
-            action: planned.action.clone(),
-            identifier: planned.identifier.clone(),
-            outcome: outcome.to_string(),
-            error: None,
-            details: planned.details.clone(),
-        });
+        self.results.push(
+            StorageImportResult::builder(
+                crate::models::TaskID::new(task_id).expect("validated task id must be positive"),
+                planned.entity_kind.clone(),
+                planned.action.clone(),
+                outcome,
+            )
+            .item_ref(planned.item_ref.clone())
+            .identifier(planned.identifier.clone())
+            .details(planned.details.clone())
+            .build(),
+        );
     }
 
     pub(super) fn push_failure(
@@ -283,16 +181,19 @@ impl ExecutionAccumulator {
     ) {
         self.processed += 1;
         self.failed += 1;
-        self.results.push(NewImportTaskResultRecord {
-            task_id,
-            item_ref: planned.item_ref.clone(),
-            entity_kind: planned.entity_kind.clone(),
-            action: planned.action.clone(),
-            identifier: planned.identifier.clone(),
-            outcome: outcome.to_string(),
-            error: Some(error.into()),
-            details: planned.details.clone(),
-        });
+        self.results.push(
+            StorageImportResult::builder(
+                crate::models::TaskID::new(task_id).expect("validated task id must be positive"),
+                planned.entity_kind.clone(),
+                planned.action.clone(),
+                outcome,
+            )
+            .item_ref(planned.item_ref.clone())
+            .identifier(planned.identifier.clone())
+            .error(Some(error.into()))
+            .details(planned.details.clone())
+            .build(),
+        );
     }
 }
 
@@ -335,18 +236,19 @@ impl PlanningFailure {
         }
     }
 
-    pub(super) fn into_result(self, task_id: i32) -> NewImportTaskResultRecord {
+    pub(super) fn into_result(self, task_id: i32) -> StorageImportResult {
         let error = self.message_for_storage();
         let outcome = self.outcome();
-        NewImportTaskResultRecord {
-            task_id,
-            item_ref: self.item.item_ref,
-            entity_kind: self.item.entity_kind,
-            action: self.item.action,
-            identifier: self.item.identifier,
-            outcome: outcome.to_string(),
-            error: Some(error),
-            details: self.item.details,
-        }
+        StorageImportResult::builder(
+            crate::models::TaskID::new(task_id).expect("validated task id must be positive"),
+            self.item.entity_kind,
+            self.item.action,
+            outcome,
+        )
+        .item_ref(self.item.item_ref)
+        .identifier(self.item.identifier)
+        .error(Some(error))
+        .details(self.item.details)
+        .build()
     }
 }

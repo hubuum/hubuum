@@ -2,14 +2,16 @@ use crate::api::etag::{RevisionedResource, revision_precondition, revision_preco
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{
     NewUser, UpdateUser, UserID, UserPointResponse, UserResponse, UserWithName,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
+use crate::storage::with_revision_precondition;
+use crate::traits::UserIdApplicationExt;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 
@@ -29,7 +31,7 @@ use tracing::debug;
 #[get("")]
 #[get("/")]
 pub async fn get_users(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -43,14 +45,9 @@ pub async fn get_users(
 
     debug!(message = "User list requested", requestor = user.id);
 
-    let total_count = if params.include_total {
-        user.count_users(&pool, count_query_options(&params))
-            .await?
-    } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
     let search_params = prepare_db_pagination::<UserWithName>(&params)?;
-    let result = user.search_users(&pool, search_params).await?;
+    let (result, total_count) =
+        crate::services::identity::list_users(&context, search_params).await?;
 
     ApiResponse::mapped_paginated(result, total_count, &params, |users| {
         users.into_iter().map(UserResponse::from).collect()
@@ -74,7 +71,7 @@ pub async fn get_users(
 #[post("")]
 #[post("/")]
 pub async fn create_user(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -86,11 +83,8 @@ pub async fn create_user(
     );
 
     let event_context = requestor.event_context(&req);
-    let user = new_user
-        .into_inner()
-        .save(&pool, Some(&event_context))
-        .await?;
-    let response = user.to_point_response(&pool).await?;
+    let user = new_user.into_inner().save(&context, &event_context).await?;
+    let response = user.to_point_response(&context).await?;
 
     let location = api_locations::user(user.id)?;
     ApiResponse::created_revisioned(response, location)
@@ -113,18 +107,18 @@ pub async fn create_user(
 )]
 #[get("/{user_id}")]
 pub async fn get_user(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
-    let user = user_id.into_inner().user(&pool).await?;
+    let user = user_id.into_inner().user(&context).await?;
     debug!(
         message = "User get requested",
         target = user.id,
         requestor = requestor.user.id
     );
 
-    ApiResponse::ok_revisioned(user.to_point_response(&pool).await?)
+    ApiResponse::ok_revisioned(user.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -146,7 +140,7 @@ pub async fn get_user(
 )]
 #[patch("/{user_id}")]
 pub async fn update_user(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_id: web::Path<UserID>,
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
@@ -160,17 +154,22 @@ pub async fn update_user(
         requestor = requestor.user.id
     );
 
-    let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
+    let current = user_id
+        .user(&context)
+        .await?
+        .to_point_response(&context)
+        .await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let user = with_revision_precondition_scope(
+    let user = with_revision_precondition(
+        &context,
         precondition,
         updated_user
             .into_inner()
-            .save(user_id, &pool, Some(&event_context)),
+            .save(user_id, &context, &event_context),
     )
     .await?;
-    ApiResponse::ok_revisioned(user.to_point_response(&pool).await?)
+    ApiResponse::ok_revisioned(user.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -190,7 +189,7 @@ pub async fn update_user(
 )]
 #[delete("/{user_id}")]
 pub async fn delete_user(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -202,14 +201,21 @@ pub async fn delete_user(
     );
 
     let user_id = user_id.into_inner();
-    let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
+    let current = user_id
+        .user(&context)
+        .await?
+        .to_point_response(&context)
+        .await?;
     let etag = current.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
 
     let event_context = requestor.event_context(&req);
-    let delete_result =
-        with_revision_precondition_scope(precondition, user_id.delete(&pool, Some(&event_context)))
-            .await;
+    let delete_result = with_revision_precondition(
+        &context,
+        precondition,
+        user_id.delete(&context, &event_context),
+    )
+    .await;
 
     match delete_result {
         Ok(_) => Ok(ApiResponse::no_content_with_etag(etag)),
@@ -232,7 +238,7 @@ pub async fn delete_user(
 )]
 #[post("/{user_id}/anonymize")]
 pub async fn anonymize_user(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -244,9 +250,23 @@ pub async fn anonymize_user(
         target = target_id,
         requestor = requestor.user.id
     );
-    let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
+    let current = user_id
+        .user(&context)
+        .await?
+        .to_point_response(&context)
+        .await?;
     let precondition = revision_precondition(&req, &current)?;
-    with_revision_precondition_scope(precondition, user_id.anonymize(&pool)).await?;
-    let updated = user_id.user(&pool).await?.to_point_response(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    with_revision_precondition(
+        &context,
+        precondition,
+        user_id.anonymize(&context, &event_context),
+    )
+    .await?;
+    let updated = user_id
+        .user(&context)
+        .await?
+        .to_point_response(&context)
+        .await?;
     Ok(ApiResponse::no_content_with_etag(updated.entity_tag()?))
 }

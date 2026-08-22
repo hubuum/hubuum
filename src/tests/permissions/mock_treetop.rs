@@ -358,13 +358,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
     backend.set_group_candidates(groups);
 
     // Empty filter: include groups with at least one permission.
-    let page = QueryOptions {
-        filters: vec![],
-        sort: vec![],
-        limit: None,
-        cursor: None,
-        include_total: true,
-    };
+    let page = QueryOptions::new(vec![], vec![], None, None, true).unwrap();
     let (results, count) = backend
         .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &page)
         .await
@@ -388,13 +382,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
     assert_eq!(results[0].group.id, 100);
 
     // Limit pagination.
-    let page_limited = QueryOptions {
-        filters: vec![],
-        sort: vec![],
-        limit: Some(1),
-        cursor: None,
-        include_total: true,
-    };
+    let page_limited = QueryOptions::new(vec![], vec![], Some(1), None, true).unwrap();
     let (results, count) = backend
         .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &page_limited)
         .await
@@ -413,7 +401,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
     assert_eq!(first_page.items[0].group.id, 200);
 
     let mut second_request = first_request;
-    second_request.cursor = first_page.next_cursor;
+    second_request.set_cursor(first_page.next_cursor).unwrap();
     let second_prepared = prepare_db_pagination::<GroupPermission>(&second_request).unwrap();
     let (second_rows, _) = backend
         .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &second_prepared)

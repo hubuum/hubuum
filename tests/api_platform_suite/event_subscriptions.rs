@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
     use serde_json::json;
 
-    use crate::db::with_connection;
     use crate::events::{Action, EntityType};
     use crate::models::{
         EventSink, EventSinkKind, EventSubscription, NewEventSink, NewEventSubscription,
@@ -56,17 +54,12 @@ mod tests {
         action_value: Action,
         entity_id_value: i32,
     ) -> i64 {
-        with_connection(&context.pool, async |conn| {
-            use crate::schema::events::dsl::{action, entity_id, entity_type, events};
-
-            events
-                .filter(entity_type.eq(entity_type_value.as_str()))
-                .filter(action.eq(action_value.as_str()))
-                .filter(entity_id.eq(entity_id_value))
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
+        crate::test_support::audit_event_count(
+            &context.pool,
+            entity_type_value,
+            action_value,
+            entity_id_value,
+        )
         .await
         .unwrap()
     }

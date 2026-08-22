@@ -1,39 +1,21 @@
-use crate::models::token_scope::TokenScope;
-use std::iter::IntoIterator;
-
 use crate::models::search::QueryOptions;
+use crate::models::token_scope::TokenScope;
 use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, ObjectAggregateBackendRequest,
-    ObjectAggregatePage, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, UnifiedSearchSpec, User, UserID,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, User, UserID,
 };
 
-use crate::db::DbPool;
-use crate::db::traits::user::{
-    LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-    ObjectAggregateBackend, UnifiedSearchBackend, UserSearchBackend,
-};
 use crate::errors::ApiError;
+use crate::storage::StorageContext;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{AuthzSubject, BackendContext, ClassAccessors, SelfAccessors};
+use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
 
 /// Search resources that are visible to a user.
 ///
 /// The methods on this trait delegate into backend search implementations while keeping the
 /// model-facing API expressed in terms of `User` / `UserID` style accessors.
 pub trait Search: UserCollectionAccessors {
-    async fn aggregate_objects<C>(
-        &self,
-        backend: &C,
-        request: ObjectAggregateBackendRequest,
-    ) -> Result<ObjectAggregatePage, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.aggregate_objects_from_backend(backend, request).await
-    }
-
     async fn search_collections<C>(
         &self,
         backend: &C,
@@ -41,23 +23,41 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_collections_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_collections(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn count_collections<C>(
         &self,
         backend: &C,
-        query_options: QueryOptions,
+        mut query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_collections_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        query_options.set_include_total(true);
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_collections(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await?
+        .1
+        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
     async fn search_classes<C>(
@@ -67,23 +67,41 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_classes_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_classes(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn count_classes<C>(
         &self,
         backend: &C,
-        query_options: QueryOptions,
+        mut query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_classes_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        query_options.set_include_total(true);
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_classes(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await?
+        .1
+        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
     async fn search_objects<C>(
@@ -93,23 +111,41 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_objects_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_objects(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn count_objects<C>(
         &self,
         backend: &C,
-        query_options: QueryOptions,
+        mut query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_objects_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        query_options.set_include_total(true);
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_objects(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await?
+        .1
+        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
     async fn search_class_relations<C>(
@@ -119,10 +155,20 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_class_relations_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_class_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn class_relations_page<C>(
@@ -132,10 +178,23 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.class_relations_page_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_class_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_classes_related_to<C, K>(
@@ -146,11 +205,22 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.search_classes_related_to_from_backend(backend.db_pool(), class, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_related_classes(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class.id(),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn classes_related_to_page<C, K>(
@@ -161,11 +231,25 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.classes_related_to_page_from_backend(backend.db_pool(), class, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_related_classes(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class.id(),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn class_relations_touching_page<C, K>(
@@ -176,16 +260,25 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.class_relations_touching_page_from_backend(
-            backend.db_pool(),
-            class,
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_class_relations_touching(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class.id(),
             query_options,
-            scopes,
         )
-        .await
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_class_relations_between_ids<C>(
@@ -195,10 +288,19 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_class_relations_between_ids_from_backend(backend.db_pool(), class_ids, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_class_relations_between_ids(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class_ids,
+        )
+        .await
     }
 
     async fn search_object_relations<C>(
@@ -208,10 +310,20 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_object_relations_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_object_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn object_relations_page<C>(
@@ -221,10 +333,23 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.object_relations_page_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_object_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_objects_related_to<C, O>(
@@ -235,16 +360,22 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.search_objects_related_to_from_backend(
-            backend.db_pool(),
-            object,
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_related_objects(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object.id(),
             query_options,
-            scopes,
         )
         .await
+        .map(|(rows, _)| rows)
     }
 
     async fn objects_related_to_page<C, O>(
@@ -255,14 +386,28 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.objects_related_to_page_from_backend(backend.db_pool(), object, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_related_objects(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object.id(),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
-    async fn related_objects_for_roots<C>(
+    async fn list_related_objects_for_roots<C>(
         &self,
         backend: &C,
         root_object_ids: &[i32],
@@ -270,18 +415,24 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.related_objects_for_roots_from_backend(
-            backend.db_pool(),
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_related_objects_for_roots(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
             root_object_ids,
             include,
-            scopes,
+            false,
         )
         .await
     }
 
-    async fn bidirectionally_related_objects_for_roots<C>(
+    async fn list_bidirectionally_related_objects_for_roots<C>(
         &self,
         backend: &C,
         root_object_ids: &[i32],
@@ -290,14 +441,20 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.bidirectionally_related_objects_for_roots_from_backend(
-            backend.db_pool(),
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_bidirectionally_related_objects_for_roots(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
             root_object_ids,
             max_depth,
             per_root_cap,
-            scopes,
+            false,
         )
         .await
     }
@@ -310,16 +467,25 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         O: SelfAccessors<HubuumObject>,
     {
-        self.object_relations_touching_page_from_backend(
-            backend.db_pool(),
-            object,
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_object_relations_touching(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object.id(),
             query_options,
-            scopes,
         )
-        .await
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_object_relations_between_ids<C>(
@@ -329,49 +495,19 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_object_relations_between_ids_from_backend(backend.db_pool(), object_ids, scopes)
-            .await
-    }
-
-    async fn search_unified_collections<C>(
-        &self,
-        backend: &C,
-        query: &UnifiedSearchSpec,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<Collection>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.search_unified_collections_from_backend(backend.db_pool(), query, scopes)
-            .await
-    }
-
-    async fn search_unified_classes<C>(
-        &self,
-        backend: &C,
-        query: &UnifiedSearchSpec,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<HubuumClassExpanded>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.search_unified_classes_from_backend(backend.db_pool(), query, scopes)
-            .await
-    }
-
-    async fn search_unified_objects<C>(
-        &self,
-        backend: &C,
-        query: &UnifiedSearchSpec,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<HubuumObject>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.search_unified_objects_from_backend(backend.db_pool(), query, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_object_relations_between_ids(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object_ids,
+        )
+        .await
     }
 }
 
@@ -381,9 +517,12 @@ pub trait GroupAccessors: AuthzSubject {
     #[allow(async_fn_in_trait, dead_code)]
     async fn groups<C>(&self, backend: &C) -> Result<Vec<Group>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_user_groups(backend.db_pool()).await
+        let options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)?;
+        crate::services::identity::list_principal_groups(backend, self.principal_id(), options)
+            .await
+            .map(|(groups, _)| groups)
     }
 
     #[allow(async_fn_in_trait)]
@@ -393,42 +532,19 @@ pub trait GroupAccessors: AuthzSubject {
         query_options: &QueryOptions,
     ) -> Result<(Vec<Group>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_user_groups_paginated_with_total_count(backend.db_pool(), query_options)
-            .await
+        crate::services::identity::list_principal_groups(
+            backend,
+            self.principal_id(),
+            query_options.clone(),
+        )
+        .await
     }
 }
 
-/// Access collections that are visible to a user through direct or group-derived permissions.
-pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
-    /// Return all collections that the user has CollectionPermissions::ReadCollection on.
-    async fn collections_read<C>(&self, backend: &C) -> Result<Vec<Collection>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.collections(backend, &[Permissions::ReadCollection])
-            .await
-    }
-
-    /// Return all collections that the user has the given permissions on.
-    async fn collections<'a, C, I>(
-        &self,
-        backend: &C,
-        permissions_list: &'a I,
-    ) -> Result<Vec<Collection>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-        &'a I: IntoIterator<Item = &'a Permissions>,
-    {
-        // NOTE: scopes are passed as `None` here (unscoped). Live token-scope
-        // threading through the collection/search visibility helpers is wired in
-        // the handler/search-scope pass; the admin fast path stays correct for
-        // the `None` case.
-        self.load_collections_with_permissions(backend.db_pool(), permissions_list, None)
-            .await
-    }
-}
+/// Marker for authorization subjects accepted by backend-owned resource queries.
+pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {}
 
 // Group/collection accessors are available to every authorization subject (human
 // users, service accounts, bare principals) via the identity-only contract.
@@ -448,7 +564,10 @@ impl IdAccessor for User {
 }
 
 impl InstanceAdapter<User> for User {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<User, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<User, ApiError> {
         Ok(self.clone())
     }
 }
@@ -463,8 +582,11 @@ impl IdAccessor for UserID {
 }
 
 impl InstanceAdapter<User> for UserID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<User, ApiError> {
-        self.load_user_record(pool).await
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<User, ApiError> {
+        crate::services::identity::get_user(pool, self.id()).await
     }
 }
 
@@ -483,13 +605,8 @@ mod test {
     use rstest::rstest;
 
     fn make_query_options_from_query_param(filter: &ParsedQueryParam) -> QueryOptions {
-        QueryOptions {
-            filters: vec![filter.clone()],
-            sort: vec![],
-            limit: None,
-            cursor: None,
-            include_total: true,
-        }
+        QueryOptions::new(vec![filter.clone()], vec![], None, None, true)
+            .expect("test query must be valid")
     }
 
     #[rstest]
@@ -623,13 +740,8 @@ mod test {
         let classlist = test_user_1
             .search_classes(
                 &context.pool,
-                QueryOptions {
-                    filters: vec![],
-                    sort: vec![],
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                },
+                QueryOptions::new(vec![], vec![], None, None, true)
+                    .expect("test query must be valid"),
                 None,
             )
             .await

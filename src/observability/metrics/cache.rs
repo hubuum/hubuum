@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::db::traits::metrics::{EventMetricsSnapshot, InventoryGaugeSnapshot, TaskGaugeSnapshot};
+use crate::storage::{EventMetricsSnapshot, InventoryGaugeSnapshot, TaskGaugeSnapshot};
 
 const DB_SCRAPE_CACHE_TTL: Duration = Duration::from_secs(30);
 

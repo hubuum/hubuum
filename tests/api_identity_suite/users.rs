@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::auth::ConfiguredLdapScope;
-    use crate::db::prelude::*;
-    use crate::db::traits::{ActiveTokens, Status};
-    use crate::db::with_connection;
+    use crate::events::EventContext;
     use crate::models::group::NewGroup;
     use crate::models::user::{
         LoginUser, NewUser, UpdateUser, User, UserID, UserPointResponse, UserResponse,
@@ -13,10 +11,14 @@ mod tests {
         PrincipalTokenPointResponse, Token, TokenResourceScope,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::test_support::TestActiveTokens;
     use crate::test_support::sync_external_user;
+    use crate::traits::UserIdApplicationExt;
     use actix_web::{http::StatusCode, test};
     use hubuum_auth_core::{AuthenticatedExternalUser, ExternalUserProfile};
     use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
     use rstest::rstest;
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -28,7 +30,7 @@ mod tests {
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
 
-    async fn token_id_for_raw(pool: &crate::db::DbPool, raw: &str) -> i32 {
+    async fn token_id_for_raw(pool: &hubuum_storage_postgres::PostgresPool, raw: &str) -> i32 {
         let token_hash = Token::storage_hash_from_raw(raw);
         with_connection(pool, async |conn| {
             crate::schema::tokens::table
@@ -42,7 +44,7 @@ mod tests {
     }
 
     async fn set_token_expiry(
-        pool: &crate::db::DbPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         raw: &str,
         expires_at: chrono::NaiveDateTime,
     ) {
@@ -97,7 +99,7 @@ mod tests {
     }
 
     async fn assert_user_response_matches(
-        pool: &crate::db::DbPool,
+        pool: &hubuum_storage_postgres::PostgresPool,
         user: &User,
         response: &UserPointResponse,
     ) {
@@ -866,7 +868,7 @@ mod tests {
         assert_ne!(renewed_raw, source_raw);
         assert!(
             Token(renewed_raw.to_string())
-                .is_valid(&context.pool)
+                .authenticate(&context.pool)
                 .await
                 .is_ok()
         );
@@ -1139,8 +1141,8 @@ mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_api_anonymize_user(#[future(awt)] test_context: TestContext) {
-        use crate::db::prelude::*;
-        use crate::db::with_connection;
+        use hubuum_storage_postgres::diesel_async_prelude::*;
+        use hubuum_storage_postgres::with_connection;
 
         let context = test_context;
 
@@ -1153,7 +1155,7 @@ mod tests {
             proper_name: Some("API Anon".into()),
             email: Some("x@example.com".into()),
         }
-        .save(&context.pool, None)
+        .save(&context.pool, &EventContext::system())
         .await
         .unwrap();
 

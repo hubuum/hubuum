@@ -84,6 +84,8 @@ pub struct TlsConfig {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct DatabaseConfig {
+    /// Complete storage backend selected by the application composition root.
+    pub backend: String,
     pub url: SecretStatus,
     pub pool_size: u32,
     pub pool_acquire_timeout_ms: u64,
@@ -135,6 +137,12 @@ pub struct ExportConfig {
     pub template_max_objects: usize,
     pub max_output_bytes: usize,
     pub stage_timeout_ms: u64,
+    /// Backend-neutral budget applied to each export storage read stage.
+    pub storage_query_budget_ms: u64,
+    /// Deprecated compatibility alias for `storage_query_budget_ms`.
+    ///
+    /// The value is identical and remains present so administrator clients do
+    /// not break while migrating away from the PostgreSQL-shaped field name.
     pub database_statement_timeout_ms: u64,
 }
 
@@ -237,8 +245,11 @@ impl From<&RunningConfig> for ClientConfig {
     }
 }
 
-impl From<&AppConfig> for RunningConfig {
-    fn from(config: &AppConfig) -> Self {
+impl RunningConfig {
+    pub(crate) fn from_app_config_and_storage(
+        config: &AppConfig,
+        storage: crate::storage::StorageBackendDescriptor,
+    ) -> Self {
         let client_allowlist = match &config.client_allowlist {
             ClientAllowlist::Any => ClientAllowlistStatus {
                 allows_any: true,
@@ -275,6 +286,7 @@ impl From<&AppConfig> for RunningConfig {
                 },
             },
             database: DatabaseConfig {
+                backend: storage.kind().as_str().to_string(),
                 url: SecretStatus {
                     configured: !config.database_url.trim().is_empty(),
                 },
@@ -322,7 +334,8 @@ impl From<&AppConfig> for RunningConfig {
                 template_max_objects: config.export_template_max_objects,
                 max_output_bytes: config.export_max_output_bytes,
                 stage_timeout_ms: config.export_stage_timeout_ms,
-                database_statement_timeout_ms: config.export_db_statement_timeout_ms,
+                storage_query_budget_ms: config.export_storage_query_budget_ms(),
+                database_statement_timeout_ms: config.export_storage_query_budget_ms(),
             },
             backups: BackupConfig {
                 output_retention_hours: config.backup_output_retention_hours,
@@ -398,6 +411,15 @@ impl From<&AppConfig> for RunningConfig {
     }
 }
 
+impl From<&AppConfig> for RunningConfig {
+    fn from(config: &AppConfig) -> Self {
+        Self::from_app_config_and_storage(
+            config,
+            crate::storage::StorageBackendDescriptor::new(config.storage_backend),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -426,6 +448,9 @@ mod tests {
         assert!(!json.contains("valkey.example"));
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
+        assert!(json.contains("\"backend\":\"postgresql\""));
+        assert!(!json.contains("contract_version"));
+        assert!(!json.contains("capabilities"));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
     }

@@ -4,7 +4,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::errors::ApiError;
-    use crate::events::EventContext;
+    use crate::events::{EventContext, PrincipalId};
     use crate::models::traits::{
         CreateObjectInResolvedClass, ResolveClassTarget, ResolveObjectTarget, UpdateResolvedClass,
         UpdateResolvedObject,
@@ -437,7 +437,11 @@ mod tests {
         #[case] addressing: SelectorAddressing,
     ) {
         let fixture = fixture(&test_context, "stale class rename").await;
-        let event_context = EventContext::user(test_context.admin_user.id, None, None);
+        let event_context = EventContext::user(
+            PrincipalId::new(test_context.admin_user.id).unwrap(),
+            None,
+            None,
+        );
         let stale_class_target = class_selector(addressing, &fixture)
             .resolve_class_target(&test_context.pool)
             .await
@@ -465,7 +469,11 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let fixture = fixture(&test_context, "stale class create").await;
-        let event_context = EventContext::user(test_context.admin_user.id, None, None);
+        let event_context = EventContext::user(
+            PrincipalId::new(test_context.admin_user.id).unwrap(),
+            None,
+            None,
+        );
         let stale_class_target = ClassSelector::by_name(fixture.class.name.clone())
             .resolve_class_target(&test_context.pool)
             .await
@@ -504,7 +512,11 @@ mod tests {
         let destination = test_context
             .collection_fixture("class move destination")
             .await;
-        let event_context = EventContext::user(test_context.admin_user.id, None, None);
+        let event_context = EventContext::user(
+            PrincipalId::new(test_context.admin_user.id).unwrap(),
+            None,
+            None,
+        );
         let stale_class_target = class_selector(addressing, &fixture)
             .resolve_class_target(&test_context.pool)
             .await
@@ -535,7 +547,11 @@ mod tests {
         #[case] addressing: SelectorAddressing,
     ) {
         let fixture = fixture(&test_context, "stale object rename").await;
-        let event_context = EventContext::user(test_context.admin_user.id, None, None);
+        let event_context = EventContext::user(
+            PrincipalId::new(test_context.admin_user.id).unwrap(),
+            None,
+            None,
+        );
         let stale_object_target = object_selector(addressing, &fixture)
             .resolve_object_target(&test_context.pool)
             .await

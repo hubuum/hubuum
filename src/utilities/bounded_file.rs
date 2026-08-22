@@ -1,7 +1,19 @@
+#![cfg(any(
+    test,
+    feature = "tls-rustls",
+    feature = "tls-openssl",
+    feature = "permissions-treetop"
+))]
+
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
+#[cfg(any(
+    feature = "tls-rustls",
+    feature = "tls-openssl",
+    feature = "permissions-treetop"
+))]
 pub(crate) const MAX_CERTIFICATE_BUNDLE_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(any(feature = "tls-rustls", feature = "tls-openssl"))]
 pub(crate) const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;

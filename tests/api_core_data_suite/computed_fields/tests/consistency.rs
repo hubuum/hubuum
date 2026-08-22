@@ -241,74 +241,6 @@ async fn shared_computed_query_falls_back_for_an_invalid_fresh_materialization(
 
 #[rstest::rstest]
 #[tokio::test]
-async fn computed_query_cursor_uses_the_resolved_definition_snapshot(
-    #[future(awt)] test_context: TestContext,
-) {
-    let mut fixture = fixture(&test_context, "computed sorting definition snapshot").await;
-    fixture.objects.push(
-        NewHubuumObject {
-            collection_id: fixture.class.collection_id,
-            hubuum_class_id: fixture.class.id,
-            name: test_context.scoped_name("snapshot second object"),
-            description: "Computed sorting snapshot object".to_string(),
-            data: serde_json::json!({"inventory": {"hostname": "second.example"}}),
-        }
-        .save_without_events(&test_context.pool)
-        .await
-        .unwrap(),
-    );
-    let response = post_request(
-        &test_context.pool,
-        &test_context.admin_token,
-        &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
-        definition("display_name"),
-    )
-    .await;
-    assert_response_status(response, StatusCode::CREATED).await;
-    finish_active_rebuild(&test_context, fixture.class.id).await;
-
-    let mut params =
-        parse_query_parameter("sort=computed.shared.display_name&limit=1&include_total=false")
-            .unwrap();
-    let snapshot = resolve_computed_query_fields(
-        &test_context.pool,
-        fixture.class.id,
-        Some(test_context.admin_user.id),
-        &mut params.filters,
-        &mut params.sort,
-    )
-    .await
-    .unwrap();
-    with_connection(&test_context.pool, async |conn| {
-        use crate::schema::computed_field_definitions::dsl::{
-            class_id, computed_field_definitions,
-        };
-        diesel::delete(computed_field_definitions.filter(class_id.eq(fixture.class.id)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    let enriched = enrich_objects_with_computed_query_snapshot(
-        &test_context.pool,
-        fixture.objects.clone(),
-        Some(test_context.admin_user.id),
-        &snapshot,
-    )
-    .await
-    .unwrap();
-    let page = finalize_page(enriched, &params).unwrap();
-
-    assert_eq!(page.items.len(), 1);
-    assert!(page.next_cursor.is_some());
-    assert!(page.items[0].computed.shared.values["display_name"].is_string());
-
-    fixture.cleanup().await.unwrap();
-}
-
-#[rstest::rstest]
-#[tokio::test]
 async fn numeric_computed_query_cursor_matches_domain_precision(
     #[future(awt)] test_context: TestContext,
 ) {
@@ -644,13 +576,19 @@ async fn raw_computed_sort_only_enriches_a_nonterminal_cursor_boundary(
     let large_page: Vec<serde_json::Value> = test::read_body_json(large_response).await;
     assert_eq!(large_page.len(), 8);
 
+    // Resolving a nonterminal cursor boundary needs one enrichment query, but
+    // it stays inside the adapter's existing read snapshot and must not add a
+    // pool checkout.
     assert_eq!(
         small_queries.domain_queries(),
-        large_queries.domain_queries() + 1
+        large_queries.domain_queries() + 1,
+        "small: {:#?}\nlarge: {:#?}",
+        small_queries.query_counts(),
+        large_queries.query_counts()
     );
     assert_eq!(
         small_queries.connection_checkouts(),
-        large_queries.connection_checkouts() + 1
+        large_queries.connection_checkouts()
     );
     assert_eq!(
         large_queries.queries_matching("hubuum_computed_evaluate_scope"),

@@ -7,13 +7,6 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
-use crate::db::traits::UserPermissions;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::history::{
-    HistoryCollectionFilter, export_template_as_of,
-    export_template_history_paginated_with_total_count,
-};
-use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::{AccessEventContext, Authenticated};
@@ -29,8 +22,14 @@ use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
     AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
 };
+use crate::services::history::{
+    HistoryCollectionFilter, export_template_as_of,
+    export_template_history_paginated_with_total_count,
+};
+use crate::storage::with_revision_precondition;
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
+use crate::traits::{UserPermissions, scope_allows};
 
 #[utoipa::path(
     post,
@@ -50,7 +49,7 @@ use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
 #[post("")]
 #[post("/")]
 pub async fn create_template(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     template: web::Json<NewExportTemplate>,
     req: HttpRequest,
@@ -60,14 +59,14 @@ pub async fn create_template(
 
     debug!(
         message = "Export template create requested",
-        user_id = user.id,
+        user_id = user.id().id(),
         collection_id = template.collection_id,
         template_name = template.name
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         can!(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             [Permissions::CreateTemplate],
@@ -75,8 +74,8 @@ pub async fn create_template(
         );
     } else {
         authorize_resources(
-            pool.permission_backend(),
-            &pool,
+            context.permission_backend(),
+            &context,
             user,
             requestor.scopes(),
             vec![Permissions::CreateTemplate],
@@ -94,7 +93,7 @@ pub async fn create_template(
     }
 
     let event_context = requestor.event_context(&req);
-    let created = template.save(&pool, &event_context).await?;
+    let created = template.save(&context, &event_context).await?;
 
     let location = api_locations::template(created.id)?;
     ApiResponse::created_revisioned(created, location)
@@ -115,7 +114,7 @@ pub async fn create_template(
 #[get("")]
 #[get("/")]
 pub async fn get_templates(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -124,33 +123,40 @@ pub async fn get_templates(
 
     info!(
         message = "Export template list requested",
-        user_id = user.id
+        user_id = user.id().id()
     );
 
-    let (templates, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
+    let (templates, total_count) = if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
         let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
-        let mut allowed_collection_ids =
-            user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
-                .await?
-                .into_iter()
-                .map(|collection| collection.id)
-                .collect::<Vec<_>>();
+        let mut allowed_collection_ids = user_can_on_any(
+            &context,
+            user,
+            Permissions::ReadTemplate,
+            requestor.scopes(),
+        )
+        .await?
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
         if let Some(scope) = requestor.scopes() {
             scope.retain_allowed_collection_ids(&mut allowed_collection_ids);
         }
-        ExportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
+        ExportTemplate::list_with_total_count(&context, &allowed_collection_ids, &search_params)
             .await?
     } else {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadTemplate]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
         let mut candidate_options = count_query_options(&params);
-        candidate_options.include_total = false;
-        let candidates = ExportTemplate::list_candidates(&pool, &candidate_options).await?;
-        let principal = PrincipalRef::load(&pool, user).await?;
+        candidate_options.set_include_total(false);
+        let candidates = ExportTemplate::list_candidates(&context, &candidate_options).await?;
+        let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
         let page = authorize_cursor_page(
-            pool.permission_backend(),
+            context.permission_backend(),
             &principal,
             candidates,
             requestor.scopes(),
@@ -190,7 +196,7 @@ pub async fn get_templates(
 )]
 #[get("/{template_id}")]
 pub async fn get_template(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
@@ -199,14 +205,14 @@ pub async fn get_template(
 
     debug!(
         message = "Export template get requested",
-        user_id = user.id,
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
-    let template = template_id.instance(&pool).await?;
+    let template = template_id.instance(&context).await?;
 
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::ReadTemplate],
@@ -237,7 +243,7 @@ pub async fn get_template(
 )]
 #[post("/{template_id}/exports")]
 pub async fn run_template_export(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     template_id: web::Path<ExportTemplateID>,
@@ -249,14 +255,14 @@ pub async fn run_template_export(
 
     debug!(
         message = "Export template execution requested",
-        user_id = user.id,
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
-    let template = template_id.instance(&pool).await?;
+    let template = template_id.instance(&context).await?;
 
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::ReadTemplate],
@@ -267,13 +273,13 @@ pub async fn run_template_export(
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let submission = ExportTaskSubmission::for_token(
         export,
-        TokenID::new(requestor.token_meta.id)?,
+        TokenID::new(requestor.token_meta.id().id())?,
         requestor.scopes(),
     )
     .template(template)
     .idempotency_key(idempotency_key);
-    let task = submit_export_task(&pool, user, submission).await?;
-    kick_task_worker(pool.clone());
+    let task = submit_export_task(&context, user, submission).await?;
+    kick_task_worker(context.clone());
     let response = task.to_response()?;
 
     Ok(ApiResponse::accepted_at(
@@ -302,7 +308,7 @@ pub async fn run_template_export(
 )]
 #[patch("/{template_id}")]
 pub async fn patch_template(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     update: web::Json<UpdateExportTemplate>,
@@ -314,14 +320,14 @@ pub async fn patch_template(
 
     debug!(
         message = "Export template patch requested",
-        user_id = user.id,
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
-    let existing = template_id.instance(&pool).await?;
+    let existing = template_id.instance(&context).await?;
 
     can!(
-        &pool,
+        &context,
         user.clone(),
         requestor.scopes(),
         [Permissions::UpdateTemplate],
@@ -332,7 +338,7 @@ pub async fn patch_template(
         && target_collection != existing.collection_id
     {
         can!(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             [Permissions::CreateTemplate],
@@ -342,9 +348,10 @@ pub async fn patch_template(
 
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
-    let updated = with_revision_precondition_scope(
+    let updated = with_revision_precondition(
+        &context,
         precondition,
-        update.update(&pool, template_id, &event_context),
+        update.update(&context, template_id, &event_context),
     )
     .await?;
 
@@ -368,7 +375,7 @@ pub async fn patch_template(
 )]
 #[delete("/{template_id}")]
 pub async fn delete_template(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
@@ -378,14 +385,14 @@ pub async fn delete_template(
 
     debug!(
         message = "Export template delete requested",
-        user_id = user.id,
+        user_id = user.id().id(),
         template_id = template_id.id()
     );
 
-    let template = template_id.instance(&pool).await?;
+    let template = template_id.instance(&context).await?;
 
     can!(
-        &pool,
+        &context,
         user,
         requestor.scopes(),
         [Permissions::DeleteTemplate],
@@ -395,8 +402,12 @@ pub async fn delete_template(
     let etag = template.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, template_id.delete(&pool, &event_context))
-        .await?;
+    with_revision_precondition(
+        &context,
+        precondition,
+        template_id.delete(&context, &event_context),
+    )
+    .await?;
 
     Ok(ApiResponse::no_content_with_etag(etag))
 }
@@ -416,7 +427,7 @@ pub async fn delete_template(
 )]
 #[get("/{template_id}/history")]
 pub async fn get_template_history(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
@@ -431,10 +442,10 @@ pub async fn get_template_history(
 
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
-    let (entity_id, require_history) = match template_id.instance(&pool).await {
+    let (entity_id, require_history) = match template_id.instance(&context).await {
         Ok(instance) => {
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadTemplate],
@@ -444,7 +455,7 @@ pub async fn get_template_history(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -460,14 +471,17 @@ pub async fn get_template_history(
     let (rows, total_count) = if require_history {
         export_template_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::All,
         )
         .await?
-    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+    } else if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
         let collection_ids = readable_history_collection_ids(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadTemplate,
@@ -475,7 +489,7 @@ pub async fn get_template_history(
         .await?;
         export_template_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::Visible(&collection_ids),
         )
@@ -484,13 +498,13 @@ pub async fn get_template_history(
         let candidate_params = history_candidate_query_options(&params);
         let (candidates, _) = export_template_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &candidate_params,
             HistoryCollectionFilter::All,
         )
         .await?;
         authorize_history_page(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadTemplate,
@@ -500,13 +514,13 @@ pub async fn get_template_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!(
             "template {entity_id} not found"
         )));
     }
 
-    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
+    let principal_names = resolve_history_principal_names(&context, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
@@ -534,7 +548,7 @@ pub async fn get_template_history(
 )]
 #[get("/{template_id}/history/as-of")]
 pub async fn get_template_as_of(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
@@ -546,10 +560,10 @@ pub async fn get_template_as_of(
 
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
-    let (entity_id, deleted) = match template_id.instance(&pool).await {
+    let (entity_id, deleted) = match template_id.instance(&context).await {
         Ok(instance) => {
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadTemplate],
@@ -559,7 +573,7 @@ pub async fn get_template_as_of(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -571,13 +585,13 @@ pub async fn get_template_as_of(
     };
 
     let at = parse_as_of(req.query_string())?;
-    let row = export_template_as_of(entity_id, at, &pool)
+    let row = export_template_as_of(entity_id, at, &context)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of template {entity_id} at {at}")))?;
 
     if !deleted {
         authorize_history_snapshot(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadTemplate,
@@ -587,7 +601,7 @@ pub async fn get_template_as_of(
     }
 
     let principal_names =
-        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+        resolve_history_principal_names(&context, std::slice::from_ref(&row)).await?;
     Ok(ApiResponse::new(
         HistoryResponse::new(row, &principal_names),
         StatusCode::OK,

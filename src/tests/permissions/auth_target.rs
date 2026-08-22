@@ -366,7 +366,7 @@ async fn object_relation_cross_collection_populates_all_fields() {
 async fn local_backend_relation_and_check_denies_partial_permission() {
     let (pool, _) = get_pool_and_config().await;
     let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
-        pool.clone(),
+        crate::storage::StorageHandle::postgres(pool.clone()),
         "admin".to_string(),
     ));
 

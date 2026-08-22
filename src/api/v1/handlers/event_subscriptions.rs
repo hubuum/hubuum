@@ -4,11 +4,6 @@ use crate::api::etag::{RevisionedResource, revision_precondition, revision_preco
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::can;
-use crate::db::traits::UserPermissions;
-use crate::db::traits::event_subscription::{
-    DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
-};
-use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter;
@@ -18,6 +13,14 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::services::event_administration::{
+    create_event_subscription as create_event_subscription_service,
+    delete_event_subscription as delete_event_subscription_service,
+    get_event_subscription as get_event_subscription_service, list_event_subscriptions,
+    update_event_subscription as update_event_subscription_service,
+};
+use crate::storage::with_revision_precondition;
+use crate::traits::UserPermissions;
 
 #[utoipa::path(
     post,
@@ -39,7 +42,7 @@ use crate::permissions::AppContext;
 #[post("/{collection_id}/event-subscriptions")]
 #[post("/{collection_id}/event-subscriptions/")]
 pub async fn create_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     collection_id: web::Path<CollectionID>,
@@ -47,20 +50,20 @@ pub async fn create_event_subscription(
 ) -> Result<impl Responder, ApiError> {
     let collection_id = collection_id.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    subscription.sink_id.instance(&pool).await?;
     let event_context = requestor.event_context(&req);
-    let created: EventSubscription = subscription
-        .into_inner()
-        .into_row(collection_id)?
-        .save_event_subscription_record(&pool, &event_context)
-        .await?
-        .try_into()?;
+    let created = create_event_subscription_service(
+        &context,
+        collection_id.id(),
+        subscription.into_inner(),
+        event_context,
+    )
+    .await?;
     let location = ResponseLocation::new(format!(
         "/api/v1/collections/{}/event-subscriptions/{}",
         created.collection_id, created.id
@@ -85,14 +88,14 @@ pub async fn create_event_subscription(
 #[get("/{collection_id}/event-subscriptions")]
 #[get("/{collection_id}/event-subscriptions/")]
 pub async fn get_event_subscriptions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: actix_web::HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let collection_id = collection_id.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
@@ -101,7 +104,7 @@ pub async fn get_event_subscriptions(
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<EventSubscription>(&params)?;
     let (subscriptions, total_count) =
-        EventSubscription::list_with_total_count(&pool, collection_id.id(), &query_options).await?;
+        list_event_subscriptions(&context, collection_id.id(), query_options).await?;
     ApiResponse::paginated(subscriptions, total_count, &params)
 }
 
@@ -123,20 +126,20 @@ pub async fn get_event_subscriptions(
 )]
 #[get("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn get_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
 ) -> Result<impl Responder, ApiError> {
     let (collection_id, subscription_id) = path.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    let subscription = subscription_id.instance(&pool).await?;
-    ensure_subscription_collection(&subscription, collection_id)?;
+    let subscription =
+        get_event_subscription_service(&context, collection_id.id(), subscription_id.id()).await?;
     ApiResponse::ok_revisioned(subscription)
 }
 
@@ -161,7 +164,7 @@ pub async fn get_event_subscription(
 )]
 #[patch("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn patch_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
@@ -169,7 +172,7 @@ pub async fn patch_event_subscription(
 ) -> Result<impl Responder, ApiError> {
     let (collection_id, subscription_id) = path.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
@@ -181,21 +184,23 @@ pub async fn patch_event_subscription(
             "Event subscription update must include at least one field".to_string(),
         ));
     }
-    if let Some(sink_id) = update.sink_id {
-        sink_id.instance(&pool).await?;
-    }
-    let existing = subscription_id.instance(&pool).await?;
-    ensure_subscription_collection(&existing, collection_id)?;
+    let existing =
+        get_event_subscription_service(&context, collection_id.id(), subscription_id.id()).await?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
-    let updated: EventSubscription = with_revision_precondition_scope(
+    let updated = with_revision_precondition(
+        &context,
         precondition,
-        update
-            .into_row(&existing)?
-            .update_event_subscription_record(&pool, existing.id, &event_context),
+        update_event_subscription_service(
+            &context,
+            collection_id.id(),
+            existing.id,
+            update,
+            &existing,
+            event_context,
+        ),
     )
-    .await?
-    .try_into()?;
+    .await?;
     ApiResponse::ok_revisioned(updated)
 }
 
@@ -217,43 +222,36 @@ pub async fn patch_event_subscription(
 )]
 #[delete("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn delete_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
 ) -> Result<impl Responder, ApiError> {
     let (collection_id, subscription_id) = path.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    let existing = subscription_id.instance(&pool).await?;
-    ensure_subscription_collection(&existing, collection_id)?;
+    let existing =
+        get_event_subscription_service(&context, collection_id.id(), subscription_id.id()).await?;
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
-        subscription_id.delete_event_subscription_record(&pool, &event_context),
+        delete_event_subscription_service(
+            &context,
+            collection_id.id(),
+            subscription_id.id(),
+            event_context,
+        ),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
-}
-
-fn ensure_subscription_collection(
-    subscription: &EventSubscription,
-    collection_id: CollectionID,
-) -> Result<(), ApiError> {
-    if subscription.collection_id == collection_id.id() {
-        Ok(())
-    } else {
-        Err(ApiError::NotFound(
-            "Event subscription not found in collection".to_string(),
-        ))
-    }
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {

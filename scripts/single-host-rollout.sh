@@ -2,7 +2,10 @@
 
 # Shared rolling-update primitives for the single-host installer and updater.
 # The caller must define COMPOSE_CMD, ENGINE_PATH, and INSTALL_MODE before
-# invoking hubuum_rollout. DATABASE_MANAGED defaults to true for legacy callers.
+# invoking hubuum_rollout. API_PORT defaults to 8080 and DATABASE_MANAGED
+# defaults to true for legacy callers.
+
+API_PORT="${API_PORT:-8080}"
 
 hubuum_require_positive_seconds() {
   local setting_name="$1"
@@ -175,11 +178,29 @@ hubuum_caddy_upstreams() {
 
 hubuum_caddy_upstream_status_is_eligible() {
   local upstreams="$1"
+  shift
+  local address
+  local found
+  local normalized
+  local upstream
 
-  # The endpoint returns one entry per configured upstream. Require at least
-  # one entry so an unavailable or not-yet-provisioned proxy cannot pass.
-  [[ "$upstreams" == *'"fails"'* ]] || return 1
-  ! grep -Eq '"fails"[[:space:]]*:[[:space:]]*[1-9][0-9]*' <<<"$upstreams"
+  [[ "$#" -gt 0 ]] || return 1
+  normalized="${upstreams//[[:space:]]/}"
+
+  # Caddy returns a flat JSON array with one object per configured upstream.
+  # An address can occur in more than one route, so require every matching
+  # entry to be eligible. This prevents an eligible metrics entry from hiding
+  # an ineligible public API entry for the same container.
+  for address in "$@"; do
+    found="false"
+    while IFS= read -r -d '}' upstream || [[ -n "$upstream" ]]; do
+      if [[ "$upstream" == *"\"address\":\"${address}\""* ]]; then
+        found="true"
+        [[ "$upstream" =~ \"fails\":0(,|$) ]] || return 1
+      fi
+    done <<<"$normalized"
+    [[ "$found" == "true" ]] || return 1
+  done
 }
 
 hubuum_caddy_upstreams_are_eligible() {
@@ -189,32 +210,37 @@ hubuum_caddy_upstreams_are_eligible() {
     return 1
   fi
 
-  hubuum_caddy_upstream_status_is_eligible "$upstreams"
+  hubuum_caddy_upstream_status_is_eligible "$upstreams" "$@"
 }
 
 hubuum_wait_for_caddy_upstreams() {
-  local timeout_seconds="${1:-${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-180}}"
+  local timeout_seconds="${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-180}"
   local deadline
 
+  [[ "$#" -gt 0 ]] || {
+    echo "ERROR: at least one required Caddy upstream address is required" >&2
+    return 1
+  }
   hubuum_require_positive_seconds "Caddy upstream timeout" "$timeout_seconds" || return 1
   deadline=$((SECONDS + timeout_seconds))
 
-  echo "Waiting for Caddy to clear upstream failure marks..."
+  echo "Waiting for required Caddy upstreams to clear failure marks..."
   while (( SECONDS < deadline )); do
-    if hubuum_caddy_upstreams_are_eligible; then
+    if hubuum_caddy_upstreams_are_eligible "$@"; then
       return 0
     fi
     sleep 2
   done
 
-  echo "ERROR: Caddy did not report all upstreams eligible within ${timeout_seconds}s" >&2
+  echo "ERROR: Caddy did not report required upstreams eligible within ${timeout_seconds}s" >&2
+  printf 'Required Caddy upstream: %s\n' "$@" >&2
   hubuum_caddy_upstreams >&2 || true
   return 1
 }
 
 hubuum_reload_caddy_and_wait_for_upstreams() {
   hubuum_reload_caddy || return 1
-  hubuum_wait_for_caddy_upstreams
+  hubuum_wait_for_caddy_upstreams "$@"
 }
 
 hubuum_run_migrations() {
@@ -238,6 +264,14 @@ hubuum_drain_primary_workers_for_migrations() {
   fi
   if [[ "$standby_health" != "healthy" && "$standby_health" != "running" ]]; then
     echo "ERROR: API standby is not healthy; refusing to migrate while old-version workers remain online" >&2
+    return 2
+  fi
+
+  # Container health can recover before Caddy clears an earlier active or
+  # passive failure mark. Do not drain the primary until the proxy confirms
+  # that the standby can actually carry public traffic.
+  if ! hubuum_wait_for_caddy_upstreams "hubuum-api-standby:${API_PORT}"; then
+    echo "ERROR: Caddy does not have an eligible API standby; refusing to drain the primary" >&2
     return 2
   fi
 
@@ -274,11 +308,13 @@ hubuum_start_stack() {
 hubuum_rollout() {
   local api_primary_recovered="false"
   local drain_status
-  local primary_rolled="false"
   local primary_workers_drained="false"
   local web_primary_recovered="false"
   local web_primary_health
   local web_standby_health
+  local -a primary_upstreams=()
+  local -a recovered_upstreams=()
+  local -a standby_upstreams=("hubuum-api-standby:${API_PORT}")
 
   hubuum_validate_rollout_timeouts || return 1
 
@@ -306,6 +342,7 @@ hubuum_rollout() {
   if [[ "$primary_workers_drained" == "true" ]]; then
     hubuum_roll_service hubuum-api
     api_primary_recovered="true"
+    recovered_upstreams+=("hubuum-api:${API_PORT}")
   fi
 
   # A previous rollout may have left the primary unhealthy. Recover it while
@@ -318,6 +355,7 @@ hubuum_rollout() {
     fi
     hubuum_roll_service hubuum-api
     api_primary_recovered="true"
+    recovered_upstreams+=("hubuum-api:${API_PORT}")
   fi
 
   if [[ "$INSTALL_MODE" == "all" ]] && ! hubuum_service_is_healthy hubuum-web; then
@@ -326,14 +364,15 @@ hubuum_rollout() {
     if hubuum_service_is_healthy hubuum-web-standby; then
       hubuum_roll_service hubuum-web
       web_primary_recovered="true"
+      recovered_upstreams+=("hubuum-web:3000")
     elif [[ "$web_primary_health" != "missing" || "$web_standby_health" != "missing" ]]; then
       echo "ERROR: neither frontend replica is healthy; refusing to replace either one" >&2
       return 1
     fi
   fi
 
-  if [[ "$api_primary_recovered" == "true" || "$web_primary_recovered" == "true" ]]; then
-    hubuum_reload_caddy_and_wait_for_upstreams
+  if [[ "${#recovered_upstreams[@]}" -gt 0 ]]; then
+    hubuum_reload_caddy_and_wait_for_upstreams "${recovered_upstreams[@]}"
   fi
 
   # Upgrade every standby while its primary remains available. Reload only
@@ -344,18 +383,19 @@ hubuum_rollout() {
   hubuum_roll_service hubuum-api-standby
   if [[ "$INSTALL_MODE" == "all" ]]; then
     hubuum_roll_service hubuum-web-standby
+    standby_upstreams+=("hubuum-web-standby:3000")
   fi
-  hubuum_reload_caddy_and_wait_for_upstreams
+  hubuum_reload_caddy_and_wait_for_upstreams "${standby_upstreams[@]}"
 
   if [[ "$api_primary_recovered" != "true" ]]; then
     hubuum_roll_service hubuum-api
-    primary_rolled="true"
+    primary_upstreams+=("hubuum-api:${API_PORT}")
   fi
   if [[ "$INSTALL_MODE" == "all" && "$web_primary_recovered" != "true" ]]; then
     hubuum_roll_service hubuum-web
-    primary_rolled="true"
+    primary_upstreams+=("hubuum-web:3000")
   fi
-  if [[ "$primary_rolled" == "true" ]]; then
-    hubuum_reload_caddy_and_wait_for_upstreams
+  if [[ "${#primary_upstreams[@]}" -gt 0 ]]; then
+    hubuum_reload_caddy_and_wait_for_upstreams "${primary_upstreams[@]}"
   fi
 }

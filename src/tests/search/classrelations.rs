@@ -3,7 +3,6 @@ mod test {
     use regex::Regex;
     use rstest::rstest;
 
-    use crate::db::DbPool;
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
     use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
@@ -12,9 +11,10 @@ mod test {
     };
     use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
+    use hubuum_storage_postgres::PostgresPool;
 
     async fn create_data(
-        pool: &DbPool,
+        pool: &PostgresPool,
         prefix: &str,
     ) -> (Collection, Vec<HubuumClass>, Vec<HubuumClassRelation>) {
         let admin_group = ensure_admin_group(pool).await;
@@ -153,13 +153,7 @@ mod test {
             relations_constraint_query(&relations),
         ];
 
-        let query = QueryOptions {
-            filters: query,
-            sort: vec![],
-            limit: None,
-            cursor: None,
-            include_total: true,
-        };
+        let query = QueryOptions::new(query, vec![], None, None, true).unwrap();
 
         let result = context
             .admin_user

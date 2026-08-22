@@ -2,7 +2,10 @@
 name = "hubuum-task-core"
 version = "0.0.1"
 edition = "2024"
+rust-version = "1.88"
+description = "Backend-neutral task identity and idempotency types for Hubuum."
 license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
 publish = false
 
 [package.metadata.hubuum]

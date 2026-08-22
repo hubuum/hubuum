@@ -1,14 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use actix_web::{http::StatusCode, test};
     use chrono::{Duration, Utc};
     use diesel::{ExpressionMethods, QueryDsl};
     use diesel_async::RunQueryDsl;
     use rstest::rstest;
 
-    use crate::db::with_connection;
     use crate::models::{
         BackupDocument, BackupManifest, BackupState, Permissions, RESTORE_CONFIRMATION_PHRASE,
         RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse,
@@ -17,6 +14,10 @@ mod tests {
     use crate::tests::api_operations::{get_request_with_headers, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{TestContext, scoped_token, test_context};
+    use hubuum_storage_core::{
+        StorageBackupRow, StorageBackupStateSection, StorageBackupStateSections,
+    };
+    use hubuum_storage_postgres::with_connection;
 
     #[derive(Clone, Copy)]
     enum RejectedRestoreCaller {
@@ -32,35 +33,15 @@ mod tests {
     }
 
     fn empty_full_backup_document() -> BackupDocument {
-        let sections = [
-            "identity_scopes",
-            "groups",
-            "principals",
-            "users",
-            "service_accounts",
-            "group_memberships",
-            "group_membership_sources",
-            "collections",
-            "collection_authorization_state",
-            "collection_closure",
-            "permissions",
-            "hubuumclass",
-            "computed_field_definitions",
-            "hubuumclass_relation",
-            "hubuumobject",
-            "hubuumobject_relation",
-            "export_templates",
-            "remote_targets",
-            "event_sinks",
-            "event_subscriptions",
-        ]
-        .into_iter()
-        .map(|name| (name.to_string(), Vec::new()))
-        .collect::<BTreeMap<_, _>>();
+        let sections = StorageBackupStateSection::ALL
+            .iter()
+            .copied()
+            .map(|section| (section, Vec::new()))
+            .collect::<StorageBackupStateSections>();
 
         BackupDocument {
             backup_version: crate::models::CURRENT_BACKUP_VERSION,
-            created_at: Utc::now().naive_utc(),
+            created_at: Utc::now(),
             source_version: env!("CARGO_PKG_VERSION").to_string(),
             state: BackupState { sections },
             history: None,
@@ -73,44 +54,56 @@ mod tests {
         document
             .state
             .sections
-            .get_mut("identity_scopes")
+            .get_mut(&StorageBackupStateSection::IdentityScopes)
             .unwrap()
-            .push(serde_json::json!({
-                "id": 1,
-                "name": "local",
-                "provider_kind": "local",
-                "revision": 1
-            }));
+            .push(
+                StorageBackupRow::try_from_value(serde_json::json!({
+                    "id": 1,
+                    "name": "local",
+                    "provider_kind": "local",
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
         document
             .state
             .sections
-            .get_mut("collections")
+            .get_mut(&StorageBackupStateSection::Collections)
             .unwrap()
-            .push(serde_json::json!({
-                "id": 1,
-                "name": "root",
-                "parent_collection_id": null,
-                "revision": 1
-            }));
+            .push(
+                StorageBackupRow::try_from_value(serde_json::json!({
+                    "id": 1,
+                    "name": "root",
+                    "parent_collection_id": null,
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
         document
             .state
             .sections
-            .get_mut("collection_authorization_state")
+            .get_mut(&StorageBackupStateSection::CollectionAuthorization)
             .unwrap()
-            .push(serde_json::json!({
-                "collection_id": 1,
-                "revision": 1
-            }));
+            .push(
+                StorageBackupRow::try_from_value(serde_json::json!({
+                    "collection_id": 1,
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
         document
             .state
             .sections
-            .get_mut("collection_closure")
+            .get_mut(&StorageBackupStateSection::CollectionHierarchy)
             .unwrap()
-            .push(serde_json::json!({
-                "ancestor_collection_id": 1,
-                "descendant_collection_id": 1,
-                "depth": 0
-            }));
+            .push(
+                StorageBackupRow::try_from_value(serde_json::json!({
+                    "ancestor_collection_id": 1,
+                    "descendant_collection_id": 1,
+                    "depth": 0
+                }))
+                .unwrap(),
+            );
         document
     }
 
@@ -304,11 +297,11 @@ mod tests {
         let context = test_context;
         let mut document = minimally_valid_full_backup_document();
         let section = match missing {
-            MissingRestoreSeed::LocalIdentityScope => "identity_scopes",
-            MissingRestoreSeed::RootCollection => "collections",
-            MissingRestoreSeed::RootClosure => "collection_closure",
+            MissingRestoreSeed::LocalIdentityScope => StorageBackupStateSection::IdentityScopes,
+            MissingRestoreSeed::RootCollection => StorageBackupStateSection::Collections,
+            MissingRestoreSeed::RootClosure => StorageBackupStateSection::CollectionHierarchy,
         };
-        document.state.sections.get_mut(section).unwrap().clear();
+        document.state.sections.get_mut(&section).unwrap().clear();
 
         let response = post_request(
             &context.pool,

@@ -16,6 +16,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/hubuum-auth-core/Cargo.toml ./crates/hubuum-auth-core/Cargo.toml
 COPY crates/hubuum-auth-ldap/Cargo.toml ./crates/hubuum-auth-ldap/Cargo.toml
 COPY crates/hubuum-computed-fields/Cargo.toml ./crates/hubuum-computed-fields/Cargo.toml
+COPY crates/hubuum-domain/Cargo.toml ./crates/hubuum-domain/Cargo.toml
 COPY crates/hubuum-event-sink-amqp/Cargo.toml ./crates/hubuum-event-sink-amqp/Cargo.toml
 COPY crates/hubuum-event-sink-email/Cargo.toml ./crates/hubuum-event-sink-email/Cargo.toml
 COPY crates/hubuum-event-sink-valkey/Cargo.toml ./crates/hubuum-event-sink-valkey/Cargo.toml
@@ -24,6 +25,9 @@ COPY crates/hubuum-event-sinks-common/Cargo.toml ./crates/hubuum-event-sinks-com
 COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
 COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
+COPY crates/hubuum-storage-core/Cargo.toml ./crates/hubuum-storage-core/Cargo.toml
+COPY crates/hubuum-storage-conformance/Cargo.toml ./crates/hubuum-storage-conformance/Cargo.toml
+COPY crates/hubuum-storage-postgres/Cargo.toml ./crates/hubuum-storage-postgres/Cargo.toml
 COPY crates/hubuum-task-core/Cargo.toml ./crates/hubuum-task-core/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
 

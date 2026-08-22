@@ -1,27 +1,20 @@
 use std::fmt;
 
-use crate::db::prelude::*;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
-use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
 use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -210,14 +203,9 @@ impl From<TaskResultCounts> for (i32, i32, i32) {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a task.
-    pub struct TaskID;
-    noun = "task id";
-}
+pub use hubuum_domain::TaskId as TaskID;
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = tasks)]
+#[derive(Clone)]
 pub struct TaskRecord {
     pub id: i32,
     pub kind: String,
@@ -291,41 +279,14 @@ impl fmt::Debug for TaskRecord {
 
 impl TaskRecord {
     pub(crate) fn worker_provenance(&self) -> MutationProvenance {
-        MutationProvenance::worker(self.initiator_user_id, self.id)
+        MutationProvenance::worker(
+            self.initiator_user_id.map(|initiator_user_id| {
+                hubuum_domain::PrincipalId::new(initiator_user_id)
+                    .expect("persisted task initiator id must be positive")
+            }),
+            hubuum_domain::TaskId::new(self.id).expect("persisted task id must be positive"),
+        )
     }
-
-    pub(crate) fn system_provenance(&self) -> MutationProvenance {
-        MutationProvenance::system_for_task(self.initiator_user_id, self.id)
-    }
-
-    pub(crate) fn user_provenance(&self, actor: PrincipalID) -> MutationProvenance {
-        MutationProvenance::user_for_task(actor.id(), self.initiator_user_id, self.id)
-    }
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = tasks)]
-pub struct NewTaskRecord {
-    pub kind: String,
-    pub status: String,
-    pub submitted_by: Option<i32>,
-    pub idempotency_key: Option<String>,
-    pub request_hash: Option<String>,
-    pub request_payload: Option<serde_json::Value>,
-    pub summary: Option<String>,
-    pub total_items: i32,
-    pub processed_items: i32,
-    pub success_items: i32,
-    pub failed_items: i32,
-    #[diesel(column_name = submitted_token_id)]
-    pub submitted_token_id: Option<i32>,
-    #[diesel(column_name = submitted_token_scoped)]
-    pub submitted_token_scoped: bool,
-    #[diesel(column_name = submitted_token_scopes)]
-    pub submitted_token_scopes: serde_json::Value,
-    pub request_redacted_at: Option<NaiveDateTime>,
-    pub started_at: Option<NaiveDateTime>,
-    pub finished_at: Option<NaiveDateTime>,
 }
 
 #[derive(Clone)]
@@ -349,8 +310,8 @@ pub struct NewTaskEventRecord {
     pub data: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = import_task_results)]
+/// Backend-neutral application projection of one persisted import result.
+#[derive(Clone)]
 pub struct ImportTaskResultRecord {
     pub id: i32,
     pub task_id: i32,
@@ -362,19 +323,6 @@ pub struct ImportTaskResultRecord {
     pub error: Option<String>,
     pub details: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
-}
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = import_task_results)]
-pub struct NewImportTaskResultRecord {
-    pub task_id: i32,
-    pub item_ref: Option<String>,
-    pub entity_kind: String,
-    pub action: String,
-    pub identifier: Option<String>,
-    pub outcome: String,
-    pub error: Option<String>,
-    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -480,44 +428,14 @@ pub struct ImportTaskResultResponse {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Clone, Queryable, Selectable)]
-#[diesel(table_name = export_task_outputs)]
-pub struct ExportTaskOutputRecord {
-    pub id: i32,
-    pub task_id: i32,
-    pub template_name: Option<String>,
+/// Backend-neutral application projection of a retained export output.
+pub struct ExportTaskOutput {
     pub content_type: String,
     pub json_output: Option<serde_json::Value>,
     pub text_output: Option<String>,
     pub meta_json: serde_json::Value,
     pub warnings_json: serde_json::Value,
-    pub warning_count: i32,
     pub truncated: bool,
-    pub output_expires_at: NaiveDateTime,
-    pub total_duration_ms: i32,
-    pub query_duration_ms: i32,
-    pub hydration_duration_ms: i32,
-    pub render_duration_ms: i32,
-    pub created_at: NaiveDateTime,
-}
-
-#[derive(Clone, Insertable)]
-#[diesel(table_name = export_task_outputs)]
-pub struct NewExportTaskOutputRecord {
-    pub task_id: i32,
-    pub template_name: Option<String>,
-    pub content_type: String,
-    pub json_output: Option<serde_json::Value>,
-    pub text_output: Option<String>,
-    pub meta_json: serde_json::Value,
-    pub warnings_json: serde_json::Value,
-    pub warning_count: i32,
-    pub truncated: bool,
-    pub output_expires_at: NaiveDateTime,
-    pub total_duration_ms: i32,
-    pub query_duration_ms: i32,
-    pub hydration_duration_ms: i32,
-    pub render_duration_ms: i32,
 }
 
 /// Outcome of looking up an export task's stored output.
@@ -545,10 +463,8 @@ impl<T> ExportOutputLookup<T> {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = export_task_outputs)]
-pub struct ExportTaskOutputSummaryRecord {
-    pub id: i32,
+#[derive(Debug, Clone)]
+pub struct ExportTaskOutputSummary {
     pub task_id: i32,
     pub template_name: Option<String>,
     pub content_type: String,
@@ -559,16 +475,19 @@ pub struct ExportTaskOutputSummaryRecord {
     pub query_duration_ms: i32,
     pub hydration_duration_ms: i32,
     pub render_duration_ms: i32,
-    pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = backup_task_outputs)]
-pub struct BackupTaskOutputSummaryRecord {
+#[derive(Debug, Clone)]
+pub struct BackupTaskOutputSummary {
     pub task_id: i32,
     pub byte_size: i64,
     pub sha256: String,
     pub output_expires_at: NaiveDateTime,
+}
+
+pub struct BackupTaskOutput {
+    pub document: Vec<u8>,
+    pub sha256: String,
 }
 
 impl TaskRecord {
@@ -578,22 +497,22 @@ impl TaskRecord {
 
     pub fn to_response_with_export_output(
         &self,
-        export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
         self.to_response_with_outputs(export_output, BackupOutputLookup::Missing)
     }
 
     pub fn to_response_with_backup_output(
         &self,
-        backup_output: BackupOutputLookup<&BackupTaskOutputSummaryRecord>,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
         self.to_response_with_outputs(ExportOutputLookup::Missing, backup_output)
     }
 
     pub(crate) fn to_response_with_outputs(
         &self,
-        export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
-        backup_output: BackupOutputLookup<&BackupTaskOutputSummaryRecord>,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummary>,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
@@ -878,54 +797,6 @@ impl CursorPaginated for TaskRecord {
     }
 }
 
-impl CursorSqlMapping for TaskResponse {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "tasks.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Kind => CursorSqlField {
-                column: "tasks.kind",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Status => CursorSqlField {
-                column: "tasks.status",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::SubmittedBy => CursorSqlField {
-                column: "tasks.submitted_by",
-                sql_type: CursorSqlType::Integer,
-                nullable: true,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "tasks.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::StartedAt => CursorSqlField {
-                column: "tasks.started_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            FilterField::FinishedAt => CursorSqlField {
-                column: "tasks.finished_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: true,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for tasks",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl CursorPaginated for TaskEventResponse {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(field, FilterField::Id)
@@ -993,20 +864,29 @@ impl IdAccessor for TaskID {
 }
 
 impl InstanceAdapter<TaskRecord> for TaskRecord {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<TaskRecord, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<TaskRecord, ApiError> {
         Ok(self.clone())
     }
 }
 
 impl InstanceAdapter<TaskRecord> for TaskID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
-        self.find_record(pool).await
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<TaskRecord, ApiError> {
+        crate::services::tasks::find_task(pool, *self).await
     }
 }
 
 #[async_trait]
 impl AuthzTarget for TaskRecord {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Task,
             id: self.id,
@@ -1020,7 +900,10 @@ impl AuthzTarget for TaskRecord {
 
 #[async_trait]
 impl AuthzTarget for TaskID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
@@ -1088,7 +971,7 @@ mod tests {
     #[test]
     fn task_id_new_rejects_non_positive() {
         for invalid in [0, -1, i32::MIN] {
-            let err = TaskID::new(invalid).unwrap_err();
+            let err: ApiError = TaskID::new(invalid).unwrap_err().into();
             assert!(matches!(err, ApiError::BadRequest(_)), "got {err:?}");
         }
     }
@@ -1181,8 +1064,7 @@ mod tests {
             attempt_count: 1,
             initiator_user_id: Some(1),
         };
-        let output = ExportTaskOutputSummaryRecord {
-            id: 3,
+        let output = ExportTaskOutputSummary {
             task_id: task.id,
             template_name: Some("inventory".to_string()),
             content_type: "text/plain".to_string(),
@@ -1193,7 +1075,6 @@ mod tests {
             query_duration_ms: 40,
             hydration_duration_ms: 30,
             render_duration_ms: 70,
-            created_at: timestamp,
         };
 
         let response = task
