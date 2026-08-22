@@ -279,6 +279,13 @@ pull request does not publish them as external crates. Their APIs are still
 reviewed as future publication boundaries and must remain usable by an
 out-of-tree adapter without root or adapter-private access.
 
+That usability is structural: an external crate can consume the types and
+implement the traits. Independent semantic certification remains future work
+until method-specific query matrices, neutral event construction, and the
+broader reusable compatibility fixtures are extracted from the application.
+See [storage query semantics](query-semantics.md) for the current query contract
+and its publication status.
+
 `hubuum-storage-postgres`, `hubuum-storage-conformance`, and the root `hubuum`
 crate are workspace-internal. The conformance crate is a development dependency
 of the application and must not enter production binaries. PostgreSQL schema,

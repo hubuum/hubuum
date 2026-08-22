@@ -128,7 +128,7 @@ pub use identity::{
     AuthenticationTokenScopeQuery,
 };
 pub use identity_operations::{
-    ExternalIdentityStorage, IdentityMembershipStorage, IdentityScopeStorage,
+    ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
     LocalIdentityCredentialStorage, ServiceAccountStorage, StorageDefaultAdminBootstrap,
     StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
     StorageExternalUserSyncBuilder, StorageGroupListQuery, StorageIdentityGroup,
@@ -187,7 +187,7 @@ pub use metrics::{
 };
 pub use mutation::{AuditReceipt, AuditReceipts, MutationOutcome};
 pub use object_aggregate::{
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateAuthorization, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder, StorageComputedFieldSelector,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
     StorageObjectAggregateCursor, StorageObjectAggregateDimension, StorageObjectAggregateMeasure,
@@ -298,7 +298,10 @@ pub enum StorageErrorKind {
     Internal,
     /// The requested durable resource does not exist.
     NotFound,
-    /// The backend cannot perform the requested operation or option.
+    /// A documented request option is unavailable for this operation.
+    ///
+    /// Complete backends must not use this variant as a substitute for an
+    /// unimplemented mandatory trait method.
     UnsupportedOperation,
     /// Caller-supplied content exceeds a documented storage limit.
     InputTooLarge,
@@ -351,6 +354,9 @@ impl StorageErrorKind {
 ///
 /// The representation deliberately carries no Diesel, Actix, or application
 /// error types. The application error layer owns transport-facing translation.
+/// Messages must be safe to expose, but are diagnostic prose rather than stable
+/// identifiers. Callers match [`StorageErrorKind`] and structured fields, never
+/// message text.
 #[derive(Debug, PartialEq, Eq)]
 pub struct StorageError {
     kind: StorageErrorKind,

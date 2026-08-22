@@ -322,7 +322,7 @@ impl AuthorizationEffectiveGroupGrant {
 /// administration APIs. Policy decisions remain outside this data contract.
 #[async_trait]
 pub trait CollectionAuthorizationQueryStorage: Send + Sync {
-    async fn list_principal_collection_permissions(
+    async fn load_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError>;
@@ -332,7 +332,7 @@ pub trait CollectionAuthorizationQueryStorage: Send + Sync {
         principal_id: PrincipalId,
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError>;
 
-    async fn list_principal_collection_permissions_page(
+    async fn list_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
     ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
@@ -358,22 +358,22 @@ pub trait CollectionAuthorizationQueryStorage: Send + Sync {
         group_id: GroupId,
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError>;
 
-    async fn list_groups_with_collection_permission(
+    async fn load_groups_with_collection_permission(
         &self,
         query: AuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError>;
 
-    async fn list_groups_with_collection_permission_page(
+    async fn list_groups_with_collection_permission(
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
     ) -> Result<StoragePage<AuthorizationGroup>, StorageError>;
 
-    async fn list_collection_group_permissions(
+    async fn load_collection_group_permissions(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError>;
 
-    async fn list_collection_group_permissions_page(
+    async fn list_collection_group_permissions(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;

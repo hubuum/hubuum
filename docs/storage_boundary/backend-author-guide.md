@@ -45,6 +45,11 @@ The grouped imports under `hubuum_storage_core::capabilities` provide the
 canonical discovery map. Crate-root reexports remain workspace-compatibility
 paths until the initial publication surface is selected.
 
+Read [storage query semantics](query-semantics.md) before implementing any
+pageable method. It defines the common page contract, the current
+method-specific matrix, and the remaining work required before the interface is
+promoted to a supported external adapter SDK.
+
 The following order minimizes rework:
 
 1. Define adapter settings, safe diagnostics, and a private native client or
@@ -177,6 +182,14 @@ conflict, validation, and stale precondition. Map connectivity and native
 execution failures to backend or unavailable classifications as appropriate.
 Keep diagnostic detail in those logs; the portable error retains only a safe
 classification, message, and optional current revision.
+
+Treat the kind and structured fields as the portable contract. The message is
+safe human-readable diagnostic prose, not a stable code, and callers must not
+branch on it. Map known native constraints to deliberately selected portable
+messages; never forward arbitrary driver or server text. Use
+`UnsupportedOperation` only when a capability explicitly documents an optional
+request variant that can be unavailable. It must never replace a mandatory
+trait implementation.
 
 Backend-neutral storage crates must not import `ApiError`. Application code
 must not convert `ApiError` back into `StorageError`. An adapter may convert a

@@ -135,7 +135,7 @@ where
         collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
     );
     storage_handle(backend)
-        .list_principal_collection_permissions(query)
+        .load_principal_collection_permissions(query)
         .await
         .map_err(ApiError::from)
         .and_then(|rows| {
@@ -191,7 +191,7 @@ where
         collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
     );
     storage_handle(backend)
-        .list_principal_collection_permissions_page(AuthorizationPrincipalCollectionPageQuery::new(
+        .list_principal_collection_permissions(AuthorizationPrincipalCollectionPageQuery::new(
             principal,
             query_options.clone(),
         ))
@@ -343,7 +343,7 @@ where
     C: StorageContext,
 {
     storage_handle(backend)
-        .list_groups_with_collection_permission(AuthorizationCollectionGroupsQuery::new(
+        .load_groups_with_collection_permission(AuthorizationCollectionGroupsQuery::new(
             collection_id_to_storage(target_collection_id),
             permission_to_storage(permission_type),
         ))
@@ -366,7 +366,7 @@ where
     C: StorageContext,
 {
     storage_handle(backend)
-        .list_groups_with_collection_permission_page(AuthorizationCollectionGroupsPageQuery::new(
+        .list_groups_with_collection_permission(AuthorizationCollectionGroupsPageQuery::new(
             AuthorizationCollectionGroupsQuery::new(
                 collection_id_to_storage(target_collection_id),
                 permission_to_storage(permission_type),
@@ -406,7 +406,7 @@ where
     T: CollectionAccessors,
 {
     storage_handle(backend)
-        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
+        .load_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options,
@@ -431,7 +431,7 @@ where
     T: CollectionAccessors,
 {
     let page = storage_handle(backend)
-        .list_collection_group_permissions_page(AuthorizationCollectionGrantListQuery::new(
+        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
@@ -456,7 +456,7 @@ where
     T: CollectionAccessors,
 {
     storage_handle(backend)
-        .list_collection_group_permissions_page(AuthorizationCollectionGrantListQuery::new(
+        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
@@ -485,7 +485,7 @@ where
     T: CollectionAccessors,
 {
     let (_, total) = storage_handle(backend)
-        .list_collection_group_permissions_page(AuthorizationCollectionGrantListQuery::new(
+        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),

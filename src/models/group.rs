@@ -9,7 +9,7 @@ use crate::services::storage_boundary::{
     group_create_to_storage, group_from_storage, group_id_to_storage, group_update_to_storage,
     principal_from_storage, principal_group_from_storage, principal_id_to_storage,
 };
-use crate::storage::{GroupStorage, StorageContext, storage_handle};
+use crate::storage::{GroupMembershipStorage, GroupStorage, StorageContext, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -280,7 +280,7 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .list_all_group_members(group_id_to_storage(self.id))
+            .load_group_member_principals(group_id_to_storage(self.id))
             .await
             .map_err(ApiError::from)
             .and_then(|members| members.into_iter().map(principal_from_storage).collect())
@@ -295,7 +295,7 @@ impl Group {
         C: StorageContext,
     {
         storage_handle(backend)
-            .list_group_members_page(group_id_to_storage(self.id), query_options.clone())
+            .list_group_members(group_id_to_storage(self.id), query_options.clone())
             .await
             .map_err(ApiError::from)
             .and_then(|page| {

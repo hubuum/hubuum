@@ -9,7 +9,8 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
 use crate::{
-    AuthenticationTokenScope, MutationOutcome, StorageError, StoragePage, StorageRecordMetadata,
+    AuthenticationTokenScope, MutationOutcome, StorageError, StorageGroupMember, StoragePage,
+    StoragePrincipal, StorageRecordMetadata,
 };
 
 /// One identity scope owned by the selected storage backend.
@@ -1602,9 +1603,9 @@ pub trait IdentityScopeStorage: Send + Sync {
     ) -> Result<Vec<(IdentityScopeId, String)>, StorageError>;
 }
 
-/// Administrative effective-membership read models.
+/// Principal-to-group membership reads and mutations.
 #[async_trait]
-pub trait IdentityMembershipStorage: Send + Sync {
+pub trait GroupMembershipStorage: Send + Sync {
     /// Load one effective principal-to-group membership with its authoritative
     /// revision, returning `NotFound` when no membership source remains.
     async fn get_principal_group(
@@ -1627,6 +1628,34 @@ pub trait IdentityMembershipStorage: Send + Sync {
         principal_id: PrincipalId,
         owner_group_id: GroupId,
     ) -> Result<bool, StorageError>;
+
+    /// Load every principal in one group for policy evaluation.
+    async fn load_group_member_principals(
+        &self,
+        group_id: GroupId,
+    ) -> Result<Vec<StoragePrincipal>, StorageError>;
+
+    /// List group memberships with stable filtering, cursor pagination, and an
+    /// optional exact total.
+    async fn list_group_members(
+        &self,
+        group_id: GroupId,
+        query_options: QueryOptions,
+    ) -> Result<StoragePage<StorageGroupMember>, StorageError>;
+
+    async fn add_group_member(
+        &self,
+        principal_id: PrincipalId,
+        group_id: GroupId,
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError>;
+
+    async fn remove_group_member(
+        &self,
+        principal_id: PrincipalId,
+        group_id: GroupId,
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError>;
 }
 
 /// Service-account lifecycle and authorization state.

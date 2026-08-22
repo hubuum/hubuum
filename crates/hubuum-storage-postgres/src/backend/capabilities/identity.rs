@@ -101,7 +101,7 @@ impl IdentityScopeStorage for PostgresStorage {
 }
 
 #[async_trait]
-impl IdentityMembershipStorage for PostgresStorage {
+impl GroupMembershipStorage for PostgresStorage {
     async fn get_principal_group(
         &self,
         principal_id: PrincipalId,
@@ -134,6 +134,57 @@ impl IdentityMembershipStorage for PostgresStorage {
             self.runtime(),
             principal_id.id(),
             owner_group_id.id(),
+        )
+        .await
+        .map_err(StorageError::from)
+    }
+
+    async fn load_group_member_principals(
+        &self,
+        group_id: GroupId,
+    ) -> Result<Vec<StoragePrincipal>, StorageError> {
+        crate::operations::group::load_group_member_principals(self.runtime(), group_id.id())
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn list_group_members(
+        &self,
+        group_id: GroupId,
+        query_options: QueryOptions,
+    ) -> Result<StoragePage<StorageGroupMember>, StorageError> {
+        crate::operations::group::list_group_members(self.runtime(), group_id.id(), query_options)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn add_group_member(
+        &self,
+        principal_id: PrincipalId,
+        group_id: GroupId,
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
+        crate::operations::group::add_group_member(
+            self.runtime(),
+            principal_id.id(),
+            group_id.id(),
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
+    }
+
+    async fn remove_group_member(
+        &self,
+        principal_id: PrincipalId,
+        group_id: GroupId,
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
+        crate::operations::group::remove_group_member(
+            self.runtime(),
+            principal_id.id(),
+            group_id.id(),
+            context,
         )
         .await
         .map_err(StorageError::from)

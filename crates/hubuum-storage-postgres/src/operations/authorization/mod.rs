@@ -135,8 +135,7 @@ pub use queries::{
     list_authorization_classes, list_authorization_collection_candidates,
     list_authorization_group_candidates, list_authorization_objects,
     list_effective_group_collection_permissions, list_effective_principal_collection_permissions,
-    list_groups_with_collection_permission, list_groups_with_collection_permission_page,
-    list_local_authorized_collections, list_local_collection_grants,
-    list_principal_collection_permissions, list_principal_collection_permissions_page,
-    list_visible_collections,
+    list_groups_with_collection_permission, list_local_authorized_collections,
+    list_local_collection_grants, list_principal_collection_permissions, list_visible_collections,
+    load_groups_with_collection_permission, load_principal_collection_permissions,
 };

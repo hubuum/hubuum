@@ -233,7 +233,9 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
                 if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
-                    return Self::conflict(info.message());
+                    return Self::conflict(
+                        "Object relation cardinality exceeded: relation limit reached",
+                    );
                 }
                 Self::invalid_input("Check constraint not met")
             }
@@ -245,7 +247,12 @@ impl From<DieselError> for PostgresStorageError {
                         None,
                     );
                 }
-                if message.starts_with("Invalid object relation:") {
+                if matches!(
+                    message,
+                    "Invalid object relation: objects cannot be related to themselves"
+                        | "Invalid object relation: objects cannot be related to the same classes"
+                        | "Invalid object relation: objects do not match the specified class relation"
+                ) {
                     return Self::invalid_input(message);
                 }
                 error!(
@@ -329,7 +336,7 @@ mod tests {
         let native_detail = "secret native database detail";
         let error = DieselError::DatabaseError(
             DatabaseErrorKind::Unknown,
-            Box::new(TestDatabaseErrorInformation(native_detail.to_string())),
+            Box::new(TestDatabaseErrorInformation::new(native_detail)),
         );
 
         let portable = StorageError::from(PostgresStorageError::from(error));
@@ -337,6 +344,58 @@ mod tests {
         assert_eq!(portable.kind(), StorageErrorKind::Backend);
         assert_eq!(portable.message(), "PostgreSQL query failed");
         assert!(!portable.message().contains(native_detail));
+    }
+
+    #[test]
+    fn known_native_domain_errors_are_whitelisted_explicitly() {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::Unknown,
+            Box::new(TestDatabaseErrorInformation::new(
+                "Invalid object relation: objects cannot be related to themselves",
+            )),
+        );
+
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::InvalidInput);
+        assert_eq!(
+            portable.message(),
+            "Invalid object relation: objects cannot be related to themselves"
+        );
+    }
+
+    #[test]
+    fn lookalike_native_domain_errors_do_not_cross_the_boundary() {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::Unknown,
+            Box::new(TestDatabaseErrorInformation::new(
+                "Invalid object relation: secret native detail",
+            )),
+        );
+
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::Backend);
+        assert_eq!(portable.message(), "PostgreSQL query failed");
+    }
+
+    #[test]
+    fn cardinality_constraints_use_controlled_portable_messages() {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::CheckViolation,
+            Box::new(TestDatabaseErrorInformation::with_constraint(
+                "Object relation cardinality exceeded: secret native detail",
+                OBJECT_RELATION_CARDINALITY_CONSTRAINT,
+            )),
+        );
+
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::Conflict);
+        assert_eq!(
+            portable.message(),
+            "Object relation cardinality exceeded: relation limit reached"
+        );
     }
 
     #[test]
@@ -355,11 +414,30 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestDatabaseErrorInformation(String);
+    struct TestDatabaseErrorInformation {
+        message: String,
+        constraint_name: Option<&'static str>,
+    }
+
+    impl TestDatabaseErrorInformation {
+        fn new(message: impl Into<String>) -> Self {
+            Self {
+                message: message.into(),
+                constraint_name: None,
+            }
+        }
+
+        fn with_constraint(message: impl Into<String>, constraint_name: &'static str) -> Self {
+            Self {
+                message: message.into(),
+                constraint_name: Some(constraint_name),
+            }
+        }
+    }
 
     impl diesel::result::DatabaseErrorInformation for TestDatabaseErrorInformation {
         fn message(&self) -> &str {
-            &self.0
+            &self.message
         }
 
         fn details(&self) -> Option<&str> {
@@ -379,7 +457,7 @@ mod tests {
         }
 
         fn constraint_name(&self) -> Option<&str> {
-            None
+            self.constraint_name
         }
 
         fn statement_position(&self) -> Option<i32> {

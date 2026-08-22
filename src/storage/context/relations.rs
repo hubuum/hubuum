@@ -5,7 +5,7 @@ impl ObjectAggregateStorage for StorageHandle {
     async fn aggregate_objects(
         &self,
         query: ObjectAggregateStorageQuery,
-        authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+        authorization: ObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -13,7 +13,7 @@ impl ObjectAggregateStorage for StorageHandle {
             "aggregate_objects",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.aggregate_objects(query, authorizer).await
+                    backend.aggregate_objects(query, authorization).await
                 })
             },
         )

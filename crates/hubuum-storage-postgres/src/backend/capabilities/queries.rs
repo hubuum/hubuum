@@ -158,9 +158,9 @@ impl ObjectAggregateStorage for PostgresStorage {
     async fn aggregate_objects(
         &self,
         query: ObjectAggregateStorageQuery,
-        authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+        authorization: ObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
-        crate::operations::object_aggregate::aggregate_objects(self.runtime(), query, authorizer)
+        crate::operations::object_aggregate::aggregate_objects(self.runtime(), query, authorization)
             .await
             .map_err(StorageError::from)
     }

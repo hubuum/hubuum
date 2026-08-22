@@ -159,7 +159,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "AuthenticationStorage",
     "LocalIdentityCredentialStorage",
     "IdentityScopeStorage",
-    "IdentityMembershipStorage",
+    "GroupMembershipStorage",
     "ServiceAccountStorage",
     "ExternalIdentityStorage",
     "UserStorage",
@@ -2172,17 +2172,17 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
         "CollectionAuthorizationQueryStorage for PostgresStorage",
     );
     for method in [
-        "list_principal_collection_permissions",
+        "load_principal_collection_permissions",
         "list_all_principal_collection_permissions",
-        "list_principal_collection_permissions_page",
+        "list_principal_collection_permissions",
         "list_effective_principal_collection_permissions",
         "list_visible_collections",
         "has_group_collection_permission",
         "list_effective_group_collection_permissions",
+        "load_groups_with_collection_permission",
         "list_groups_with_collection_permission",
-        "list_groups_with_collection_permission_page",
+        "load_collection_group_permissions",
         "list_collection_group_permissions",
-        "list_collection_group_permissions_page",
         "get_collection_group_permission",
     ] {
         let method_body = item_body(implementation, "fn", method);
@@ -2426,7 +2426,7 @@ fn principal_state_queries_are_owned_by_the_postgres_adapter() {
     let membership = item_body(
         &capability,
         "impl",
-        "IdentityMembershipStorage for PostgresStorage",
+        "GroupMembershipStorage for PostgresStorage",
     );
     for method in ["get_principal_group", "is_human_owner_group_member"] {
         let method_body = item_body(membership, "fn", method);
@@ -2631,10 +2631,6 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
         "create_group",
         "update_group",
         "delete_group",
-        "list_all_group_members",
-        "list_group_members_page",
-        "add_group_member",
-        "remove_group_member",
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(
@@ -2658,18 +2654,25 @@ fn group_resources_are_owned_by_the_postgres_adapter() {
     let identity_implementation = item_body(
         &identity_capability,
         "impl",
-        "IdentityMembershipStorage for PostgresStorage",
+        "GroupMembershipStorage for PostgresStorage",
     );
-    let method = "list_principal_groups";
-    let method_body = item_body(identity_implementation, "fn", method);
-    assert!(
-        method_body.contains("crate::operations::group"),
-        "the {method} implementation must delegate into the adapter crate"
-    );
-    assert!(
-        !method_body.contains("&self.pool"),
-        "the {method} implementation must not expose the PostgreSQL pool"
-    );
+    for method in [
+        "list_principal_groups",
+        "load_group_member_principals",
+        "list_group_members",
+        "add_group_member",
+        "remove_group_member",
+    ] {
+        let method_body = item_body(identity_implementation, "fn", method);
+        assert!(
+            method_body.contains("crate::operations::group"),
+            "the {method} implementation must delegate into the adapter crate"
+        );
+        assert!(
+            !method_body.contains("&self.pool"),
+            "the {method} implementation must not expose the PostgreSQL pool"
+        );
+    }
 
     assert!(!root.join("src/storage/postgres").exists());
 }

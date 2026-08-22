@@ -10,6 +10,8 @@ PostgreSQL is currently the only selectable backend. The in-memory resource mode
 - Read the normative [storage contract](storage_boundary/contract.md) for the
   guarantees every selectable backend and application caller must preserve.
 - Use the [capability family map](storage_boundary/capability-families.md) to find the trait that owns an operation and the families it collaborates with.
+- Use [storage query semantics](storage_boundary/query-semantics.md) for the
+  common paging contract and the current method-specific support matrix.
 - Use the [backend author guide](storage_boundary/backend-author-guide.md) to implement or evaluate a backend.
 - Use the [maintainer guide](storage_boundary/maintainer-guide.md) to trace a call, locate its implementation, and change the boundary safely.
 - Use [transactions and side effects](storage_boundary/transactions-and-events.md) when a use case spans several resource operations or must define audit behavior.
@@ -207,6 +209,11 @@ and representative typed DTO/query APIs without crate-private access so a
 later crate split does not require an interface redesign. Backend registration
 remains explicit, exhaustive, and application-owned. Hubuum does not load
 storage plugins dynamically.
+
+This establishes structural out-of-tree usability, not a supported standalone
+adapter SDK. The remaining method-specific query matrices, reusable family
+fixtures, neutral event factories, publication dependency closure, and second
+complete adapter are required before semantic portability is considered proven.
 
 Moving a file does not by itself improve the boundary. Dependencies must continue to point from the application to contracts and from adapters to contracts, never from a contract or adapter back into the application.
 

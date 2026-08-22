@@ -46,10 +46,11 @@ source = "crates/hubuum-storage-core/src/identity_operations.rs"
 methods = ["ensure_identity_scope", "resolve_identity_scope_name", "resolve_identity_scope_names"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
-[traits.IdentityMembershipStorage]
+[traits.GroupMembershipStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
-methods = ["get_principal_group", "list_principal_groups", "is_human_owner_group_member"]
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+methods = ["get_principal_group", "list_principal_groups", "is_human_owner_group_member", "load_group_member_principals", "list_group_members", "add_group_member", "remove_group_member"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/connection_loss.rs::connection_loss_before_commit_rolls_back_and_pool_recovers"]
 
 [traits.ServiceAccountStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
@@ -169,9 +170,8 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.GroupStorage]
 source = "crates/hubuum-storage-core/src/identity_resources.rs"
-methods = ["list_groups", "get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group", "list_all_group_members", "list_group_members_page", "add_group_member", "remove_group_member"]
+methods = ["list_groups", "get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/connection_loss.rs::connection_loss_before_commit_rolls_back_and_pool_recovers"]
 
 [traits.PrincipalStorage]
 source = "crates/hubuum-storage-core/src/identity_resources.rs"
@@ -180,7 +180,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.CollectionAuthorizationQueryStorage]
 source = "crates/hubuum-storage-core/src/collection_authorization.rs"
-methods = ["list_principal_collection_permissions", "list_all_principal_collection_permissions", "list_principal_collection_permissions_page", "list_effective_principal_collection_permissions", "list_visible_collections", "has_group_collection_permission", "list_effective_group_collection_permissions", "list_groups_with_collection_permission", "list_groups_with_collection_permission_page", "list_collection_group_permissions", "list_collection_group_permissions_page", "get_collection_group_permission"]
+methods = ["load_principal_collection_permissions", "list_all_principal_collection_permissions", "list_principal_collection_permissions", "list_effective_principal_collection_permissions", "list_visible_collections", "has_group_collection_permission", "list_effective_group_collection_permissions", "load_groups_with_collection_permission", "list_groups_with_collection_permission", "load_collection_group_permissions", "list_collection_group_permissions", "get_collection_group_permission"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
 
 [traits.RemoteTargetStorage]
@@ -263,7 +263,7 @@ source = "crates/hubuum-storage-core/src/relation_query.rs"
 variants = ["Path", "Name", "CreatedAt"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_queries"]
 
-[enums.ObjectAggregateAuthorizationMode]
+[enums.ObjectAggregateAuthorization]
 source = "crates/hubuum-storage-core/src/object_aggregate.rs"
 variants = ["Storage", "Delegated"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_object_aggregates"]

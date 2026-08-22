@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ResourceRevision};
 use hubuum_events_core::EventContext;
-use hubuum_query::QueryOptions;
 use serde_json::Value;
 
 use crate::{
@@ -311,7 +310,7 @@ impl StorageGroupMember {
     }
 }
 
-/// Complete group lifecycle and membership behavior required from a backend.
+/// Complete group lifecycle behavior required from a backend.
 #[async_trait]
 pub trait GroupStorage: Send + Sync {
     /// List groups with stable filtering, cursor pagination, and an optional
@@ -346,31 +345,6 @@ pub trait GroupStorage: Send + Sync {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<crate::MutationOutcome<usize>, StorageError>;
-
-    async fn list_all_group_members(
-        &self,
-        group_id: GroupId,
-    ) -> Result<Vec<StoragePrincipal>, StorageError>;
-
-    async fn list_group_members_page(
-        &self,
-        group_id: GroupId,
-        query_options: QueryOptions,
-    ) -> Result<StoragePage<StorageGroupMember>, StorageError>;
-
-    async fn add_group_member(
-        &self,
-        principal_id: PrincipalId,
-        group_id: GroupId,
-        context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StoragePrincipalGroup>, StorageError>;
-
-    async fn remove_group_member(
-        &self,
-        principal_id: PrincipalId,
-        group_id: GroupId,
-        context: &EventContext,
-    ) -> Result<crate::MutationOutcome<()>, StorageError>;
 }
 
 /// Principal point and settings behavior required from every backend.

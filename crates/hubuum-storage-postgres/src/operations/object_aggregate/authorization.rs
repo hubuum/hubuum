@@ -26,11 +26,11 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
         }
     }
 
-    pub(super) async fn authorize_target(
+    pub(super) async fn load_authorization_target(
         &self,
         connection: &mut PostgresConnection,
         target: &ObjectAggregateRouteTarget,
-    ) -> Result<bool, PostgresStorageError> {
+    ) -> Result<StorageObjectAggregateAuthorizationTarget, PostgresStorageError> {
         use crate::schema::collections;
 
         let collection_name = collections::table
@@ -45,12 +45,18 @@ impl<'a> DelegatedObjectAggregateAuthorization<'a> {
                     target.collection_id
                 ))
             })?;
-        let target = StorageObjectAggregateAuthorizationTarget::new(
+        Ok(StorageObjectAggregateAuthorizationTarget::new(
             ClassId::new(target.class_id)?,
             target.class_name.clone(),
             CollectionId::new(target.collection_id)?,
             collection_name,
-        );
+        ))
+    }
+
+    pub(super) async fn authorize_target(
+        &self,
+        target: StorageObjectAggregateAuthorizationTarget,
+    ) -> Result<bool, PostgresStorageError> {
         Ok(self
             .authorizer
             .authorize_target(target, self.required_permissions.clone())

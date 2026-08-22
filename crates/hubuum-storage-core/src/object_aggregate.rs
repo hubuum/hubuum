@@ -11,10 +11,23 @@ use serde_json::Value;
 
 use crate::{AuthorizationPermission, StorageError, StorageVisibility};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ObjectAggregateAuthorizationMode {
+/// Authorization strategy for one object-aggregate operation.
+///
+/// The delegated variant carries the required authorizer so callers cannot
+/// select delegated authorization without supplying it, or attach an
+/// authorizer to storage-owned authorization.
+pub enum ObjectAggregateAuthorization<'authorizer> {
     Storage,
-    Delegated,
+    Delegated(&'authorizer dyn ObjectAggregateAuthorizer),
+}
+
+impl fmt::Debug for ObjectAggregateAuthorization<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Storage => "Storage",
+            Self::Delegated(_) => "Delegated",
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -625,7 +638,6 @@ pub struct ObjectAggregateStorageQuery {
     visibility: StorageVisibility,
     page_limit: usize,
     cursor_max_encoded_bytes: usize,
-    authorization_mode: ObjectAggregateAuthorizationMode,
 }
 
 pub struct ObjectAggregateStorageQueryBuilder {
@@ -637,7 +649,6 @@ pub struct ObjectAggregateStorageQueryBuilder {
     visibility: StorageVisibility,
     page_limit: Option<usize>,
     cursor_max_encoded_bytes: Option<usize>,
-    authorization_mode: ObjectAggregateAuthorizationMode,
 }
 
 impl ObjectAggregateStorageQuery {
@@ -657,7 +668,6 @@ impl ObjectAggregateStorageQuery {
             visibility,
             page_limit: None,
             cursor_max_encoded_bytes: None,
-            authorization_mode: ObjectAggregateAuthorizationMode::Storage,
         }
     }
 
@@ -700,11 +710,6 @@ impl ObjectAggregateStorageQuery {
     pub const fn page_limit(&self) -> usize {
         self.page_limit
     }
-
-    #[must_use]
-    pub const fn authorization_mode(&self) -> ObjectAggregateAuthorizationMode {
-        self.authorization_mode
-    }
 }
 
 impl ObjectAggregateStorageQueryBuilder {
@@ -732,15 +737,6 @@ impl ObjectAggregateStorageQueryBuilder {
     #[must_use]
     pub const fn page_limit(mut self, page_limit: usize) -> Self {
         self.page_limit = Some(page_limit);
-        self
-    }
-
-    #[must_use]
-    pub const fn authorization_mode(
-        mut self,
-        authorization_mode: ObjectAggregateAuthorizationMode,
-    ) -> Self {
-        self.authorization_mode = authorization_mode;
         self
     }
 
@@ -778,7 +774,6 @@ impl ObjectAggregateStorageQueryBuilder {
             visibility: self.visibility,
             page_limit,
             cursor_max_encoded_bytes,
-            authorization_mode: self.authorization_mode,
         })
     }
 }
@@ -798,7 +793,6 @@ impl fmt::Debug for ObjectAggregateStorageQuery {
             .field("visibility", &self.visibility)
             .field("page_limit", &self.page_limit)
             .field("cursor_max_encoded_bytes", &self.cursor_max_encoded_bytes)
-            .field("authorization_mode", &self.authorization_mode)
             .finish()
     }
 }
@@ -985,7 +979,7 @@ pub trait ObjectAggregateStorage: Send + Sync {
     async fn aggregate_objects(
         &self,
         query: ObjectAggregateStorageQuery,
-        authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+        authorization: ObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError>;
 }
 
@@ -1171,7 +1165,6 @@ mod tests {
         .required_permissions([AuthorizationPermission::ReadObject])
         .page_limit(20)
         .cursor_max_encoded_bytes(1_000)
-        .authorization_mode(ObjectAggregateAuthorizationMode::Delegated)
         .build()
         .unwrap();
 

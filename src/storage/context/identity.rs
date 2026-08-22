@@ -160,7 +160,7 @@ impl IdentityScopeStorage for StorageHandle {
 }
 
 #[async_trait]
-impl IdentityMembershipStorage for StorageHandle {
+impl GroupMembershipStorage for StorageHandle {
     async fn get_principal_group(
         &self,
         principal_id: PrincipalId,
@@ -168,7 +168,7 @@ impl IdentityMembershipStorage for StorageHandle {
     ) -> Result<StoragePrincipalGroup, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::IdentityMembership,
+            StorageCapability::GroupMembership,
             "get_principal_group",
             async {
                 dispatch_backend!(self, |backend| {
@@ -185,7 +185,7 @@ impl IdentityMembershipStorage for StorageHandle {
     ) -> Result<StoragePage<StorageIdentityGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::IdentityMembership,
+            StorageCapability::GroupMembership,
             "list_principal_groups",
             async {
                 dispatch_backend!(self, |backend| {
@@ -203,12 +203,89 @@ impl IdentityMembershipStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::IdentityMembership,
+            StorageCapability::GroupMembership,
             "is_human_owner_group_member",
             async {
                 dispatch_backend!(self, |backend| {
                     backend
                         .is_human_owner_group_member(principal_id, owner_group_id)
+                        .await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn load_group_member_principals(
+        &self,
+        group_id: GroupId,
+    ) -> Result<Vec<StoragePrincipal>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::GroupMembership,
+            "load_group_member_principals",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.load_group_member_principals(group_id).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn list_group_members(
+        &self,
+        group_id: GroupId,
+        query_options: QueryOptions,
+    ) -> Result<StoragePage<StorageGroupMember>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::GroupMembership,
+            "list_group_members",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_group_members(group_id, query_options).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn add_group_member(
+        &self,
+        principal_id: PrincipalId,
+        group_id: GroupId,
+        context: &EventContext,
+    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::GroupMembership,
+            "add_group_member",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .add_group_member(principal_id, group_id, context)
+                        .await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn remove_group_member(
+        &self,
+        principal_id: PrincipalId,
+        group_id: GroupId,
+        context: &EventContext,
+    ) -> Result<MutationOutcome<()>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::GroupMembership,
+            "remove_group_member",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .remove_group_member(principal_id, group_id, context)
                         .await
                 })
             },

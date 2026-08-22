@@ -8,7 +8,9 @@ use crate::services::storage_boundary::{
     group_from_storage, group_id_to_storage, principal_from_storage, principal_group_from_storage,
     principal_id_to_storage,
 };
-use crate::storage::{GroupStorage, PrincipalStorage, StorageContext, storage_handle};
+use crate::storage::{
+    GroupMembershipStorage, GroupStorage, PrincipalStorage, StorageContext, storage_handle,
+};
 
 use crate::traits::crud::SaveAdapter;
 use serde::{Deserialize, Serialize};

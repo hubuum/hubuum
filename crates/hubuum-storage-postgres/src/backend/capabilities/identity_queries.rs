@@ -56,61 +56,6 @@ impl GroupStorage for PostgresStorage {
             .await
             .map_err(StorageError::from)
     }
-
-    async fn list_all_group_members(
-        &self,
-        group_id: GroupId,
-    ) -> Result<Vec<StoragePrincipal>, StorageError> {
-        crate::operations::group::list_all_group_members(self.runtime(), group_id.id())
-            .await
-            .map_err(StorageError::from)
-    }
-
-    async fn list_group_members_page(
-        &self,
-        group_id: GroupId,
-        query_options: QueryOptions,
-    ) -> Result<StoragePage<StorageGroupMember>, StorageError> {
-        crate::operations::group::list_group_members_page(
-            self.runtime(),
-            group_id.id(),
-            query_options,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn add_group_member(
-        &self,
-        principal_id: PrincipalId,
-        group_id: GroupId,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
-        crate::operations::group::add_group_member(
-            self.runtime(),
-            principal_id.id(),
-            group_id.id(),
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn remove_group_member(
-        &self,
-        principal_id: PrincipalId,
-        group_id: GroupId,
-        context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        crate::operations::group::remove_group_member(
-            self.runtime(),
-            principal_id.id(),
-            group_id.id(),
-            context,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
 }
 
 #[async_trait]
@@ -152,11 +97,11 @@ impl PrincipalStorage for PostgresStorage {
 
 #[async_trait]
 impl CollectionAuthorizationQueryStorage for PostgresStorage {
-    async fn list_principal_collection_permissions(
+    async fn load_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        crate::operations::authorization::list_principal_collection_permissions(
+        crate::operations::authorization::load_principal_collection_permissions(
             self.runtime(),
             query,
         )
@@ -176,11 +121,11 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn list_principal_collection_permissions_page(
+    async fn list_principal_collection_permissions(
         &self,
         query: AuthorizationPrincipalCollectionPageQuery,
     ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
-        crate::operations::authorization::list_principal_collection_permissions_page(
+        crate::operations::authorization::list_principal_collection_permissions(
             self.runtime(),
             query,
         )
@@ -232,10 +177,22 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn list_groups_with_collection_permission(
+    async fn load_groups_with_collection_permission(
         &self,
         query: AuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        crate::operations::authorization::load_groups_with_collection_permission(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
+    }
+
+    async fn list_groups_with_collection_permission(
+        &self,
+        query: AuthorizationCollectionGroupsPageQuery,
+    ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
         crate::operations::authorization::list_groups_with_collection_permission(
             self.runtime(),
             query,
@@ -244,19 +201,7 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn list_groups_with_collection_permission_page(
-        &self,
-        query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
-        crate::operations::authorization::list_groups_with_collection_permission_page(
-            self.runtime(),
-            query,
-        )
-        .await
-        .map_err(StorageError::from)
-    }
-
-    async fn list_collection_group_permissions(
+    async fn load_collection_group_permissions(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
@@ -268,7 +213,7 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
         Ok(rows)
     }
 
-    async fn list_collection_group_permissions_page(
+    async fn list_collection_group_permissions(
         &self,
         query: AuthorizationCollectionGrantListQuery,
     ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {

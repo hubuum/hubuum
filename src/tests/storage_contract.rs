@@ -78,17 +78,17 @@ use crate::storage::{
     ComputedObjectStorage, ComputedObjectVisibility, EventArchiveSink, EventConfigurationStorage,
     EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionBatch, ExecutionStorage, ExportTemplateStorage,
-    ExternalIdentityStorage, GroupStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, IdentityMembershipStorage, IdentityScopeStorage,
-    ImportStorage, InventoryStorage, LocalIdentityCredentialStorage, MetricsStorage,
-    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
-    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PrincipalStorage,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage, RestoreStorage,
-    ServiceAccountStorage, StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery,
-    StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite, StorageClassCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
+    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryStorage, IdentityScopeStorage, ImportStorage,
+    InventoryStorage, LocalIdentityCredentialStorage, MetricsStorage, ObjectAggregateAuthorization,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
+    OperationalStateStorage, PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery,
+    RelationIdsQuery, RelationListQuery, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetStorage, RestoreStorage, ServiceAccountStorage, StorageAuditEvent,
+    StorageAuditEventFilters, StorageAuditEventListQuery, StorageBackendKind,
+    StorageBackupTaskArtifact, StorageCallSite, StorageClassCreate, StorageClassSelector,
+    StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
     StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
     StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
@@ -1344,7 +1344,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .into_value();
 
         let members = backend
-            .list_all_group_members(created.id())
+            .load_group_member_principals(created.id())
             .await
             .expect("certified backend should list group members");
         assert!(
@@ -1355,7 +1355,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         let query_options = QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
             .expect("contract query must be valid");
         let page = backend
-            .list_group_members_page(created.id(), query_options.clone())
+            .list_group_members(created.id(), query_options.clone())
             .await
             .expect("certified backend should page group members");
         assert!(
@@ -1371,7 +1371,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
             .expect("certified backend should remove group members")
             .into_value();
         let empty_page = backend
-            .list_group_members_page(created.id(), query_options)
+            .list_group_members(created.id(), query_options)
             .await
             .expect("certified backend should recount group members");
         assert_eq!(empty_page.total(), Some(0));
@@ -3570,7 +3570,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             || AuthorizationPrincipalCollectionQuery::new(principal_id, collection_id);
 
         let principal_permissions = backend
-            .list_principal_collection_permissions(principal_query())
+            .load_principal_collection_permissions(principal_query())
             .await
             .expect("certified backend should project principal collection grants");
         assert!(
@@ -3590,9 +3590,10 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         }));
 
         let (principal_page, principal_total) = backend
-            .list_principal_collection_permissions_page(
-                AuthorizationPrincipalCollectionPageQuery::new(principal_query(), page_options()),
-            )
+            .list_principal_collection_permissions(AuthorizationPrincipalCollectionPageQuery::new(
+                principal_query(),
+                page_options(),
+            ))
             .await
             .expect("certified backend should page principal collection grants")
             .into_parts();
@@ -3650,15 +3651,16 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             )
         };
         let groups = backend
-            .list_groups_with_collection_permission(groups_query())
+            .load_groups_with_collection_permission(groups_query())
             .await
             .expect("certified backend should list groups with collection grants");
         assert!(groups.iter().any(|candidate| candidate.id() == group_id));
 
         let (groups_page, groups_total) = backend
-            .list_groups_with_collection_permission_page(
-                AuthorizationCollectionGroupsPageQuery::new(groups_query(), page_options()),
-            )
+            .list_groups_with_collection_permission(AuthorizationCollectionGroupsPageQuery::new(
+                groups_query(),
+                page_options(),
+            ))
             .await
             .expect("certified backend should page groups with collection grants")
             .into_parts();
@@ -3673,7 +3675,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             )
         };
         let grants = backend
-            .list_collection_group_permissions(grant_query())
+            .load_collection_group_permissions(grant_query())
             .await
             .expect("certified backend should list collection grants");
         assert!(
@@ -3684,7 +3686,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let (grant_page, grant_total) = backend
-            .list_collection_group_permissions_page(grant_query())
+            .list_collection_group_permissions(grant_query())
             .await
             .expect("certified backend should page collection grants")
             .into_parts();
@@ -4400,7 +4402,7 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
             None,
         )
     };
-    let query = |mode| {
+    let query = || {
         ObjectAggregateStorageQuery::builder(
             StorageObjectAggregateTarget::new(
                 ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
@@ -4442,14 +4444,13 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
         ])
         .page_limit(50)
         .cursor_max_encoded_bytes(4_096)
-        .authorization_mode(mode)
         .build()
         .expect("compatibility aggregate query should be valid")
     };
 
     for backend in available_backends() {
         let storage_page = backend
-            .aggregate_objects(query(ObjectAggregateAuthorizationMode::Storage), None)
+            .aggregate_objects(query(), ObjectAggregateAuthorization::Storage)
             .await
             .expect("certified backend should aggregate with storage authorization");
         let (rows, total, next_cursor) = storage_page.into_parts();
@@ -4459,8 +4460,8 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
 
         let delegated_page = backend
             .aggregate_objects(
-                query(ObjectAggregateAuthorizationMode::Delegated),
-                Some(&AllowAllObjectAggregateAuthorizer),
+                query(),
+                ObjectAggregateAuthorization::Delegated(&AllowAllObjectAggregateAuthorizer),
             )
             .await
             .expect("certified backend should aggregate with delegated authorization");

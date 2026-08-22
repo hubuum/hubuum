@@ -10,7 +10,7 @@ use crate::{
     CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, EventConfigurationStorage,
     EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
-    ExternalIdentityStorage, GroupStorage, HistoryStorage, IdentityMembershipStorage,
+    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryStorage,
     IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
     MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
     OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
@@ -45,7 +45,7 @@ pub trait IdentityStorage:
     AuthenticationStorage
     + LocalIdentityCredentialStorage
     + IdentityScopeStorage
-    + IdentityMembershipStorage
+    + GroupMembershipStorage
     + ServiceAccountStorage
     + ExternalIdentityStorage
     + UserStorage
@@ -61,7 +61,7 @@ impl<T> IdentityStorage for T where
     T: AuthenticationStorage
         + LocalIdentityCredentialStorage
         + IdentityScopeStorage
-        + IdentityMembershipStorage
+        + GroupMembershipStorage
         + ServiceAccountStorage
         + ExternalIdentityStorage
         + UserStorage

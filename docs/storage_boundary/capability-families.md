@@ -144,7 +144,7 @@ or a query builder.
 Required traits:
 
 - `AuthenticationStorage`;
-- `LocalIdentityCredentialStorage`, `IdentityScopeStorage`, `IdentityMembershipStorage`,
+- `LocalIdentityCredentialStorage`, `IdentityScopeStorage`, `GroupMembershipStorage`,
   `ServiceAccountStorage`, `ExternalIdentityStorage`, `UserStorage`, and
   `TokenStorage`;
 - `AuthorizationDataStorage` and `CollectionAuthorizationQueryStorage`; and
@@ -156,7 +156,7 @@ the candidate or snapshot data required by external policy engines.
 
 Resource ownership follows the trait name: `GroupStorage` owns group listing
 and lifecycle, `TokenStorage` owns retained-token listing and lifecycle, and
-`IdentityMembershipStorage` owns only principal/group membership facts. This
+`GroupMembershipStorage` owns only principal/group membership facts. This
 keeps point, list, and mutation methods for one resource on the same trait.
 
 The application still owns token-policy interpretation, administrator policy,

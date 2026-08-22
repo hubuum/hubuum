@@ -380,7 +380,7 @@ pub async fn get_authorization_policy_snapshot(
 }
 
 /// Return the direct grants held by a principal's groups on one collection.
-pub async fn list_principal_collection_permissions(
+pub async fn load_principal_collection_permissions(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionQuery,
 ) -> Result<Vec<AuthorizationGroupGrant>, PostgresStorageError> {
@@ -445,7 +445,7 @@ pub async fn list_all_principal_collection_permissions(
 }
 
 /// Return a stable cursor page of a principal's direct grants.
-pub async fn list_principal_collection_permissions_page(
+pub async fn list_principal_collection_permissions(
     runtime: &PostgresRuntime,
     query: AuthorizationPrincipalCollectionPageQuery,
 ) -> Result<StoragePage<AuthorizationGroupGrant>, PostgresStorageError> {
@@ -636,7 +636,7 @@ pub async fn list_effective_group_collection_permissions(
 }
 
 /// Return every group with one direct or inherited permission.
-pub async fn list_groups_with_collection_permission(
+pub async fn load_groups_with_collection_permission(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGroupsQuery,
 ) -> Result<Vec<AuthorizationGroup>, PostgresStorageError> {
@@ -652,7 +652,7 @@ pub async fn list_groups_with_collection_permission(
 }
 
 /// Return a stable cursor page of groups with one effective permission.
-pub async fn list_groups_with_collection_permission_page(
+pub async fn list_groups_with_collection_permission(
     runtime: &PostgresRuntime,
     query: AuthorizationCollectionGroupsPageQuery,
 ) -> Result<StoragePage<AuthorizationGroup>, PostgresStorageError> {

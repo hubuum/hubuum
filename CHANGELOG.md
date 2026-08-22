@@ -37,6 +37,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for every registered backend, and uses adapter-private deterministic
   failpoints to verify rollback of compound collection and task-finalization
   writes.
+- Storage query documentation now defines common visibility, counting,
+  snapshot, ordering, cursor, limit, and error semantics plus the exact
+  identity-membership and collection-authorization filter/sort matrix. The
+  remaining method-specific matrices are explicitly required before the
+  boundary is promoted to a supported external adapter SDK.
 - Storage backend certification now includes a reusable six-part audit
   conformance harness. Every selectable backend must prove that committed
   receipts match durable events, no-ops append nothing, failed mutations roll
@@ -136,16 +141,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `ComputedFieldStorage`, `EventSubscriptionStorage` to
   `EventConfigurationStorage`, `EventDeliveryStorage` to
   `EventDeliveryWorkerStorage`, and `BootstrapStorage` to
-  `LocalIdentityCredentialStorage`. Group listing belongs to `GroupStorage`,
-  retained-token listing belongs to `TokenStorage`, and renamed operations use
-  consistent `list_*`, `resolve_*`, `update_*`, and service-account-specific
-  names. The coarse cross-cutting family is `OperationalStorage`, matching the
-  other singular family bounds. Observer capabilities are typed
-  `StorageCapability` values; storage
-  metrics users must update label selectors such as `authorization` to
+  `LocalIdentityCredentialStorage`. Group listing and lifecycle belong to
+  `GroupStorage`; `GroupMembershipStorage` owns membership reads and mutations;
+  and retained-token listing belongs to `TokenStorage`. Pageable operations use
+  `list_*`, while complete policy projections use `load_*`; page-returning
+  method names no longer carry a redundant `_page` suffix. Renamed operations
+  otherwise use consistent `resolve_*`, `update_*`, and
+  service-account-specific names. The coarse cross-cutting family is
+  `OperationalStorage`, matching the other singular family bounds. Observer
+  capabilities are typed `StorageCapability` values; storage metrics users
+  must update label selectors such as `authorization` to
   `authorization_data`, `event_subscriptions` to `event_configuration`, and
   `event_delivery` to either `event_delivery_administration` or
-  `event_delivery_worker`.
+  `event_delivery_worker`; the membership label is `group_membership`.
+- **Breaking (workspace storage API):** object aggregation accepts one
+  `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
+  when required. The query no longer stores a separate authorization mode, so
+  callers cannot construct storage/delegated mode and callback mismatches.
+  Delegated target authorization also releases the native storage connection
+  before awaiting the application-owned policy backend.
 - **Breaking (workspace storage API):** storage pages now use one
   `StoragePage<T>` with an optional non-negative exact total instead of a
   negative sentinel or a second counted-page type. Persisted record metadata

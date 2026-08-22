@@ -8,7 +8,7 @@ mod sql;
 
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::{
-    AuthorizationPermission, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
+    AuthorizationPermission, ObjectAggregateAuthorization, ObjectAggregateAuthorizer,
     ObjectAggregateStorageQuery, StorageObjectAggregateCursor, StorageObjectAggregatePage,
     StorageObjectAggregateSpec, StorageVisibility,
 };
@@ -98,7 +98,7 @@ impl ObjectAggregatePaging {
 pub async fn aggregate_objects(
     runtime: &PostgresRuntime,
     query: ObjectAggregateStorageQuery,
-    authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+    authorization: ObjectAggregateAuthorization<'_>,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
     let target = query.target();
     let class_id = target.class_id().id();
@@ -123,7 +123,7 @@ pub async fn aggregate_objects(
         measure_count = spec.measures().len(),
         filter_count = query_options.filters().len(),
         include_total = query_options.include_total(),
-        authorization_mode = ?query.authorization_mode(),
+        authorization = ?authorization,
         "grouping visible filtered objects"
     );
     let execution = ObjectAggregateExecution {
@@ -146,21 +146,11 @@ pub async fn aggregate_objects(
         visibility: query.visibility().clone(),
     };
 
-    match query.authorization_mode() {
-        ObjectAggregateAuthorizationMode::Storage => {
-            if authorizer.is_some() {
-                return Err(PostgresStorageError::internal(
-                    "Storage-authorized aggregation received a delegated authorizer",
-                ));
-            }
+    match authorization {
+        ObjectAggregateAuthorization::Storage => {
             aggregate_objects_with_local_authorization(execution).await
         }
-        ObjectAggregateAuthorizationMode::Delegated => {
-            let authorizer = authorizer.ok_or_else(|| {
-                PostgresStorageError::internal(
-                    "Delegated object aggregation requires an authorizer",
-                )
-            })?;
+        ObjectAggregateAuthorization::Delegated(authorizer) => {
             aggregate_visible_filtered_objects_with_external_batches(authorizer, execution).await
         }
     }
@@ -325,14 +315,15 @@ async fn aggregate_visible_filtered_objects_with_external_batches(
         authorizer,
         execution.required_permissions.clone(),
     );
-    let target_is_authorized = execution
+    let authorization_target = execution
         .runtime
         .with_connection(async |connection| {
             authorizer
-                .authorize_target(connection, &execution.target)
+                .load_authorization_target(connection, &execution.target)
                 .await
         })
         .await?;
+    let target_is_authorized = authorizer.authorize_target(authorization_target).await?;
     if !target_is_authorized {
         return empty_aggregate_page(&execution.paging.query_options);
     }

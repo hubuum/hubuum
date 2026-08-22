@@ -21,7 +21,7 @@ use crate::services::storage_boundary::{
 };
 use crate::storage::{
     AuthenticationResourceScope, AuthenticationTokenScope, ExternalIdentityStorage,
-    IdentityMembershipStorage, IdentityScopeStorage, LocalIdentityCredentialStorage,
+    GroupMembershipStorage, IdentityScopeStorage, LocalIdentityCredentialStorage,
     ServiceAccountStorage, StorageContext, StorageExternalGroup, StorageExternalPrincipalState,
     StorageExternalUserSync, StorageIdentityGroup, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,

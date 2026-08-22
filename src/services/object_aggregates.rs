@@ -17,7 +17,7 @@ use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, principal_id_to_storage, visibility,
 };
 use crate::storage::{
-    AuthorizationPermission, ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer,
+    AuthorizationPermission, ObjectAggregateAuthorization, ObjectAggregateAuthorizer,
     ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageComputedFieldSelector,
     StorageError, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateDimension,
@@ -87,11 +87,6 @@ pub(crate) async fn aggregate_objects(
     )
     .page_limit(page_limit)
     .cursor_max_encoded_bytes(cursor_budget.max_encoded_bytes())
-    .authorization_mode(if delegated {
-        ObjectAggregateAuthorizationMode::Delegated
-    } else {
-        ObjectAggregateAuthorizationMode::Storage
-    })
     .build()?;
 
     let page = if delegated {
@@ -106,11 +101,11 @@ pub(crate) async fn aggregate_objects(
             principal,
         };
         storage_handle(backend)
-            .aggregate_objects(query, Some(&authorizer))
+            .aggregate_objects(query, ObjectAggregateAuthorization::Delegated(&authorizer))
             .await?
     } else {
         storage_handle(backend)
-            .aggregate_objects(query, None)
+            .aggregate_objects(query, ObjectAggregateAuthorization::Storage)
             .await?
     };
     page_from_storage(page, &response_spec)
