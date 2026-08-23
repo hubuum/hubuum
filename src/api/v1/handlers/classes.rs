@@ -276,7 +276,7 @@ fn prepare_graph_query_options(
     }
 
     let limit = page_limits()?.resolve(params.limit())?;
-    params.set_limit(Some(limit + 1));
+    params.set_limit(Some(limit + 1))?;
 
     Ok((params, limit))
 }

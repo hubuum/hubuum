@@ -23,9 +23,9 @@ use crate::services::storage_boundary::{
 use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
-    AuthorizationGroupCollectionQuery, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, CollectionAuthorizationQueryStorage, StorageContext,
-    storage_handle,
+    AuthorizationDataStorage, AuthorizationGrantKey, AuthorizationGroupCollectionQuery,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    CollectionAuthorizationQueryStorage, StorageContext, storage_handle,
 };
 use crate::traits::AuthzSubject;
 use crate::traits::{CollectionAccessors, SelfAccessors};
@@ -405,19 +405,22 @@ where
     C: StorageContext,
     T: CollectionAccessors,
 {
-    storage_handle(backend)
-        .load_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
+    let mut query_options = query_options;
+    query_options.set_limit(None)?;
+    query_options.clear_cursor();
+    query_options.set_include_total(false);
+    let (rows, _) = storage_handle(backend)
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options,
         ))
         .await
-        .map_err(ApiError::from)
-        .and_then(|rows| {
-            rows.into_iter()
-                .map(authorization_group_grant_from_storage)
-                .collect()
-        })
+        .map_err(ApiError::from)?
+        .into_parts();
+    rows.into_iter()
+        .map(authorization_group_grant_from_storage)
+        .collect()
 }
 
 pub async fn groups_on_paginated<C, T>(
@@ -431,7 +434,7 @@ where
     T: CollectionAccessors,
 {
     let page = storage_handle(backend)
-        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
@@ -456,7 +459,7 @@ where
     T: CollectionAccessors,
 {
     storage_handle(backend)
-        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
@@ -485,7 +488,7 @@ where
     T: CollectionAccessors,
 {
     let (_, total) = storage_handle(backend)
-        .list_collection_group_permissions(AuthorizationCollectionGrantListQuery::new(
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
             collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
@@ -505,14 +508,19 @@ pub async fn group_on<C>(
 where
     C: StorageContext,
 {
-    storage_handle(backend)
-        .get_collection_group_permission(
+    let grant = storage_handle(backend)
+        .get_local_collection_grant(AuthorizationGrantKey::new(
             collection_id_to_storage(target_collection_id),
             group_id_to_storage(gid),
-        )
+        ))
         .await
-        .map_err(ApiError::from)
-        .map(grant_from_storage)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "No grant exists for group {gid} on collection {target_collection_id}"
+            ))
+        })?;
+    Ok(grant_from_storage(grant))
 }
 
 pub async fn list_collection_children<C, T>(

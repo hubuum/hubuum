@@ -129,13 +129,13 @@ pub use mutations::{
 };
 pub use queries::{
     authorize_local_collection, authorize_local_collections, get_authorization_policy_snapshot,
-    get_authorization_principal, get_collection_group_permission, get_local_collection_grant,
-    get_local_collection_permission_set, has_group_collection_permission,
-    is_authorization_principal_group_member, list_all_principal_collection_permissions,
-    list_authorization_classes, list_authorization_collection_candidates,
-    list_authorization_group_candidates, list_authorization_objects,
-    list_effective_group_collection_permissions, list_effective_principal_collection_permissions,
-    list_groups_with_collection_permission, list_local_authorized_collections,
-    list_local_collection_grants, list_principal_collection_permissions, list_visible_collections,
+    get_authorization_principal, get_local_collection_grant, get_local_collection_permission_set,
+    has_group_collection_permission, is_authorization_principal_group_member,
+    list_all_principal_collection_permissions, list_authorization_classes,
+    list_authorization_objects, list_effective_group_collection_permissions,
+    list_effective_principal_collection_permissions, list_groups_with_collection_permission,
+    list_local_authorized_collections, list_local_collection_grants,
+    list_principal_collection_permissions, list_visible_collections,
+    load_authorization_collection_candidates, load_authorization_group_candidates,
     load_groups_with_collection_permission, load_principal_collection_permissions,
 };

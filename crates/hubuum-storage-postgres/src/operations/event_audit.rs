@@ -56,7 +56,16 @@ pub async fn list_audit_events(
                     .iter()
                     .map(|sort| audit_event_cursor_field(&sort.field))
                     .collect::<Result<Vec<_>, _>>()?;
-                crate::apply_query_options_with_fields!(records, query.options(), fields);
+                crate::apply_query_options_with_fields!(
+                    records,
+                    query.options(),
+                    fields,
+                    crate::cursor::CursorTieBreaker::new(
+                        FilterField::Id,
+                        true,
+                        audit_event_cursor_field(&FilterField::Id)?,
+                    )
+                );
                 let mut event_rows = records
                     .select(StoredEventProjection::as_select())
                     .load::<StoredEventProjection>(connection)

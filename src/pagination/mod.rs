@@ -160,14 +160,16 @@ where
     if let Some(tie_breaker) = tie_breaker {
         prepared.sort_mut().append_tie_breaker(tie_breaker)?;
     }
-    prepared.set_limit(Some(limit.saturating_add(1)));
+    prepared.set_limit(Some(limit.saturating_add(1)))?;
     Ok(prepared)
 }
 
 pub fn count_query_options(query_options: &QueryOptions) -> QueryOptions {
     let mut prepared = query_options.clone();
     prepared.set_sort(Default::default());
-    prepared.set_limit(None);
+    prepared
+        .set_limit(None)
+        .expect("clearing a query limit must be valid");
     prepared.clear_cursor();
     prepared
 }

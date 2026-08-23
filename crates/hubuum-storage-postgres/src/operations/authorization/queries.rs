@@ -5,18 +5,19 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AggregateExpressionMethods, BoolExpressionMethods, JoinOnDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, GroupId, ObjectId, PrincipalId, ResourceId};
-use hubuum_query::{FilterField, QueryOptions};
+use hubuum_query::FilterField;
 use hubuum_storage_core::{
     AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
     AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery,
     AuthorizationEffectiveGroupGrant, AuthorizationGrant, AuthorizationGrantKey,
-    AuthorizationGroup, AuthorizationGroupCollectionQuery, AuthorizationGroupGrant,
-    AuthorizationGroupMembershipQuery, AuthorizationObjectResource, AuthorizationPermission,
-    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, StoragePage,
+    AuthorizationGroup, AuthorizationGroupCandidateQuery, AuthorizationGroupCollectionQuery,
+    AuthorizationGroupGrant, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
+    AuthorizationPermission, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    AuthorizationResourceIds, StoragePage,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -293,7 +294,7 @@ async fn authorized_collection_ids_for_permission(
         .map_err(PostgresStorageError::from)
 }
 
-pub async fn list_authorization_collection_candidates(
+pub async fn load_authorization_collection_candidates(
     runtime: &PostgresRuntime,
 ) -> Result<Vec<AuthorizationCollection>, PostgresStorageError> {
     runtime
@@ -309,16 +310,17 @@ pub async fn list_authorization_collection_candidates(
         .await
 }
 
-pub async fn list_authorization_group_candidates(
+pub async fn load_authorization_group_candidates(
     runtime: &PostgresRuntime,
-    options: QueryOptions,
+    query: AuthorizationGroupCandidateQuery,
 ) -> Result<Vec<AuthorizationGroup>, PostgresStorageError> {
+    let filters = query.filters().clone();
     runtime
         .with_connection(async |connection| {
             use crate::schema::groups::dsl::{created_at, groupname, groups, id, updated_at};
 
             let mut query = groups.into_boxed();
-            for parameter in options.filters() {
+            for parameter in &filters {
                 match parameter.field {
                     FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
                     FilterField::Name | FilterField::Groupname => {
@@ -811,7 +813,16 @@ async fn load_principal_grants(
         .iter()
         .map(|sort| group_grant_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    crate::apply_query_options_with_fields!(records, query.query_options(), fields);
+    crate::apply_query_options_with_fields!(
+        records,
+        query.query_options(),
+        fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            group_grant_cursor_field(&FilterField::Id)?,
+        )
+    );
     let rows = records
         .select((GroupRow::as_select(), PermissionRow::as_select()))
         .load::<(GroupRow, PermissionRow)>(connection)
@@ -885,7 +896,16 @@ async fn load_groups_page(
         .iter()
         .map(|sort| group_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    crate::apply_query_options_with_fields!(groups, query.query_options(), fields);
+    crate::apply_query_options_with_fields!(
+        groups,
+        query.query_options(),
+        fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            group_cursor_field(&FilterField::Id)?,
+        )
+    );
     let rows = groups.load::<GroupRow>(connection).await?;
     rows.into_iter().map(GroupRow::into_storage).collect()
 }
@@ -946,7 +966,16 @@ async fn load_group_grants(
         .iter()
         .map(|sort| group_grant_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    crate::apply_query_options_with_fields!(records, query.query_options(), fields);
+    crate::apply_query_options_with_fields!(
+        records,
+        query.query_options(),
+        fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            group_grant_cursor_field(&FilterField::Id)?,
+        )
+    );
     let rows = records
         .select((GroupRow::as_select(), PermissionRow::as_select()))
         .load::<(GroupRow, PermissionRow)>(connection)
@@ -1064,23 +1093,6 @@ pub async fn get_local_collection_grant(
                 .transpose()
         })
         .await
-}
-
-pub async fn get_collection_group_permission(
-    runtime: &PostgresRuntime,
-    collection_id: i32,
-    group_id: i32,
-) -> Result<AuthorizationGrant, PostgresStorageError> {
-    get_local_collection_grant(
-        runtime,
-        AuthorizationGrantKey::new(CollectionId::new(collection_id)?, GroupId::new(group_id)?),
-    )
-    .await?
-    .ok_or_else(|| {
-        PostgresStorageError::not_found(format!(
-            "No grant exists for group {group_id} on collection {collection_id}"
-        ))
-    })
 }
 
 pub async fn get_local_collection_permission_set(

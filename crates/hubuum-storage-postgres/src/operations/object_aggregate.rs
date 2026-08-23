@@ -218,7 +218,9 @@ async fn local_computed_filter_has_visible_candidates(
 ) -> Result<bool, PostgresStorageError> {
     let mut candidate_options =
         object_aggregate_authorization_chunk_options(&execution.paging.query_options);
-    candidate_options.set_limit(Some(1));
+    candidate_options
+        .set_limit(Some(1))
+        .expect("the fixed aggregate candidate limit must be valid");
     let database_options = candidate_execution_options(&candidate_options)?;
     let candidate_query = ObjectAggregateCandidateQuery::new(
         &database_options,
@@ -423,7 +425,9 @@ fn object_aggregate_chunk_options(query_options: &QueryOptions) -> QueryOptions 
             .try_into()
             .expect("the fixed aggregate candidate sort must be valid"),
     );
-    chunk_options.set_limit(Some(OBJECT_AGGREGATE_CANDIDATE_BATCH_SIZE));
+    chunk_options
+        .set_limit(Some(OBJECT_AGGREGATE_CANDIDATE_BATCH_SIZE))
+        .expect("the fixed aggregate candidate batch size must be valid");
     chunk_options.clear_cursor();
     chunk_options.set_include_total(false);
     chunk_options
@@ -441,7 +445,9 @@ fn candidate_execution_options(
         ));
     }
     let mut options = query_options.clone();
-    options.set_limit(Some(limit.saturating_add(1)));
+    options
+        .set_limit(Some(limit.saturating_add(1)))
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     Ok(options)
 }
 

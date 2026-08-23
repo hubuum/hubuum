@@ -24,8 +24,8 @@ pub(crate) async fn load_export_template_health(
     Ok(storage.load_export_template_health().await?)
 }
 
-pub(crate) async fn list_export_templates_for_audit(
+pub(crate) async fn load_export_templates_for_audit(
     storage: &StorageHandle,
 ) -> Result<Vec<OperationalExportTemplateAuditEntry>, ApiError> {
-    Ok(storage.list_export_templates_for_audit().await?)
+    Ok(storage.load_export_templates_for_audit().await?)
 }

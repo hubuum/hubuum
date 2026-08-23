@@ -50,16 +50,16 @@ impl OperationalStateStorage for StorageHandle {
         .await
     }
 
-    async fn list_export_templates_for_audit(
+    async fn load_export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::OperationalState,
-            "list_export_templates_for_audit",
+            "load_export_templates_for_audit",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.list_export_templates_for_audit().await
+                    backend.load_export_templates_for_audit().await
                 })
             },
         )

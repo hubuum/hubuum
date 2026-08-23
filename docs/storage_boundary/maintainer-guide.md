@@ -271,7 +271,7 @@ Keep both. Do not infer one from the other or silently omit the common wrapper
 because native instrumentation exists.
 
 The complete transaction callback is one logical operation labeled
-`transactions/with_transaction`. Its constituent resource calls are steps inside that
+`transaction/with_transaction`. Its constituent resource calls are steps inside that
 entrypoint. PostgreSQL pool, transaction, and query diagnostics provide the
 lower-level view without double-counting each step as an independent
 application call.

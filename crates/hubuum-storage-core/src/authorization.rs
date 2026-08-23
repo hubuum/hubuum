@@ -7,7 +7,7 @@ use hubuum_domain::{
     ResourceId, ResourceRevision,
 };
 use hubuum_events_core::EventContext;
-use hubuum_query::QueryOptions;
+use hubuum_query::{QueryFilters, QueryOptions};
 
 use crate::{MutationOutcome, StorageError, StoragePage};
 
@@ -495,6 +495,37 @@ impl fmt::Debug for AuthorizationGroupIdentity {
                 &self.external_key.as_ref().map(|_| "[redacted]"),
             )
             .finish()
+    }
+}
+
+/// Filters used while enumerating authorization group candidates.
+///
+/// Candidate enumeration deliberately excludes pagination and sorting: the
+/// policy backend must see every matching group before it can authorize and
+/// paginate the result.
+#[derive(Clone, PartialEq)]
+pub struct AuthorizationGroupCandidateQuery {
+    filters: QueryFilters,
+}
+
+impl AuthorizationGroupCandidateQuery {
+    #[must_use]
+    pub const fn new(filters: QueryFilters) -> Self {
+        Self { filters }
+    }
+
+    #[must_use]
+    pub const fn filters(&self) -> &QueryFilters {
+        &self.filters
+    }
+}
+
+impl fmt::Debug for AuthorizationGroupCandidateQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationGroupCandidateQuery")
+            .field("filter_count", &self.filters.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -1183,13 +1214,13 @@ pub trait AuthorizationDataStorage: Send + Sync {
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError>;
 
-    async fn list_authorization_collection_candidates(
+    async fn load_authorization_collection_candidates(
         &self,
     ) -> Result<Vec<AuthorizationCollection>, StorageError>;
 
-    async fn list_authorization_group_candidates(
+    async fn load_authorization_group_candidates(
         &self,
-        query_options: QueryOptions,
+        query: AuthorizationGroupCandidateQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError>;
 
     async fn get_authorization_policy_snapshot(

@@ -266,7 +266,16 @@ pub async fn list_principal_groups(
                 .iter()
                 .map(|sort| group_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    group_cursor_field(&FilterField::Id)?,
+                )
+            );
             let groups = records
                 .load::<GroupRow>(connection)
                 .await?
@@ -307,7 +316,16 @@ pub async fn list_groups(
                 .iter()
                 .map(|sort| group_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    group_cursor_field(&FilterField::Id)?,
+                )
+            );
             let groups = records
                 .distinct()
                 .load::<GroupRow>(connection)
@@ -467,7 +485,16 @@ pub async fn list_group_members(
                 .iter()
                 .map(|sort| member_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::apply_query_options_with_fields!(query, options, fields);
+            crate::apply_query_options_with_fields!(
+                query,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    member_cursor_field(&FilterField::Id)?,
+                )
+            );
             let rows = query
                 .select((PrincipalGroupRow::as_select(), PrincipalRow::as_select()))
                 .load::<(PrincipalGroupRow, PrincipalRow)>(connection)

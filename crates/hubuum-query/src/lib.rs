@@ -786,6 +786,7 @@ impl QueryOptions {
         cursor: Option<String>,
         include_total: bool,
     ) -> Result<Self, QueryError> {
+        validate_query_limit(limit)?;
         Ok(Self {
             filters: QueryFilters(filters),
             sort: QuerySort(sort),
@@ -802,6 +803,7 @@ impl QueryOptions {
         cursor: Option<String>,
         include_total: bool,
     ) -> Result<Self, QueryError> {
+        validate_query_limit(limit)?;
         Ok(Self {
             filters: QueryFilters::new(filters)?,
             sort: QuerySort::new(sort)?,
@@ -864,8 +866,10 @@ impl QueryOptions {
         self.limit
     }
 
-    pub const fn set_limit(&mut self, limit: Option<usize>) {
+    pub fn set_limit(&mut self, limit: Option<usize>) -> Result<(), QueryError> {
+        validate_query_limit(limit)?;
         self.limit = limit;
+        Ok(())
     }
 
     #[must_use]
@@ -904,6 +908,21 @@ impl QueryOptions {
         self.filters.try_resolve_computed_fields(&mut resolver)?;
         self.sort.try_resolve_computed_fields(resolver)
     }
+}
+
+fn validate_query_limit(limit: Option<usize>) -> Result<(), QueryError> {
+    let Some(limit) = limit else {
+        return Ok(());
+    };
+    if limit == 0 {
+        return Err(QueryError::BadRequest(
+            "limit must be greater than 0".to_string(),
+        ));
+    }
+    i64::try_from(limit).map_err(|_| {
+        QueryError::BadRequest("query limit exceeds the supported range".to_string())
+    })?;
+    Ok(())
 }
 
 /// A validated, comma-separated path into a JSON object.
@@ -2463,6 +2482,27 @@ mod tests {
 
         assert!(error.to_string().contains("maximum encoded size"));
         assert_eq!(options.cursor().map(QueryCursor::as_str), Some("valid"));
+    }
+
+    #[test]
+    fn query_options_reject_zero_and_native_limit_overflow() {
+        let zero = QueryOptions::new(Vec::new(), Vec::new(), Some(0), None, false).unwrap_err();
+        assert!(zero.to_string().contains("greater than 0"));
+
+        if let Ok(overflow) = usize::try_from(i64::MAX).map(|value| value.saturating_add(1)) {
+            let error =
+                QueryOptions::new(Vec::new(), Vec::new(), Some(overflow), None, false).unwrap_err();
+            assert!(error.to_string().contains("supported range"));
+        }
+    }
+
+    #[test]
+    fn rejected_limit_update_preserves_the_previous_valid_limit() {
+        let mut options = QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, false).unwrap();
+
+        options.set_limit(Some(0)).unwrap_err();
+
+        assert_eq!(options.limit(), Some(10));
     }
 
     #[test]

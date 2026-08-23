@@ -115,7 +115,19 @@ pub async fn list_computed_objects(
                 &snapshot,
             )?;
             let fields = query::object_cursor_sql_fields(options.sort(), &snapshot)?;
-            crate::apply_query_options_with_fields!(row_query, options, fields);
+            crate::apply_query_options_with_fields!(
+                row_query,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    hubuum_query::FilterField::Id,
+                    false,
+                    crate::operations::catalog::object_cursor_field(
+                        &hubuum_query::FilterField::Id,
+                    )?
+                    .into(),
+                )
+            );
             tracing::debug!(
                 operation = "list_computed_objects",
                 filter_count = options.filters().len(),

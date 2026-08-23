@@ -362,23 +362,28 @@ fn history_cursor_fields(
     options
         .sort()
         .iter()
-        .map(|sort| {
-            let column = match sort.field {
-                FilterField::HistoryId => "history_id",
-                FilterField::Revision => "revision",
-                ref field => {
-                    return Err(PostgresStorageError::invalid_input(format!(
-                        "Field '{field}' is not orderable for history"
-                    )));
-                }
-            };
-            Ok(CursorSqlField {
-                column: format!("{table}.{column}"),
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            })
-        })
+        .map(|sort| history_cursor_field(&sort.field, table))
         .collect()
+}
+
+fn history_cursor_field(
+    field: &FilterField,
+    table: &'static str,
+) -> Result<CursorSqlField<String>, PostgresStorageError> {
+    let column = match field {
+        FilterField::HistoryId => "history_id",
+        FilterField::Revision => "revision",
+        field => {
+            return Err(PostgresStorageError::invalid_input(format!(
+                "Field '{field}' is not orderable for history"
+            )));
+        }
+    };
+    Ok(CursorSqlField {
+        column: format!("{table}.{column}"),
+        sql_type: CursorSqlType::BigInt,
+        nullable: false,
+    })
 }
 
 fn validate_history_filters(options: &QueryOptions) -> Result<(), PostgresStorageError> {
@@ -448,7 +453,16 @@ macro_rules! history_operations {
                     for parameter in options.filters() {
                         crate::postgres_revision_filter!(records, parameter, revision);
                     }
-                    crate::apply_query_options_with_fields!(records, options, fields);
+                    crate::apply_query_options_with_fields!(
+                        records,
+                        options,
+                        fields,
+                        crate::cursor::CursorTieBreaker::new(
+                            FilterField::HistoryId,
+                            false,
+                            history_cursor_field(&FilterField::HistoryId, $table_name)?,
+                        )
+                    );
                     let rows = records
                         .load::<$row>(connection)
                         .await?
@@ -564,7 +578,16 @@ pub async fn list_object_history(
             for parameter in options.filters() {
                 crate::postgres_revision_filter!(records, parameter, history::revision);
             }
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::HistoryId,
+                    false,
+                    history_cursor_field(&FilterField::HistoryId, "hubuumobject_history")?,
+                )
+            );
             let rows = records
                 .load::<ObjectHistoryRow>(connection)
                 .await?

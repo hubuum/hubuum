@@ -643,15 +643,15 @@ impl AuthorizationDataStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn list_authorization_collection_candidates(
+    async fn load_authorization_collection_candidates(
         &self,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
         fixture_result()
     }
 
-    async fn list_authorization_group_candidates(
+    async fn load_authorization_group_candidates(
         &self,
-        query_options: QueryOptions,
+        query: AuthorizationGroupCandidateQuery,
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
         fixture_result()
     }
@@ -1229,7 +1229,7 @@ impl OperationalStateStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn list_export_templates_for_audit(
+    async fn load_export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
         fixture_result()
@@ -1405,28 +1405,6 @@ impl CollectionAuthorizationQueryStorage for CompleteExternalAdapter {
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
     ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
-        fixture_result()
-    }
-
-    async fn load_collection_group_permissions(
-        &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        fixture_result()
-    }
-
-    async fn list_collection_group_permissions(
-        &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
-        fixture_result()
-    }
-
-    async fn get_collection_group_permission(
-        &self,
-        collection_id: CollectionId,
-        group_id: GroupId,
-    ) -> Result<AuthorizationGrant, StorageError> {
         fixture_result()
     }
 }

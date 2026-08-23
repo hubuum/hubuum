@@ -200,39 +200,4 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
         .await
         .map_err(StorageError::from)
     }
-
-    async fn load_collection_group_permissions(
-        &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
-        let (rows, _) =
-            crate::operations::authorization::list_local_collection_grants(self.runtime(), query)
-                .await
-                .map_err(StorageError::from)?
-                .into_parts();
-        Ok(rows)
-    }
-
-    async fn list_collection_group_permissions(
-        &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
-        crate::operations::authorization::list_local_collection_grants(self.runtime(), query)
-            .await
-            .map_err(StorageError::from)
-    }
-
-    async fn get_collection_group_permission(
-        &self,
-        collection_id: CollectionId,
-        group_id: GroupId,
-    ) -> Result<AuthorizationGrant, StorageError> {
-        crate::operations::authorization::get_collection_group_permission(
-            self.runtime(),
-            collection_id.id(),
-            group_id.id(),
-        )
-        .await
-        .map_err(StorageError::from)
-    }
 }

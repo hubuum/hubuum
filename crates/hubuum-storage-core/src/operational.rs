@@ -726,7 +726,7 @@ pub trait OperationalStateStorage: Send + Sync {
 
     /// Load the complete stored template set required for an explicit
     /// administrator validation pass.
-    async fn list_export_templates_for_audit(
+    async fn load_export_templates_for_audit(
         &self,
     ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError>;
 }

@@ -130,7 +130,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.AuthorizationDataStorage]
 source = "crates/hubuum-storage-core/src/authorization.rs"
-methods = ["get_authorization_principal", "is_authorization_principal_group_member", "list_authorization_classes", "list_authorization_objects", "authorize_local_collection", "authorize_local_collections", "list_local_authorized_collections", "list_authorization_collection_candidates", "list_authorization_group_candidates", "get_authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "get_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
+methods = ["get_authorization_principal", "is_authorization_principal_group_member", "list_authorization_classes", "list_authorization_objects", "authorize_local_collection", "authorize_local_collections", "list_local_authorized_collections", "load_authorization_collection_candidates", "load_authorization_group_candidates", "get_authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "get_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
 
 [traits.CatalogStorage]
@@ -211,7 +211,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.OperationalStateStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"
-methods = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot", "load_export_template_health", "list_export_templates_for_audit"]
+methods = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot", "load_export_template_health", "load_export_templates_for_audit"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_operational_state"]
 
 [traits.TokenRetentionStorage]
@@ -236,7 +236,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.CollectionAuthorizationQueryStorage]
 source = "crates/hubuum-storage-core/src/collection_authorization.rs"
-methods = ["load_principal_collection_permissions", "list_all_principal_collection_permissions", "list_principal_collection_permissions", "list_effective_principal_collection_permissions", "list_visible_collections", "has_group_collection_permission", "list_effective_group_collection_permissions", "load_groups_with_collection_permission", "list_groups_with_collection_permission", "load_collection_group_permissions", "list_collection_group_permissions", "get_collection_group_permission"]
+methods = ["load_principal_collection_permissions", "list_all_principal_collection_permissions", "list_principal_collection_permissions", "list_effective_principal_collection_permissions", "list_visible_collections", "has_group_collection_permission", "list_effective_group_collection_permissions", "load_groups_with_collection_permission", "list_groups_with_collection_permission"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
 
 [traits.RemoteTargetStorage]
@@ -253,7 +253,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 source = "crates/hubuum-storage-core/src/task_execution.rs"
 methods = ["claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
-native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure", "src/tests/storage_contract.rs::postgres_lease_renewal_loss_expires_and_finalizes_without_replay"]
+native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure", "src/tests/storage_contract.rs::postgres_task_page_count_and_rows_share_one_snapshot", "src/tests/storage_contract.rs::postgres_lease_renewal_loss_expires_and_finalizes_without_replay"]
 
 [traits.BackupSnapshotStorage]
 source = "crates/hubuum-storage-core/src/backup_snapshot.rs"

@@ -138,6 +138,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   matching `hubuum-domain` IDs and `ResourceRevision`; use
   `StorageRevisionTarget` instead of formatted revision-owner keys; construct
   and mutate `QueryOptions` through its bounded collection and cursor APIs;
+  handle the now-fallible `QueryOptions::set_limit` method, which rejects zero
+  and values outside the native signed limit range;
   replace `SQLMappedType` and the JSONB-named inference helpers with
   `QueryScalarType` and the `infer_*` helpers; use semantic event `parse`
   methods instead of `from_db`; and update matches to the semantic
@@ -167,7 +169,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Capability labels now uniformly use the singular trait stem, for example
   `collection`, `computed_field`, `task_queue`, and `transaction`. Complete
   batch reads now use `load_token_metadata_by_ids` and
-  `load_export_template_health` rather than `get_*` names.
+  `load_export_template_health` rather than `get_*` names. Authorization
+  candidate enumeration is now named `load_authorization_*_candidates`, group
+  candidate queries accept filters only, and the duplicate collection-grant
+  methods on `CollectionAuthorizationQueryStorage` are removed in favor of
+  `AuthorizationDataStorage::{list_local_collection_grants,
+  get_local_collection_grant}`. Operational adapters must also rename
+  `list_export_templates_for_audit` to `load_export_templates_for_audit`.
 - **Breaking (workspace storage API):** object aggregation accepts one
   `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
   when required. The query no longer stores a separate authorization mode, so

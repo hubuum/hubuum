@@ -380,34 +380,20 @@ pub async fn list_tasks(
 ) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
     let (submitted_by, kind, status, options) = query.into_parts();
     let submitted_by = submitted_by.map(PrincipalId::id);
-    let total = if options.include_total() {
-        Some(
-            runtime
-                .with_connection(async move |connection| {
-                    build_task_query(submitted_by, kind, status)
-                        .count()
-                        .get_result::<i64>(connection)
-                        .await
-                })
-                .await?,
-        )
+    let options = crate::cursor::normalize_query_options(options, FilterField::Id, false)?;
+    if options.include_total() {
+        runtime
+            .with_read_only_snapshot(async |connection| {
+                list_tasks_on(connection, submitted_by, kind, status, &options).await
+            })
+            .await
     } else {
-        None
-    };
-    let tasks = runtime
-        .with_connection(
-            async move |connection| -> Result<Vec<TaskRow>, PostgresStorageError> {
-                let mut storage_query = build_task_query(submitted_by, kind, status);
-                let sql_fields = task_cursor_fields(&options)?;
-                crate::apply_query_options_with_fields!(storage_query, options, sql_fields);
-                Ok(storage_query.load::<TaskRow>(connection).await?)
-            },
-        )
-        .await?
-        .into_iter()
-        .map(TaskRow::into_storage)
-        .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(tasks, total).map_err(PostgresStorageError::from)
+        runtime
+            .with_connection(async |connection| {
+                list_tasks_on(connection, submitted_by, kind, status, &options).await
+            })
+            .await
+    }
 }
 
 pub async fn list_task_events(
@@ -416,18 +402,20 @@ pub async fn list_task_events(
 ) -> Result<StoragePage<StorageTaskEvent>, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     let task_id = task_id.id();
-    let total = if options.include_total() {
-        Some(count_task_events(runtime, task_id).await?)
+    let options = normalize_task_child_page_options(options, "task events")?;
+    if options.include_total() {
+        runtime
+            .with_read_only_snapshot(async |connection| {
+                list_task_events_on(connection, task_id, &options).await
+            })
+            .await
     } else {
-        None
-    };
-    let mut events = load_task_events(runtime, task_id, &options).await?;
-    enrich_legacy_event_initiators(runtime, &mut events).await?;
-    let events = events
-        .into_iter()
-        .map(TaskEventRow::into_storage)
-        .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(events, total).map_err(PostgresStorageError::from)
+        runtime
+            .with_connection(async |connection| {
+                list_task_events_on(connection, task_id, &options).await
+            })
+            .await
+    }
 }
 
 pub async fn list_import_task_results(
@@ -436,59 +424,20 @@ pub async fn list_import_task_results(
 ) -> Result<StoragePage<StorageImportTaskResult>, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     let task_id = task_id.id();
-    let total = if options.include_total() {
-        Some(
-            runtime
-                .with_connection(async move |connection| {
-                    use crate::schema::import_task_results::dsl as results;
-                    results::import_task_results
-                        .filter(results::task_id.eq(task_id))
-                        .count()
-                        .get_result::<i64>(connection)
-                        .await
-                })
-                .await?,
-        )
+    let options = normalize_task_child_page_options(options, "import task results")?;
+    if options.include_total() {
+        runtime
+            .with_read_only_snapshot(async |connection| {
+                list_import_task_results_on(connection, task_id, &options).await
+            })
+            .await
     } else {
-        None
-    };
-    let cursor_id = decode_i32_page_cursor(&options, "import task results")?;
-    let descending = page_descending(&options);
-    let limit = page_limit(&options);
-    let results = runtime
-        .with_connection(async move |connection| {
-            use crate::schema::import_task_results::dsl as stored;
-            let mut storage_query = stored::import_task_results
-                .filter(stored::task_id.eq(task_id))
-                .into_boxed();
-            if let Some(cursor_id) = cursor_id {
-                storage_query = if descending {
-                    storage_query.filter(stored::id.lt(cursor_id))
-                } else {
-                    storage_query.filter(stored::id.gt(cursor_id))
-                };
-            }
-            if descending {
-                storage_query
-                    .order(stored::id.desc())
-                    .limit(limit)
-                    .select(ImportTaskResultRow::as_select())
-                    .load::<ImportTaskResultRow>(connection)
-                    .await
-            } else {
-                storage_query
-                    .order(stored::id.asc())
-                    .limit(limit)
-                    .select(ImportTaskResultRow::as_select())
-                    .load::<ImportTaskResultRow>(connection)
-                    .await
-            }
-        })
-        .await?
-        .into_iter()
-        .map(ImportTaskResultRow::into_storage)
-        .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(results, total).map_err(PostgresStorageError::from)
+        runtime
+            .with_connection(async |connection| {
+                list_import_task_results_on(connection, task_id, &options).await
+            })
+            .await
+    }
 }
 
 pub async fn list_export_output_summaries(
@@ -634,55 +583,96 @@ fn build_task_query(
     query
 }
 
+async fn list_tasks_on(
+    connection: &mut PostgresConnection,
+    submitted_by: Option<i32>,
+    kind: Option<StorageTaskKind>,
+    status: Option<StorageTaskStatus>,
+    options: &QueryOptions,
+) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
+    let total = if options.include_total() {
+        let total = build_task_query(submitted_by, kind, status)
+            .count()
+            .get_result::<i64>(connection)
+            .await?;
+        crate::reach_fault_point(crate::PostgresFaultPoint::PageAfterCount, Some(connection))
+            .await?;
+        Some(total)
+    } else {
+        None
+    };
+    let mut storage_query = build_task_query(submitted_by, kind, status);
+    let sql_fields = task_cursor_fields(options)?;
+    crate::apply_query_options_with_fields!(
+        storage_query,
+        options,
+        sql_fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            task_cursor_field(&FilterField::Id)?,
+        )
+    );
+    let tasks = storage_query
+        .load::<TaskRow>(connection)
+        .await?
+        .into_iter()
+        .map(TaskRow::into_storage)
+        .collect::<Result<Vec<_>, _>>()?;
+    StoragePage::try_new(tasks, total).map_err(PostgresStorageError::from)
+}
+
 fn task_cursor_fields(options: &QueryOptions) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
     options
         .sort()
         .iter()
-        .map(|sort| {
-            Ok(match &sort.field {
-                FilterField::Id => CursorSqlField {
-                    column: "tasks.id",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: false,
-                },
-                FilterField::Kind => CursorSqlField {
-                    column: "tasks.kind",
-                    sql_type: CursorSqlType::String,
-                    nullable: false,
-                },
-                FilterField::Status => CursorSqlField {
-                    column: "tasks.status",
-                    sql_type: CursorSqlType::String,
-                    nullable: false,
-                },
-                FilterField::SubmittedBy => CursorSqlField {
-                    column: "tasks.submitted_by",
-                    sql_type: CursorSqlType::Integer,
-                    nullable: true,
-                },
-                FilterField::CreatedAt => CursorSqlField {
-                    column: "tasks.created_at",
-                    sql_type: CursorSqlType::DateTime,
-                    nullable: false,
-                },
-                FilterField::StartedAt => CursorSqlField {
-                    column: "tasks.started_at",
-                    sql_type: CursorSqlType::DateTime,
-                    nullable: true,
-                },
-                FilterField::FinishedAt => CursorSqlField {
-                    column: "tasks.finished_at",
-                    sql_type: CursorSqlType::DateTime,
-                    nullable: true,
-                },
-                field => {
-                    return Err(PostgresStorageError::invalid_input(format!(
-                        "Field '{field}' is not orderable for tasks"
-                    )));
-                }
-            })
-        })
+        .map(|sort| task_cursor_field(&sort.field))
         .collect()
+}
+
+fn task_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStorageError> {
+    Ok(match field {
+        FilterField::Id => CursorSqlField {
+            column: "tasks.id",
+            sql_type: CursorSqlType::Integer,
+            nullable: false,
+        },
+        FilterField::Kind => CursorSqlField {
+            column: "tasks.kind",
+            sql_type: CursorSqlType::String,
+            nullable: false,
+        },
+        FilterField::Status => CursorSqlField {
+            column: "tasks.status",
+            sql_type: CursorSqlType::String,
+            nullable: false,
+        },
+        FilterField::SubmittedBy => CursorSqlField {
+            column: "tasks.submitted_by",
+            sql_type: CursorSqlType::Integer,
+            nullable: true,
+        },
+        FilterField::CreatedAt => CursorSqlField {
+            column: "tasks.created_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: false,
+        },
+        FilterField::StartedAt => CursorSqlField {
+            column: "tasks.started_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: true,
+        },
+        FilterField::FinishedAt => CursorSqlField {
+            column: "tasks.finished_at",
+            sql_type: CursorSqlType::DateTime,
+            nullable: true,
+        },
+        field => {
+            return Err(PostgresStorageError::invalid_input(format!(
+                "Field '{field}' is not orderable for tasks"
+            )));
+        }
+    })
 }
 
 async fn find_task_by_idempotency(
@@ -820,78 +810,85 @@ fn log_task_queued(task: &TaskRow) {
     );
 }
 
-async fn count_task_events(
-    runtime: &PostgresRuntime,
+async fn list_task_events_on(
+    connection: &mut PostgresConnection,
     task_id: i32,
-) -> Result<i64, PostgresStorageError> {
-    runtime
-        .with_connection(async move |connection| {
-            use crate::schema::events::dsl as stored;
-            stored::events
-                .filter(stored::entity_type.eq(EntityType::Task.as_str()))
-                .filter(stored::entity_id.eq(Some(task_id)))
-                .count()
-                .get_result::<i64>(connection)
-                .await
-        })
-        .await
+    options: &QueryOptions,
+) -> Result<StoragePage<StorageTaskEvent>, PostgresStorageError> {
+    let total = if options.include_total() {
+        use crate::schema::events::dsl as stored;
+        let total = stored::events
+            .filter(stored::entity_type.eq(EntityType::Task.as_str()))
+            .filter(stored::entity_id.eq(Some(task_id)))
+            .count()
+            .get_result::<i64>(connection)
+            .await?;
+        crate::reach_fault_point(crate::PostgresFaultPoint::PageAfterCount, Some(connection))
+            .await?;
+        Some(total)
+    } else {
+        None
+    };
+    let mut events = load_task_events(connection, task_id, options).await?;
+    enrich_legacy_event_initiators(connection, &mut events).await?;
+    let events = events
+        .into_iter()
+        .map(TaskEventRow::into_storage)
+        .collect::<Result<Vec<_>, _>>()?;
+    StoragePage::try_new(events, total).map_err(PostgresStorageError::from)
 }
 
 async fn load_task_events(
-    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
     task_id: i32,
     options: &QueryOptions,
 ) -> Result<Vec<TaskEventRow>, PostgresStorageError> {
     let cursor_id = decode_i64_page_cursor(options, "task events")?;
     let descending = page_descending(options);
-    let limit = page_limit(options);
-    runtime
-        .with_connection(async move |connection| {
-            use crate::schema::events::dsl as stored;
-            let mut query = stored::events
-                .filter(stored::entity_type.eq(EntityType::Task.as_str()))
-                .filter(stored::entity_id.eq(Some(task_id)))
-                .into_boxed();
-            if let Some(cursor_id) = cursor_id {
-                query = if descending {
-                    query.filter(stored::id.lt(cursor_id))
-                } else {
-                    query.filter(stored::id.gt(cursor_id))
-                };
-            }
-            let selection = (
-                stored::id,
-                stored::entity_id,
-                stored::action,
-                stored::summary,
-                stored::metadata,
-                stored::occurred_at,
-                stored::actor_user_id,
-                stored::actor_kind,
-                stored::initiator_user_id,
-                stored::task_id,
-            );
-            if descending {
-                query
-                    .order(stored::id.desc())
-                    .limit(limit)
-                    .select(selection)
-                    .load::<TaskEventRow>(connection)
-                    .await
-            } else {
-                query
-                    .order(stored::id.asc())
-                    .limit(limit)
-                    .select(selection)
-                    .load::<TaskEventRow>(connection)
-                    .await
-            }
-        })
-        .await
+    let limit = page_limit(options)?;
+    use crate::schema::events::dsl as stored;
+    let mut query = stored::events
+        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
+        .filter(stored::entity_id.eq(Some(task_id)))
+        .into_boxed();
+    if let Some(cursor_id) = cursor_id {
+        query = if descending {
+            query.filter(stored::id.lt(cursor_id))
+        } else {
+            query.filter(stored::id.gt(cursor_id))
+        };
+    }
+    let selection = (
+        stored::id,
+        stored::entity_id,
+        stored::action,
+        stored::summary,
+        stored::metadata,
+        stored::occurred_at,
+        stored::actor_user_id,
+        stored::actor_kind,
+        stored::initiator_user_id,
+        stored::task_id,
+    );
+    if descending {
+        Ok(query
+            .order(stored::id.desc())
+            .limit(limit)
+            .select(selection)
+            .load::<TaskEventRow>(connection)
+            .await?)
+    } else {
+        Ok(query
+            .order(stored::id.asc())
+            .limit(limit)
+            .select(selection)
+            .load::<TaskEventRow>(connection)
+            .await?)
+    }
 }
 
 async fn enrich_legacy_event_initiators(
-    runtime: &PostgresRuntime,
+    connection: &mut PostgresConnection,
     events: &mut [TaskEventRow],
 ) -> Result<(), PostgresStorageError> {
     let task_ids = events
@@ -902,22 +899,18 @@ async fn enrich_legacy_event_initiators(
     if task_ids.is_empty() {
         return Ok(());
     }
-    let queued = runtime
-        .with_connection(async move |connection| {
-            use crate::schema::events::dsl as stored;
-            stored::events
-                .filter(stored::entity_type.eq(EntityType::Task.as_str()))
-                .filter(stored::action.eq(Action::Queued.as_str()))
-                .filter(stored::entity_id.eq_any(task_ids.into_iter().map(Some)))
-                .order(stored::id.asc())
-                .select((
-                    stored::entity_id,
-                    stored::initiator_user_id,
-                    stored::actor_user_id,
-                ))
-                .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
-                .await
-        })
+    use crate::schema::events::dsl as stored;
+    let queued = stored::events
+        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
+        .filter(stored::action.eq(Action::Queued.as_str()))
+        .filter(stored::entity_id.eq_any(task_ids.into_iter().map(Some)))
+        .order(stored::id.asc())
+        .select((
+            stored::entity_id,
+            stored::initiator_user_id,
+            stored::actor_user_id,
+        ))
+        .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
         .await?;
     let initiators = queued
         .into_iter()
@@ -933,6 +926,76 @@ async fn enrich_legacy_event_initiators(
         }
     }
     Ok(())
+}
+
+async fn list_import_task_results_on(
+    connection: &mut PostgresConnection,
+    task_id: i32,
+    options: &QueryOptions,
+) -> Result<StoragePage<StorageImportTaskResult>, PostgresStorageError> {
+    use crate::schema::import_task_results::dsl as stored;
+    let total = if options.include_total() {
+        let total = stored::import_task_results
+            .filter(stored::task_id.eq(task_id))
+            .count()
+            .get_result::<i64>(connection)
+            .await?;
+        crate::reach_fault_point(crate::PostgresFaultPoint::PageAfterCount, Some(connection))
+            .await?;
+        Some(total)
+    } else {
+        None
+    };
+    let cursor_id = decode_i32_page_cursor(options, "import task results")?;
+    let descending = page_descending(options);
+    let limit = page_limit(options)?;
+    let mut storage_query = stored::import_task_results
+        .filter(stored::task_id.eq(task_id))
+        .into_boxed();
+    if let Some(cursor_id) = cursor_id {
+        storage_query = if descending {
+            storage_query.filter(stored::id.lt(cursor_id))
+        } else {
+            storage_query.filter(stored::id.gt(cursor_id))
+        };
+    }
+    let results = if descending {
+        storage_query
+            .order(stored::id.desc())
+            .limit(limit)
+            .select(ImportTaskResultRow::as_select())
+            .load::<ImportTaskResultRow>(connection)
+            .await?
+    } else {
+        storage_query
+            .order(stored::id.asc())
+            .limit(limit)
+            .select(ImportTaskResultRow::as_select())
+            .load::<ImportTaskResultRow>(connection)
+            .await?
+    };
+    let results = results
+        .into_iter()
+        .map(ImportTaskResultRow::into_storage)
+        .collect::<Result<Vec<_>, _>>()?;
+    StoragePage::try_new(results, total).map_err(PostgresStorageError::from)
+}
+
+fn normalize_task_child_page_options(
+    options: QueryOptions,
+    resource: &str,
+) -> Result<QueryOptions, PostgresStorageError> {
+    let options = crate::cursor::normalize_query_options(options, FilterField::Id, false)?;
+    if options
+        .sort()
+        .iter()
+        .any(|sort| sort.field != FilterField::Id)
+    {
+        return Err(PostgresStorageError::invalid_input(format!(
+            "Only the id field is orderable for {resource}"
+        )));
+    }
+    Ok(options)
 }
 
 fn decode_i64_page_cursor(
@@ -972,8 +1035,9 @@ fn page_descending(options: &QueryOptions) -> bool {
         .is_some_and(|sort| sort.descending)
 }
 
-fn page_limit(options: &QueryOptions) -> i64 {
-    i64::try_from(options.limit().unwrap_or(DEFAULT_PAGE_WITH_LOOKAHEAD)).unwrap_or(i64::MAX)
+fn page_limit(options: &QueryOptions) -> Result<i64, PostgresStorageError> {
+    Ok(crate::cursor::validated_query_limit(options.limit())?
+        .unwrap_or(DEFAULT_PAGE_WITH_LOOKAHEAD as i64))
 }
 
 fn classify_output<T, U>(

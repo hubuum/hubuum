@@ -81,7 +81,20 @@ pub async fn list_collections(
             let row_query = collection_query(principal_id, is_admin, resource_scope.as_ref());
             let mut row_query = apply_collection_filters(row_query, &options)?;
             let fields = collection_cursor_fields(&options)?;
-            crate::apply_query_options_with_fields!(row_query, options, fields);
+            crate::apply_query_options_with_fields!(
+                row_query,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    CursorSqlField {
+                        column: "collections.id",
+                        sql_type: CursorSqlType::Integer,
+                        nullable: false,
+                    },
+                )
+            );
             let rows = row_query
                 .select(CollectionCatalogRow::as_select())
                 .load::<CollectionCatalogRow>(connection)
@@ -129,7 +142,20 @@ pub async fn list_classes(
 
             let mut query = apply_class_filters(build_query(), &options)?;
             let fields = class_cursor_fields(&options)?;
-            crate::apply_query_options_with_fields!(query, options, fields);
+            crate::apply_query_options_with_fields!(
+                query,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    CursorSqlField {
+                        column: "hubuumclass.id",
+                        sql_type: CursorSqlType::Integer,
+                        nullable: false,
+                    },
+                )
+            );
             tracing::debug!(
                 operation = "list_classes",
                 filter_count = options.filters().len(),
@@ -191,7 +217,16 @@ pub async fn list_objects(
 
             let mut query = apply_object_filters(build_query(), &options, related_predicate)?;
             let fields = object_cursor_fields(&options)?;
-            crate::apply_query_options_with_fields!(query, options, fields);
+            crate::apply_query_options_with_fields!(
+                query,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    object_cursor_field(&FilterField::Id)?,
+                )
+            );
             tracing::debug!(
                 operation = "list_objects",
                 filter_count = options.filters().len(),

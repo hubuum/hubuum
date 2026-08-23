@@ -127,7 +127,7 @@ pub(crate) async fn externally_authorized_related_object_ids(
         }
 
         let mut target_query = related_target_query(&group, target_class.id)?;
-        target_query.set_limit(Some(MAX_EXTERNAL_RELATED_FILTER_TARGETS + 1));
+        target_query.set_limit(Some(MAX_EXTERNAL_RELATED_FILTER_TARGETS + 1))?;
         let (target_candidates, _) =
             catalog::list_objects(storage, principal.user_id, true, None, target_query).await?;
         RelatedTraversalResource::TargetObjects.ensure_count(target_candidates.len())?;

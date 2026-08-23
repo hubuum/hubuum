@@ -43,7 +43,7 @@ pub fn parse_query_parameter_with_passthrough(
     let (mut query_options, passthrough) =
         hubuum_query::parse_query_parameter_with_passthrough(qs, passthrough_keys)?;
     let limit = query_options.limit().map(validate_page_limit).transpose()?;
-    query_options.set_limit(limit);
+    query_options.set_limit(limit)?;
     Ok((query_options, passthrough))
 }
 
@@ -57,7 +57,7 @@ pub fn parse_query_parameter_with_computed_filters_and_passthrough(
             passthrough_keys,
         )?;
     let limit = query_options.limit().map(validate_page_limit).transpose()?;
-    query_options.set_limit(limit);
+    query_options.set_limit(limit)?;
     Ok((query_options, passthrough))
 }
 
@@ -71,7 +71,7 @@ pub fn parse_query_parameter_with_computed_and_related_filters_and_passthrough(
             passthrough_keys,
         )?;
     let limit = query_options.limit().map(validate_page_limit).transpose()?;
-    query_options.set_limit(limit);
+    query_options.set_limit(limit)?;
     Ok((query_options, passthrough))
 }
 

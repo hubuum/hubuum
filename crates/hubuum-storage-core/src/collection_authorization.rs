@@ -5,9 +5,9 @@ use hubuum_domain::{CollectionId, GroupId, PrincipalId};
 use hubuum_query::QueryOptions;
 
 use crate::{
-    AuthenticationTokenScope, AuthorizationCollection, AuthorizationCollectionGrantListQuery,
-    AuthorizationGrant, AuthorizationGroup, AuthorizationGroupGrant, AuthorizationPermission,
-    AuthorizationPolicySnapshotRow, StorageError, StoragePage,
+    AuthenticationTokenScope, AuthorizationCollection, AuthorizationGrant, AuthorizationGroup,
+    AuthorizationGroupGrant, AuthorizationPermission, AuthorizationPolicySnapshotRow, StorageError,
+    StoragePage,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -367,20 +367,4 @@ pub trait CollectionAuthorizationQueryStorage: Send + Sync {
         &self,
         query: AuthorizationCollectionGroupsPageQuery,
     ) -> Result<StoragePage<AuthorizationGroup>, StorageError>;
-
-    async fn load_collection_group_permissions(
-        &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError>;
-
-    async fn list_collection_group_permissions(
-        &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
-
-    async fn get_collection_group_permission(
-        &self,
-        collection_id: CollectionId,
-        group_id: GroupId,
-    ) -> Result<AuthorizationGrant, StorageError>;
 }

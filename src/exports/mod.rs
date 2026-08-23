@@ -1612,7 +1612,7 @@ fn prepare_query_options(export: &ExportRequest) -> Result<QueryOptions, ApiErro
     let requested_limit = query_options.limit().unwrap_or(configured_limit);
     let effective_limit = page_limits.clamp(requested_limit.min(configured_limit));
 
-    query_options.set_limit(Some(effective_limit.saturating_add(1)));
+    query_options.set_limit(Some(effective_limit.saturating_add(1)))?;
     Ok(query_options)
 }
 

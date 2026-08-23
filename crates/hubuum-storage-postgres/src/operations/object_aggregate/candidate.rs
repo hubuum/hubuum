@@ -150,12 +150,25 @@ pub(super) async fn load_aggregate_candidate_batch(
         })?;
         query = query.filter(computed_filter_predicate(parameter, snapshot)?);
     }
-    let fields = [CursorSqlField {
+    let fields = vec![CursorSqlField {
         column: "hubuumobject.id",
         sql_type: CursorSqlType::Integer,
         nullable: false,
     }];
-    crate::apply_query_options_with_fields!(query, query_options, fields);
+    crate::apply_query_options_with_fields!(
+        query,
+        query_options,
+        fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            CursorSqlField {
+                column: "hubuumobject.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+        )
+    );
     let data_projection = if include_object_data {
         "data"
     } else {

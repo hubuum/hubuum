@@ -539,7 +539,16 @@ async fn load_remote_target_rows(
         .iter()
         .map(|sort| remote_target_cursor_field(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    crate::apply_query_options_with_fields!(records, options, fields);
+    crate::apply_query_options_with_fields!(
+        records,
+        options,
+        fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            remote_target_cursor_field(&FilterField::Id)?,
+        )
+    );
     records
         .load::<RemoteTargetRow>(connection)
         .await?

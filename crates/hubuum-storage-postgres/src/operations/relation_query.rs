@@ -82,7 +82,16 @@ pub async fn list_class_relations(
             };
             let mut records = build_query()?;
             let fields = relation_cursor_fields(&options, RelationKind::Class)?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    relation_cursor_field(&FilterField::Id, RelationKind::Class)?,
+                )
+            );
             let rows = records
                 .select(ClassRelationRow::as_select())
                 .load::<ClassRelationRow>(connection)
@@ -121,7 +130,16 @@ pub async fn list_object_relations(
             };
             let mut records = build_query()?;
             let fields = relation_cursor_fields(&options, RelationKind::Object)?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    relation_cursor_field(&FilterField::Id, RelationKind::Object)?,
+                )
+            );
             let rows = records
                 .select(ObjectRelationRow::as_select())
                 .load::<ObjectRelationRow>(connection)
@@ -169,7 +187,16 @@ pub async fn list_class_relations_touching(
             };
             let mut records = build_query()?;
             let fields = relation_cursor_fields(&options, RelationKind::Class)?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    relation_cursor_field(&FilterField::Id, RelationKind::Class)?,
+                )
+            );
             let rows = records
                 .select(ClassRelationRow::as_select())
                 .load::<ClassRelationRow>(connection)
@@ -215,7 +242,16 @@ pub async fn list_object_relations_touching(
             };
             let mut records = build_query()?;
             let fields = relation_cursor_fields(&options, RelationKind::Object)?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    relation_cursor_field(&FilterField::Id, RelationKind::Object)?,
+                )
+            );
             let rows = records
                 .select(ObjectRelationRow::as_select())
                 .load::<ObjectRelationRow>(connection)

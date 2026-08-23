@@ -221,7 +221,16 @@ pub async fn list_manageable_service_accounts(
                 .iter()
                 .map(|sort| service_account_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::apply_query_options_with_fields!(records, options, fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    service_account_cursor_field(&FilterField::Id)?,
+                )
+            );
             let rows = records
                 .select((
                     ServiceAccountRow::as_select(),

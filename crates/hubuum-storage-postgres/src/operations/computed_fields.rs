@@ -321,42 +321,61 @@ pub async fn list_personal_computed_fields(
     let owner_id = owner_id.id();
     let class_id = class_id.map(|id| id.id());
     normalize_list_options(&mut options);
-    let count_options = options.clone();
+    if options.include_total() {
+        runtime
+            .with_read_only_snapshot(async |connection| {
+                list_personal_computed_fields_on(connection, owner_id, class_id, &options).await
+            })
+            .await
+    } else {
+        runtime
+            .with_connection(async |connection| {
+                list_personal_computed_fields_on(connection, owner_id, class_id, &options).await
+            })
+            .await
+    }
+}
+
+async fn list_personal_computed_fields_on(
+    connection: &mut PostgresConnection,
+    owner_id: i32,
+    class_id: Option<i32>,
+    options: &QueryOptions,
+) -> Result<StoragePage<StorageComputedFieldDefinition>, PostgresStorageError> {
     let total = if options.include_total() {
-        Some(
-            runtime
-                .with_connection(
-                    async move |connection| -> Result<i64, PostgresStorageError> {
-                        apply_personal_definition_filters(
-                            personal_definition_query(owner_id, class_id),
-                            &count_options,
-                        )?
-                        .count()
-                        .get_result::<i64>(connection)
-                        .await
-                        .map_err(PostgresStorageError::from)
-                    },
-                )
-                .await?,
-        )
+        let total = apply_personal_definition_filters(
+            personal_definition_query(owner_id, class_id),
+            options,
+        )?
+        .count()
+        .get_result::<i64>(connection)
+        .await?;
+        crate::reach_fault_point(crate::PostgresFaultPoint::PageAfterCount, Some(connection))
+            .await?;
+        Some(total)
     } else {
         None
     };
-    let definitions = runtime
-        .with_connection(
-            async move |connection| -> Result<Vec<ComputedDefinitionRow>, PostgresStorageError> {
-                let mut storage_query = apply_personal_definition_filters(
-                    personal_definition_query(owner_id, class_id),
-                    &options,
-                )?;
-                let fields = computed_cursor_fields(&options)?;
-                crate::apply_query_options_with_fields!(storage_query, options, fields);
-                Ok(storage_query
-                    .select(ComputedDefinitionRow::as_select())
-                    .load::<ComputedDefinitionRow>(connection)
-                    .await?)
+    let mut storage_query =
+        apply_personal_definition_filters(personal_definition_query(owner_id, class_id), options)?;
+    let fields = computed_cursor_fields(options)?;
+    crate::apply_query_options_with_fields!(
+        storage_query,
+        options,
+        fields,
+        crate::cursor::CursorTieBreaker::new(
+            FilterField::Id,
+            false,
+            CursorSqlField {
+                column: "computed_field_definitions.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
             },
         )
+    );
+    let definitions = storage_query
+        .select(ComputedDefinitionRow::as_select())
+        .load::<ComputedDefinitionRow>(connection)
         .await?
         .into_iter()
         .map(ComputedDefinitionRow::into_storage)
@@ -907,6 +926,11 @@ async fn process_reindex_batch(
     cursor: i32,
 ) -> Result<ReindexBatch, PostgresStorageError> {
     let payload = payload.clone();
+    let batch_size = i64::try_from(runtime.computed_reindex_batch_size()).map_err(|_| {
+        PostgresStorageError::invalid_input(
+            "computed reindex batch size exceeds the supported range",
+        )
+    })?;
     runtime
         .with_transaction(
             async move |connection| -> Result<ReindexBatch, PostgresStorageError> {
@@ -917,7 +941,7 @@ async fn process_reindex_batch(
                     .filter(objects::id.gt(cursor))
                     .filter(objects::id.le(payload.object_upper_bound))
                     .order(objects::id.asc())
-                    .limit(runtime.computed_reindex_batch_size() as i64)
+                    .limit(batch_size)
                     .for_update()
                     .select(ObjectRow::as_select())
                     .load::<ObjectRow>(connection)

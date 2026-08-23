@@ -14,7 +14,7 @@ use hubuum_storage_postgres::{
     PostgresObserver, PostgresPool, PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage,
     build_postgres_pool,
 };
-use tracing::info;
+use tracing::{error, info};
 
 use super::{
     DatabaseDiagnosticsProvider, DatabasePoolAcquisitions, DatabasePoolCapacity,
@@ -269,7 +269,14 @@ impl PostgresAdapterFactory {
             | PostgresPoolBuildError::UnsupportedTlsMode(_) => {
                 StorageError::invalid_input(error.to_string())
             }
-            PostgresPoolBuildError::Tls(_) => StorageError::unavailable(error.to_string()),
+            PostgresPoolBuildError::Tls(native_error) => {
+                error!(
+                    message = "PostgreSQL TLS initialization failed",
+                    backend = "postgresql",
+                    native_error = %native_error,
+                );
+                StorageError::unavailable("PostgreSQL TLS configuration failed")
+            }
         }
     }
 
@@ -342,6 +349,18 @@ mod tests {
             .expect_err("missing connection limits should fail");
 
         assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn postgres_tls_initialization_error_hides_native_details() {
+        let native_detail = "could not read /private/adapter/root-ca.pem";
+        let error = PostgresAdapterFactory::initialization_error(PostgresPoolBuildError::Tls(
+            native_detail.to_string(),
+        ));
+
+        assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+        assert_eq!(error.message(), "PostgreSQL TLS configuration failed");
+        assert!(!error.message().contains(native_detail));
     }
 
     #[test]

@@ -2221,9 +2221,6 @@ fn collection_authorization_queries_are_owned_by_the_postgres_adapter() {
         "list_effective_group_collection_permissions",
         "load_groups_with_collection_permission",
         "list_groups_with_collection_permission",
-        "load_collection_group_permissions",
-        "list_collection_group_permissions",
-        "get_collection_group_permission",
     ] {
         let method_body = item_body(implementation, "fn", method);
         assert!(

@@ -480,7 +480,7 @@ async fn audit_templates(
     export_template_recursion_limit: usize,
     export_template_fuel: u64,
 ) -> Result<(), ApiError> {
-    let templates = operational_service::list_export_templates_for_audit(storage).await?;
+    let templates = operational_service::load_export_templates_for_audit(storage).await?;
     let mut failures = Vec::new();
 
     for template in &templates {

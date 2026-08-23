@@ -69,36 +69,37 @@ use crate::storage::{
     AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
     AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationDataStorage,
     AuthorizationGrantDelete, AuthorizationGrantKey, AuthorizationGrantMutation,
-    AuthorizationGroupCollectionQuery, AuthorizationGroupMembershipQuery, AuthorizationPermission,
-    AuthorizationPermissionSetQuery, AuthorizationPrincipalCollectionPageQuery,
-    AuthorizationPrincipalCollectionQuery, AuthorizationResourceIds, BackupSnapshotStorage,
-    BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
-    CollectionAuthorizationQueryStorage, ComputedFieldStorage, ComputedObjectEnrichmentQuery,
-    ComputedObjectListQuery, ComputedObjectProjection, ComputedObjectQueryOptions,
-    ComputedObjectStorage, ComputedObjectVisibility, EventArchiveSink, EventConfigurationStorage,
-    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionBatch, ExecutionStorage, ExportTemplateStorage,
-    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryStorage, IdentityScopeStorage, ImportStorage,
-    InventoryStorage, LocalIdentityCredentialStorage, MetricsStorage, ObjectAggregateAuthorization,
-    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
-    OperationalStateStorage, PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetStorage, RestoreStorage, ServiceAccountStorage, StorageAuditEvent,
-    StorageAuditEventFilters, StorageAuditEventListQuery, StorageBackendKind,
-    StorageBackupTaskArtifact, StorageCallSite, StorageClassCreate, StorageClassSelector,
-    StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
-    StorageEventSinkCreate, StorageEventSinkDelete, StorageEventSinkListQuery,
-    StorageEventSinkUpdate, StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
-    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan,
-    StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
+    AuthorizationGroupCandidateQuery, AuthorizationGroupCollectionQuery,
+    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationPermissionSetQuery,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    AuthorizationResourceIds, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
+    CatalogListQuery, CatalogStorage, CollectionAuthorizationQueryStorage, ComputedFieldStorage,
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
+    ComputedObjectQueryOptions, ComputedObjectStorage, ComputedObjectVisibility, EventArchiveSink,
+    EventConfigurationStorage, EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionBatch, ExecutionStorage,
+    ExportTemplateStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
+    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage,
+    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
+    MetricsStorage, ObjectAggregateAuthorization, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
+    PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
+    RestoreStorage, ServiceAccountStorage, StorageAuditEvent, StorageAuditEventFilters,
+    StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
+    StorageClassCreate, StorageClassSelector, StorageClassUpdate, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
+    StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportTaskArtifact,
+    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
+    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
+    StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan, StorageImportPlanItem,
+    StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
     StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
@@ -127,6 +128,7 @@ use crate::storage::{
     TokenRetentionStorage, TokenStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::{CanDelete, CanSave};
+use hubuum_query::QueryFilters;
 use hubuum_storage_postgres::PostgresPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -1240,6 +1242,96 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("task rollback user should be removed");
+}
+
+#[actix_web::test]
+async fn postgres_task_page_count_and_rows_share_one_snapshot() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let backend = StorageHandle::postgres(pool.get_ref().clone());
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("task_snapshot_user"),
+        "testpassword",
+    )
+    .await;
+    let first = backend
+        .create_task(
+            StorageTaskCreateRequest::builder(
+                StorageTaskKind::Import,
+                principal_id(user.id),
+                serde_json::json!({"snapshot": "first"}),
+                0,
+            )
+            .idempotency_key(Some(
+                IdempotencyKey::new(prefix("task_snapshot_first"))
+                    .expect("snapshot idempotency key should be valid"),
+            ))
+            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+            .build(10),
+        )
+        .await
+        .expect("initial snapshot task should be created");
+
+    let controller = PostgresFaultController::pausing(PostgresFaultPoint::PageAfterCount);
+    let listing_controller = controller.clone();
+    let listing_backend = backend.clone();
+    let query = StorageTaskListQuery::new(
+        Some(principal_id(user.id)),
+        Some(StorageTaskKind::Import),
+        Some(StorageTaskStatus::Queued),
+        QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
+            .expect("snapshot query should be valid"),
+    );
+    let listing = tokio::spawn(async move {
+        listing_controller
+            .run(listing_backend.list_tasks(query))
+            .await
+    });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        controller.wait_until_reached(),
+    )
+    .await
+    .expect("task page should pause after its count");
+
+    let second = backend
+        .create_task(
+            StorageTaskCreateRequest::builder(
+                StorageTaskKind::Import,
+                principal_id(user.id),
+                serde_json::json!({"snapshot": "second"}),
+                0,
+            )
+            .idempotency_key(Some(
+                IdempotencyKey::new(prefix("task_snapshot_second"))
+                    .expect("snapshot idempotency key should be valid"),
+            ))
+            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+            .build(10),
+        )
+        .await
+        .expect("concurrent snapshot task should be created");
+    controller.resume();
+
+    let page = tokio::time::timeout(std::time::Duration::from_secs(5), listing)
+        .await
+        .expect("task page should finish after resuming")
+        .expect("task page future should not panic")
+        .expect("task page should succeed");
+    let (tasks, total) = page.into_parts();
+    assert_eq!(total, Some(1));
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id(), first.id());
+
+    for task in [first, second] {
+        hubuum_storage_postgres::test_support::delete_task(pool.get_ref(), task.id())
+            .await
+            .expect("snapshot task should be removed");
+    }
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("snapshot user should be removed");
 }
 
 #[actix_web::test]
@@ -3709,39 +3801,6 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(groups_total.is_some_and(|total| total >= 1));
         assert!(!groups_page.is_empty());
 
-        let grant_query = || {
-            AuthorizationCollectionGrantListQuery::new(
-                collection_id,
-                [AuthorizationPermission::ReadCollection],
-                page_options(),
-            )
-        };
-        let grants = backend
-            .load_collection_group_permissions(grant_query())
-            .await
-            .expect("certified backend should list collection grants");
-        assert!(
-            grants
-                .iter()
-                .cloned()
-                .any(|row| row.into_parts().0.id() == group_id)
-        );
-
-        let (grant_page, grant_total) = backend
-            .list_collection_group_permissions(grant_query())
-            .await
-            .expect("certified backend should page collection grants")
-            .into_parts();
-        assert!(grant_total.is_some_and(|total| total >= 1));
-        assert!(!grant_page.is_empty());
-
-        let grant = backend
-            .get_collection_group_permission(collection_id, group_id)
-            .await
-            .expect("certified backend should load a collection grant");
-        assert_eq!(grant.collection_id(), collection_id);
-        assert_eq!(grant.group_id(), group_id);
-
         let collections = backend
             .list_local_authorized_collections(AuthorizationCollectionsQuery::new(
                 principal_id,
@@ -3769,7 +3828,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(!items.is_empty());
 
         let collection_candidates = backend
-            .list_authorization_collection_candidates()
+            .load_authorization_collection_candidates()
             .await
             .expect("certified backend should list authorization collection candidates");
         assert!(
@@ -3779,10 +3838,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let group_candidates = backend
-            .list_authorization_group_candidates(
-                QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
-                    .expect("contract query must be valid"),
-            )
+            .load_authorization_group_candidates(AuthorizationGroupCandidateQuery::new(
+                QueryFilters::default(),
+            ))
             .await
             .expect("certified backend should list authorization group candidates");
         assert!(
@@ -4981,7 +5039,7 @@ async fn every_available_storage_backend_supplies_operational_state() {
             .expect("certified backend should aggregate export-template health");
         assert!(export_health.iter().all(|row| row.runs() > 0));
         let audit_entries = backend
-            .list_export_templates_for_audit()
+            .load_export_templates_for_audit()
             .await
             .expect("certified backend should supply the template audit set");
         assert!(audit_entries.windows(2).all(|entries| {

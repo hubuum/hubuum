@@ -7,7 +7,7 @@
 use hubuum_domain::{
     MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
 };
-use hubuum_query::{CursorCodecError, CursorValue, SortParam};
+use hubuum_query::{CursorCodecError, CursorValue, FilterField, QueryOptions, SortParam};
 
 use crate::PostgresStorageError;
 
@@ -28,6 +28,76 @@ pub struct CursorSqlField<T = &'static str> {
     pub column: T,
     pub sql_type: CursorSqlType,
     pub nullable: bool,
+}
+
+/// One adapter-owned unique sort projection used to make a page deterministic.
+pub(crate) struct CursorTieBreaker<T = &'static str> {
+    field: FilterField,
+    descending: bool,
+    sql_field: CursorSqlField<T>,
+}
+
+impl<T> CursorTieBreaker<T> {
+    pub(crate) const fn new(
+        field: FilterField,
+        descending: bool,
+        sql_field: CursorSqlField<T>,
+    ) -> Self {
+        Self {
+            field,
+            descending,
+            sql_field,
+        }
+    }
+}
+
+pub(crate) fn normalize_query_options(
+    mut options: QueryOptions,
+    field: FilterField,
+    descending: bool,
+) -> Result<QueryOptions, PostgresStorageError> {
+    if !options.sort().iter().any(|sort| sort.field == field) {
+        options
+            .sort_mut()
+            .append_tie_breaker(SortParam { field, descending })
+            .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+    }
+    validated_query_limit(options.limit())?;
+    Ok(options)
+}
+
+pub(crate) fn normalize_query_fields<T>(
+    options: &QueryOptions,
+    mut sql_fields: Vec<CursorSqlField<T>>,
+    tie_breaker: CursorTieBreaker<T>,
+) -> Result<(QueryOptions, Vec<CursorSqlField<T>>), PostgresStorageError> {
+    let append_sql_field = !options
+        .sort()
+        .iter()
+        .any(|sort| sort.field == tie_breaker.field);
+    let options =
+        normalize_query_options(options.clone(), tie_breaker.field, tie_breaker.descending)?;
+    if append_sql_field {
+        sql_fields.push(tie_breaker.sql_field);
+    }
+    Ok((options, sql_fields))
+}
+
+pub(crate) fn validated_query_limit(
+    limit: Option<usize>,
+) -> Result<Option<i64>, PostgresStorageError> {
+    limit
+        .map(|limit| {
+            if limit == 0 {
+                return Err(PostgresStorageError::invalid_input(
+                    "query limit must be greater than zero",
+                ));
+            }
+            i64::try_from(limit).map_err(|_| {
+                PostgresStorageError::invalid_input("query limit exceeds the supported range")
+            })
+        })
+        .transpose()
 }
 
 impl<T> CursorSqlField<T>
@@ -364,18 +434,19 @@ macro_rules! apply_cursor_ordering_fields {
 }
 
 macro_rules! apply_query_options_with_fields {
-    ($query:ident, $query_options:expr, $sql_fields:expr) => {{
-        let query_options = &$query_options;
+    ($query:ident, $query_options:expr, $sql_fields:expr, $tie_breaker:expr) => {{
+        let (query_options, sql_fields) =
+            $crate::cursor::normalize_query_fields(&$query_options, $sql_fields, $tie_breaker)?;
         if let Some(cursor_sql) = $crate::cursor::cursor_filter_sql_for_fields(
             query_options.sort(),
-            &$sql_fields,
+            &sql_fields,
             query_options.cursor().map(|cursor| cursor.as_str()),
         )? {
             $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
         }
-        $crate::apply_cursor_ordering_fields!($query, query_options.sort(), $sql_fields);
-        if let Some(limit) = query_options.limit() {
-            $query = $query.limit(limit as i64);
+        $crate::apply_cursor_ordering_fields!($query, query_options.sort(), sql_fields);
+        if let Some(limit) = $crate::cursor::validated_query_limit(query_options.limit())? {
+            $query = $query.limit(limit);
         }
     }};
 }
@@ -384,9 +455,12 @@ pub(crate) use {apply_cursor_ordering_fields, apply_query_options_with_fields};
 
 #[cfg(test)]
 mod tests {
-    use hubuum_query::{FilterField, SortParam, encode_cursor_values};
+    use hubuum_query::{FilterField, QueryOptions, SortParam, encode_cursor_values};
 
-    use super::{CursorSqlField, CursorSqlType, cursor_filter_sql_for_fields};
+    use super::{
+        CursorSqlField, CursorSqlType, CursorTieBreaker, cursor_filter_sql_for_fields,
+        normalize_query_fields, validated_query_limit,
+    };
 
     #[test]
     fn cursor_predicate_preserves_nullable_descending_semantics() {
@@ -411,5 +485,65 @@ mod tests {
             sql.as_deref(),
             Some("(((resources.name < 'beta' OR resources.name IS NULL)))")
         );
+    }
+
+    #[test]
+    fn query_normalization_appends_the_adapter_tie_breaker() {
+        let options = QueryOptions::new(
+            Vec::new(),
+            vec![SortParam {
+                field: FilterField::Name,
+                descending: true,
+            }],
+            Some(10),
+            None,
+            true,
+        )
+        .unwrap();
+        let fields = vec![CursorSqlField {
+            column: "resources.name",
+            sql_type: CursorSqlType::String,
+            nullable: false,
+        }];
+
+        let (options, fields) = normalize_query_fields(
+            &options,
+            fields,
+            CursorTieBreaker::new(
+                FilterField::Id,
+                false,
+                CursorSqlField {
+                    column: "resources.id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                },
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            options.sort().as_slice(),
+            [
+                SortParam {
+                    field: FilterField::Name,
+                    descending: true,
+                },
+                SortParam {
+                    field: FilterField::Id,
+                    descending: false,
+                },
+            ]
+        );
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[1].column, "resources.id");
+    }
+
+    #[test]
+    fn query_limits_are_checked_before_native_execution() {
+        assert!(validated_query_limit(Some(0)).is_err());
+        if usize::BITS >= i64::BITS {
+            assert!(validated_query_limit(Some(usize::MAX)).is_err());
+        }
+        assert_eq!(validated_query_limit(Some(10)).unwrap(), Some(10));
     }
 }

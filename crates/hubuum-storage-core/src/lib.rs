@@ -49,11 +49,11 @@ pub use authorization::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsAccessQuery,
     AuthorizationCollectionsQuery, AuthorizationDataStorage, AuthorizationGrant,
     AuthorizationGrantDelete, AuthorizationGrantKey, AuthorizationGrantMutation,
-    AuthorizationGroup, AuthorizationGroupGrant, AuthorizationGroupIdentity,
-    AuthorizationGroupMembershipQuery, AuthorizationGroupProfile, AuthorizationGroupSyncState,
-    AuthorizationObjectResource, AuthorizationPermission, AuthorizationPermissionSet,
-    AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
-    AuthorizationResourceIds,
+    AuthorizationGroup, AuthorizationGroupCandidateQuery, AuthorizationGroupGrant,
+    AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery, AuthorizationGroupProfile,
+    AuthorizationGroupSyncState, AuthorizationObjectResource, AuthorizationPermission,
+    AuthorizationPermissionSet, AuthorizationPermissionSetQuery, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationResourceIds,
 };
 pub use backend::StorageBackend;
 pub use backup_snapshot::{

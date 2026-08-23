@@ -73,7 +73,7 @@ fn query_options_are_readable_and_mutable_without_exposing_their_representation(
     );
     assert!(options.include_total());
 
-    options.set_limit(Some(10));
+    options.set_limit(Some(10)).unwrap();
     options.set_include_total(false);
     options.set_cursor(Some("second".to_string())).unwrap();
     assert_eq!(options.limit(), Some(10));

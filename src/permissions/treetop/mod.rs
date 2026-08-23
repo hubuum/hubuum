@@ -15,7 +15,7 @@ use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
-use crate::storage::{AuthorizationDataStorage, StorageHandle};
+use crate::storage::{AuthorizationDataStorage, AuthorizationGroupCandidateQuery, StorageHandle};
 use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
 use super::backend::PermissionBackend;
@@ -365,7 +365,7 @@ impl PermissionBackend for TreetopPermissionBackend {
         let start = Instant::now();
         let all_collections = self
             .storage
-            .list_authorization_collection_candidates()
+            .load_authorization_collection_candidates()
             .await?
             .into_iter()
             .map(collection_from_storage)
@@ -428,7 +428,9 @@ impl PermissionBackend for TreetopPermissionBackend {
         let collection_id = collection_id.id();
         let all_groups = self
             .storage
-            .list_authorization_group_candidates(page.clone())
+            .load_authorization_group_candidates(AuthorizationGroupCandidateQuery::new(
+                page.filters().clone(),
+            ))
             .await?
             .into_iter()
             .map(group_from_storage)

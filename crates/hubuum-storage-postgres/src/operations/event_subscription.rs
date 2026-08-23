@@ -323,7 +323,16 @@ pub async fn list_event_sinks(
                 .iter()
                 .map(|sort| event_sink_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::apply_query_options_with_fields!(records, query.options(), fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                query.options(),
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    event_sink_cursor_field(&FilterField::Id)?,
+                )
+            );
             let rows = records
                 .load::<EventSinkRow>(connection)
                 .await?
@@ -501,7 +510,16 @@ pub async fn list_event_subscriptions(
                 .iter()
                 .map(|sort| event_subscription_cursor_field(&sort.field))
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::apply_query_options_with_fields!(records, query.options(), fields);
+            crate::apply_query_options_with_fields!(
+                records,
+                query.options(),
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    event_subscription_cursor_field(&FilterField::Id)?,
+                )
+            );
             let rows = records
                 .load::<EventSubscriptionRow>(connection)
                 .await?
