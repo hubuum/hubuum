@@ -75,7 +75,7 @@ impl TryFrom<EventSinkRow> for StorageEventSink {
     type Error = PostgresStorageError;
 
     fn try_from(row: EventSinkRow) -> Result<Self, Self::Error> {
-        Ok(Self::builder(
+        Self::builder(
             EventSinkId::new(row.id)?,
             row.name,
             row.kind,
@@ -86,7 +86,10 @@ impl TryFrom<EventSinkRow> for StorageEventSink {
         .configuration(row.config)
         .secret_ref(row.secret_ref)
         .enabled(row.enabled)
-        .build())
+        .try_build()
+        .map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("event sink projection", error)
+        })
     }
 }
 
@@ -173,7 +176,7 @@ impl TryFrom<EventSubscriptionRow> for StorageEventSubscription {
     type Error = PostgresStorageError;
 
     fn try_from(row: EventSubscriptionRow) -> Result<Self, Self::Error> {
-        Ok(Self::builder(
+        Self::builder(
             EventSubscriptionId::new(row.id)?,
             CollectionId::new(row.collection_id)?,
             EventSinkId::new(row.sink_id)?,
@@ -191,7 +194,10 @@ impl TryFrom<EventSubscriptionRow> for StorageEventSubscription {
         .filter(decode_json(row.filter, "event subscription filter")?)
         .routing(row.routing)
         .enabled(row.enabled)
-        .build())
+        .try_build()
+        .map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("event subscription projection", error)
+        })
     }
 }
 
@@ -908,6 +914,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use hubuum_storage_core::StorageErrorKind;
+
     use super::*;
 
     #[test]
@@ -943,5 +951,31 @@ mod tests {
         assert_eq!(snapshot["routing"]["headers"]["X-API-Key"], "[redacted]");
         assert!(!snapshot.to_string().contains("audit-password"));
         assert!(!snapshot.to_string().contains("audit-api-key"));
+    }
+
+    #[test]
+    fn corrupt_persisted_subscription_is_a_backend_failure() {
+        let timestamp = chrono::Utc::now().naive_utc();
+        let row = EventSubscriptionRow {
+            id: 1,
+            collection_id: 2,
+            sink_id: 3,
+            name: "subscription".to_string(),
+            description: String::new(),
+            entity_types: json!(["object_relation"]),
+            actions: json!(["updated"]),
+            filter: json!({}),
+            routing: json!({}),
+            enabled: true,
+            created_at: timestamp,
+            updated_at: timestamp,
+            revision: PostgresRevision::INITIAL,
+        };
+
+        let error = StorageEventSubscription::try_from(row)
+            .err()
+            .expect("invalid catalog pair must fail persisted decoding");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
     }
 }

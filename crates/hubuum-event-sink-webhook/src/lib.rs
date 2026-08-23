@@ -139,10 +139,10 @@ async fn deliver_webhook(
         .insert("accept", "application/json")
         .map_err(sink_error)?;
     headers
-        .insert("idempotency-key", &envelope.event_id.to_string())
+        .insert("idempotency-key", &envelope.event_id().to_string())
         .map_err(sink_error)?;
     headers
-        .insert("x-hubuum-event-id", &envelope.event_id.to_string())
+        .insert("x-hubuum-event-id", &envelope.event_id().to_string())
         .map_err(sink_error)?;
 
     let body = serde_json::to_string(envelope)
@@ -270,18 +270,18 @@ mod tests {
     const LOCALHOST_KEY_DER_B64: &str = "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCfcDfvy97JHN4/sxJL9LrUQ+kT6/1n58aUULioHxI5Qe87UPr5BmupwqRQllv8cqdDIPJ0w0wEl+OzCJ3mXXyiA9UWZ8YicannRPdx4fyLUMCc3UGPqDqH9CAp7rh6WRgO6RqgeSosaJDs3CyWWbxSrB2AVr4HWFgPq6hgBx3/iC/kKXE7HpuTCBqe9Zqz49fIcQR1hbtgFEDI+skcgidaNyTmTlQk+flXLnnWm0am6u9Sp/YztVyafGMcCV1Odz1uv5yEi8u3K6VaDykEB0XC77hkzSNZClNGFWLmVYH6ruaYjwNriLNXT8rZrVsOdI3qPiuYDMSSeiTR8ygZfNaNAgMBAAECggEAAQH66ebA1Y9whamibqggtQiyrd6HAohCnR1CEhpOWCcaXPbuAtJNkUapRSf72gAAND4v3j2ikL1S+P9Yxhc7lBclbMoV+3uxk5+qFYVxzNlzsz1RoLUMs0IkCtEt6L/UyIaLDjLGUCavrIAKuxNKlM0/EOOgCcyljFuUUAIKIwOcOKv7rG/t7GC+wZMTT3oyICgihwsN7D527BTKRlk6zcSCj38B21drfgLAMreGRt8NGcByhzo3BuazRkYyEw8SP9LCEbDQKwWGR2xJtxwnSHcrvYvSklhDAB3EP29URstGUxapRg4re25e3MRVIjVdYtCeGt8Ie71UZgO/lgwYAQKBgQDPL192FKjTUwqfhjICpXYiNbbseXw7dvvNfLOZvuE20zPTkwwEWkpF2dxQX44RfYS625jzj9GHRijKwL6HlV89i+pNw+N2OWLUdWkkeMVqqknSPgJavZ4O3WKpk+cSgVm0VgaxNfvwoNi+TnLQblP6YFoXMG/luY3wYg0CviHzAQKBgQDFAPGIU/G6SYAnD5SJcojUXKzH3ivvciBYuLJt4FGUlfym9fnkQNbGNJAL4c3otPTcR/r0br2JIrxod5/w4c93Q4EKmXEwMdW26npxDR8uO/caSvFGZweikqxIj0Im5UlGV3cuanFb+u0jZWjCjFxMO2sWGRMdwrgQm+GyG7z/jQKBgA+vxIiKM+YcKXe+j1bH9FPOwVTSNefCsHn0cRy46RBfmVLxlT1XILx9LEMhmP4WBNCpA8GdJ/4X/8qqIULeumFMkKbmp/gxjBwN77IFOt1Cm2hBraf1J1x0wp2YRyyNgp82zDbqoXKsmvx9sA+76rvQQ8Hxtucrz2Vd5yJIBwYBAoGAaLd7q8+TKkZvjFPHzNfIy7kHTqZWDE1JzF9A2Q7nzmd7iPQvBJlCkNDX0LkSTqQBlCXey5chwIdqRs1vgwdE1ExZh1zQwaF7zGMO+pDTBixxyNQVNCsH7+6vDVK5AxvVu0I6471IzG+xJaN98AvT8+GRpollk+gxFwMFETuVVvECgYAJ8qBnL/YnusNmORCdItqG6adl+0H4ohikxNurIP8cBRjKGJ6XSC2Qs3BmljiqL9aLluKTcbhOBKlH6iq63vA8KxF7JjVBj2NXClDh6MO6hr/4gWTi7VMpC3CWT80IijoMAth37y+MImdaJhG2kut+XcT14KFakVJM1JCbe0Ygdw==";
 
     fn envelope() -> EventEnvelope {
-        EventEnvelope {
-            id: hubuum_events_core::EventSequence::new(42).unwrap(),
-            event_id: Uuid::new_v4(),
-            occurred_at: Utc::now().naive_utc(),
-            entity_type: "collection".to_string(),
-            entity_id: Some(hubuum_events_core::EventEntityId::new(7).unwrap()),
-            entity_name: Some("example".to_string()),
-            collection_id: Some(hubuum_events_core::CollectionId::new(7).unwrap()),
-            action: "created".to_string(),
-            actor_user_id: Some(hubuum_events_core::PrincipalId::new(1).unwrap()),
-            actor_kind: "user".to_string(),
-            provenance: hubuum_events_core::Provenance {
+        EventEnvelope::builder()
+            .id(hubuum_events_core::EventSequence::new(42).unwrap())
+            .event_id(Uuid::new_v4())
+            .occurred_at(Utc::now())
+            .entity_type(hubuum_events_core::EntityType::Collection)
+            .entity_id(Some(hubuum_events_core::EventEntityId::new(7).unwrap()))
+            .entity_name(Some("example".to_string()))
+            .collection_id(Some(hubuum_events_core::CollectionId::new(7).unwrap()))
+            .action(hubuum_events_core::Action::Created)
+            .actor_user_id(Some(hubuum_events_core::PrincipalId::new(1).unwrap()))
+            .actor_kind(hubuum_events_core::ActorKind::User)
+            .provenance(hubuum_events_core::Provenance {
                 actor: hubuum_events_core::ProvenanceActor {
                     kind: Some("user".to_string()),
                     principal: Some(hubuum_events_core::ProvenancePrincipal {
@@ -294,15 +294,14 @@ mod tests {
                     name: Some("admin".to_string()),
                 }),
                 task_id: Some(hubuum_events_core::TaskId::new(99).unwrap()),
-            },
-            request_id: None,
-            correlation_id: Some("corr-1".to_string()),
-            summary: "collection created".to_string(),
-            before: None,
-            after: Some(serde_json::json!({"name": "example"})),
-            metadata: serde_json::json!({"source": "test"}),
-            schema_version: 1,
-        }
+            })
+            .correlation_id(Some("corr-1".to_string()))
+            .summary("collection created".to_string())
+            .after(Some(serde_json::json!({"name": "example"})))
+            .metadata(serde_json::json!({"source": "test"}))
+            .schema_version(1)
+            .try_build()
+            .unwrap()
     }
 
     fn settings() -> WebhookSinkSettings {
@@ -444,7 +443,7 @@ mod tests {
         assert!(request.starts_with("POST /events HTTP/1.1"));
         assert!(request.contains("authorization: Bearer expected-token"));
         assert!(request.contains("idempotency-key: "));
-        assert!(request.contains(&envelope.event_id.to_string()));
+        assert!(request.contains(&envelope.event_id().to_string()));
         assert!(request.contains("x-hubuum-event-id: "));
         assert!(request.contains("x-custom: custom"));
         assert!(request.contains("\"entity_type\":\"collection\""));

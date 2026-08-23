@@ -6,14 +6,18 @@ use diesel::{Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, PrincipalId, TaskId};
 use hubuum_events_core::{
-    Action, EntityType, EventEntityId, EventEnvelope, EventSequence, Provenance, ProvenanceActor,
-    ProvenancePrincipal,
+    Action, ActorKind, EntityType, EventEntityId, EventEnvelope, EventSequence, Provenance,
+    ProvenanceActor, ProvenancePrincipal,
 };
 use hubuum_storage_core::StorageAuditEvent;
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{PostgresConnection, PostgresRevision, PostgresStorageError};
+
+fn invalid_event_envelope(error: impl std::fmt::Debug) -> PostgresStorageError {
+    PostgresStorageError::invalid_persisted_value("event envelope", error)
+}
 
 /// Adapter-private stored event projection shared by audit and delivery reads.
 #[derive(Clone, Queryable, Selectable)]
@@ -60,40 +64,66 @@ impl StoredEventProjection {
         self,
         principal_names: &HashMap<i32, String>,
     ) -> Result<EventEnvelope, PostgresStorageError> {
-        let actor_user_id = self.actor_user_id.map(PrincipalId::new).transpose()?;
-        let initiator_user_id = self.initiator_user_id.map(PrincipalId::new).transpose()?;
+        let entity_type = EntityType::parse(&self.entity_type).map_err(invalid_event_envelope)?;
+        let action = Action::parse(&self.action).map_err(invalid_event_envelope)?;
+        let actor_kind = ActorKind::parse(&self.actor_kind).map_err(invalid_event_envelope)?;
+        let actor_user_id = self
+            .actor_user_id
+            .map(PrincipalId::new)
+            .transpose()
+            .map_err(invalid_event_envelope)?;
+        let initiator_user_id = self
+            .initiator_user_id
+            .map(PrincipalId::new)
+            .transpose()
+            .map_err(invalid_event_envelope)?;
         let principal = |principal_id: PrincipalId| ProvenancePrincipal {
             principal_id,
             name: principal_names.get(&principal_id.id()).cloned(),
         };
         let provenance = Provenance {
             actor: ProvenanceActor {
-                kind: Some(self.actor_kind.clone()),
+                kind: Some(actor_kind.as_str().to_string()),
                 principal: actor_user_id.map(principal),
             },
             initiator: initiator_user_id.map(principal),
-            task_id: self.task_id.map(TaskId::new).transpose()?,
+            task_id: self
+                .task_id
+                .map(TaskId::new)
+                .transpose()
+                .map_err(invalid_event_envelope)?,
         };
-        Ok(EventEnvelope {
-            id: EventSequence::new(self.id)?,
-            event_id: self.event_id,
-            occurred_at: self.occurred_at,
-            entity_type: self.entity_type,
-            entity_id: self.entity_id.map(EventEntityId::new).transpose()?,
-            entity_name: self.entity_name,
-            collection_id: self.collection_id.map(CollectionId::new).transpose()?,
-            action: self.action,
-            actor_user_id,
-            actor_kind: self.actor_kind,
-            provenance,
-            request_id: self.request_id,
-            correlation_id: self.correlation_id,
-            summary: self.summary,
-            before: self.before,
-            after: self.after,
-            metadata: self.metadata,
-            schema_version: self.schema_version,
-        })
+        EventEnvelope::builder()
+            .id(EventSequence::new(self.id).map_err(invalid_event_envelope)?)
+            .event_id(self.event_id)
+            .occurred_at(self.occurred_at.and_utc())
+            .entity_type(entity_type)
+            .entity_id(
+                self.entity_id
+                    .map(EventEntityId::new)
+                    .transpose()
+                    .map_err(invalid_event_envelope)?,
+            )
+            .entity_name(self.entity_name)
+            .collection_id(
+                self.collection_id
+                    .map(CollectionId::new)
+                    .transpose()
+                    .map_err(invalid_event_envelope)?,
+            )
+            .action(action)
+            .actor_user_id(actor_user_id)
+            .actor_kind(actor_kind)
+            .provenance(provenance)
+            .request_id(self.request_id)
+            .correlation_id(self.correlation_id)
+            .summary(self.summary)
+            .before(self.before)
+            .after(self.after)
+            .metadata(self.metadata)
+            .schema_version(self.schema_version)
+            .try_build()
+            .map_err(invalid_event_envelope)
     }
 
     pub(super) fn into_audit_event(
@@ -103,11 +133,12 @@ impl StoredEventProjection {
     ) -> Result<StorageAuditEvent, PostgresStorageError> {
         let before_revision = self.before_revision.map(PostgresRevision::into_domain);
         let after_revision = self.after_revision.map(PostgresRevision::into_domain);
-        let mut envelope = self.into_envelope(principal_names)?;
-        if redact_payloads {
-            envelope.before = None;
-            envelope.after = None;
-        }
+        let envelope = self.into_envelope(principal_names)?;
+        let envelope = if redact_payloads {
+            envelope.without_payloads()
+        } else {
+            envelope
+        };
         Ok(StorageAuditEvent::new(
             envelope,
             before_revision,
@@ -187,4 +218,50 @@ async fn load_principal_names(
         .await?
         .into_iter()
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use hubuum_storage_core::StorageErrorKind;
+
+    use super::*;
+
+    fn projection() -> StoredEventProjection {
+        StoredEventProjection {
+            id: 1,
+            event_id: Uuid::new_v4(),
+            occurred_at: chrono::Utc::now().naive_utc(),
+            entity_type: EntityType::Collection.as_str().to_string(),
+            entity_id: Some(1),
+            entity_name: Some("collection".to_string()),
+            collection_id: Some(1),
+            action: Action::Created.as_str().to_string(),
+            actor_user_id: None,
+            actor_kind: ActorKind::System.as_str().to_string(),
+            request_id: None,
+            correlation_id: None,
+            summary: "created collection".to_string(),
+            before: None,
+            after: Some(serde_json::json!({"name": "collection"})),
+            metadata: serde_json::json!({}),
+            schema_version: 1,
+            initiator_user_id: None,
+            task_id: None,
+            before_revision: None,
+            after_revision: None,
+        }
+    }
+
+    #[test]
+    fn corrupt_persisted_event_envelopes_are_backend_failures() {
+        let mut projection = projection();
+        projection.action = Action::Updated.as_str().to_string();
+        projection.entity_type = EntityType::ObjectRelation.as_str().to_string();
+
+        let error = projection
+            .into_envelope(&HashMap::new())
+            .expect_err("invalid catalog pair must fail decoding");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
 }

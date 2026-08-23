@@ -19,7 +19,7 @@ The obligations being tested are defined by the normative
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
 | Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and a sealed certification gate covers every selectable kind. |
 | Audit/event contract | Strong | The reusable conformance harness verifies a durable receipt, no-op behavior, rollback, outbox-to-sink delivery, and logical/backend/failure telemetry for every registered backend. |
-| Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The scenarios still require human review for semantic depth. |
+| Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The guard verifies names and test existence, not that a test invokes each listed method or asserts all of its effects. |
 | Application and HTTP behavior | Strong | Every registered backend runs a service point read, readiness, and representative authenticated point/list HTTP requests. Larger integration suites exercise the remaining real application path. |
 | Concurrency and failure recovery | Good | Portable runners own delivery, restore-coordination, and lease-loss expectations; adapters provide deterministic fault injection. Native connection-loss, notification, transaction, retention, and atomicity tests cover implementation mechanics. |
 | Cross-backend portability | Moderate | Traits and DTOs are neutral and a focused resource model provides independent evidence, but only PostgreSQL implements the complete contract. |
@@ -61,15 +61,18 @@ They are deterministic and require no database.
 
 Three `hubuum-storage-core` integration tests compile as external crates.
 `external_adapter_api.rs` verifies transaction-scoped resource ports and
-representative typed principal and query APIs. `complete_external_adapter.rs`
+representative typed principal and query APIs, plus complete validated event
+administration request construction and access. `complete_external_adapter.rs`
 implements all 44 complete-backend traits and proves that every one of their
 253 method signatures is publicly implementable. `external_adapter_values.rs`
 exercises public constructors or terminal builders for every value currently
 returned by an adapter, including nested page and protocol values. None of the
 fixtures can reach crate-private fields.
 
-These tests prove that boundary values enforce their local invariants. They do
-not prove that an adapter applies the request correctly.
+These external fixtures prove that construction and inspection paths are
+public. Fallible constructors and unit tests separately enforce the invariants
+they document; the fixtures alone do not prove that every infallible projection
+has semantic validation or that an adapter applies a request correctly.
 
 ## Architecture Tests
 
@@ -98,10 +101,11 @@ The same architecture suite reads
 aggregate trait set, each trait's methods, and each tracked boundary enum's
 variants exactly. Every entry must point to a test function that exists. A new
 method or variant therefore fails locally until its intended semantic evidence
-is recorded. The observation guard derives its expected method count from this
-same inventory, including resource-family methods observed by
-`ObservedStorage`, rather than maintaining a second hand-written operation
-list.
+is recorded. The guard does not inspect test bodies or construct a call graph,
+so invocation and assertion depth remain review responsibilities. The
+observation guard derives its expected method count from this same inventory,
+including resource-family methods observed by `ObservedStorage`, rather than
+maintaining a second hand-written operation list.
 
 ## Shared Resource-Family Contracts
 
@@ -169,7 +173,9 @@ The suite covers these family-level behaviors:
 The aggregate trait guarantees that every method exists. The semantic coverage
 inventory guarantees that the method and tracked input-variant lists cannot
 drift unnoticed. The compatibility suite supplies representative semantics by
-family and directly invokes most methods. Some native worker operations—most
+family and directly invokes most methods. A listed scenario is not mechanical
+method-level evidence: broad scenarios may cover several methods, and the guard
+does not verify which ones they call. Some native worker operations—most
 notably delivery claims—still receive their deepest coverage in
 PostgreSQL-specific tests. Optional notification providers are tested beside
 their adapter rather than inventoried as complete-backend traits.
@@ -322,10 +328,11 @@ The current suite is solid, but these limitations should remain visible:
 1. **Only one complete adapter exists.** Neutral APIs have been designed and
    enforced, but a second production implementation is the best portability
    test.
-2. **Evidence is scenario-level, not path coverage.** The inventory proves
-   that maintainers classified every method and tracked variant and named an
-   existing scenario. It cannot prove that every branch of a method is visited
-   or that a broad family scenario asserts every subtle invariant.
+2. **Evidence is scenario-level, not method invocation or path coverage.** The
+   inventory proves that maintainers listed every trait method and tracked
+   variant and named an existing scenario. It cannot prove that the scenario
+   invokes the listed method, that every effect is asserted, or that every
+   branch is visited. Method-aware evidence checking remains later work.
 3. **No published line or branch coverage exists.** A coverage report would
    help identify cold error branches, even if it should not become a simplistic
    merge gate.

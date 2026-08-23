@@ -65,7 +65,7 @@ async fn fanout_trigger_notifies_only_after_commit() {
         .expect("test event must be valid");
         let result = with_transaction(&pool, async |connection| {
             let event = append_event_on_connection(connection, &event).await?;
-            captured_id.store(event.into_parts().0.id.get(), Ordering::Release);
+            captured_id.store(event.into_parts().0.id().get(), Ordering::Release);
             if commit {
                 Ok(())
             } else {

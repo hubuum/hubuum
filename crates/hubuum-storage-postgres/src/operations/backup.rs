@@ -674,7 +674,7 @@ fn backup_rows(rows: Vec<Value>) -> Result<Vec<StorageBackupRow>, PostgresStorag
         .map_err(Into::into)
 }
 
-pub async fn create_backup_snapshot(
+pub async fn capture_backup_snapshot(
     runtime: &PostgresRuntime,
     include_history: bool,
 ) -> Result<StorageBackupSnapshot, PostgresStorageError> {

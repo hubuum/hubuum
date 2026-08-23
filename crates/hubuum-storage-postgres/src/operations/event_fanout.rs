@@ -6,14 +6,22 @@ use diesel::{QueryResult, Queryable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, EventDeliveryStatus, EventFanoutSettings, PrincipalId, TaskId};
 use hubuum_events_core::{
-    EventEntityId, EventEnvelope, EventSequence, EventSubscriptionFilter, Provenance,
-    ProvenanceActor, ProvenancePrincipal,
+    Action, ActorKind, EntityType, EventEntityId, EventEnvelope, EventSequence,
+    EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal, is_valid_pair,
 };
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::operations::maintenance::maintenance_state_on_connection;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
+
+fn invalid_fanout_event(error: impl std::fmt::Debug) -> PostgresStorageError {
+    PostgresStorageError::invalid_persisted_value("event fan-out envelope", error)
+}
+
+fn invalid_fanout_subscription(error: impl std::fmt::Debug) -> PostgresStorageError {
+    PostgresStorageError::invalid_persisted_value("event fan-out subscription", error)
+}
 
 #[derive(Queryable)]
 struct FanoutEventRow {
@@ -42,10 +50,21 @@ impl TryFrom<FanoutEventRow> for EventEnvelope {
     type Error = PostgresStorageError;
 
     fn try_from(row: FanoutEventRow) -> Result<Self, Self::Error> {
-        let actor_user_id = row.actor_user_id.map(PrincipalId::new).transpose()?;
-        let initiator_user_id = row.initiator_user_id.map(PrincipalId::new).transpose()?;
+        let entity_type = EntityType::parse(&row.entity_type).map_err(invalid_fanout_event)?;
+        let action = Action::parse(&row.action).map_err(invalid_fanout_event)?;
+        let actor_kind = ActorKind::parse(&row.actor_kind).map_err(invalid_fanout_event)?;
+        let actor_user_id = row
+            .actor_user_id
+            .map(PrincipalId::new)
+            .transpose()
+            .map_err(invalid_fanout_event)?;
+        let initiator_user_id = row
+            .initiator_user_id
+            .map(PrincipalId::new)
+            .transpose()
+            .map_err(invalid_fanout_event)?;
         let actor = ProvenanceActor {
-            kind: Some(row.actor_kind.clone()),
+            kind: Some(actor_kind.as_str().to_string()),
             principal: actor_user_id.map(|principal_id| ProvenancePrincipal {
                 principal_id,
                 name: None,
@@ -55,30 +74,45 @@ impl TryFrom<FanoutEventRow> for EventEnvelope {
             principal_id,
             name: None,
         });
-        Ok(Self {
-            id: EventSequence::new(row.id)?,
-            event_id: row.event_id,
-            occurred_at: row.occurred_at,
-            entity_type: row.entity_type,
-            entity_id: row.entity_id.map(EventEntityId::new).transpose()?,
-            entity_name: row.entity_name,
-            collection_id: row.collection_id.map(CollectionId::new).transpose()?,
-            action: row.action,
-            actor_user_id,
-            actor_kind: row.actor_kind,
-            provenance: Provenance {
+        Self::builder()
+            .id(EventSequence::new(row.id).map_err(invalid_fanout_event)?)
+            .event_id(row.event_id)
+            .occurred_at(row.occurred_at.and_utc())
+            .entity_type(entity_type)
+            .entity_id(
+                row.entity_id
+                    .map(EventEntityId::new)
+                    .transpose()
+                    .map_err(invalid_fanout_event)?,
+            )
+            .entity_name(row.entity_name)
+            .collection_id(
+                row.collection_id
+                    .map(CollectionId::new)
+                    .transpose()
+                    .map_err(invalid_fanout_event)?,
+            )
+            .action(action)
+            .actor_user_id(actor_user_id)
+            .actor_kind(actor_kind)
+            .provenance(Provenance {
                 actor,
                 initiator,
-                task_id: row.task_id.map(TaskId::new).transpose()?,
-            },
-            request_id: row.request_id,
-            correlation_id: row.correlation_id,
-            summary: row.summary,
-            before: row.before,
-            after: row.after,
-            metadata: row.metadata,
-            schema_version: row.schema_version,
-        })
+                task_id: row
+                    .task_id
+                    .map(TaskId::new)
+                    .transpose()
+                    .map_err(invalid_fanout_event)?,
+            })
+            .request_id(row.request_id)
+            .correlation_id(row.correlation_id)
+            .summary(row.summary)
+            .before(row.before)
+            .after(row.after)
+            .metadata(row.metadata)
+            .schema_version(row.schema_version)
+            .try_build()
+            .map_err(invalid_fanout_event)
     }
 }
 
@@ -94,8 +128,8 @@ struct FanoutSubscriptionRow {
 struct CompiledEventSubscription {
     id: i32,
     collection_id: CollectionId,
-    entity_types: HashSet<String>,
-    actions: HashSet<String>,
+    entity_types: HashSet<EntityType>,
+    actions: HashSet<Action>,
     filter: EventSubscriptionFilter,
 }
 
@@ -103,12 +137,42 @@ impl TryFrom<FanoutSubscriptionRow> for CompiledEventSubscription {
     type Error = PostgresStorageError;
 
     fn try_from(subscription: FanoutSubscriptionRow) -> Result<Self, Self::Error> {
-        let entity_types = decode_persisted_json(subscription.entity_types, "entity types")?;
-        let actions = decode_persisted_json(subscription.actions, "actions")?;
-        let filter = decode_persisted_json(subscription.filter, "filter")?;
+        let entity_type_values: Vec<String> =
+            decode_persisted_json(subscription.entity_types, "entity types")?;
+        let action_values: Vec<String> = decode_persisted_json(subscription.actions, "actions")?;
+        if entity_type_values.is_empty() || action_values.is_empty() {
+            return Err(invalid_fanout_subscription(
+                "entity types and actions must not be empty",
+            ));
+        }
+        let entity_types = entity_type_values
+            .iter()
+            .map(|value| EntityType::parse(value).map_err(invalid_fanout_subscription))
+            .collect::<Result<HashSet<_>, _>>()?;
+        let actions = action_values
+            .iter()
+            .map(|value| Action::parse(value).map_err(invalid_fanout_subscription))
+            .collect::<Result<HashSet<_>, _>>()?;
+        if entity_types.len() != entity_type_values.len() || actions.len() != action_values.len() {
+            return Err(invalid_fanout_subscription(
+                "entity types and actions must not contain duplicates",
+            ));
+        }
+        if entity_types.iter().any(|entity_type| {
+            actions
+                .iter()
+                .any(|action| !is_valid_pair(*entity_type, *action))
+        }) {
+            return Err(invalid_fanout_subscription(
+                "entity type and action pairs must be valid",
+            ));
+        }
+        let filter: EventSubscriptionFilter = decode_persisted_json(subscription.filter, "filter")?;
+        filter.validate().map_err(invalid_fanout_subscription)?;
         Ok(Self {
             id: subscription.id,
-            collection_id: CollectionId::new(subscription.collection_id)?,
+            collection_id: CollectionId::new(subscription.collection_id)
+                .map_err(invalid_fanout_subscription)?,
             entity_types,
             actions,
             filter,
@@ -118,9 +182,9 @@ impl TryFrom<FanoutSubscriptionRow> for CompiledEventSubscription {
 
 impl CompiledEventSubscription {
     fn matches(&self, event: &EventEnvelope) -> bool {
-        self.entity_types.contains(&event.entity_type)
-            && self.actions.contains(&event.action)
-            && (event.collection_id == Some(self.collection_id)
+        self.entity_types.contains(&event.entity_type())
+            && self.actions.contains(&event.action())
+            && (event.collection_id() == Some(self.collection_id)
                 || event.related_collection_ids().contains(&self.collection_id))
             && self.filter.matches(event)
     }
@@ -287,8 +351,9 @@ pub async fn fanout_events(
                     .map(|subscription| subscription.id)
                     .collect::<Vec<_>>();
                 inserted +=
-                    insert_delivery_rows(connection, envelope.id.get(), &subscription_ids).await?;
-                processed_event_ids.push(envelope.id.get());
+                    insert_delivery_rows(connection, envelope.id().get(), &subscription_ids)
+                        .await?;
+                processed_event_ids.push(envelope.id().get());
             }
 
             diesel::update(events.filter(id.eq_any(processed_event_ids)))
@@ -310,7 +375,7 @@ pub async fn fanout_events(
 fn candidate_subscription_collection_ids(events: &[EventEnvelope]) -> Vec<i32> {
     let mut collection_ids = HashSet::new();
     for event in events {
-        collection_ids.extend(event.collection_id);
+        collection_ids.extend(event.collection_id());
         collection_ids.extend(event.related_collection_ids());
     }
     collection_ids.into_iter().map(CollectionId::id).collect()

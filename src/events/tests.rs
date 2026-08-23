@@ -36,28 +36,29 @@ fn principal_id(id: i32) -> PrincipalId {
 fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Event {
     let (event, before_revision, after_revision) = event.into_parts();
     Event {
-        id: event.id.get(),
-        event_id: event.event_id,
-        occurred_at: event.occurred_at,
-        entity_type: event.entity_type,
-        entity_id: event.entity_id.map(EventEntityId::get),
-        entity_name: event.entity_name,
-        collection_id: event.collection_id.map(CollectionId::id),
-        action: event.action,
-        actor_user_id: event.actor_user_id.map(PrincipalId::id),
-        actor_kind: event.actor_kind,
-        request_id: event.request_id,
-        correlation_id: event.correlation_id,
-        summary: event.summary,
-        before: event.before,
-        after: event.after,
-        metadata: event.metadata,
-        schema_version: event.schema_version,
+        id: event.id().get(),
+        event_id: event.event_id(),
+        occurred_at: event.occurred_at().naive_utc(),
+        entity_type: event.entity_type().as_str().to_string(),
+        entity_id: event.entity_id().map(EventEntityId::get),
+        entity_name: event.entity_name().map(ToOwned::to_owned),
+        collection_id: event.collection_id().map(CollectionId::id),
+        action: event.action().as_str().to_string(),
+        actor_user_id: event.actor_user_id().map(PrincipalId::id),
+        actor_kind: event.actor_kind().as_str().to_string(),
+        request_id: event.request_id(),
+        correlation_id: event.correlation_id().map(ToOwned::to_owned),
+        summary: event.summary().to_string(),
+        before: event.before().cloned(),
+        after: event.after().cloned(),
+        metadata: event.metadata().clone(),
+        schema_version: event.schema_version(),
         initiator_user_id: event
-            .provenance
+            .provenance()
             .initiator
+            .as_ref()
             .map(|principal| principal.principal_id.id()),
-        task_id: event.provenance.task_id.map(TaskId::id),
+        task_id: event.provenance().task_id.map(TaskId::id),
         before_revision,
         after_revision,
     }

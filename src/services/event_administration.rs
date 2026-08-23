@@ -21,27 +21,47 @@ use crate::storage::{
 };
 use crate::utilities::extensions::CustomStringExtensions;
 
+fn storage_entity_types(values: &[String]) -> Result<Vec<EntityType>, ApiError> {
+    values
+        .iter()
+        .map(|value| {
+            EntityType::parse(value)
+                .map_err(|error| ApiError::BadRequest(format!("bad entity_type: {error}")))
+        })
+        .collect()
+}
+
+fn storage_actions(values: &[String]) -> Result<Vec<Action>, ApiError> {
+    values
+        .iter()
+        .map(|value| {
+            Action::parse(value)
+                .map_err(|error| ApiError::BadRequest(format!("bad action: {error}")))
+        })
+        .collect()
+}
+
 fn audit_event_from_storage(event: StorageAuditEvent) -> Result<EventResponse, ApiError> {
     let (event, before_revision, after_revision) = event.into_parts();
     Ok(EventResponse {
-        id: event.id.get(),
-        event_id: event.event_id,
-        occurred_at: event.occurred_at,
-        entity_type: event.entity_type,
-        entity_id: event.entity_id.map(|id| id.get()),
-        entity_name: event.entity_name,
-        collection_id: event.collection_id.map(|id| id.id()),
-        action: event.action,
-        actor_user_id: event.actor_user_id.map(|id| id.id()),
-        actor_kind: event.actor_kind,
-        provenance: event.provenance,
-        request_id: event.request_id,
-        correlation_id: event.correlation_id,
-        summary: event.summary,
-        before: event.before,
-        after: event.after,
-        metadata: event.metadata,
-        schema_version: event.schema_version,
+        id: event.id().get(),
+        event_id: event.event_id(),
+        occurred_at: event.occurred_at().naive_utc(),
+        entity_type: event.entity_type().as_str().to_string(),
+        entity_id: event.entity_id().map(|id| id.get()),
+        entity_name: event.entity_name().map(ToOwned::to_owned),
+        collection_id: event.collection_id().map(|id| id.id()),
+        action: event.action().as_str().to_string(),
+        actor_user_id: event.actor_user_id().map(|id| id.id()),
+        actor_kind: event.actor_kind().as_str().to_string(),
+        provenance: event.provenance().clone(),
+        request_id: event.request_id(),
+        correlation_id: event.correlation_id().map(ToOwned::to_owned),
+        summary: event.summary().to_string(),
+        before: event.before().cloned(),
+        after: event.after().cloned(),
+        metadata: event.metadata().clone(),
+        schema_version: event.schema_version(),
         before_revision,
         after_revision,
     })
@@ -246,7 +266,7 @@ pub(crate) async fn create_event_sink(
         .configuration(sink.config)
         .secret_ref(normalize_optional_string(sink.secret_ref))
         .enabled(sink.enabled)
-        .build();
+        .try_build()?;
     event_sink_from_storage(
         storage_handle(backend)
             .create_event_sink(request)
@@ -269,7 +289,7 @@ pub(crate) async fn update_event_sink(
         None => existing.secret_ref.as_deref(),
     };
     validate_sink_parts(kind, config, secret_ref)?;
-    let request = StorageEventSinkUpdate::new(
+    let request = StorageEventSinkUpdate::builder(
         hubuum_domain::EventSinkId::new(sink_id).expect("validated event sink id must be positive"),
         event_context,
     )
@@ -277,7 +297,8 @@ pub(crate) async fn update_event_sink(
     .kind(update.kind.map(|value| value.as_str().to_string()))
     .configuration(update.config)
     .secret_ref(update.secret_ref.map(normalize_optional_string))
-    .enabled(update.enabled);
+    .enabled(update.enabled)
+    .try_build()?;
     event_sink_from_storage(
         storage_handle(backend)
             .update_event_sink(request)
@@ -311,8 +332,16 @@ fn event_subscription_from_storage(
         sink_id: subscription.sink_id().id(),
         name: subscription.name().to_string(),
         description: subscription.description().to_string(),
-        entity_types: subscription.entity_types().to_vec(),
-        actions: subscription.actions().to_vec(),
+        entity_types: subscription
+            .entity_types()
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        actions: subscription
+            .actions()
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
         filter: subscription.filter().clone(),
         routing: subscription.routing().clone(),
         enabled: subscription.enabled(),
@@ -374,6 +403,8 @@ pub(crate) async fn create_event_subscription(
         &subscription.filter,
         &subscription.routing,
     )?;
+    let entity_types = storage_entity_types(&subscription.entity_types)?;
+    let actions = storage_actions(&subscription.actions)?;
     let request = StorageEventSubscriptionCreate::builder(
         collection_id_to_storage(collection_id),
         subscription.sink_id,
@@ -381,12 +412,12 @@ pub(crate) async fn create_event_subscription(
         event_context,
     )
     .description(subscription.description)
-    .entity_types(subscription.entity_types)
-    .actions(subscription.actions)
+    .entity_types(entity_types)
+    .actions(actions)
     .filter(subscription.filter)
     .routing(subscription.routing)
     .enabled(subscription.enabled)
-    .build();
+    .try_build()?;
     event_subscription_from_storage(
         storage_handle(backend)
             .create_event_subscription(request)
@@ -414,7 +445,13 @@ pub(crate) async fn update_event_subscription(
     let filter = update.filter.as_ref().unwrap_or(&existing.filter);
     let routing = update.routing.as_ref().unwrap_or(&existing.routing);
     validate_subscription_parts(entity_types, actions, filter, routing)?;
-    let request = StorageEventSubscriptionUpdate::new(
+    let storage_entity_types = update
+        .entity_types
+        .as_deref()
+        .map(storage_entity_types)
+        .transpose()?;
+    let storage_actions = update.actions.as_deref().map(storage_actions).transpose()?;
+    let request = StorageEventSubscriptionUpdate::builder(
         collection_id_to_storage(collection_id),
         hubuum_domain::EventSubscriptionId::new(subscription_id)
             .expect("validated event subscription id must be positive"),
@@ -423,11 +460,12 @@ pub(crate) async fn update_event_subscription(
     .sink_id(update.sink_id)
     .name(update.name)
     .description(update.description)
-    .entity_types(update.entity_types)
-    .actions(update.actions)
+    .entity_types(storage_entity_types)
+    .actions(storage_actions)
     .filter(update.filter)
     .routing(update.routing)
-    .enabled(update.enabled);
+    .enabled(update.enabled)
+    .try_build()?;
     event_subscription_from_storage(
         storage_handle(backend)
             .update_event_subscription(request)

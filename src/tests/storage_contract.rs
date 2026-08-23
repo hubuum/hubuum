@@ -361,7 +361,8 @@ impl PostgresAuditContractFixture {
                 )
                 .configuration(serde_json::json!({}))
                 .enabled(true)
-                .build(),
+                .try_build()
+                .unwrap(),
             )
             .await?
             .into_value();
@@ -386,11 +387,12 @@ impl PostgresAuditContractFixture {
                     prefix("audit_contract_subscription"),
                     context,
                 )
-                .entity_types(vec![EntityType::Collection.as_str().to_string()])
-                .actions(vec![Action::Updated.as_str().to_string()])
+                .entity_types(vec![EntityType::Collection])
+                .actions(vec![Action::Updated])
                 .routing(serde_json::json!({}))
                 .enabled(true)
-                .build(),
+                .try_build()
+                .unwrap(),
             )
             .await?
             .into_value();
@@ -498,7 +500,7 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
             .collection_events(self.collection_id)
             .await?
             .into_iter()
-            .find(|event| event.clone().into_parts().0.id == receipt.sequence())
+            .find(|event| event.clone().into_parts().0.id() == receipt.sequence())
             .ok_or_else(|| std::io::Error::other("receipt event was not queryable"))?;
         Ok(CommittedMutationProbe::new(outcome.map(drop), event))
     }
@@ -2854,7 +2856,7 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
 
     for backend in available_backends() {
         let (state, history) = backend
-            .create_backup_snapshot(false)
+            .capture_backup_snapshot(false)
             .await
             .expect("certified backend should supply a state-only backup snapshot")
             .into_parts();
@@ -2868,7 +2870,7 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         assert!(history.is_none());
 
         let (state, history) = backend
-            .create_backup_snapshot(true)
+            .capture_backup_snapshot(true)
             .await
             .expect("certified backend should supply a history-inclusive backup snapshot")
             .into_parts();
@@ -5020,7 +5022,8 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
                 StorageEventSinkCreate::builder(sink_name, "webhook", event_context.clone())
                     .configuration(serde_json::json!({}))
                     .enabled(true)
-                    .build(),
+                    .try_build()
+                    .unwrap(),
             )
             .await
             .expect("certified backend should create event sinks")
@@ -5051,8 +5054,10 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         assert!(sink_total.is_some_and(|total| total >= 1));
         let updated_sink = backend
             .update_event_sink(
-                StorageEventSinkUpdate::new(sink_id, event_context.clone())
-                    .name(Some(prefix("event_admin_sink_updated"))),
+                StorageEventSinkUpdate::builder(sink_id, event_context.clone())
+                    .name(Some(prefix("event_admin_sink_updated")))
+                    .try_build()
+                    .unwrap(),
             )
             .await
             .expect("certified backend should update event sinks")
@@ -5068,11 +5073,12 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
                     event_context.clone(),
                 )
                 .description("storage compatibility event subscription")
-                .entity_types(vec![EntityType::EventSubscription.as_str().to_string()])
-                .actions(vec![Action::Created.as_str().to_string()])
+                .entity_types(vec![EntityType::EventSubscription])
+                .actions(vec![Action::Created])
                 .routing(serde_json::json!({}))
                 .enabled(true)
-                .build(),
+                .try_build()
+                .unwrap(),
             )
             .await
             .expect("certified backend should create event subscriptions")
@@ -5098,14 +5104,16 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         assert!(subscription_total.is_some_and(|total| total >= 1));
         let updated_subscription = backend
             .update_event_subscription(
-                StorageEventSubscriptionUpdate::new(
+                StorageEventSubscriptionUpdate::builder(
                     event_admin_collection_id,
                     subscription_id,
                     event_context.clone(),
                 )
                 .description(Some(
                     "updated storage compatibility subscription".to_string(),
-                )),
+                ))
+                .try_build()
+                .unwrap(),
             )
             .await
             .expect("certified backend should update event subscriptions")

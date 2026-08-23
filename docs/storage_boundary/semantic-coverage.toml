@@ -5,10 +5,12 @@
 # contract scenarios. `native_scenarios` identify adapter-only evidence for
 # mechanics that should not leak into the logical contract.
 
-# Exhaustive inventory of complete-backend methods that can durably write
-# without accepting an EventContext. Every entry is a non-ordinary mutation;
-# ordinary domain mutations are required to carry context and return a
-# MutationOutcome. Keep this inventory and transactions-and-events.md aligned.
+# Review-maintained inventory of known complete-backend methods that can
+# durably write without accepting an EventContext. The guard verifies that
+# every listed name is a real method, but does not yet infer every writer from
+# method bodies. Every entry is a non-ordinary mutation; ordinary domain
+# mutations are required to carry context and return a MutationOutcome. Keep
+# this inventory and transactions-and-events.md aligned.
 [context_free_mutations]
 best_effort_observation = [
     "AuthenticationStorage::authenticate_bearer_token",
@@ -255,7 +257,7 @@ native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_fin
 
 [traits.BackupSnapshotStorage]
 source = "crates/hubuum-storage-core/src/backup_snapshot.rs"
-methods = ["create_backup_snapshot"]
+methods = ["capture_backup_snapshot"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_backup_snapshots"]
 
 [traits.RestoreStorage]

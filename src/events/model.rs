@@ -22,8 +22,8 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::pagination::{CursorPaginated, CursorValue};
 
 use super::{
-    Action, ActorKind, CollectionId, EntityType, EventCatalogError, EventEntityId, EventEnvelope,
-    EventSequence, PrincipalId, Provenance, ProvenanceActor, ProvenancePrincipal, TaskId,
+    Action, ActorKind, EntityType, EventCatalogError, PrincipalId, Provenance, ProvenanceActor,
+    ProvenancePrincipal, TaskId,
 };
 
 /// Principal names resolved in one database query for provenance responses.
@@ -164,40 +164,6 @@ impl fmt::Debug for Event {
             .field("initiator_user_id", &self.initiator_user_id)
             .field("task_id", &self.task_id)
             .finish()
-    }
-}
-
-impl Event {
-    pub(crate) fn into_envelope(self, principal_names: &PrincipalNames) -> EventEnvelope {
-        let provenance = self.resolved_provenance(principal_names);
-        EventEnvelope {
-            id: EventSequence::new(self.id).expect("persisted event sequence must be positive"),
-            event_id: self.event_id,
-            occurred_at: self.occurred_at,
-            entity_type: self.entity_type,
-            entity_id: self.entity_id.map(|entity_id| {
-                EventEntityId::new(entity_id).expect("persisted event entity id must be positive")
-            }),
-            entity_name: self.entity_name,
-            collection_id: self.collection_id.map(|collection_id| {
-                CollectionId::new(collection_id)
-                    .expect("persisted event collection id must be positive")
-            }),
-            action: self.action,
-            actor_user_id: self.actor_user_id.map(|actor_user_id| {
-                PrincipalId::new(actor_user_id)
-                    .expect("persisted event actor principal id must be positive")
-            }),
-            actor_kind: self.actor_kind,
-            provenance,
-            request_id: self.request_id,
-            correlation_id: self.correlation_id,
-            summary: self.summary,
-            before: self.before,
-            after: self.after,
-            metadata: self.metadata,
-            schema_version: self.schema_version,
-        }
     }
 }
 

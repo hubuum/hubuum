@@ -140,7 +140,7 @@ pub(crate) async fn process_event_delivery_work_item(
             warn!(
                 message = "Event sink delivery failed",
                 event_delivery_id = claim.delivery_id().id(),
-                event_id = %envelope.event_id,
+                event_id = %envelope.event_id(),
                 event_sink_id = sink.id().id(),
                 event_subscription_id = subscription.id().id(),
                 sink_kind = sink.kind(),
@@ -394,6 +394,21 @@ mod tests {
         }
     }
 
+    fn envelope() -> EventEnvelope {
+        EventEnvelope::builder()
+            .id(crate::events::EventSequence::new(1).unwrap())
+            .event_id(uuid::Uuid::new_v4())
+            .occurred_at(chrono::Utc::now())
+            .entity_type(crate::events::EntityType::Collection)
+            .action(crate::events::Action::Created)
+            .actor_kind(crate::events::ActorKind::System)
+            .summary("summary".to_string())
+            .metadata(serde_json::json!({}))
+            .schema_version(1)
+            .try_build()
+            .unwrap()
+    }
+
     #[test]
     fn delivery_worker_stops_after_empty_or_error_iteration() {
         assert!(!delivery_worker_should_continue(&Ok(
@@ -429,39 +444,21 @@ mod tests {
 
     #[actix_rt::test]
     async fn resolver_exports_unsupported_sink_kind() {
-        let now = chrono::Utc::now().naive_utc();
-        let envelope = EventEnvelope {
-            id: crate::events::EventSequence::new(1).unwrap(),
-            event_id: uuid::Uuid::new_v4(),
-            occurred_at: now,
-            entity_type: "collection".to_string(),
-            entity_id: None,
-            entity_name: None,
-            collection_id: None,
-            action: "created".to_string(),
-            actor_user_id: None,
-            actor_kind: "system".to_string(),
-            provenance: hubuum_events_core::Provenance::default(),
-            request_id: None,
-            correlation_id: None,
-            summary: "summary".to_string(),
-            before: None,
-            after: None,
-            metadata: serde_json::json!({}),
-            schema_version: 1,
-        };
-        let subscription = EventDeliverySubscription::new(
+        let envelope = envelope();
+        let subscription = EventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
-        );
-        let sink = EventDeliverySink::new(
+        )
+        .unwrap();
+        let sink = EventDeliverySink::try_new(
             hubuum_domain::EventSinkId::new(1).unwrap(),
             "sink",
             "webhook",
             serde_json::json!({}),
             None,
-        );
+        )
+        .unwrap();
 
         let error = deliver_one(&NoopSinkResolver, &envelope, &subscription, &sink)
             .await
@@ -471,39 +468,21 @@ mod tests {
 
     #[actix_rt::test]
     async fn resolver_passes_through_transport_error() {
-        let now = chrono::Utc::now().naive_utc();
-        let envelope = EventEnvelope {
-            id: crate::events::EventSequence::new(1).unwrap(),
-            event_id: uuid::Uuid::new_v4(),
-            occurred_at: now,
-            entity_type: "collection".to_string(),
-            entity_id: None,
-            entity_name: None,
-            collection_id: None,
-            action: "created".to_string(),
-            actor_user_id: None,
-            actor_kind: "system".to_string(),
-            provenance: hubuum_events_core::Provenance::default(),
-            request_id: None,
-            correlation_id: None,
-            summary: "summary".to_string(),
-            before: None,
-            after: None,
-            metadata: serde_json::json!({}),
-            schema_version: 1,
-        };
-        let subscription = EventDeliverySubscription::new(
+        let envelope = envelope();
+        let subscription = EventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
-        );
-        let sink = EventDeliverySink::new(
+        )
+        .unwrap();
+        let sink = EventDeliverySink::try_new(
             hubuum_domain::EventSinkId::new(1).unwrap(),
             "sink",
             "webhook",
             serde_json::json!({}),
             None,
-        );
+        )
+        .unwrap();
         let failing = FailingSink;
         let resolver = StaticResolver {
             kind: EventSinkKind::Webhook,

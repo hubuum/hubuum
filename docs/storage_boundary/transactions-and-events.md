@@ -114,12 +114,15 @@ ordinary user mutations.
 
 ## Context-Free Mutation Inventory
 
-The following list is exhaustive for `StorageBackend` methods that may durably
-write without accepting an `EventContext`. They are deliberately outside the
-ordinary audited-mutation category. Any new context-free writer must be added
-to `semantic-coverage.toml`, placed in one of these semantic categories, and
-reviewed here; an ordinary resource or configuration mutation is not eligible
-for an exception.
+The following review-maintained list is intended to cover every
+`StorageBackend` method that may durably write without accepting an
+`EventContext`. They are deliberately outside the ordinary audited-mutation
+category. The current guard proves that each listed name is a real trait method;
+it does not yet infer write effects from method bodies or mechanically prove
+the reverse direction. That inference is deferred. Until it exists, reviewers
+must add every new context-free writer to `semantic-coverage.toml`, place it in
+one of these semantic categories, and review it here. An ordinary resource or
+configuration mutation is not eligible for an exception.
 
 - Best-effort observation: `AuthenticationStorage::authenticate_bearer_token`
   may throttle-write token use time. This does not change authorization or
@@ -173,7 +176,7 @@ for an exception.
   `ImportStorage::record_import_results` preserve or reconstruct imported
   state and results under the typed import workflow.
 
-`BackupSnapshotStorage::create_backup_snapshot` is not listed because it only
+`BackupSnapshotStorage::capture_backup_snapshot` is not listed because it only
 reads a consistent projection. `ImportStorage::preflight_import` executes
 against rollback-only state and does not durably write. `ExecutionStorage`
 scope changes are native execution context, not durable storage mutations.

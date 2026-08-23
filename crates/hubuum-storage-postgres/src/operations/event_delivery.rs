@@ -49,6 +49,35 @@ struct DeliverySinkRow {
     secret_ref: Option<String>,
 }
 
+fn invalid_delivery_value(
+    projection: &'static str,
+    error: impl std::fmt::Debug,
+) -> PostgresStorageError {
+    PostgresStorageError::invalid_persisted_value(projection, error)
+}
+
+fn delivery_subscription_value(
+    row: &DeliverySubscriptionRow,
+) -> Result<EventDeliverySubscription, PostgresStorageError> {
+    EventDeliverySubscription::try_new(
+        EventSubscriptionId::new(row.id)?,
+        row.name.clone(),
+        row.routing.clone(),
+    )
+    .map_err(|error| invalid_delivery_value("event delivery subscription", error))
+}
+
+fn delivery_sink_value(row: &DeliverySinkRow) -> Result<EventDeliverySink, PostgresStorageError> {
+    EventDeliverySink::try_new(
+        EventSinkId::new(row.id)?,
+        row.name.clone(),
+        row.kind.clone(),
+        row.configuration.clone(),
+        row.secret_ref.clone(),
+    )
+    .map_err(|error| invalid_delivery_value("event delivery sink", error))
+}
+
 #[derive(Queryable)]
 struct AdministrationDeliveryRow {
     id: i64,
@@ -339,25 +368,20 @@ async fn load_work_items(
                 )
             })?;
 
+            let claim = EventDeliveryClaim::try_new(
+                EventDeliveryId::new(delivery.id)?,
+                delivery.attempts,
+                claim_token,
+            )
+            .map_err(|error| invalid_delivery_value("event delivery claim", error))?;
+            let subscription = delivery_subscription_value(subscription)?;
+            let sink = delivery_sink_value(sink)?;
+
             Ok(EventDeliveryWorkItem::new(
-                EventDeliveryClaim::try_new(
-                    EventDeliveryId::new(delivery.id)?,
-                    delivery.attempts,
-                    claim_token,
-                )?,
+                claim,
                 event.into_envelope(&principal_names)?,
-                EventDeliverySubscription::new(
-                    EventSubscriptionId::new(subscription.id)?,
-                    subscription.name.clone(),
-                    subscription.routing.clone(),
-                ),
-                EventDeliverySink::new(
-                    EventSinkId::new(sink.id)?,
-                    sink.name.clone(),
-                    sink.kind.clone(),
-                    sink.configuration.clone(),
-                    sink.secret_ref.clone(),
-                ),
+                subscription,
+                sink,
             ))
         })
         .collect()
@@ -800,7 +824,12 @@ pub async fn claim_event_delivery_by_id(
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_delivery_error;
+    use hubuum_storage_core::StorageErrorKind;
+
+    use super::{
+        DeliverySinkRow, DeliverySubscriptionRow, delivery_sink_value, delivery_subscription_value,
+        truncate_delivery_error,
+    };
 
     #[test]
     fn delivery_error_truncation_preserves_utf8_boundaries() {
@@ -810,5 +839,33 @@ mod tests {
 
         assert_eq!(truncated.len(), 4095);
         assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn corrupt_delivery_transport_values_are_backend_failures() {
+        let subscription = DeliverySubscriptionRow {
+            id: 1,
+            sink_id: 2,
+            name: "subscription".to_string(),
+            routing: serde_json::json!([]),
+        };
+        let sink = DeliverySinkRow {
+            id: 2,
+            name: "sink".to_string(),
+            kind: "webhook".to_string(),
+            configuration: serde_json::json!([]),
+            secret_ref: None,
+        };
+
+        assert_eq!(
+            delivery_subscription_value(&subscription)
+                .unwrap_err()
+                .kind(),
+            StorageErrorKind::Backend
+        );
+        assert_eq!(
+            delivery_sink_value(&sink).unwrap_err().kind(),
+            StorageErrorKind::Backend
+        );
     }
 }

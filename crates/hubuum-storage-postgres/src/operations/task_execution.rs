@@ -568,7 +568,7 @@ async fn finalize_task_connection(
         .await?;
     let recorded =
         append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?).await?;
-    let occurred_at = recorded.into_parts().0.occurred_at;
+    let occurred_at = recorded.into_parts().0.occurred_at().naive_utc();
     crate::reach_fault_point(
         crate::PostgresFaultPoint::TaskFinalizeAfterEvent,
         Some(connection),

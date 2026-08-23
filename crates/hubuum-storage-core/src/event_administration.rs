@@ -8,12 +8,94 @@ use hubuum_domain::{
 };
 use hubuum_events_core::{
     Action, ActorKind, EntityType, EventContext, EventEntityId, EventSequence,
-    EventSubscriptionFilter,
+    EventSubscriptionFilter, is_valid_pair,
 };
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
 use crate::{MutationOutcome, StorageError, StoragePage};
+
+fn validate_non_empty(field: &str, value: &str) -> Result<(), StorageError> {
+    if value.trim().is_empty() {
+        return Err(StorageError::invalid_input(format!(
+            "{field} must not be empty"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_optional_non_empty(field: &str, value: Option<&str>) -> Result<(), StorageError> {
+    if let Some(value) = value {
+        validate_non_empty(field, value)?;
+    }
+    Ok(())
+}
+
+fn validate_json_object(field: &str, value: &Value) -> Result<(), StorageError> {
+    if !value.is_object() {
+        return Err(StorageError::invalid_input(format!(
+            "{field} must be a JSON object"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_timestamps(
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+) -> Result<(), StorageError> {
+    if updated_at < created_at {
+        return Err(StorageError::invalid_input(
+            "updated_at must not be earlier than created_at",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_catalog_values<T>(field: &str, values: &[T]) -> Result<(), StorageError>
+where
+    T: Copy + Eq + std::hash::Hash,
+{
+    if values.is_empty() {
+        return Err(StorageError::invalid_input(format!(
+            "{field} must include at least one value"
+        )));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(values.len());
+    if values.iter().any(|value| !seen.insert(*value)) {
+        return Err(StorageError::invalid_input(format!(
+            "{field} must not contain duplicates"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_subscription_parts(
+    name: &str,
+    entity_types: &[EntityType],
+    actions: &[Action],
+    filter: &EventSubscriptionFilter,
+    routing: &Value,
+) -> Result<(), StorageError> {
+    validate_non_empty("name", name)?;
+    validate_catalog_values("entity_types", entity_types)?;
+    validate_catalog_values("actions", actions)?;
+    for entity_type in entity_types {
+        for action in actions {
+            if !is_valid_pair(*entity_type, *action) {
+                return Err(StorageError::invalid_input(format!(
+                    "action '{}' is not valid for entity_type '{}'",
+                    action.as_str(),
+                    entity_type.as_str()
+                )));
+            }
+        }
+    }
+    filter
+        .validate()
+        .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+    validate_json_object("routing", routing)
+}
 
 /// Typed audit filters interpreted by the selected backend.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -359,9 +441,13 @@ impl StorageEventSinkBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageEventSink {
-        StorageEventSink {
+    pub fn try_build(self) -> Result<StorageEventSink, StorageError> {
+        validate_non_empty("name", &self.name)?;
+        validate_non_empty("kind", &self.kind)?;
+        validate_json_object("configuration", &self.configuration)?;
+        validate_optional_non_empty("secret_ref", self.secret_ref.as_deref())?;
+        validate_timestamps(self.created_at, self.updated_at)?;
+        Ok(StorageEventSink {
             id: self.id,
             name: self.name,
             kind: self.kind,
@@ -371,7 +457,7 @@ impl StorageEventSinkBuilder {
             created_at: self.created_at,
             updated_at: self.updated_at,
             revision: self.revision,
-        }
+        })
     }
 }
 
@@ -494,16 +580,19 @@ impl StorageEventSinkCreateBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageEventSinkCreate {
-        StorageEventSinkCreate {
+    pub fn try_build(self) -> Result<StorageEventSinkCreate, StorageError> {
+        validate_non_empty("name", &self.name)?;
+        validate_non_empty("kind", &self.kind)?;
+        validate_json_object("configuration", &self.configuration)?;
+        validate_optional_non_empty("secret_ref", self.secret_ref.as_deref())?;
+        Ok(StorageEventSinkCreate {
             name: self.name,
             kind: self.kind,
             configuration: self.configuration,
             secret_ref: self.secret_ref,
             enabled: self.enabled,
             event_context: self.event_context,
-        }
+        })
     }
 }
 
@@ -534,8 +623,8 @@ pub struct StorageEventSinkUpdate {
 
 impl StorageEventSinkUpdate {
     #[must_use]
-    pub fn new(id: EventSinkId, event_context: EventContext) -> Self {
-        Self {
+    pub fn builder(id: EventSinkId, event_context: EventContext) -> StorageEventSinkUpdateBuilder {
+        StorageEventSinkUpdateBuilder {
             id,
             name: None,
             kind: None,
@@ -544,36 +633,6 @@ impl StorageEventSinkUpdate {
             enabled: None,
             event_context,
         }
-    }
-
-    #[must_use]
-    pub fn name(mut self, value: Option<String>) -> Self {
-        self.name = value;
-        self
-    }
-
-    #[must_use]
-    pub fn kind(mut self, value: Option<String>) -> Self {
-        self.kind = value;
-        self
-    }
-
-    #[must_use]
-    pub fn configuration(mut self, value: Option<Value>) -> Self {
-        self.configuration = value;
-        self
-    }
-
-    #[must_use]
-    pub fn secret_ref(mut self, value: Option<Option<String>>) -> Self {
-        self.secret_ref = value;
-        self
-    }
-
-    #[must_use]
-    pub const fn enabled(mut self, value: Option<bool>) -> Self {
-        self.enabled = value;
-        self
     }
 
     #[must_use]
@@ -609,6 +668,69 @@ impl StorageEventSinkUpdate {
     #[must_use]
     pub const fn event_context(&self) -> &EventContext {
         &self.event_context
+    }
+}
+
+/// Builder for validated event-sink patches.
+pub struct StorageEventSinkUpdateBuilder {
+    id: EventSinkId,
+    name: Option<String>,
+    kind: Option<String>,
+    configuration: Option<Value>,
+    secret_ref: Option<Option<String>>,
+    enabled: Option<bool>,
+    event_context: EventContext,
+}
+
+impl StorageEventSinkUpdateBuilder {
+    #[must_use]
+    pub fn name(mut self, value: Option<String>) -> Self {
+        self.name = value;
+        self
+    }
+
+    #[must_use]
+    pub fn kind(mut self, value: Option<String>) -> Self {
+        self.kind = value;
+        self
+    }
+
+    #[must_use]
+    pub fn configuration(mut self, value: Option<Value>) -> Self {
+        self.configuration = value;
+        self
+    }
+
+    #[must_use]
+    pub fn secret_ref(mut self, value: Option<Option<String>>) -> Self {
+        self.secret_ref = value;
+        self
+    }
+
+    #[must_use]
+    pub const fn enabled(mut self, value: Option<bool>) -> Self {
+        self.enabled = value;
+        self
+    }
+
+    pub fn try_build(self) -> Result<StorageEventSinkUpdate, StorageError> {
+        validate_optional_non_empty("name", self.name.as_deref())?;
+        validate_optional_non_empty("kind", self.kind.as_deref())?;
+        if let Some(configuration) = &self.configuration {
+            validate_json_object("configuration", configuration)?;
+        }
+        if let Some(secret_ref) = &self.secret_ref {
+            validate_optional_non_empty("secret_ref", secret_ref.as_deref())?;
+        }
+        Ok(StorageEventSinkUpdate {
+            id: self.id,
+            name: self.name,
+            kind: self.kind,
+            configuration: self.configuration,
+            secret_ref: self.secret_ref,
+            enabled: self.enabled,
+            event_context: self.event_context,
+        })
     }
 }
 
@@ -667,8 +789,8 @@ pub struct StorageEventSubscription {
     sink_id: EventSinkId,
     name: String,
     description: String,
-    entity_types: Vec<String>,
-    actions: Vec<String>,
+    entity_types: Vec<EntityType>,
+    actions: Vec<Action>,
     filter: EventSubscriptionFilter,
     routing: Value,
     enabled: bool,
@@ -731,12 +853,12 @@ impl StorageEventSubscription {
     }
 
     #[must_use]
-    pub fn entity_types(&self) -> &[String] {
+    pub fn entity_types(&self) -> &[EntityType] {
         &self.entity_types
     }
 
     #[must_use]
-    pub fn actions(&self) -> &[String] {
+    pub fn actions(&self) -> &[Action] {
         &self.actions
     }
 
@@ -778,8 +900,8 @@ pub struct StorageEventSubscriptionBuilder {
     sink_id: EventSinkId,
     name: String,
     description: String,
-    entity_types: Vec<String>,
-    actions: Vec<String>,
+    entity_types: Vec<EntityType>,
+    actions: Vec<Action>,
     filter: EventSubscriptionFilter,
     routing: Value,
     enabled: bool,
@@ -796,13 +918,13 @@ impl StorageEventSubscriptionBuilder {
     }
 
     #[must_use]
-    pub fn entity_types(mut self, value: Vec<String>) -> Self {
+    pub fn entity_types(mut self, value: Vec<EntityType>) -> Self {
         self.entity_types = value;
         self
     }
 
     #[must_use]
-    pub fn actions(mut self, value: Vec<String>) -> Self {
+    pub fn actions(mut self, value: Vec<Action>) -> Self {
         self.actions = value;
         self
     }
@@ -825,9 +947,16 @@ impl StorageEventSubscriptionBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageEventSubscription {
-        StorageEventSubscription {
+    pub fn try_build(self) -> Result<StorageEventSubscription, StorageError> {
+        validate_subscription_parts(
+            &self.name,
+            &self.entity_types,
+            &self.actions,
+            &self.filter,
+            &self.routing,
+        )?;
+        validate_timestamps(self.created_at, self.updated_at)?;
+        Ok(StorageEventSubscription {
             id: self.id,
             collection_id: self.collection_id,
             sink_id: self.sink_id,
@@ -841,7 +970,7 @@ impl StorageEventSubscriptionBuilder {
             created_at: self.created_at,
             updated_at: self.updated_at,
             revision: self.revision,
-        }
+        })
     }
 }
 
@@ -893,8 +1022,8 @@ pub struct StorageEventSubscriptionCreate {
     sink_id: EventSinkId,
     name: String,
     description: String,
-    entity_types: Vec<String>,
-    actions: Vec<String>,
+    entity_types: Vec<EntityType>,
+    actions: Vec<Action>,
     filter: EventSubscriptionFilter,
     routing: Value,
     enabled: bool,
@@ -944,12 +1073,12 @@ impl StorageEventSubscriptionCreate {
     }
 
     #[must_use]
-    pub fn entity_types(&self) -> &[String] {
+    pub fn entity_types(&self) -> &[EntityType] {
         &self.entity_types
     }
 
     #[must_use]
-    pub fn actions(&self) -> &[String] {
+    pub fn actions(&self) -> &[Action] {
         &self.actions
     }
 
@@ -997,8 +1126,8 @@ pub struct StorageEventSubscriptionCreateBuilder {
     sink_id: EventSinkId,
     name: String,
     description: String,
-    entity_types: Vec<String>,
-    actions: Vec<String>,
+    entity_types: Vec<EntityType>,
+    actions: Vec<Action>,
     filter: EventSubscriptionFilter,
     routing: Value,
     enabled: bool,
@@ -1013,13 +1142,13 @@ impl StorageEventSubscriptionCreateBuilder {
     }
 
     #[must_use]
-    pub fn entity_types(mut self, value: Vec<String>) -> Self {
+    pub fn entity_types(mut self, value: Vec<EntityType>) -> Self {
         self.entity_types = value;
         self
     }
 
     #[must_use]
-    pub fn actions(mut self, value: Vec<String>) -> Self {
+    pub fn actions(mut self, value: Vec<Action>) -> Self {
         self.actions = value;
         self
     }
@@ -1042,9 +1171,15 @@ impl StorageEventSubscriptionCreateBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageEventSubscriptionCreate {
-        StorageEventSubscriptionCreate {
+    pub fn try_build(self) -> Result<StorageEventSubscriptionCreate, StorageError> {
+        validate_subscription_parts(
+            &self.name,
+            &self.entity_types,
+            &self.actions,
+            &self.filter,
+            &self.routing,
+        )?;
+        Ok(StorageEventSubscriptionCreate {
             collection_id: self.collection_id,
             sink_id: self.sink_id,
             name: self.name,
@@ -1055,7 +1190,7 @@ impl StorageEventSubscriptionCreateBuilder {
             routing: self.routing,
             enabled: self.enabled,
             event_context: self.event_context,
-        }
+        })
     }
 }
 
@@ -1067,8 +1202,8 @@ pub struct StorageEventSubscriptionUpdate {
     sink_id: Option<EventSinkId>,
     name: Option<String>,
     description: Option<String>,
-    entity_types: Option<Vec<String>>,
-    actions: Option<Vec<String>>,
+    entity_types: Option<Vec<EntityType>>,
+    actions: Option<Vec<Action>>,
     filter: Option<EventSubscriptionFilter>,
     routing: Option<Value>,
     enabled: Option<bool>,
@@ -1077,12 +1212,12 @@ pub struct StorageEventSubscriptionUpdate {
 
 impl StorageEventSubscriptionUpdate {
     #[must_use]
-    pub fn new(
+    pub fn builder(
         collection_id: CollectionId,
         id: EventSubscriptionId,
         event_context: EventContext,
-    ) -> Self {
-        Self {
+    ) -> StorageEventSubscriptionUpdateBuilder {
+        StorageEventSubscriptionUpdateBuilder {
             collection_id,
             id,
             sink_id: None,
@@ -1095,54 +1230,6 @@ impl StorageEventSubscriptionUpdate {
             enabled: None,
             event_context,
         }
-    }
-
-    #[must_use]
-    pub const fn sink_id(mut self, value: Option<EventSinkId>) -> Self {
-        self.sink_id = value;
-        self
-    }
-
-    #[must_use]
-    pub fn name(mut self, value: Option<String>) -> Self {
-        self.name = value;
-        self
-    }
-
-    #[must_use]
-    pub fn description(mut self, value: Option<String>) -> Self {
-        self.description = value;
-        self
-    }
-
-    #[must_use]
-    pub fn entity_types(mut self, value: Option<Vec<String>>) -> Self {
-        self.entity_types = value;
-        self
-    }
-
-    #[must_use]
-    pub fn actions(mut self, value: Option<Vec<String>>) -> Self {
-        self.actions = value;
-        self
-    }
-
-    #[must_use]
-    pub fn filter(mut self, value: Option<EventSubscriptionFilter>) -> Self {
-        self.filter = value;
-        self
-    }
-
-    #[must_use]
-    pub fn routing(mut self, value: Option<Value>) -> Self {
-        self.routing = value;
-        self
-    }
-
-    #[must_use]
-    pub const fn enabled(mut self, value: Option<bool>) -> Self {
-        self.enabled = value;
-        self
     }
 
     #[must_use]
@@ -1171,12 +1258,12 @@ impl StorageEventSubscriptionUpdate {
     }
 
     #[must_use]
-    pub fn entity_types_value(&self) -> Option<&[String]> {
+    pub fn entity_types_value(&self) -> Option<&[EntityType]> {
         self.entity_types.as_deref()
     }
 
     #[must_use]
-    pub fn actions_value(&self) -> Option<&[String]> {
+    pub fn actions_value(&self) -> Option<&[Action]> {
         self.actions.as_deref()
     }
 
@@ -1198,6 +1285,115 @@ impl StorageEventSubscriptionUpdate {
     #[must_use]
     pub const fn event_context(&self) -> &EventContext {
         &self.event_context
+    }
+}
+
+/// Builder for validated collection-scoped event-subscription patches.
+pub struct StorageEventSubscriptionUpdateBuilder {
+    collection_id: CollectionId,
+    id: EventSubscriptionId,
+    sink_id: Option<EventSinkId>,
+    name: Option<String>,
+    description: Option<String>,
+    entity_types: Option<Vec<EntityType>>,
+    actions: Option<Vec<Action>>,
+    filter: Option<EventSubscriptionFilter>,
+    routing: Option<Value>,
+    enabled: Option<bool>,
+    event_context: EventContext,
+}
+
+impl StorageEventSubscriptionUpdateBuilder {
+    #[must_use]
+    pub const fn sink_id(mut self, value: Option<EventSinkId>) -> Self {
+        self.sink_id = value;
+        self
+    }
+
+    #[must_use]
+    pub fn name(mut self, value: Option<String>) -> Self {
+        self.name = value;
+        self
+    }
+
+    #[must_use]
+    pub fn description(mut self, value: Option<String>) -> Self {
+        self.description = value;
+        self
+    }
+
+    #[must_use]
+    pub fn entity_types(mut self, value: Option<Vec<EntityType>>) -> Self {
+        self.entity_types = value;
+        self
+    }
+
+    #[must_use]
+    pub fn actions(mut self, value: Option<Vec<Action>>) -> Self {
+        self.actions = value;
+        self
+    }
+
+    #[must_use]
+    pub fn filter(mut self, value: Option<EventSubscriptionFilter>) -> Self {
+        self.filter = value;
+        self
+    }
+
+    #[must_use]
+    pub fn routing(mut self, value: Option<Value>) -> Self {
+        self.routing = value;
+        self
+    }
+
+    #[must_use]
+    pub const fn enabled(mut self, value: Option<bool>) -> Self {
+        self.enabled = value;
+        self
+    }
+
+    pub fn try_build(self) -> Result<StorageEventSubscriptionUpdate, StorageError> {
+        validate_optional_non_empty("name", self.name.as_deref())?;
+        if let Some(entity_types) = &self.entity_types {
+            validate_catalog_values("entity_types", entity_types)?;
+        }
+        if let Some(actions) = &self.actions {
+            validate_catalog_values("actions", actions)?;
+        }
+        if let (Some(entity_types), Some(actions)) = (&self.entity_types, &self.actions) {
+            for entity_type in entity_types {
+                for action in actions {
+                    if !is_valid_pair(*entity_type, *action) {
+                        return Err(StorageError::invalid_input(format!(
+                            "action '{}' is not valid for entity_type '{}'",
+                            action.as_str(),
+                            entity_type.as_str()
+                        )));
+                    }
+                }
+            }
+        }
+        if let Some(filter) = &self.filter {
+            filter
+                .validate()
+                .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+        }
+        if let Some(routing) = &self.routing {
+            validate_json_object("routing", routing)?;
+        }
+        Ok(StorageEventSubscriptionUpdate {
+            collection_id: self.collection_id,
+            id: self.id,
+            sink_id: self.sink_id,
+            name: self.name,
+            description: self.description,
+            entity_types: self.entity_types,
+            actions: self.actions,
+            filter: self.filter,
+            routing: self.routing,
+            enabled: self.enabled,
+            event_context: self.event_context,
+        })
     }
 }
 
@@ -1268,6 +1464,11 @@ impl fmt::Debug for StorageEventSubscriptionDelete {
 }
 
 /// Complete event sink and subscription administration behavior.
+///
+/// Adapters must construct every returned projection through its fallible
+/// terminal builder and classify invalid persisted state as a backend failure.
+/// Patch implementations must validate the merged projection before commit,
+/// including when only one half of a subscription catalog pair is changed.
 #[async_trait]
 pub trait EventConfigurationStorage: Send + Sync {
     /// Return the number of enabled sinks used to decide whether fan-out
@@ -1291,7 +1492,7 @@ pub trait EventConfigurationStorage: Send + Sync {
     ) -> Result<MutationOutcome<StorageEventSink>, StorageError>;
 
     /// Atomically patch an event sink and its lifecycle event, preserving
-    /// no-op revision behavior.
+    /// no-op revision behavior and validating the merged projection.
     async fn update_event_sink(
         &self,
         request: StorageEventSinkUpdate,
@@ -1324,7 +1525,8 @@ pub trait EventConfigurationStorage: Send + Sync {
     ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError>;
 
     /// Atomically patch a collection-scoped subscription and its lifecycle
-    /// event, preserving no-op revision behavior.
+    /// event, preserving no-op revision behavior and validating the merged
+    /// projection.
     async fn update_event_subscription(
         &self,
         request: StorageEventSubscriptionUpdate,
@@ -1645,15 +1847,19 @@ mod tests {
             .configuration(serde_json::json!({"url": "https://secret.invalid"}))
             .secret_ref(Some("secret-reference".to_string()))
             .enabled(true)
-            .build();
+            .try_build()
+            .unwrap();
         let subscription = StorageEventSubscriptionCreate::builder(
             CollectionId::new(42).unwrap(),
             EventSinkId::new(43).unwrap(),
             "secret-subscription",
             event_context,
         )
+        .entity_types(vec![EntityType::Collection])
+        .actions(vec![Action::Created])
         .routing(serde_json::json!({"key": "secret-routing"}))
-        .build();
+        .try_build()
+        .unwrap();
         let debug = format!("{sink:?} {subscription:?}");
 
         assert!(!debug.contains("secret-name"));
@@ -1663,5 +1869,74 @@ mod tests {
         assert!(!debug.contains("secret-routing"));
         assert!(!debug.contains("42"));
         assert!(!debug.contains("43"));
+    }
+
+    #[test]
+    fn event_administration_builders_reject_invalid_requests() {
+        let context = EventContext::system();
+        assert!(
+            StorageEventSinkCreate::builder("", "webhook", context.clone())
+                .try_build()
+                .is_err()
+        );
+        assert!(
+            StorageEventSinkUpdate::builder(EventSinkId::new(1).unwrap(), context.clone())
+                .configuration(Some(serde_json::json!([])))
+                .try_build()
+                .is_err()
+        );
+        assert!(
+            StorageEventSubscriptionCreate::builder(
+                CollectionId::new(1).unwrap(),
+                EventSinkId::new(1).unwrap(),
+                "subscription",
+                context.clone(),
+            )
+            .try_build()
+            .is_err()
+        );
+        assert!(
+            StorageEventSubscriptionUpdate::builder(
+                CollectionId::new(1).unwrap(),
+                EventSubscriptionId::new(1).unwrap(),
+                context,
+            )
+            .routing(Some(serde_json::json!([])))
+            .try_build()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn persisted_event_administration_builders_reject_corrupt_projections() {
+        let created_at = Utc::now();
+        let updated_at = created_at - chrono::Duration::seconds(1);
+        assert!(
+            StorageEventSink::builder(
+                EventSinkId::new(1).unwrap(),
+                "sink",
+                "webhook",
+                created_at,
+                updated_at,
+                ResourceRevision::INITIAL,
+            )
+            .try_build()
+            .is_err()
+        );
+        assert!(
+            StorageEventSubscription::builder(
+                EventSubscriptionId::new(1).unwrap(),
+                CollectionId::new(1).unwrap(),
+                EventSinkId::new(1).unwrap(),
+                "subscription",
+                created_at,
+                created_at,
+                ResourceRevision::INITIAL,
+            )
+            .entity_types(vec![EntityType::ObjectRelation])
+            .actions(vec![Action::Updated])
+            .try_build()
+            .is_err()
+        );
     }
 }

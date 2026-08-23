@@ -268,7 +268,7 @@ pub async fn create_collection_event_delivery(
     let event = hubuum_storage_postgres::test_support::append_event(pool, &event)
         .await
         .map_err(hubuum_storage_core::StorageError::from)?;
-    let event_sequence = event.clone().into_parts().0.id;
+    let event_sequence = event.clone().into_parts().0.id();
     hubuum_storage_postgres::test_support::fanout_event(pool, event_sequence)
         .await
         .map_err(hubuum_storage_core::StorageError::from)?;
@@ -316,24 +316,24 @@ pub async fn set_event_delivery_claim_token(
 fn event_response(event: hubuum_storage_core::StorageRecordedEvent) -> EventResponse {
     let (event, before_revision, after_revision) = event.into_parts();
     EventResponse {
-        id: event.id.get(),
-        event_id: event.event_id,
-        occurred_at: event.occurred_at,
-        entity_type: event.entity_type,
-        entity_id: event.entity_id.map(EventEntityId::get),
-        entity_name: event.entity_name,
-        collection_id: event.collection_id.map(CollectionId::id),
-        action: event.action,
-        actor_user_id: event.actor_user_id.map(hubuum_domain::PrincipalId::id),
-        actor_kind: event.actor_kind,
-        provenance: event.provenance,
-        request_id: event.request_id,
-        correlation_id: event.correlation_id,
-        summary: event.summary,
-        before: event.before,
-        after: event.after,
-        metadata: event.metadata,
-        schema_version: event.schema_version,
+        id: event.id().get(),
+        event_id: event.event_id(),
+        occurred_at: event.occurred_at().naive_utc(),
+        entity_type: event.entity_type().as_str().to_string(),
+        entity_id: event.entity_id().map(EventEntityId::get),
+        entity_name: event.entity_name().map(ToOwned::to_owned),
+        collection_id: event.collection_id().map(CollectionId::id),
+        action: event.action().as_str().to_string(),
+        actor_user_id: event.actor_user_id().map(hubuum_domain::PrincipalId::id),
+        actor_kind: event.actor_kind().as_str().to_string(),
+        provenance: event.provenance().clone(),
+        request_id: event.request_id(),
+        correlation_id: event.correlation_id().map(ToOwned::to_owned),
+        summary: event.summary().to_string(),
+        before: event.before().cloned(),
+        after: event.after().cloned(),
+        metadata: event.metadata().clone(),
+        schema_version: event.schema_version(),
         before_revision,
         after_revision,
     }
@@ -501,7 +501,7 @@ pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<
             .filter(|value| !value.is_empty()),
     )
     .enabled(sink.enabled)
-    .build();
+    .try_build()?;
     PostgresStorage::unobserved(pool.clone())
         .create_event_sink(request)
         .await
@@ -520,6 +520,22 @@ pub async fn save_event_subscription(
         &subscription.filter,
         &subscription.routing,
     )?;
+    let entity_types = subscription
+        .entity_types
+        .iter()
+        .map(|value| {
+            EntityType::parse(value)
+                .map_err(|error| ApiError::BadRequest(format!("bad entity_type: {error}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let actions = subscription
+        .actions
+        .iter()
+        .map(|value| {
+            Action::parse(value)
+                .map_err(|error| ApiError::BadRequest(format!("bad action: {error}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let request = StorageEventSubscriptionCreate::builder(
         CollectionId::new(collection_id.id()).expect("persisted collection id must be positive"),
         EventSinkId::new(subscription.sink_id.id())
@@ -528,12 +544,12 @@ pub async fn save_event_subscription(
         hubuum_events_core::EventContext::system(),
     )
     .description(subscription.description)
-    .entity_types(subscription.entity_types)
-    .actions(subscription.actions)
+    .entity_types(entity_types)
+    .actions(actions)
     .filter(subscription.filter)
     .routing(subscription.routing)
     .enabled(subscription.enabled)
-    .build();
+    .try_build()?;
     PostgresStorage::unobserved(pool.clone())
         .create_event_subscription(request)
         .await

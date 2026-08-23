@@ -7,23 +7,9 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::events::{Event, PrincipalNames};
 use crate::storage::{EventDeliverySink, EventDeliverySubscription};
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
-
-impl From<Event> for EventEnvelope {
-    fn from(event: Event) -> Self {
-        event_envelope_with_names(event, &PrincipalNames::default())
-    }
-}
-
-pub(crate) fn event_envelope_with_names(
-    event: Event,
-    principal_names: &PrincipalNames,
-) -> EventEnvelope {
-    event.into_envelope(principal_names)
-}
 
 pub trait Sink: Send + Sync {
     fn deliver<'a>(
@@ -211,7 +197,7 @@ mod tests {
             sink: &'a EventDeliverySink,
         ) -> BoxFuture<'a, Result<(), SinkError>> {
             async move {
-                assert_eq!(envelope.entity_type, "collection");
+                assert_eq!(envelope.entity_type().as_str(), "collection");
                 assert_eq!(subscription.name(), "subscription");
                 assert_eq!(sink.name(), "sink");
                 Ok(())
@@ -222,38 +208,35 @@ mod tests {
 
     #[actix_rt::test]
     async fn sink_trait_can_be_mocked_without_worker_storage() {
-        let envelope = EventEnvelope {
-            id: crate::events::EventSequence::new(1).unwrap(),
-            event_id: Uuid::new_v4(),
-            occurred_at: chrono::Utc::now().naive_utc(),
-            entity_type: "collection".to_string(),
-            entity_id: Some(crate::events::EventEntityId::new(10).unwrap()),
-            entity_name: Some("example".to_string()),
-            collection_id: Some(crate::events::CollectionId::new(10).unwrap()),
-            action: "created".to_string(),
-            actor_user_id: None,
-            actor_kind: "system".to_string(),
-            provenance: hubuum_events_core::Provenance::default(),
-            request_id: None,
-            correlation_id: None,
-            summary: "created collection".to_string(),
-            before: None,
-            after: None,
-            metadata: serde_json::json!({}),
-            schema_version: 1,
-        };
-        let subscription = EventDeliverySubscription::new(
+        let envelope = EventEnvelope::builder()
+            .id(crate::events::EventSequence::new(1).unwrap())
+            .event_id(Uuid::new_v4())
+            .occurred_at(chrono::Utc::now())
+            .entity_type(crate::events::EntityType::Collection)
+            .entity_id(Some(crate::events::EventEntityId::new(10).unwrap()))
+            .entity_name(Some("example".to_string()))
+            .collection_id(Some(crate::events::CollectionId::new(10).unwrap()))
+            .action(crate::events::Action::Created)
+            .actor_kind(crate::events::ActorKind::System)
+            .summary("created collection".to_string())
+            .metadata(serde_json::json!({}))
+            .schema_version(1)
+            .try_build()
+            .unwrap();
+        let subscription = EventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
-        );
-        let sink = EventDeliverySink::new(
+        )
+        .unwrap();
+        let sink = EventDeliverySink::try_new(
             hubuum_domain::EventSinkId::new(1).unwrap(),
             "sink",
             "webhook",
             serde_json::json!({}),
             None,
-        );
+        )
+        .unwrap();
 
         RecordingSink
             .deliver(&envelope, &subscription, &sink)

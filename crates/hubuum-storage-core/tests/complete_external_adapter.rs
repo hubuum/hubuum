@@ -1610,7 +1610,7 @@ impl TaskExecutionStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl BackupSnapshotStorage for CompleteExternalAdapter {
-    async fn create_backup_snapshot(
+    async fn capture_backup_snapshot(
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {

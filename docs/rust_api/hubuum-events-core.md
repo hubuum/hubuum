@@ -20,10 +20,13 @@ where their type documentation or Hubuum's persisted event format says so;
 ordinary Rust helper representations are not independent wire protocols.
 
 Event envelopes and subscription filters are intentional serialized
-integration DTOs. Their public fields use validated event sequence, entity,
-collection, principal, and task identifier types. Mutation helpers keep their
-representation private, and catalog parsing uses semantic `parse` methods;
-database column terminology is not part of the public API.
+integration DTOs. Event envelopes keep their representation private, expose
+typed accessors, and require a fallible builder that validates catalog pairs,
+actor kind, UTC time, JSON payload shape, and schema version. Subscription
+filters retain a serialized field representation and are validated when they
+enter subscription boundary types. Mutation helpers keep their representation
+private, and catalog parsing uses semantic `parse` methods; database column
+terminology is not part of the public API.
 
 ## Errors, Runtime, and Security
 

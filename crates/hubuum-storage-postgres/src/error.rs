@@ -205,7 +205,7 @@ impl From<PoolError> for PostgresStorageError {
             backend = "postgresql",
             error = ?error,
         );
-        Self::database("PostgreSQL connection pool unavailable")
+        Self::unavailable("PostgreSQL connection pool unavailable")
     }
 }
 
@@ -322,6 +322,14 @@ mod tests {
         let error = PostgresStorageError::from(DieselError::NotFound);
 
         assert_eq!(error.kind(), StorageErrorKind::NotFound);
+    }
+
+    #[test]
+    fn pool_checkout_failures_are_temporarily_unavailable() {
+        let error: PoolError = PoolError::TimedOut;
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::Unavailable);
     }
 
     #[test]

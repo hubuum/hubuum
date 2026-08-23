@@ -3,9 +3,7 @@ use hubuum_domain::{
     EventDeliveryId, EventFanoutSettings, EventRetentionSettings, EventSinkId, EventSubscriptionId,
     ResourceRevision,
 };
-use hubuum_events_core::{
-    Action, EntityType, EventEnvelope, EventId, EventSequence, is_valid_pair,
-};
+use hubuum_events_core::{EventEnvelope, EventId, EventSequence};
 use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
@@ -51,26 +49,11 @@ impl StorageRecordedEvent {
     /// ordinary mutation APIs.
     pub fn into_audit_receipt(self) -> Result<AuditReceipt, StorageError> {
         let (envelope, before_revision, after_revision) = self.into_parts();
-        let entity_type = EntityType::parse(&envelope.entity_type).map_err(|error| {
-            StorageError::internal(format!(
-                "backend returned an invalid event entity type: {error}"
-            ))
-        })?;
-        let action = Action::parse(&envelope.action).map_err(|error| {
-            StorageError::internal(format!("backend returned an invalid event action: {error}"))
-        })?;
-        if !is_valid_pair(entity_type, action) {
-            return Err(StorageError::internal(format!(
-                "backend returned action '{}' for entity type '{}'",
-                action.as_str(),
-                entity_type.as_str(),
-            )));
-        }
         Ok(AuditReceipt::new(
-            envelope.id,
-            EventId::from(envelope.event_id),
-            entity_type,
-            action,
+            envelope.id(),
+            EventId::from(envelope.event_id()),
+            envelope.entity_type(),
+            envelope.action(),
             before_revision,
             after_revision,
         ))
@@ -107,7 +90,7 @@ impl EventDeliveryClaim {
         token: Uuid,
     ) -> Result<Self, StorageError> {
         if attempts < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageError::invalid_input(
                 "An event delivery claim cannot have a negative attempt count",
             ));
         }
@@ -156,21 +139,45 @@ pub struct EventDeliverySink {
 }
 
 impl EventDeliverySink {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         id: EventSinkId,
         name: impl Into<String>,
         kind: impl Into<String>,
         configuration: Value,
         secret_ref: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Event delivery sink name must not be empty",
+            ));
+        }
+        let kind = kind.into();
+        if kind.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Event delivery sink kind must not be empty",
+            ));
+        }
+        if !configuration.is_object() {
+            return Err(StorageError::invalid_input(
+                "Event delivery sink configuration must be a JSON object",
+            ));
+        }
+        if secret_ref
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(StorageError::invalid_input(
+                "Event delivery sink secret_ref must not be empty",
+            ));
+        }
+        Ok(Self {
             id,
-            name: name.into(),
-            kind: kind.into(),
+            name,
+            kind,
             configuration,
             secret_ref,
-        }
+        })
     }
 
     #[must_use]
@@ -224,13 +231,23 @@ pub struct EventDeliverySubscription {
 }
 
 impl EventDeliverySubscription {
-    #[must_use]
-    pub fn new(id: EventSubscriptionId, name: impl Into<String>, routing: Value) -> Self {
-        Self {
-            id,
-            name: name.into(),
-            routing,
+    pub fn try_new(
+        id: EventSubscriptionId,
+        name: impl Into<String>,
+        routing: Value,
+    ) -> Result<Self, StorageError> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(StorageError::invalid_input(
+                "Event delivery subscription name must not be empty",
+            ));
         }
+        if !routing.is_object() {
+            return Err(StorageError::invalid_input(
+                "Event delivery subscription routing must be a JSON object",
+            ));
+        }
+        Ok(Self { id, name, routing })
     }
 
     #[must_use]
@@ -326,8 +343,10 @@ impl EventDeliveryBatch {
 /// Claim and acknowledgement lifecycle required from every storage backend.
 ///
 /// The claim operation must atomically choose due work, mark it in flight, and
-/// return fully enriched delivery DTOs. Acknowledgements must verify the opaque
-/// claim so a stale worker cannot overwrite a newer attempt.
+/// return fully enriched, validated delivery DTOs. Invalid persisted envelope,
+/// sink, subscription, or claim values are backend failures and must roll back
+/// the claim. Acknowledgements must verify the opaque claim so a stale worker
+/// cannot overwrite a newer attempt.
 #[async_trait]
 pub trait EventDeliveryWorkerStorage: Send + Sync {
     async fn claim_event_delivery_batch(
@@ -529,18 +548,20 @@ mod tests {
         let token = Uuid::new_v4();
         let claim =
             EventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), 2, token).unwrap();
-        let sink = EventDeliverySink::new(
+        let sink = EventDeliverySink::try_new(
             EventSinkId::new(8).unwrap(),
             "webhook",
             "webhook",
             serde_json::json!({"authorization": "config-secret"}),
             Some("secret-reference".to_string()),
-        );
-        let subscription = EventDeliverySubscription::new(
+        )
+        .unwrap();
+        let subscription = EventDeliverySubscription::try_new(
             EventSubscriptionId::new(9).unwrap(),
             "subscription",
             serde_json::json!({"url": "https://routing-secret.invalid"}),
-        );
+        )
+        .unwrap();
 
         let debug = format!("{claim:?} {sink:?} {subscription:?}");
 
@@ -555,6 +576,28 @@ mod tests {
         assert!(
             EventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), -1, Uuid::new_v4(),)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn delivery_transport_values_reject_invalid_shapes() {
+        assert!(
+            EventDeliverySink::try_new(
+                EventSinkId::new(8).unwrap(),
+                "sink",
+                "webhook",
+                serde_json::json!([]),
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            EventDeliverySubscription::try_new(
+                EventSubscriptionId::new(9).unwrap(),
+                "subscription",
+                serde_json::json!([]),
+            )
+            .is_err()
         );
     }
 

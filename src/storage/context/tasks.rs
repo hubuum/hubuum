@@ -302,17 +302,17 @@ impl TaskExecutionStorage for StorageHandle {
 
 #[async_trait]
 impl BackupSnapshotStorage for StorageHandle {
-    async fn create_backup_snapshot(
+    async fn capture_backup_snapshot(
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::BackupSnapshot,
-            "create_backup_snapshot",
+            "capture_backup_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.create_backup_snapshot(include_history).await
+                    backend.capture_backup_snapshot(include_history).await
                 })
             },
         )

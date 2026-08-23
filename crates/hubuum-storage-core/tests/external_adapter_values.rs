@@ -7,7 +7,7 @@ use hubuum_domain::{
     PrincipalId, PrincipalKind, ResourceId, ResourceRevision, RestoreJobId, ServiceAccountId,
     TaskId, UserId,
 };
-use hubuum_events_core::EventSequence;
+use hubuum_events_core::{Action, ActorKind, EntityType, EventEnvelope, EventSequence};
 use hubuum_storage_core::*;
 
 #[test]
@@ -86,18 +86,20 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = ComputedObjectPage::try_new;
     let _ = EventDeliveryBatch::new;
     let _ = EventDeliveryClaim::try_new;
-    let _ = EventDeliverySink::new(
+    let _ = EventDeliverySink::try_new(
         EventSinkId::new(1).unwrap(),
         "sink",
         "webhook",
         serde_json::json!({}),
         None,
-    );
-    let _ = EventDeliverySubscription::new(
+    )
+    .unwrap();
+    let _ = EventDeliverySubscription::try_new(
         EventSubscriptionId::new(1).unwrap(),
         "subscription",
         serde_json::json!({}),
-    );
+    )
+    .unwrap();
     let _ = EventDeliveryWorkItem::new;
     let _ = EventDeliveryHealthSnapshot::new;
     let _ = EventMetricsSnapshot::new;
@@ -122,7 +124,19 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = OperationalTaskQueueSnapshot::new;
     let _ = ReadinessSnapshot::new;
     let _ = RemoteTargetHistoryRecord::new;
-    let _ = StorageRecordedEvent::new;
+    let event = EventEnvelope::builder()
+        .id(EventSequence::new(1).unwrap())
+        .event_id(uuid::Uuid::nil())
+        .occurred_at(now)
+        .entity_type(EntityType::Collection)
+        .action(Action::Created)
+        .actor_kind(ActorKind::System)
+        .summary("created collection".to_string())
+        .metadata(serde_json::json!({}))
+        .schema_version(1)
+        .try_build()
+        .unwrap();
+    let _ = StorageRecordedEvent::new(event, None, None);
     let _ = StorageBackupOutput::new(TaskId::new(1).unwrap(), Vec::new(), 0, "sha256", now, now);
     let _ = StorageBackupOutputSummary::new(TaskId::new(1).unwrap(), 0, "sha256", now);
     let _ = StorageBackupSnapshot::try_new;
@@ -144,7 +158,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         now,
         ResourceRevision::INITIAL,
     )
-    .build();
+    .try_build()
+    .unwrap();
     let _ = StorageEventSubscription::builder(
         EventSubscriptionId::new(1).unwrap(),
         collection_id,
@@ -154,7 +169,10 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         now,
         ResourceRevision::INITIAL,
     )
-    .build();
+    .entity_types(vec![EntityType::Collection])
+    .actions(vec![Action::Created])
+    .try_build()
+    .unwrap();
     let _ = StorageExportOutput::builder(
         TaskId::new(1).unwrap(),
         "application/json",
@@ -213,7 +231,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         now,
     )
     .build();
-    let _ = StorageInventoryCounts::new;
+    let _ = StorageInventoryCounts::try_new;
+    let _ = StorageObjectsByClassCount::try_new;
     let _ = object.clone();
     let _ = ObjectHistoryRecord::new;
     let _ = StorageObjectAggregateCursor::try_new;
@@ -322,8 +341,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageClassComputationStateBuilder::try_build;
     let _ = StorageClassRecordBuilder::build;
     let _ = StorageEventDeliveryBuilder::try_build;
-    let _ = StorageEventSinkBuilder::build;
-    let _ = StorageEventSubscriptionBuilder::build;
+    let _ = StorageEventSinkBuilder::try_build;
+    let _ = StorageEventSubscriptionBuilder::try_build;
     let _ = StorageExportOutputBuilder::build;
     let _ = StorageIdentityGroupBuilder::build;
     let _ = StorageImportTaskResultBuilder::build;

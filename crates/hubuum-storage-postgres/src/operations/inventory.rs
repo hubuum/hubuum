@@ -50,19 +50,26 @@ pub async fn load_inventory_counts(
                 .iter()
                 .filter_map(|row| row.class_id.zip(row.count))
                 .map(|(class_id, count)| {
-                    Ok(StorageObjectsByClassCount::new(
-                        ClassId::new(class_id)?,
-                        count,
-                    ))
+                    StorageObjectsByClassCount::try_new(ClassId::new(class_id)?, count).map_err(
+                        |error| {
+                            PostgresStorageError::invalid_persisted_value(
+                                "inventory class count",
+                                error,
+                            )
+                        },
+                    )
                 })
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
 
-            Ok::<_, PostgresStorageError>(StorageInventoryCounts::new(
+            StorageInventoryCounts::try_new(
                 first.total_objects,
                 first.total_classes,
                 first.total_collections,
                 objects_by_class,
-            ))
+            )
+            .map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("inventory totals", error)
+            })
         })
         .await
 }

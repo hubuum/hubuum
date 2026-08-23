@@ -806,13 +806,13 @@ fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), Contra
     for receipt in receipts.iter() {
         let Some((event, before_revision, after_revision)) = persisted_events
             .iter()
-            .find(|(event, _, _)| event.id == receipt.sequence())
+            .find(|(event, _, _)| event.id() == receipt.sequence())
         else {
             return Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent);
         };
-        if event.event_id != receipt.event_id().as_uuid()
-            || event.entity_type != receipt.entity_type().as_str()
-            || event.action != receipt.action().as_str()
+        if event.event_id() != receipt.event_id().as_uuid()
+            || event.entity_type() != receipt.entity_type()
+            || event.action() != receipt.action()
             || *before_revision != receipt.before_revision()
             || *after_revision != receipt.after_revision()
         {

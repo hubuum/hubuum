@@ -155,7 +155,26 @@ and bounded. IDs, names, queries, URLs, credentials, payloads, and error text
 must never become metric labels. Failed and rolled-back operations must still
 produce failure observation.
 
-### 5. Revision Conflicts Preserve the Current Revision
+### 5. Portable Error Classification Is Consistent
+
+Adapters must classify equivalent failures identically because the application
+uses the kind for HTTP status and retry behavior. This matrix is normative:
+
+| Condition | `StorageErrorKind` | Application behavior |
+| --- | --- | --- |
+| Pool exhaustion or timeout, connection establishment failure, temporarily unreachable storage service, or an explicit maintenance outage | `Unavailable` | Service unavailable; retry may succeed without changing the request. |
+| Query execution, transaction, driver, protocol, serialization, or persisted-value corruption after storage was reached | `Backend` | Backend failure; do not assume that an unchanged retry is safe. |
+| Adapter or Hubuum invariant violation unrelated to native persistence execution | `Internal` | Internal failure; operator or code correction is required. |
+| Configured authorization provider cannot answer safely | `AuthorizationUnavailable` | Permission service unavailable; never downgrade to a denial or local-policy fallback. |
+| Malformed caller input, oversized input, authentication, permission, rate, or semantic validation failure | The matching specific input or policy kind | Preserve the specific client-facing outcome; do not collapse it into a backend failure. |
+| Missing state, conflicting state, or a failed precondition | `NotFound`, `Conflict`, `RevisionConflict`, or `PreconditionFailed` | Preserve the expected domain outcome and any required current revision. |
+
+Native error text remains adapter-private. In particular, a pool checkout
+failure is `Unavailable`, while a failed query on an acquired connection is
+`Backend`. Corrupt persisted values are also `Backend`, even when the same DTO
+validator would classify caller-supplied data as invalid input.
+
+### 6. Revision Conflicts Preserve the Current Revision
 
 Optimistic-concurrency failures use `StorageErrorKind::RevisionConflict` and
 must carry the positive current `ResourceRevision`. Adapters must not discard,
@@ -163,7 +182,7 @@ guess, or stringify this value while translating native errors. The
 application projects the same value to its API error so a caller can refresh
 or retry against an authoritative revision.
 
-### 6. Selection Requires Behavioral Certification
+### 7. Selection Requires Behavioral Certification
 
 `hubuum-storage-conformance` supplies the reusable `BackendAuditFixture` and
 `verify_backend_audit_contract` runner. For each `StorageBackendKind::ALL`

@@ -11,7 +11,7 @@ use crate::models::{
     CURRENT_BACKUP_VERSION, NewTaskEventRecord, TaskResultCounts, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::services::backups::create_backup_snapshot;
+use crate::services::backups::capture_backup_snapshot;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
 use crate::storage::{StorageBackupTaskArtifact, StorageTaskCompletionArtifact};
 use crate::traits::AuthzSubject;
@@ -97,7 +97,7 @@ pub async fn create_backup_document(
     request: &BackupRequest,
 ) -> Result<BackupDocument, ApiError> {
     let include_history = request.include_history;
-    let (state, history) = create_backup_snapshot(backend, include_history).await?;
+    let (state, history) = capture_backup_snapshot(backend, include_history).await?;
     let manifest = build_manifest(&state, history.as_ref());
     Ok(BackupDocument {
         backup_version: CURRENT_BACKUP_VERSION,

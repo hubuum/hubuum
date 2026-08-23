@@ -37,6 +37,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for every registered backend, and uses adapter-private deterministic
   failpoints to verify rollback of compound collection and task-finalization
   writes.
+- Breaking storage-adapter API: event envelopes now expose typed, validated
+  accessors instead of public raw fields; event sink, subscription, and
+  inventory and delivery-work projections now require fallible construction;
+  subscription catalogs use `EntityType` and `Action`; event update requests
+  use terminal builders; and
+  `BackupSnapshotStorage::create_backup_snapshot` is renamed to
+  `capture_backup_snapshot`. External adapter authors must migrate field reads
+  to accessors, handle `try_build` or `try_new` failures as backend corruption
+  when decoding persisted state, use typed subscription catalog values, and
+  rename the backup snapshot method.
 - Storage query documentation now defines common visibility, counting,
   snapshot, ordering, cursor, limit, and error semantics plus the exact
   identity-membership and collection-authorization filter/sort matrix. The

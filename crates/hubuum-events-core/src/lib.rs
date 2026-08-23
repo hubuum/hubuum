@@ -14,7 +14,7 @@
 
 use std::fmt;
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 pub use hubuum_domain::{CollectionId, PrincipalId, TaskId};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
@@ -27,8 +27,9 @@ use uuid::Uuid;
 /// Stored as text on the `events.actor_kind` column. System actors cover
 /// maintenance and recovery paths; worker actors carry root-task causation
 /// through the event's durable initiator and task provenance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
 pub enum ActorKind {
     User,
     System,
@@ -232,8 +233,9 @@ impl EventContext {
 /// This is the API/concept name, **not** the table name (`class`, not
 /// `hubuumclass`). Stored as text on `events.entity_type` and validated
 /// against the catalog at emit time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
 pub enum EntityType {
     Collection,
     Class,
@@ -311,8 +313,9 @@ impl EntityType {
 /// relations have no `Updated`; `permission` is grant/revoke; `user_group` is
 /// add/remove; `token` is created/revoked/purged; `remote_target` adds `Invoked`;
 /// `task` is lifecycle-only (see #87).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
 pub enum Action {
     Created,
     Updated,
@@ -535,26 +538,278 @@ impl utoipa::PartialSchema for EventEntityId {
 impl utoipa::ToSchema for EventEntityId {}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "EventEnvelopeWire")]
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventEnvelope {
-    pub id: EventSequence,
-    pub event_id: Uuid,
-    pub occurred_at: NaiveDateTime,
-    pub entity_type: String,
-    pub entity_id: Option<EventEntityId>,
-    pub entity_name: Option<String>,
-    pub collection_id: Option<CollectionId>,
-    pub action: String,
-    pub actor_user_id: Option<PrincipalId>,
-    pub actor_kind: String,
-    pub provenance: Provenance,
-    pub request_id: Option<Uuid>,
-    pub correlation_id: Option<String>,
-    pub summary: String,
-    pub before: Option<serde_json::Value>,
-    pub after: Option<serde_json::Value>,
-    pub metadata: serde_json::Value,
-    pub schema_version: i32,
+    id: EventSequence,
+    event_id: Uuid,
+    #[serde(serialize_with = "serialize_utc_as_naive")]
+    #[cfg_attr(feature = "schema", schema(value_type = NaiveDateTime))]
+    occurred_at: DateTime<Utc>,
+    entity_type: EntityType,
+    entity_id: Option<EventEntityId>,
+    entity_name: Option<String>,
+    collection_id: Option<CollectionId>,
+    action: Action,
+    actor_user_id: Option<PrincipalId>,
+    actor_kind: ActorKind,
+    provenance: Provenance,
+    request_id: Option<Uuid>,
+    correlation_id: Option<String>,
+    summary: String,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
+    metadata: serde_json::Value,
+    schema_version: i32,
+}
+
+fn serialize_utc_as_naive<S>(timestamp: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    timestamp.naive_utc().serialize(serializer)
+}
+
+#[derive(Deserialize)]
+struct EventEnvelopeWire {
+    id: EventSequence,
+    event_id: Uuid,
+    occurred_at: NaiveDateTime,
+    entity_type: EntityType,
+    entity_id: Option<EventEntityId>,
+    entity_name: Option<String>,
+    collection_id: Option<CollectionId>,
+    action: Action,
+    actor_user_id: Option<PrincipalId>,
+    actor_kind: ActorKind,
+    provenance: Provenance,
+    request_id: Option<Uuid>,
+    correlation_id: Option<String>,
+    summary: String,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
+    metadata: serde_json::Value,
+    schema_version: i32,
+}
+
+impl TryFrom<EventEnvelopeWire> for EventEnvelope {
+    type Error = EventEnvelopeError;
+
+    fn try_from(wire: EventEnvelopeWire) -> Result<Self, Self::Error> {
+        EventEnvelope::builder()
+            .id(wire.id)
+            .event_id(wire.event_id)
+            .occurred_at(wire.occurred_at.and_utc())
+            .entity_type(wire.entity_type)
+            .entity_id(wire.entity_id)
+            .entity_name(wire.entity_name)
+            .collection_id(wire.collection_id)
+            .action(wire.action)
+            .actor_user_id(wire.actor_user_id)
+            .actor_kind(wire.actor_kind)
+            .provenance(wire.provenance)
+            .request_id(wire.request_id)
+            .correlation_id(wire.correlation_id)
+            .summary(wire.summary)
+            .before(wire.before)
+            .after(wire.after)
+            .metadata(wire.metadata)
+            .schema_version(wire.schema_version)
+            .try_build()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventEnvelopeError {
+    message: String,
+}
+
+impl EventEnvelopeError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for EventEnvelopeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for EventEnvelopeError {}
+
+#[derive(Default)]
+pub struct EventEnvelopeBuilder {
+    id: Option<EventSequence>,
+    event_id: Option<Uuid>,
+    occurred_at: Option<DateTime<Utc>>,
+    entity_type: Option<EntityType>,
+    entity_id: Option<EventEntityId>,
+    entity_name: Option<String>,
+    collection_id: Option<CollectionId>,
+    action: Option<Action>,
+    actor_user_id: Option<PrincipalId>,
+    actor_kind: Option<ActorKind>,
+    provenance: Provenance,
+    request_id: Option<Uuid>,
+    correlation_id: Option<String>,
+    summary: Option<String>,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
+    metadata: Option<serde_json::Value>,
+    schema_version: Option<i32>,
+}
+
+macro_rules! event_envelope_builder_required_setter {
+    ($name:ident, $field:ident, $type:ty) => {
+        #[must_use]
+        pub fn $name(mut self, value: $type) -> Self {
+            self.$field = Some(value);
+            self
+        }
+    };
+}
+
+macro_rules! event_envelope_builder_optional_setter {
+    ($name:ident, $field:ident, $type:ty) => {
+        #[must_use]
+        pub fn $name(mut self, value: Option<$type>) -> Self {
+            self.$field = value;
+            self
+        }
+    };
+}
+
+impl EventEnvelopeBuilder {
+    event_envelope_builder_required_setter!(id, id, EventSequence);
+    event_envelope_builder_required_setter!(event_id, event_id, Uuid);
+    event_envelope_builder_required_setter!(occurred_at, occurred_at, DateTime<Utc>);
+    event_envelope_builder_required_setter!(entity_type, entity_type, EntityType);
+    event_envelope_builder_optional_setter!(entity_id, entity_id, EventEntityId);
+    event_envelope_builder_optional_setter!(entity_name, entity_name, String);
+    event_envelope_builder_optional_setter!(collection_id, collection_id, CollectionId);
+    event_envelope_builder_required_setter!(action, action, Action);
+    event_envelope_builder_optional_setter!(actor_user_id, actor_user_id, PrincipalId);
+    event_envelope_builder_required_setter!(actor_kind, actor_kind, ActorKind);
+    event_envelope_builder_optional_setter!(request_id, request_id, Uuid);
+    event_envelope_builder_optional_setter!(correlation_id, correlation_id, String);
+    event_envelope_builder_required_setter!(summary, summary, String);
+    event_envelope_builder_optional_setter!(before, before, serde_json::Value);
+    event_envelope_builder_optional_setter!(after, after, serde_json::Value);
+    event_envelope_builder_required_setter!(metadata, metadata, serde_json::Value);
+    event_envelope_builder_required_setter!(schema_version, schema_version, i32);
+
+    #[must_use]
+    pub fn provenance(mut self, value: Provenance) -> Self {
+        self.provenance = value;
+        self
+    }
+
+    pub fn try_build(self) -> Result<EventEnvelope, EventEnvelopeError> {
+        let entity_type = self
+            .entity_type
+            .ok_or_else(|| EventEnvelopeError::new("event envelope is missing entity_type"))?;
+        let action = self
+            .action
+            .ok_or_else(|| EventEnvelopeError::new("event envelope is missing action"))?;
+        if !is_valid_pair(entity_type, action) {
+            return Err(EventEnvelopeError::new(format!(
+                "action '{}' is not valid for entity type '{}'",
+                action.as_str(),
+                entity_type.as_str()
+            )));
+        }
+
+        let actor_kind = self
+            .actor_kind
+            .ok_or_else(|| EventEnvelopeError::new("event envelope is missing actor_kind"))?;
+        let actor_user_id = self.actor_user_id;
+        let mut provenance = self.provenance;
+        if let Some(provenance_kind) = provenance.actor.kind.as_deref() {
+            let provenance_kind = ActorKind::parse(provenance_kind)
+                .map_err(|error| EventEnvelopeError::new(error.to_string()))?;
+            if provenance_kind != actor_kind {
+                return Err(EventEnvelopeError::new(
+                    "event envelope actor kind does not match its provenance actor kind",
+                ));
+            }
+        } else {
+            provenance.actor.kind = Some(actor_kind.as_str().to_string());
+        }
+        match (actor_user_id, provenance.actor.principal.as_ref()) {
+            (Some(actor_user_id), Some(principal)) if principal.principal_id != actor_user_id => {
+                return Err(EventEnvelopeError::new(
+                    "event envelope actor id does not match its provenance actor principal",
+                ));
+            }
+            (Some(actor_user_id), None) => {
+                provenance.actor.principal = Some(ProvenancePrincipal {
+                    principal_id: actor_user_id,
+                    name: None,
+                });
+            }
+            (None, Some(_)) => {
+                return Err(EventEnvelopeError::new(
+                    "event envelope provenance actor principal has no matching actor id",
+                ));
+            }
+            _ => {}
+        }
+
+        let metadata = self
+            .metadata
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        if !metadata.is_object() {
+            return Err(EventEnvelopeError::new(
+                "event envelope metadata must be a JSON object",
+            ));
+        }
+        for (field, snapshot) in [("before", &self.before), ("after", &self.after)] {
+            if snapshot.as_ref().is_some_and(|value| !value.is_object()) {
+                return Err(EventEnvelopeError::new(format!(
+                    "event envelope {field} snapshot must be a JSON object"
+                )));
+            }
+        }
+
+        let schema_version = self.schema_version.unwrap_or(1);
+        if schema_version <= 0 {
+            return Err(EventEnvelopeError::new(
+                "event envelope schema_version must be positive",
+            ));
+        }
+
+        Ok(EventEnvelope {
+            id: self
+                .id
+                .ok_or_else(|| EventEnvelopeError::new("event envelope is missing id"))?,
+            event_id: self
+                .event_id
+                .ok_or_else(|| EventEnvelopeError::new("event envelope is missing event_id"))?,
+            occurred_at: self
+                .occurred_at
+                .ok_or_else(|| EventEnvelopeError::new("event envelope is missing occurred_at"))?,
+            entity_type,
+            entity_id: self.entity_id,
+            entity_name: self.entity_name,
+            collection_id: self.collection_id,
+            action,
+            actor_user_id,
+            actor_kind,
+            provenance,
+            request_id: self.request_id,
+            correlation_id: self.correlation_id,
+            summary: self
+                .summary
+                .ok_or_else(|| EventEnvelopeError::new("event envelope is missing summary"))?,
+            before: self.before,
+            after: self.after,
+            metadata,
+            schema_version,
+        })
+    }
 }
 
 impl fmt::Debug for EventEnvelope {
@@ -584,6 +839,108 @@ impl fmt::Debug for EventEnvelope {
 }
 
 impl EventEnvelope {
+    #[must_use]
+    pub fn builder() -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::default()
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> EventSequence {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn event_id(&self) -> Uuid {
+        self.event_id
+    }
+
+    #[must_use]
+    pub const fn occurred_at(&self) -> DateTime<Utc> {
+        self.occurred_at
+    }
+
+    #[must_use]
+    pub const fn entity_type(&self) -> EntityType {
+        self.entity_type
+    }
+
+    #[must_use]
+    pub const fn entity_id(&self) -> Option<EventEntityId> {
+        self.entity_id
+    }
+
+    #[must_use]
+    pub fn entity_name(&self) -> Option<&str> {
+        self.entity_name.as_deref()
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> Option<CollectionId> {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub const fn action(&self) -> Action {
+        self.action
+    }
+
+    #[must_use]
+    pub const fn actor_user_id(&self) -> Option<PrincipalId> {
+        self.actor_user_id
+    }
+
+    #[must_use]
+    pub const fn actor_kind(&self) -> ActorKind {
+        self.actor_kind
+    }
+
+    #[must_use]
+    pub const fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    #[must_use]
+    pub const fn request_id(&self) -> Option<Uuid> {
+        self.request_id
+    }
+
+    #[must_use]
+    pub fn correlation_id(&self) -> Option<&str> {
+        self.correlation_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    #[must_use]
+    pub const fn before(&self) -> Option<&serde_json::Value> {
+        self.before.as_ref()
+    }
+
+    #[must_use]
+    pub const fn after(&self) -> Option<&serde_json::Value> {
+        self.after.as_ref()
+    }
+
+    #[must_use]
+    pub const fn metadata(&self) -> &serde_json::Value {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> i32 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub fn without_payloads(mut self) -> Self {
+        self.before = None;
+        self.after = None;
+        self
+    }
+
     pub fn related_collection_ids(&self) -> Vec<CollectionId> {
         self.metadata
             .get("related_collection_ids")
@@ -635,25 +992,25 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
-        matches_optional(&self.collection_ids, event.collection_id)
+        matches_optional(&self.collection_ids, event.collection_id())
             && matches_any(
                 &self.related_collection_ids,
                 &event.related_collection_ids(),
             )
-            && matches_optional(&self.entity_ids, event.entity_id)
-            && matches_optional_str(&self.entity_names, event.entity_name.as_deref())
-            && matches_str(&self.actor_kinds, &event.actor_kind)
-            && matches_optional(&self.actor_user_ids, event.actor_user_id)
+            && matches_optional(&self.entity_ids, event.entity_id())
+            && matches_optional_str(&self.entity_names, event.entity_name())
+            && matches_str(&self.actor_kinds, event.actor_kind().as_str())
+            && matches_optional(&self.actor_user_ids, event.actor_user_id())
             && matches_optional(
                 &self.initiator_user_ids,
                 event
-                    .provenance
+                    .provenance()
                     .initiator
                     .as_ref()
                     .map(|principal| principal.principal_id),
             )
-            && matches_optional_uuid(&self.request_ids, event.request_id)
-            && matches_optional_str(&self.correlation_ids, event.correlation_id.as_deref())
+            && matches_optional_uuid(&self.request_ids, event.request_id())
+            && matches_optional_str(&self.correlation_ids, event.correlation_id())
     }
 
     pub fn validate(&self) -> Result<(), EventFilterError> {
@@ -1414,10 +1771,10 @@ mod tests {
     #[test]
     fn subscription_filter_matches_selected_dimensions() {
         let request_id = Uuid::new_v4();
-        let event = EventEnvelope {
-            request_id: Some(request_id),
-            ..envelope()
-        };
+        let event = envelope_builder()
+            .request_id(Some(request_id))
+            .try_build()
+            .unwrap();
         let filter = EventSubscriptionFilter {
             collection_ids: vec![CollectionId::new(10).unwrap()],
             related_collection_ids: vec![CollectionId::new(20).unwrap()],
@@ -1445,11 +1802,16 @@ mod tests {
 
     #[test]
     fn subscription_filter_matches_task_initiator() {
-        let mut event = envelope();
-        event.provenance.initiator = Some(ProvenancePrincipal {
-            principal_id: PrincipalId::new(77).unwrap(),
-            name: Some("submitter".to_string()),
-        });
+        let event = envelope_builder()
+            .provenance(Provenance {
+                initiator: Some(ProvenancePrincipal {
+                    principal_id: PrincipalId::new(77).unwrap(),
+                    name: Some("submitter".to_string()),
+                }),
+                ..Provenance::default()
+            })
+            .try_build()
+            .unwrap();
         let filter = EventSubscriptionFilter {
             initiator_user_ids: vec![PrincipalId::new(77).unwrap()],
             ..EventSubscriptionFilter::default()
@@ -1484,38 +1846,42 @@ mod tests {
         ));
     }
 
+    fn envelope_builder() -> EventEnvelopeBuilder {
+        EventEnvelope::builder()
+            .id(EventSequence::new(1).unwrap())
+            .event_id(Uuid::new_v4())
+            .occurred_at(
+                chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc(),
+            )
+            .entity_type(EntityType::Collection)
+            .entity_id(Some(EventEntityId::new(30).unwrap()))
+            .entity_name(Some("test entity".to_string()))
+            .collection_id(Some(CollectionId::new(10).unwrap()))
+            .action(Action::Created)
+            .actor_user_id(Some(PrincipalId::new(40).unwrap()))
+            .actor_kind(ActorKind::User)
+            .correlation_id(Some("correlation".to_string()))
+            .summary("summary".to_string())
+            .metadata(serde_json::json!({"related_collection_ids": [20, "21"]}))
+            .schema_version(1)
+    }
+
     fn envelope() -> EventEnvelope {
-        EventEnvelope {
-            id: EventSequence::new(1).unwrap(),
-            event_id: Uuid::new_v4(),
-            occurred_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
-            entity_type: "collection".to_string(),
-            entity_id: Some(EventEntityId::new(30).unwrap()),
-            entity_name: Some("test entity".to_string()),
-            collection_id: Some(CollectionId::new(10).unwrap()),
-            action: "created".to_string(),
-            actor_user_id: Some(PrincipalId::new(40).unwrap()),
-            actor_kind: "user".to_string(),
-            provenance: Provenance::default(),
-            request_id: None,
-            correlation_id: Some("correlation".to_string()),
-            summary: "summary".to_string(),
-            before: None,
-            after: None,
-            metadata: serde_json::json!({"related_collection_ids": [20, "21"]}),
-            schema_version: 1,
-        }
+        envelope_builder().try_build().unwrap()
     }
 
     #[test]
     fn event_envelope_debug_redacts_payload_snapshots() {
-        let mut event = envelope();
-        event.before = Some(serde_json::json!({"token": "before-secret"}));
-        event.after = Some(serde_json::json!({"token": "after-secret"}));
-        event.metadata = serde_json::json!({"token": "metadata-secret"});
+        let event = envelope_builder()
+            .before(Some(serde_json::json!({"token": "before-secret"})))
+            .after(Some(serde_json::json!({"token": "after-secret"})))
+            .metadata(serde_json::json!({"token": "metadata-secret"}))
+            .try_build()
+            .unwrap();
 
         let debug = format!("{event:?}");
 
@@ -1523,6 +1889,94 @@ mod tests {
         assert!(!debug.contains("before-secret"));
         assert!(!debug.contains("after-secret"));
         assert!(!debug.contains("metadata-secret"));
+    }
+
+    #[test]
+    fn event_envelope_rejects_invalid_catalog_and_payload_values() {
+        let invalid_pair = envelope_builder()
+            .entity_type(EntityType::ObjectRelation)
+            .action(Action::Updated)
+            .try_build();
+        assert!(invalid_pair.is_err());
+
+        assert!(
+            envelope_builder()
+                .metadata(serde_json::json!([]))
+                .try_build()
+                .is_err()
+        );
+        assert!(
+            envelope_builder()
+                .before(Some(serde_json::json!("not an object")))
+                .try_build()
+                .is_err()
+        );
+        assert!(envelope_builder().schema_version(0).try_build().is_err());
+    }
+
+    #[test]
+    fn event_envelope_rejects_invalid_or_mismatched_provenance_actor_kind() {
+        let invalid = envelope_builder()
+            .provenance(Provenance {
+                actor: ProvenanceActor {
+                    kind: Some("anonymous".to_string()),
+                    principal: None,
+                },
+                ..Provenance::default()
+            })
+            .try_build();
+        assert!(invalid.is_err());
+
+        let mismatched = envelope_builder()
+            .provenance(Provenance {
+                actor: ProvenanceActor {
+                    kind: Some(ActorKind::Worker.as_str().to_string()),
+                    principal: None,
+                },
+                ..Provenance::default()
+            })
+            .try_build();
+        assert!(mismatched.is_err());
+
+        let mismatched_principal = envelope_builder()
+            .provenance(Provenance {
+                actor: ProvenanceActor {
+                    kind: Some(ActorKind::User.as_str().to_string()),
+                    principal: Some(ProvenancePrincipal {
+                        principal_id: PrincipalId::new(41).unwrap(),
+                        name: None,
+                    }),
+                },
+                ..Provenance::default()
+            })
+            .try_build();
+        assert!(mismatched_principal.is_err());
+    }
+
+    #[test]
+    fn event_envelope_canonicalizes_missing_actor_provenance() {
+        let event = envelope();
+
+        assert_eq!(event.provenance().actor.kind.as_deref(), Some("user"));
+        assert_eq!(
+            event
+                .provenance()
+                .actor
+                .principal
+                .as_ref()
+                .map(|principal| principal.principal_id),
+            event.actor_user_id()
+        );
+    }
+
+    #[test]
+    fn event_envelope_serialization_preserves_naive_utc_wire_format() {
+        let event = envelope();
+        let value = serde_json::to_value(&event).unwrap();
+
+        assert_eq!(value["occurred_at"], "2026-01-01T00:00:00");
+        let decoded: EventEnvelope = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.occurred_at(), event.occurred_at());
     }
 
     #[test]

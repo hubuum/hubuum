@@ -184,10 +184,13 @@ ExampleStorageError -> StorageError -> ApiError
 ```
 
 Map expected outcomes to the narrowest `StorageErrorKind`, including not found,
-conflict, validation, and stale precondition. Map connectivity and native
-execution failures to backend or unavailable classifications as appropriate.
-Keep diagnostic detail in those logs; the portable error retains only a safe
-classification, message, and optional current revision.
+conflict, validation, and stale precondition. Follow the normative error matrix
+in the [storage contract](contract.md#5-portable-error-classification-is-consistent):
+pool, connection-establishment, and temporary service reachability failures are
+`Unavailable`; failures executing against a reached backend and corrupt
+persisted values are `Backend`. Keep diagnostic detail in adapter-owned logs;
+the portable error retains only a safe classification, message, and optional
+current revision.
 
 Treat the kind and structured fields as the portable contract. The message is
 safe human-readable diagnostic prose, not a stable code, and callers must not
