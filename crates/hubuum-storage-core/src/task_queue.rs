@@ -7,7 +7,6 @@ use hubuum_events_core::EventSequence;
 use hubuum_query::QueryOptions;
 use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::{StorageError, StoragePage};
 
@@ -379,7 +378,6 @@ pub struct StorageTask {
     deleted_by: Option<PrincipalId>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
-    lease_token: Option<Uuid>,
     lease_expires_at: Option<DateTime<Utc>>,
     attempt_count: i32,
     initiator_principal_id: Option<PrincipalId>,
@@ -413,7 +411,6 @@ impl StorageTask {
                 deleted_by: None,
                 created_at,
                 updated_at,
-                lease_token: None,
                 lease_expires_at: None,
                 attempt_count: 0,
                 initiator_principal_id: None,
@@ -507,8 +504,8 @@ impl StorageTask {
     }
 
     #[must_use]
-    pub const fn lease_token(&self) -> Option<Uuid> {
-        self.lease_token
+    pub const fn has_lease(&self) -> bool {
+        self.lease_expires_at.is_some()
     }
 
     #[must_use]
@@ -537,7 +534,7 @@ impl fmt::Debug for StorageTask {
             .field("has_submitter", &self.submitted_by.is_some())
             .field("has_summary", &self.summary.is_some())
             .field("has_request_payload", &self.request_payload.is_some())
-            .field("has_lease", &self.lease_token.is_some())
+            .field("has_lease", &self.has_lease())
             .field("identity_and_payload", &"[redacted]")
             .finish_non_exhaustive()
     }
@@ -620,12 +617,7 @@ impl StorageTaskBuilder {
     }
 
     #[must_use]
-    pub const fn lease(
-        mut self,
-        lease_token: Option<Uuid>,
-        lease_expires_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        self.task.lease_token = lease_token;
+    pub const fn lease_expires_at(mut self, lease_expires_at: Option<DateTime<Utc>>) -> Self {
         self.task.lease_expires_at = lease_expires_at;
         self
     }
@@ -1407,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn task_debug_redacts_identity_payload_scope_and_claim() {
+    fn task_debug_redacts_identity_payload_and_scope() {
         let now = chrono::Utc::now();
         let task = StorageTask::builder(
             TaskId::new(91_001).unwrap(),
@@ -1428,10 +1420,7 @@ mod tests {
             serde_json::json!({"permissions": ["secret"]}),
         ))
         .started_at(Some(now))
-        .lease(
-            Some(Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap()),
-            Some(now),
-        )
+        .lease_expires_at(Some(now))
         .attempt_count(1)
         .initiator_principal_id(Some(PrincipalId::new(91_004).unwrap()))
         .build();
@@ -1447,11 +1436,11 @@ mod tests {
             "secret hash",
             "secret\": \"payload",
             "permissions\": [\"secret",
-            "11111111",
         ] {
             assert!(!debug.contains(secret));
         }
         assert!(debug.contains("Import"));
         assert!(debug.contains("Running"));
+        assert!(debug.contains("has_lease: true"));
     }
 }

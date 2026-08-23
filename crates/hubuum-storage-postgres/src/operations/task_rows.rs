@@ -50,6 +50,7 @@ impl TaskRow {
         let status = StorageTaskStatus::from_persisted(&self.status).ok_or_else(|| {
             PostgresStorageError::database(format!("Unknown stored task status '{}'", self.status))
         })?;
+        let lease_expires_at = projected_lease_expiry(self.lease_token, self.lease_expires_at)?;
         Ok(StorageTask::builder(
             TaskId::new(self.id)?,
             kind,
@@ -83,12 +84,55 @@ impl TaskRow {
             self.deleted_at.map(|timestamp| timestamp.and_utc()),
             self.deleted_by.map(PrincipalId::new).transpose()?,
         )
-        .lease(
-            self.lease_token,
-            self.lease_expires_at.map(|timestamp| timestamp.and_utc()),
-        )
+        .lease_expires_at(lease_expires_at)
         .attempt_count(self.attempt_count)
         .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
         .build())
+    }
+}
+
+fn projected_lease_expiry(
+    token: Option<Uuid>,
+    expires_at: Option<NaiveDateTime>,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, PostgresStorageError> {
+    match (token, expires_at) {
+        (None, None) => Ok(None),
+        (Some(_), Some(expires_at)) => Ok(Some(expires_at.and_utc())),
+        _ => Err(PostgresStorageError::database(
+            "Persisted task lease token and expiry must both be present or absent",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hubuum_storage_core::StorageErrorKind;
+
+    use super::*;
+
+    #[test]
+    fn task_projection_hides_the_native_lease_token() {
+        let expires_at = chrono::Utc::now().naive_utc();
+
+        let projected = projected_lease_expiry(Some(Uuid::new_v4()), Some(expires_at))
+            .expect("a complete persisted lease should project successfully");
+
+        assert_eq!(projected, Some(expires_at.and_utc()));
+    }
+
+    #[test]
+    fn task_projection_rejects_a_lease_token_without_an_expiry() {
+        let error = projected_lease_expiry(Some(Uuid::new_v4()), None)
+            .expect_err("a partial persisted lease must be rejected");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn task_projection_rejects_a_lease_expiry_without_a_token() {
+        let error = projected_lease_expiry(None, Some(chrono::Utc::now().naive_utc()))
+            .expect_err("a partial persisted lease must be rejected");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
     }
 }

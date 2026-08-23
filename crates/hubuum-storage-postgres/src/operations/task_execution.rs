@@ -198,7 +198,7 @@ pub async fn claim_next_task(
             TaskId::new(row.id)?,
             StorageTaskClaimToken::new(token.to_string()),
         );
-        Ok(StorageTaskClaim::new(row.into_storage()?, lease))
+        Ok(StorageTaskClaim::try_new(row.into_storage()?, lease)?)
     })
     .transpose()
 }
@@ -462,7 +462,7 @@ pub async fn fail_task(
     let counts = match kind {
         StorageTaskKind::Import => import_result_counts(runtime, claimed.id).await?,
         StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
-            StorageTaskResultCounts::new(1, 0, 1)
+            StorageTaskResultCounts::try_new(1, 0, 1)?
         }
         StorageTaskKind::Reindex => {
             validated_counts(stored.processed_items, stored.success_items, 1)?
@@ -720,7 +720,6 @@ fn state_update(
     request: StorageTaskStateUpdate,
 ) -> Result<(ClaimedTask, TaskStateUpdate), PostgresStorageError> {
     let (lease, status, summary, counts, started_at) = request.into_parts();
-    validate_counts(counts)?;
     Ok((
         claimed_task(&lease)?,
         TaskStateUpdate {
@@ -755,24 +754,15 @@ fn validate_lease_duration(
     }
 }
 
-fn validate_counts(counts: StorageTaskResultCounts) -> Result<(), PostgresStorageError> {
-    if counts.processed() < 0 || counts.succeeded() < 0 || counts.failed() < 0 {
-        Err(PostgresStorageError::internal(
-            "Task result counts must not be negative",
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 fn validated_counts(
     processed: i32,
     succeeded: i32,
     failed: i32,
 ) -> Result<StorageTaskResultCounts, PostgresStorageError> {
-    let counts = StorageTaskResultCounts::new(processed, succeeded, failed);
-    validate_counts(counts)?;
-    Ok(counts)
+    crate::validate_persisted(
+        "task result counts",
+        StorageTaskResultCounts::try_new(processed, succeeded, failed),
+    )
 }
 
 fn stored_task_kind(task: &TaskRow) -> Result<StorageTaskKind, PostgresStorageError> {
@@ -817,7 +807,7 @@ async fn recovered_counts(
     match kind {
         StorageTaskKind::Import => import_result_counts_connection(connection, task.id).await,
         StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
-            Ok(StorageTaskResultCounts::new(1, 0, 1))
+            StorageTaskResultCounts::try_new(1, 0, 1).map_err(PostgresStorageError::from)
         }
         StorageTaskKind::Reindex => {
             validated_counts(task.processed_items, task.success_items, task.failed_items)
@@ -861,7 +851,7 @@ async fn import_result_counts_connection(
         .map_err(|_| PostgresStorageError::database("Import task success count is out of range"))?;
     let failed = i32::try_from(failed)
         .map_err(|_| PostgresStorageError::database("Import task failure count is out of range"))?;
-    Ok(StorageTaskResultCounts::new(processed, succeeded, failed))
+    validated_counts(processed, succeeded, failed)
 }
 
 async fn mark_reindex_failed(

@@ -231,7 +231,6 @@ pub struct TaskRecord {
     pub deleted_by: Option<i32>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
-    pub lease_token: Option<uuid::Uuid>,
     pub lease_expires_at: Option<NaiveDateTime>,
     pub attempt_count: i32,
     pub initiator_user_id: Option<i32>,
@@ -269,7 +268,7 @@ impl fmt::Debug for TaskRecord {
             .field("deleted_by", &self.deleted_by)
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
-            .field("lease_token", &redacted_debug_option(&self.lease_token))
+            .field("has_lease", &self.lease_expires_at.is_some())
             .field("lease_expires_at", &self.lease_expires_at)
             .field("attempt_count", &self.attempt_count)
             .field("initiator_user_id", &self.initiator_user_id)
@@ -986,9 +985,8 @@ mod tests {
     }
 
     #[test]
-    fn task_record_debug_redacts_request_and_lease_material() {
+    fn task_record_debug_redacts_request_and_scope_material() {
         let timestamp = test_timestamp();
-        let lease_token = uuid::Uuid::parse_str("de305d54-75b4-431b-adb2-eb6b9e546014").unwrap();
         let task = TaskRecord {
             id: 7,
             kind: TaskKind::Import.as_str().to_string(),
@@ -1012,7 +1010,6 @@ mod tests {
             deleted_by: None,
             created_at: timestamp,
             updated_at: timestamp,
-            lease_token: Some(lease_token),
             lease_expires_at: Some(timestamp),
             attempt_count: 1,
             initiator_user_id: Some(1),
@@ -1027,7 +1024,6 @@ mod tests {
             "request-hash-secret",
             "payload-secret",
             "scope-secret",
-            "de305d54-75b4-431b-adb2-eb6b9e546014",
         ] {
             assert!(!debug.contains(secret), "debug output exposed {secret}");
         }
@@ -1059,7 +1055,6 @@ mod tests {
             deleted_by: None,
             created_at: timestamp,
             updated_at: timestamp,
-            lease_token: None,
             lease_expires_at: None,
             attempt_count: 1,
             initiator_user_id: Some(1),

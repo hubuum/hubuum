@@ -445,7 +445,7 @@ impl RestoreCoordinationFaultProbe {
 pub struct LeaseLossFaultProbe {
     renewal_error_kind: StorageErrorKind,
     recovered_as_failed: bool,
-    lease_token_cleared: bool,
+    lease_cleared: bool,
     request_payload_cleared: bool,
     stale_renewal_rejected: bool,
 }
@@ -455,14 +455,14 @@ impl LeaseLossFaultProbe {
     pub const fn new(
         renewal_error_kind: StorageErrorKind,
         recovered_as_failed: bool,
-        lease_token_cleared: bool,
+        lease_cleared: bool,
         request_payload_cleared: bool,
         stale_renewal_rejected: bool,
     ) -> Self {
         Self {
             renewal_error_kind,
             recovered_as_failed,
-            lease_token_cleared,
+            lease_cleared,
             request_payload_cleared,
             stale_renewal_rejected,
         }
@@ -542,7 +542,7 @@ pub enum ContractViolation {
     RestoreTransitionWasPersisted,
     RestoreCoordinatorStateChanged,
     LeaseWasNotRecoveredAsFailed,
-    LeaseTokenWasNotCleared,
+    LeaseWasNotCleared,
     LeasePayloadWasNotCleared,
     StaleLeaseRegainedOwnership,
 }
@@ -629,7 +629,7 @@ impl fmt::Display for ContractViolation {
                 "failed restore transition changed coordinator state"
             }
             Self::LeaseWasNotRecoveredAsFailed => "expired task lease was not finalized as failed",
-            Self::LeaseTokenWasNotCleared => "expired task lease retained its ownership token",
+            Self::LeaseWasNotCleared => "expired task lease retained its ownership state",
             Self::LeasePayloadWasNotCleared => "expired task lease retained its request payload",
             Self::StaleLeaseRegainedOwnership => "stale task lease regained ownership",
         };
@@ -765,8 +765,8 @@ pub async fn verify_lease_loss_fault_contract(
     if !probe.recovered_as_failed {
         return Err(ContractViolation::LeaseWasNotRecoveredAsFailed);
     }
-    if !probe.lease_token_cleared {
-        return Err(ContractViolation::LeaseTokenWasNotCleared);
+    if !probe.lease_cleared {
+        return Err(ContractViolation::LeaseWasNotCleared);
     }
     if !probe.request_payload_cleared {
         return Err(ContractViolation::LeasePayloadWasNotCleared);

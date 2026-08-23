@@ -24,6 +24,7 @@ use hubuum_storage_conformance::{
     verify_backend_audit_contract, verify_delivery_fault_contract,
     verify_lease_loss_fault_contract, verify_restore_coordination_fault_contract,
 };
+use hubuum_storage_core::StorageTaskClaimToken;
 use hubuum_storage_postgres::{
     PostgresFaultController, PostgresFaultPoint, PostgresObserver,
     PostgresStorage as AdapterPostgresStorage,
@@ -115,17 +116,17 @@ use crate::storage::{
     StorageRestoreStageCreate, StorageRevisionPrecondition, StorageRevisionTarget,
     StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
     StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot,
-    StorageTaskStateUpdate, StorageTaskStatus, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserAnonymize,
-    StorageUserCreate, StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
+    StorageTokenListState, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
+    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchQuery,
+    UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 use hubuum_query::QueryFilters;
@@ -885,7 +886,7 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
             .find(|recovered| recovered.id() == task.id());
         let recovered_as_failed =
             recovered_task.is_some_and(|task| task.status() == StorageTaskStatus::Failed);
-        let lease_token_cleared = recovered_task.is_some_and(|task| task.lease_token().is_none());
+        let lease_cleared = recovered_task.is_some_and(|task| !task.has_lease());
         let request_payload_cleared =
             recovered_task.is_some_and(|task| task.request_payload().is_none());
         let stale_renewal_rejected = !backend
@@ -899,7 +900,7 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
         Ok(LeaseLossFaultProbe::new(
             renewal_error.kind(),
             recovered_as_failed,
-            lease_token_cleared,
+            lease_cleared,
             request_payload_cleared,
             stale_renewal_rejected,
         ))
@@ -1206,14 +1207,17 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
     );
 
     let error = PostgresFaultController::failing(PostgresFaultPoint::TaskFinalizeAfterEvent)
-        .run(backend.complete_task(StorageTaskCompletion::new(
-            StorageTaskStateUpdate::new(
-                lease,
-                StorageTaskStatus::Succeeded,
-                StorageTaskResultCounts::new(1, 1, 0),
-            ),
-            StorageTaskEventInput::new("succeeded", "Must be rolled back"),
-        )))
+        .run(
+            backend.complete_task(StorageTaskCompletion::new(
+                StorageTaskStateUpdate::new(
+                    lease,
+                    StorageTaskStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0)
+                        .expect("non-negative task counts should be valid"),
+                ),
+                StorageTaskEventInput::new("succeeded", "Must be rolled back"),
+            )),
+        )
         .await
         .expect_err("injected failure should abort task finalization");
     assert_eq!(error.kind(), StorageErrorKind::Backend);
@@ -2808,7 +2812,8 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .update_task_state(StorageTaskStateUpdate::new(
                     claimed.lease().clone(),
                     StorageTaskStatus::Running,
-                    StorageTaskResultCounts::new(0, 0, 0),
+                    StorageTaskResultCounts::try_new(0, 0, 0)
+                        .expect("non-negative task counts should be valid"),
                 ))
                 .await
                 .expect("certified backend should update claimed task state");
@@ -2819,7 +2824,8 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         StorageTaskStateUpdate::new(
                             claimed.lease().clone(),
                             StorageTaskStatus::Succeeded,
-                            StorageTaskResultCounts::new(1, 1, 0),
+                            StorageTaskResultCounts::try_new(1, 1, 0)
+                                .expect("non-negative task counts should be valid"),
                         ),
                         StorageTaskEventInput::new("succeeded", "Compatibility completed"),
                     )

@@ -28,8 +28,6 @@ pub use execution::{
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::run_storage_migrations;
 pub(crate) use factory::{StorageSettings, initialize_storage};
-#[cfg(any(test, feature = "integration-test-support"))]
-pub(crate) use hubuum_storage_core::StorageTaskClaimToken;
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationAttempt, AuthenticationCredential, AuthenticationHuman,
     AuthenticationIdentity, AuthenticationPrincipal, AuthenticationResourceScope,

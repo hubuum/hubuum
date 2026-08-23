@@ -13,11 +13,14 @@ For source locations, see the [maintainer guide](maintainer-guide.md).
 
 ## How Families and Traits Relate
 
-A **trait** is the Rust interface that makes an operation available. Its
-canonical capability key removes the `Storage` suffix and converts the
-remaining singular trait stem to snake case: `CollectionStorage` is
-`collection`, and `TaskQueueStorage` is `task_queue`. These same keys are used
-by `StorageCapability` and logical storage metrics.
+An **operation trait** is the Rust interface that makes an observed logical
+storage operation available. Its canonical capability key removes the
+`Storage` suffix and converts the remaining singular trait stem to snake case:
+`CollectionStorage` is `collection`, and `TaskQueueStorage` is `task_queue`.
+These same keys are used by `StorageCapability` and logical storage metrics.
+`ExecutionStorage` is the deliberate exception: its methods establish the
+scope inherited by observed operations and therefore do not emit their own
+logical storage observation or capability label.
 
 A **capability family** is a documentation grouping for related traits and
 semantics. Family keys such as `domain_lifecycle` and `catalog_queries` are not

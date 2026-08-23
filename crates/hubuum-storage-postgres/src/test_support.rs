@@ -588,10 +588,10 @@ pub async fn claim_task_by_id_with_lease(
     .returning(crate::operations::task_rows::TaskRow::as_returning())
     .get_result::<crate::operations::task_rows::TaskRow>(&mut connection)
     .await?;
-    Ok(StorageTaskClaim::new(
+    Ok(StorageTaskClaim::try_new(
         row.into_storage()?,
         StorageTaskLease::new(task_id_value, StorageTaskClaimToken::new(token.to_string())),
-    ))
+    )?)
 }
 
 /// Persist one export artifact for a terminal task fixture.

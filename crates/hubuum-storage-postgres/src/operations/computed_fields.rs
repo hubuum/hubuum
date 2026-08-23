@@ -818,7 +818,7 @@ pub async fn execute_computed_field_rebuild(
                         StorageTaskStateUpdate::new(
                             lease,
                             StorageTaskStatus::Cancelled,
-                            successful_counts(processed),
+                            successful_counts(processed)?,
                         )
                         .summary(Some("Computed-field rebuild superseded".to_string()))
                         .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
@@ -848,7 +848,7 @@ pub async fn execute_computed_field_rebuild(
                     StorageTaskStateUpdate::new(
                         lease.clone(),
                         StorageTaskStatus::Running,
-                        successful_counts(processed),
+                        successful_counts(processed)?,
                     )
                     .summary(Some(format!(
                         "Rebuilt {processed} of {} objects",
@@ -897,7 +897,7 @@ pub async fn execute_computed_field_rebuild(
             };
             let finalized = task_execution::complete_task_on_connection(
                 connection,
-                StorageTaskStateUpdate::new(lease, status, successful_counts(processed))
+                StorageTaskStateUpdate::new(lease, status, successful_counts(processed)?)
                     .summary(Some(summary.clone()))
                     .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                 StorageTaskEventInput::new(status.as_str(), summary),
@@ -983,8 +983,8 @@ async fn process_reindex_batch(
         .await
 }
 
-fn successful_counts(processed: i32) -> StorageTaskResultCounts {
-    StorageTaskResultCounts::new(processed, processed, 0)
+fn successful_counts(processed: i32) -> Result<StorageTaskResultCounts, PostgresStorageError> {
+    StorageTaskResultCounts::try_new(processed, processed, 0).map_err(PostgresStorageError::from)
 }
 
 fn personal_definition_query(

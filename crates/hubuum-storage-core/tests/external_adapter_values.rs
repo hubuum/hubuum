@@ -321,7 +321,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageSyncedHuman::new;
     let _ = StorageTask::builder;
     let _ = StorageTaskAccess::new;
-    let _ = StorageTaskClaim::new;
+    let _ = StorageTaskClaim::try_new;
+    let _ = StorageTaskResultCounts::try_new;
     let _ = StorageTaskEvent::builder(
         EventSequence::new(1).unwrap(),
         TaskId::new(1).unwrap(),

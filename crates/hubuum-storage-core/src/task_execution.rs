@@ -98,9 +98,14 @@ pub struct StorageTaskClaim {
 }
 
 impl StorageTaskClaim {
-    #[must_use]
-    pub const fn new(task: StorageTask, lease: StorageTaskLease) -> Self {
-        Self { task, lease }
+    /// Pair a task projection with the ownership proof for that exact task.
+    pub fn try_new(task: StorageTask, lease: StorageTaskLease) -> Result<Self, StorageError> {
+        if task.id() != lease.task_id() {
+            return Err(StorageError::backend_failure(
+                "Storage adapter returned a task claim with mismatched task and lease identifiers",
+            ));
+        }
+        Ok(Self { task, lease })
     }
 
     #[must_use]
@@ -137,13 +142,31 @@ pub struct StorageTaskResultCounts {
 }
 
 impl StorageTaskResultCounts {
-    #[must_use]
-    pub const fn new(processed: i32, succeeded: i32, failed: i32) -> Self {
-        Self {
+    /// Construct non-negative task progress counts.
+    ///
+    /// `processed` may differ from `succeeded + failed` while work is running
+    /// or recovering, so only the per-field invariant is enforced here.
+    pub fn try_new(processed: i32, succeeded: i32, failed: i32) -> Result<Self, StorageError> {
+        if processed < 0 {
+            return Err(StorageError::invalid_input(
+                "Task processed count must not be negative",
+            ));
+        }
+        if succeeded < 0 {
+            return Err(StorageError::invalid_input(
+                "Task succeeded count must not be negative",
+            ));
+        }
+        if failed < 0 {
+            return Err(StorageError::invalid_input(
+                "Task failed count must not be negative",
+            ));
+        }
+        Ok(Self {
             processed,
             succeeded,
             failed,
-        }
+        })
     }
 
     #[must_use]
@@ -820,10 +843,11 @@ mod tests {
         .progress(StorageTaskProgress::new(1, 0, 0, 0))
         .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
         .build();
-        let claim = StorageTaskClaim::new(
+        let claim = StorageTaskClaim::try_new(
             task,
             StorageTaskLease::new(task_id, StorageTaskClaimToken::new("secret-backend-claim")),
-        );
+        )
+        .expect("matching task and lease ids should form a claim");
         let artifact = StorageExportTaskArtifact::builder(
             "application/json",
             serde_json::json!({"secret": "metadata"}),
@@ -867,5 +891,68 @@ mod tests {
         ] {
             assert!(!debug.contains(secret));
         }
+    }
+
+    fn task_with_id(task_id: TaskId) -> StorageTask {
+        let now = chrono::Utc::now();
+        StorageTask::builder(
+            task_id,
+            StorageTaskKind::Export,
+            StorageTaskStatus::Running,
+            now,
+            now,
+        )
+        .build()
+    }
+
+    #[test]
+    fn task_claim_rejects_mismatched_task_and_lease_ids() {
+        let task_id = TaskId::new(88_101).unwrap();
+        let lease_task_id = TaskId::new(88_102).unwrap();
+
+        let error = StorageTaskClaim::try_new(
+            task_with_id(task_id),
+            StorageTaskLease::new(
+                lease_task_id,
+                StorageTaskClaimToken::new("mismatched-claim"),
+            ),
+        )
+        .expect_err("a lease for another task must not form a claim");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn task_result_counts_reject_negative_processed_count() {
+        let error = StorageTaskResultCounts::try_new(-1, 0, 0)
+            .expect_err("a negative processed count must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn task_result_counts_reject_negative_succeeded_count() {
+        let error = StorageTaskResultCounts::try_new(0, -1, 0)
+            .expect_err("a negative succeeded count must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn task_result_counts_reject_negative_failed_count() {
+        let error = StorageTaskResultCounts::try_new(0, 0, -1)
+            .expect_err("a negative failed count must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn task_result_counts_allow_in_progress_totals() {
+        let counts = StorageTaskResultCounts::try_new(5, 2, 1)
+            .expect("in-progress counts need not sum to the processed total");
+
+        assert_eq!(counts.processed(), 5);
+        assert_eq!(counts.succeeded(), 2);
+        assert_eq!(counts.failed(), 1);
     }
 }

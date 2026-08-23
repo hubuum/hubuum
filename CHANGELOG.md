@@ -207,7 +207,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   exposes a generic unsupported-operation result; all mandatory behavior must
   be implemented. `StorageTaskCreateRequestBuilder::build` now returns a
   result and rejects negative totals and zero active-task capacity; callers
-  must handle that validation error.
+  must handle that validation error. Ordinary `StorageTask` projections expose
+  lease presence and expiry without exposing or prescribing a UUID claim-token
+  representation. `StorageTaskClaim::try_new` rejects mismatched task and lease
+  identifiers, and `StorageTaskResultCounts::try_new` centrally rejects negative
+  task progress counts; adapter authors must handle both validating constructors.
 - **Breaking (backup/restore):** full backups are version 5 and restore rejects
   version 4. Version 5 uses stable logical resource and history section names,
   semantic class/object/principal fields, permission-name arrays,

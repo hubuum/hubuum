@@ -58,21 +58,6 @@ impl ClaimedTask {
     pub(crate) const fn lease(&self) -> &StorageTaskLease {
         &self.lease
     }
-
-    #[cfg(any(test, feature = "integration-test-support"))]
-    #[doc(hidden)]
-    pub fn from_record(task: TaskRecord) -> Result<Self, ApiError> {
-        let token = task.lease_token.ok_or_else(|| {
-            ApiError::InternalServerError("Test task does not carry a claim token".to_string())
-        })?;
-        Ok(Self {
-            lease: StorageTaskLease::new(
-                TaskID::new(task.id).expect("validated task id must be positive"),
-                crate::storage::StorageTaskClaimToken::new(token.to_string()),
-            ),
-            task,
-        })
-    }
 }
 
 impl Deref for ClaimedTask {
@@ -123,15 +108,15 @@ fn storage_lease_duration(duration: Duration) -> Result<StorageTaskLeaseDuration
 fn storage_task_state_update(
     task: &ClaimedTask,
     change: TaskStateChange,
-) -> StorageTaskStateUpdate {
+) -> Result<StorageTaskStateUpdate, ApiError> {
     let (processed, succeeded, failed) = change.counts.into();
-    StorageTaskStateUpdate::new(
+    Ok(StorageTaskStateUpdate::new(
         task.lease.clone(),
         task_status_to_storage(change.status),
-        StorageTaskResultCounts::new(processed, succeeded, failed),
+        StorageTaskResultCounts::try_new(processed, succeeded, failed)?,
     )
     .summary(change.summary)
-    .started_at(change.started_at.map(|timestamp| timestamp.and_utc()))
+    .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
 }
 
 fn storage_task_event(event: NewTaskEventRecord) -> StorageTaskEventInput {
@@ -199,7 +184,7 @@ pub(crate) async fn update_task_state(
     change: TaskStateChange,
 ) -> Result<TaskRecord, ApiError> {
     storage_handle(backend)
-        .update_task_state(storage_task_state_update(task, change))
+        .update_task_state(storage_task_state_update(task, change)?)
         .await
         .map_err(ApiError::from)
         .and_then(task_from_storage)
@@ -219,7 +204,7 @@ pub(crate) async fn complete_task(
         )));
     }
     let completion = StorageTaskCompletion::new(
-        storage_task_state_update(task, change),
+        storage_task_state_update(task, change)?,
         storage_task_event(event),
     )
     .artifact(artifact);
@@ -702,7 +687,6 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
         deleted_by: task.deleted_by().map(|id| id.id()),
         created_at: task.created_at().naive_utc(),
         updated_at: task.updated_at().naive_utc(),
-        lease_token: task.lease_token(),
         lease_expires_at: task
             .lease_expires_at()
             .map(|timestamp| timestamp.naive_utc()),
