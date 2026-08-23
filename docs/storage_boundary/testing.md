@@ -323,7 +323,10 @@ checks required by `AGENTS.md` for the paths changed.
 
 ## Known Gaps
 
-The current suite is solid, but these limitations should remain visible:
+The current suite is solid, but these limitations should remain visible.
+
+The actionable follow-up work and its completion criteria are tracked in the
+[storage boundary TODO](todo.md).
 
 1. **Only one complete adapter exists.** Neutral APIs have been designed and
    enforced, but a second production implementation is the best portability

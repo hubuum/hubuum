@@ -16,6 +16,7 @@ PostgreSQL is currently the only selectable backend. The in-memory resource mode
 - Use the [maintainer guide](storage_boundary/maintainer-guide.md) to trace a call, locate its implementation, and change the boundary safely.
 - Use [transactions and side effects](storage_boundary/transactions-and-events.md) when a use case spans several resource operations or must define audit behavior.
 - Use [testing and compatibility](storage_boundary/testing.md) to understand what the test layers prove and where confidence remains limited.
+- Track deliberately deferred work in the [storage boundary TODO](storage_boundary/todo.md).
 - Inspect the machine-checked [semantic coverage inventory](storage_boundary/semantic-coverage.toml) for the exact methods, tracked input variants, and test evidence.
 
 ## The Boundary in One Page
@@ -212,9 +213,9 @@ registration remains explicit, exhaustive, and application-owned. Hubuum does
 not load storage plugins dynamically.
 
 This establishes structural out-of-tree usability, not a supported standalone
-adapter SDK. The remaining method-specific query matrices, reusable family
-fixtures, neutral event factories, publication dependency closure, and second
-complete adapter are required before semantic portability is considered proven.
+adapter SDK. The [storage boundary TODO](storage_boundary/todo.md) tracks the
+remaining portability validation, semantic evidence, value audits, neutral
+event construction, and publication policy work.
 
 Moving a file does not by itself improve the boundary. Dependencies must continue to point from the application to contracts and from adapters to contracts, never from a contract or adapter back into the application.
 
