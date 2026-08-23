@@ -332,7 +332,7 @@ pub async fn get_token_metadata(
         .await
 }
 
-pub async fn get_token_metadata_by_ids(
+pub async fn load_token_metadata_by_ids(
     runtime: &PostgresRuntime,
     token_ids: Vec<i32>,
     observation: StorageTokenObservation,

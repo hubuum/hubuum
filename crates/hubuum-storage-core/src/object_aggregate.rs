@@ -1020,6 +1020,15 @@ impl StorageObjectAggregatePage {
 /// Implementations receive only storage-owned DTOs. Decisions must retain the
 /// input order and cardinality so the storage backend can reject malformed
 /// policy responses before using them.
+///
+/// A backend may retain one native read snapshot and a scarce storage resource
+/// while awaiting these callbacks so authorization, computed values,
+/// aggregation, totals, and paging observe one consistent candidate set.
+/// Implementations must therefore keep policy work bounded and cancellation
+/// safe. Authorization latency extends the lifetime of that snapshot and its
+/// native resource. A callback must not re-enter the same storage backend when
+/// doing so could exhaust its resource pool or deadlock on the retained
+/// snapshot or connection.
 #[async_trait]
 pub trait ObjectAggregateAuthorizer: Send + Sync {
     async fn authorize_target(

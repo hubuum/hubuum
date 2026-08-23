@@ -65,9 +65,9 @@ pub mod workflows {
 
 /// Audit, fan-out, delivery, administration, and retention capabilities.
 pub mod events {
-    pub use crate::EventStorage;
     pub use crate::event_administration::*;
     pub use crate::events::*;
+    pub use crate::{EventHealthStorage, EventStorage};
 }
 
 /// Execution context, observation, operational state, and process integration.

@@ -41,7 +41,7 @@ impl OperationalStateStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn get_export_template_health(
+    async fn load_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
         crate::operations::meta::load_export_template_health(self.runtime())

@@ -14,7 +14,10 @@ use chrono::{DateTime, Utc};
 use hubuum_domain::*;
 use hubuum_events_core::*;
 use hubuum_query::*;
-use hubuum_storage_core::*;
+use hubuum_storage_core::capabilities::{
+    backend::*, common::*, events::*, identity::*, operational::*, queries::*, resources::*,
+    workflows::*,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -559,7 +562,7 @@ impl TokenStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn get_token_metadata_by_ids(
+    async fn load_token_metadata_by_ids(
         &self,
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
@@ -1220,7 +1223,7 @@ impl OperationalStateStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn get_export_template_health(
+    async fn load_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
         fixture_result()

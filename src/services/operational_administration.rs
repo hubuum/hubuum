@@ -18,10 +18,10 @@ pub(crate) async fn get_task_queue_snapshot(
     Ok(storage.get_task_queue_snapshot().await?)
 }
 
-pub(crate) async fn get_export_template_health(
+pub(crate) async fn load_export_template_health(
     storage: &StorageHandle,
 ) -> Result<Vec<OperationalExportTemplateHealth>, ApiError> {
-    Ok(storage.get_export_template_health().await?)
+    Ok(storage.load_export_template_health().await?)
 }
 
 pub(crate) async fn list_export_templates_for_audit(

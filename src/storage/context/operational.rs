@@ -34,16 +34,16 @@ impl OperationalStateStorage for StorageHandle {
         .await
     }
 
-    async fn get_export_template_health(
+    async fn load_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::OperationalState,
-            "get_export_template_health",
+            "load_export_template_health",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.get_export_template_health().await
+                    backend.load_export_template_health().await
                 })
             },
         )

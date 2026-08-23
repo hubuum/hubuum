@@ -21,12 +21,11 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         ResourceRevision::INITIAL,
     )
     .unwrap();
-    let collection = StorageCollection::new(metadata.clone(), "collection", "description", None);
+    let collection = StorageCollection::new(metadata, "collection", "description", None);
     let class_record =
-        StorageClassRecord::builder(metadata.clone(), "class", collection_id, "description")
-            .build();
+        StorageClassRecord::builder(metadata, "class", collection_id, "description").build();
     let object = StorageObject::new(
-        metadata.clone(),
+        metadata,
         "object",
         collection_id,
         ClassId::new(1).unwrap(),
@@ -127,8 +126,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageBackupOutput::new(TaskId::new(1).unwrap(), Vec::new(), 0, "sha256", now, now);
     let _ = StorageBackupOutputSummary::new(TaskId::new(1).unwrap(), 0, "sha256", now);
     let _ = StorageBackupSnapshot::try_new;
-    let _ =
-        StorageClass::builder(metadata.clone(), "class", collection.clone(), "description").build();
+    let _ = StorageClass::builder(metadata, "class", collection.clone(), "description").build();
     let _ = StorageClassComputationState::builder;
     let _ = StorageClassGraphRow::new;
     let _ = class_record.clone();
@@ -176,7 +174,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         StorageTaskDurations::default(),
     );
     let _ = StorageExportTemplate::new(
-        metadata.clone(),
+        metadata,
         collection_id,
         "template",
         StorageExportTemplateDefinition::new(
@@ -189,7 +187,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageExternalPrincipalState::new("scope", "user", "subject", None, None);
     let _ = StorageGroupMember::new;
     let _ = StorageIdentityGroup::builder(
-        metadata.clone(),
+        metadata,
         "group",
         "description",
         IdentityScopeId::new(1).unwrap(),
@@ -228,7 +226,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StoragePreparedClassRelation::new;
     let _ = StoragePreparedObjectRelation::new;
     let _ = StoragePrincipal::builder(
-        metadata.clone(),
+        metadata,
         PrincipalKind::Human,
         "principal",
         IdentityScopeId::new(1).unwrap(),
@@ -239,7 +237,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageRelatedObjectForRootRow::new;
     let _ = StorageRelatedObjectIncludeRow::new;
     let _ = StorageRemoteTarget::new(
-        metadata.clone(),
+        metadata,
         collection_id,
         "remote",
         StorageRemoteTargetDefinition::new(

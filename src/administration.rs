@@ -179,7 +179,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         )
         .await?;
     } else if admin_cli.export_template_health {
-        get_export_template_health(&storage).await?;
+        load_export_template_health(&storage).await?;
     } else if admin_cli.database_ready {
         storage_ready(&storage).await?;
     } else {
@@ -529,8 +529,8 @@ async fn audit_templates(
     )))
 }
 
-async fn get_export_template_health(storage: &StorageHandle) -> Result<(), ApiError> {
-    let health = operational_service::get_export_template_health(storage).await?;
+async fn load_export_template_health(storage: &StorageHandle) -> Result<(), ApiError> {
+    let health = operational_service::load_export_template_health(storage).await?;
     if health.is_empty() {
         println!("No stored export outputs found.");
         return Ok(());

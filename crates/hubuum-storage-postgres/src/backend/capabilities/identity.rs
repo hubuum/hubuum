@@ -435,13 +435,13 @@ impl TokenStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn get_token_metadata_by_ids(
+    async fn load_token_metadata_by_ids(
         &self,
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
         let token_ids = token_ids.into_iter().map(TokenId::id).collect();
-        crate::operations::token::get_token_metadata_by_ids(self.runtime(), token_ids, observation)
+        crate::operations::token::load_token_metadata_by_ids(self.runtime(), token_ids, observation)
             .await
             .map_err(StorageError::from)
     }

@@ -506,12 +506,12 @@ pub async fn get_token_metadata(
     )
 }
 
-pub async fn get_token_metadata_by_ids(
+pub async fn load_token_metadata_by_ids(
     context: &impl StorageContext,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     storage_handle(context)
-        .get_token_metadata_by_ids(
+        .load_token_metadata_by_ids(
             tokens
                 .iter()
                 .map(|token| {

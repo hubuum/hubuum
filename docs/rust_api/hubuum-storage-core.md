@@ -87,7 +87,9 @@ workspace-internal `hubuum-storage-conformance` harness certifies durable
 receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
 revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
-native query, transaction, migration, connection-loss, and failure tests. An external-crate
-integration test also compiles representative transaction,
-query, and typed DTO usage so accidental reliance on crate-private adapter
-hooks fails before a later promotion review.
+native query, transaction, migration, connection-loss, and failure tests.
+External-crate integration tests implement all 44 complete-backend traits,
+compile every one of their 253 methods, exercise every transaction port, and
+name public construction paths for all current adapter-returned values. This
+prevents accidental reliance on crate-private adapter hooks before a later
+promotion review.

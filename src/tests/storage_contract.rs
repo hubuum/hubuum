@@ -1766,7 +1766,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             first_token_id
         );
         let batch = backend
-            .get_token_metadata_by_ids(vec![first_token_id, first_token_id], token_observation)
+            .load_token_metadata_by_ids(vec![first_token_id, first_token_id], token_observation)
             .await
             .expect("certified backend should preserve token batch order");
         assert_eq!(batch.len(), 2);
@@ -4974,7 +4974,7 @@ async fn every_available_storage_backend_supplies_operational_state() {
         assert!(task_queue.statuses().total() >= 0);
         assert!(task_queue.total_task_events() >= 0);
         let export_health = backend
-            .get_export_template_health()
+            .load_export_template_health()
             .await
             .expect("certified backend should aggregate export-template health");
         assert!(export_health.iter().all(|row| row.runs() > 0));

@@ -203,12 +203,13 @@ hubuum application
   fixtures are typed, feature-gated APIs owned by `hubuum-storage-postgres`.
 
 The backend-neutral contracts needed by an out-of-tree adapter remain
-workspace-internal in this pull request; they are not being published yet. An
-external-crate integration test nevertheless compiles the transaction ports
-and representative typed DTO/query APIs without crate-private access so a
-later crate split does not require an interface redesign. Backend registration
-remains explicit, exhaustive, and application-owned. Hubuum does not load
-storage plugins dynamically.
+workspace-internal in this pull request; they are not being published yet.
+External-crate integration tests nevertheless implement all 44
+complete-backend traits and their 253 methods, compile every transaction port,
+exercise representative typed query APIs, and name public construction paths
+for all current adapter-returned values without crate-private access. Backend
+registration remains explicit, exhaustive, and application-owned. Hubuum does
+not load storage plugins dynamically.
 
 This establishes structural out-of-tree usability, not a supported standalone
 adapter SDK. The remaining method-specific query matrices, reusable family

@@ -155,13 +155,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `event_delivery` to either `event_delivery_administration` or
   `event_delivery_worker`; the membership label is `group_membership`.
   Capability labels now uniformly use the singular trait stem, for example
-  `collection`, `computed_field`, `task_queue`, and `transaction`.
+  `collection`, `computed_field`, `task_queue`, and `transaction`. Complete
+  batch reads now use `load_token_metadata_by_ids` and
+  `load_export_template_health` rather than `get_*` names.
 - **Breaking (workspace storage API):** object aggregation accepts one
   `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
   when required. The query no longer stores a separate authorization mode, so
   callers cannot construct storage/delegated mode and callback mismatches.
-  Delegated target authorization also releases the native storage connection
-  before awaiting the application-owned policy backend.
+  Delegated target and object authorization, computed-definition resolution,
+  aggregation, and paging now share one repeatable-read snapshot. The native
+  read transaction remains open while the application-owned policy backend
+  evaluates bounded candidate batches.
 - **Breaking (workspace storage API):** storage pages now use one
   `StoragePage<T>` with an optional non-negative exact total instead of a
   negative sentinel or a second counted-page type. Persisted record metadata

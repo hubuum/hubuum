@@ -676,7 +676,7 @@ impl TokenStorage for StorageHandle {
         .await
     }
 
-    async fn get_token_metadata_by_ids(
+    async fn load_token_metadata_by_ids(
         &self,
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
@@ -684,11 +684,11 @@ impl TokenStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
-            "get_token_metadata_by_ids",
+            "load_token_metadata_by_ids",
             async {
                 dispatch_backend!(self, |backend| {
                     backend
-                        .get_token_metadata_by_ids(token_ids, observation)
+                        .load_token_metadata_by_ids(token_ids, observation)
                         .await
                 })
             },

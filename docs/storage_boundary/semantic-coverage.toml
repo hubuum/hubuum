@@ -123,7 +123,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.TokenStorage]
 source = "crates/hubuum-storage-core/src/identity_tokens.rs"
-methods = ["list_retained_tokens", "create_token", "renew_token", "get_token_metadata", "get_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
+methods = ["list_retained_tokens", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.AuthorizationDataStorage]
@@ -209,7 +209,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.OperationalStateStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"
-methods = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot", "get_export_template_health", "list_export_templates_for_audit"]
+methods = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot", "load_export_template_health", "list_export_templates_for_audit"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_operational_state"]
 
 [traits.TokenRetentionStorage]

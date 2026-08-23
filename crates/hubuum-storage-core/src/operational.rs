@@ -720,7 +720,7 @@ pub trait OperationalStateStorage: Send + Sync {
 
     /// Return one backend-aggregated row per stored export-template identity.
     /// Implementations must not return individual export outputs.
-    async fn get_export_template_health(
+    async fn load_export_template_health(
         &self,
     ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError>;
 

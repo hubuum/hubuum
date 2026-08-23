@@ -2794,7 +2794,7 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
         "create_token",
         "renew_token",
         "get_token_metadata",
-        "get_token_metadata_by_ids",
+        "load_token_metadata_by_ids",
         "revoke_token",
         "revoke_token_by_hash",
         "revoke_all_principal_tokens",

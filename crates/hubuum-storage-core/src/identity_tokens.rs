@@ -412,7 +412,7 @@ pub trait TokenStorage: Send + Sync {
     ) -> Result<StorageTokenMetadata, StorageError>;
 
     /// Load metadata for token IDs in the same order, including duplicates.
-    async fn get_token_metadata_by_ids(
+    async fn load_token_metadata_by_ids(
         &self,
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
