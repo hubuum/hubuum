@@ -90,7 +90,11 @@ use crate::models::{
 use crate::storage::ServiceAccountStorage;
 use hubuum_storage_postgres::PostgresPool;
 
-impl crate::permissions::AuthorizationContext for PostgresPool {}
+impl crate::permissions::AuthorizationContext for PostgresPool {
+    fn authorization_mode(&self) -> crate::permissions::AuthorizationMode<'_> {
+        crate::permissions::AuthorizationMode::LocalStorage
+    }
+}
 
 use crate::utilities::auth::{generate_random_password, hash_password};
 

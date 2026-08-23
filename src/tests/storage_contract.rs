@@ -860,7 +860,8 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
                 ))
                 .request_hash(Some(prefix("lease_loss_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(1),
+                .build(1)
+                .expect("lease-loss task request should be valid"),
             )
             .await?;
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(50)
@@ -1183,7 +1184,8 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
             ))
             .request_hash(Some(prefix("task_failpoint_hash")))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(10),
+            .build(10)
+            .expect("failpoint task request should be valid"),
         )
         .await
         .expect("task rollback fixture should be created");
@@ -1268,7 +1270,8 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(10),
+            .build(10)
+            .expect("initial snapshot task request should be valid"),
         )
         .await
         .expect("initial snapshot task should be created");
@@ -1308,7 +1311,8 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(10),
+            .build(10)
+            .expect("concurrent snapshot task request should be valid"),
         )
         .await
         .expect("concurrent snapshot task should be created");
@@ -2050,7 +2054,8 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .request_hash(Some(prefix("identity_contract_sa_task_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(10),
+                .build(10)
+                .expect("identity contract task request should be valid"),
             )
             .await
             .expect("certified backend should queue service-account work");
@@ -2615,7 +2620,8 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
                 ))
                 .request_hash(Some(prefix("task_queue_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(10),
+                .build(10)
+                .expect("task queue request should be valid"),
             )
             .await
             .expect("certified backend should create a task");
@@ -2749,7 +2755,8 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .build(10),
+                    .build(10)
+                    .expect("task execution request should be valid"),
                 )
                 .await
                 .expect("certified backend should create an executable task");
@@ -2858,7 +2865,8 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .build(10),
+                    .build(10)
+                    .expect("task execution failure request should be valid"),
                 )
                 .await
                 .expect("certified backend should create a failure fixture");
@@ -3057,14 +3065,6 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
             .await
             .expect("certified backend should list collection template siblings");
         assert!(siblings.is_empty());
-
-        assert_eq!(
-            backend
-                .get_export_template_class_collection_id(ClassId::new(class.id).unwrap())
-                .await
-                .expect("certified backend should resolve template class ownership"),
-            Some(storage_collection_id)
-        );
 
         let replacement_name = format!("{name}_updated");
         let replaced = backend

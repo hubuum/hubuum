@@ -245,8 +245,8 @@ where
         return Ok(is_admin);
     }
     let pool = backend;
-    let is_admin = match backend.permission_backend() {
-        Some(permission_backend) if !permission_backend.uses_local_permission_store() => {
+    let is_admin = match backend.authorization_mode() {
+        crate::permissions::AuthorizationMode::Delegated(permission_backend) => {
             let principal = PrincipalRef::load(pool, user)
                 .await
                 .map_err(|err| err.to_string())?;
@@ -255,7 +255,9 @@ where
                 .await
                 .map_err(|err| err.to_string())?
         }
-        _ => user.is_admin(pool).await.map_err(|err| err.to_string())?,
+        crate::permissions::AuthorizationMode::LocalStorage => {
+            user.is_admin(pool).await.map_err(|err| err.to_string())?
+        }
     };
     state.admin_status = ImportAdminStatus::Known(is_admin);
     Ok(is_admin)

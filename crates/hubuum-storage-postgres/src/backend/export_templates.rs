@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hubuum_domain::{ClassId, CollectionId, ExportTemplateId};
+use hubuum_domain::{CollectionId, ExportTemplateId};
 
 use hubuum_storage_core::{
     ExportTemplateStorage, MutationOutcome, StorageError, StorageExportTemplate,
@@ -41,20 +41,6 @@ impl ExportTemplateStorage for PostgresStorage {
         )
         .await
         .map_err(StorageError::from)
-    }
-
-    async fn get_export_template_class_collection_id(
-        &self,
-        class_id: ClassId,
-    ) -> Result<Option<CollectionId>, StorageError> {
-        crate::operations::export_template::get_export_template_class_collection_id(
-            self.runtime(),
-            class_id.id(),
-        )
-        .await?
-        .map(CollectionId::new)
-        .transpose()
-        .map_err(|error| StorageError::internal(error.to_string()))
     }
 
     async fn create_export_template(

@@ -67,7 +67,6 @@ operations. Aliases separated by `/` address the same logical field.
 | `list_principal_collection_permissions` | `id`, `name`/`groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`/`groupname`, `created_at`, `updated_at` |
 | `list_groups_with_collection_permission` | `id`, `name`/`groupname`, `description`, `created_at`, `updated_at`, `revision` | `id`, `name`/`groupname`, `description`, `created_at`, `updated_at`, `revision` |
 | `list_local_collection_grants` | `id`, `name`/`groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`/`groupname`, `created_at`, `updated_at` |
-| `list_local_collection_grants` | `id`, `name`/`groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`/`groupname`, `created_at`, `updated_at` |
 
 The `permissions` filter selects grants containing the requested permission. It
 is a filter only and is not a cursor sort field.

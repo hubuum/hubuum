@@ -250,7 +250,7 @@ pub async fn list_manageable_service_accounts(
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }

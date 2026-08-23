@@ -262,10 +262,10 @@ runtime transaction mechanism.
 ## Observability and Performance
 
 The unit of work is one logical storage entrypoint with the bounded labels
-`transaction` and `run`. The PostgreSQL runtime separately measures pool
-checkout and native transaction duration. Constituent calls do not create a
-second set of logical entrypoint metrics; query-level diagnostics remain an
-adapter concern.
+`transaction` and `with_transaction`. The PostgreSQL runtime separately
+measures pool checkout and native transaction duration. Constituent calls do
+not create a second set of logical entrypoint metrics; query-level diagnostics
+remain an adapter concern.
 
 The transaction reuses one native connection. It does not add a database
 round trip to each constituent operation. Compared with calling several

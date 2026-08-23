@@ -383,11 +383,10 @@ pub(super) fn finish_aggregate_page(
     } else {
         None
     };
-    Ok(StorageObjectAggregatePage::try_new(
-        rows,
-        total,
-        next_cursor,
-    )?)
+    crate::validate_persisted(
+        "object aggregate page",
+        StorageObjectAggregatePage::try_new(rows, total, next_cursor),
+    )
 }
 
 #[derive(serde::Deserialize)]
@@ -441,21 +440,24 @@ fn storage_row_from_database(
             "Database returned invalid object aggregate measure data",
         ));
     }
-    Ok(StorageObjectAggregateRow::try_new(
-        measures
-            .into_iter()
-            .map(|measure| {
+    let measures = measures
+        .into_iter()
+        .map(|measure| {
+            crate::validate_persisted(
+                "object aggregate measure",
                 StorageObjectAggregateMeasureValue::try_new(
                     measure.state,
                     measure.value_count,
                     measure.skipped_count,
                     measure.value,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-        object_count,
-        sort_key,
-    )?)
+                ),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::validate_persisted(
+        "object aggregate row",
+        StorageObjectAggregateRow::try_new(measures, object_count, sort_key),
+    )
 }
 
 fn aggregate_rows_payload(groups: AggregateRows) -> serde_json::Value {

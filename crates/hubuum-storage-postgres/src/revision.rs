@@ -132,13 +132,15 @@ pub(crate) fn record_metadata(
     updated_at: chrono::NaiveDateTime,
     revision: PostgresRevision,
 ) -> Result<StorageRecordMetadata, PostgresStorageError> {
-    StorageRecordMetadata::try_new(
-        ResourceId::new(id)?,
-        created_at.and_utc(),
-        updated_at.and_utc(),
-        revision.into_domain(),
+    crate::validate_persisted(
+        "record metadata",
+        StorageRecordMetadata::try_new(
+            ResourceId::new(id)?,
+            created_at.and_utc(),
+            updated_at.and_utc(),
+            revision.into_domain(),
+        ),
     )
-    .map_err(PostgresStorageError::from)
 }
 
 pub(crate) fn record_metadata_from_raw_revision(
@@ -185,5 +187,34 @@ where
     fn from_sql(bytes: DB::RawValue<'_>) -> DeserializeResult<Self> {
         let value = i64::from_sql(bytes)?;
         Self::new(value).map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDate;
+    use hubuum_storage_core::StorageErrorKind;
+
+    use super::*;
+
+    #[test]
+    fn contradictory_persisted_record_timestamps_are_backend_failures() {
+        let created_at = NaiveDate::from_ymd_opt(2026, 1, 2)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let updated_at = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let error = record_metadata(1, created_at, updated_at, PostgresRevision::INITIAL)
+            .expect_err("reversed persisted timestamps must fail validation");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+        assert_eq!(
+            error.to_string(),
+            "PostgreSQL persisted record metadata failed contract validation"
+        );
     }
 }

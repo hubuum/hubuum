@@ -282,7 +282,7 @@ pub async fn list_principal_groups(
                 .into_iter()
                 .map(GroupRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(groups, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(groups, total)
         })
         .await
 }
@@ -333,7 +333,7 @@ pub async fn list_groups(
                 .into_iter()
                 .map(GroupRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(groups, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(groups, total)
         })
         .await
 }
@@ -508,7 +508,7 @@ pub async fn list_group_members(
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(members, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(members, total)
         })
         .await
 }

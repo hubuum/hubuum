@@ -619,7 +619,7 @@ async fn list_tasks_on(
         .into_iter()
         .map(TaskRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(tasks, total).map_err(PostgresStorageError::from)
+    crate::persisted_page(tasks, total)
 }
 
 fn task_cursor_fields(options: &QueryOptions) -> Result<Vec<CursorSqlField>, PostgresStorageError> {
@@ -835,7 +835,7 @@ async fn list_task_events_on(
         .into_iter()
         .map(TaskEventRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(events, total).map_err(PostgresStorageError::from)
+    crate::persisted_page(events, total)
 }
 
 async fn load_task_events(
@@ -978,7 +978,7 @@ async fn list_import_task_results_on(
         .into_iter()
         .map(ImportTaskResultRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(results, total).map_err(PostgresStorageError::from)
+    crate::persisted_page(results, total)
 }
 
 fn normalize_task_child_page_options(

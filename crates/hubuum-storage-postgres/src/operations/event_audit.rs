@@ -85,7 +85,7 @@ pub async fn list_audit_events(
                         event.into_audit_event(&principal_names, !directly_visible)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+                crate::persisted_page(rows, total)
             },
         )
         .await

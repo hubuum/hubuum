@@ -1822,13 +1822,6 @@ impl ExportTemplateStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn get_export_template_class_collection_id(
-        &self,
-        class_id: ClassId,
-    ) -> Result<Option<CollectionId>, StorageError> {
-        fixture_result()
-    }
-
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,

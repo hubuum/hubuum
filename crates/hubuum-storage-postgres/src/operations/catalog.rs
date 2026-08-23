@@ -58,8 +58,7 @@ pub async fn list_collections(
         .visibility()
         .allows_permissions(&[AuthorizationPermission::ReadCollection])
     {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     let (options, visibility) = query.into_parts();
@@ -103,7 +102,7 @@ pub async fn list_collections(
                 .map(CollectionCatalogRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }
@@ -124,8 +123,7 @@ pub async fn list_classes(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -174,7 +172,7 @@ pub async fn list_classes(
                 .map(|row| class_to_storage(row, &collections))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            StoragePage::try_new(classes, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(classes, total)
         })
         .await
 }
@@ -195,8 +193,7 @@ pub async fn list_objects(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
     reject_computed_object_query(&options)?;
 
@@ -243,7 +240,7 @@ pub async fn list_objects(
                 .map(ObjectRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }

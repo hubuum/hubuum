@@ -12,7 +12,8 @@ use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
-    AuthorizationContext, PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
+    AuthorizationContext, AuthorizationMode, PermissionBackend, PrincipalRef, ResourceAttrs,
+    ResourceKind, ResourceRef,
 };
 use crate::services::unified_search as unified_search_service;
 use crate::storage::StorageContext;
@@ -704,9 +705,14 @@ where
     S: AuthzSubject + ?Sized,
 {
     let search_spec = params.search_spec();
-    let external_backend = backend
-        .permission_backend()
-        .filter(|permission_backend| !permission_backend.supports_storage_visibility_filtering());
+    let external_backend = match backend.authorization_mode() {
+        AuthorizationMode::Delegated(permission_backend)
+            if !permission_backend.supports_storage_visibility_filtering() =>
+        {
+            Some(permission_backend)
+        }
+        AuthorizationMode::LocalStorage | AuthorizationMode::Delegated(_) => None,
+    };
     let principal = if external_backend.is_some() {
         Some(PrincipalRef::load(backend, user).await?)
     } else {
@@ -805,9 +811,14 @@ where
     S: AuthzSubject + ?Sized,
 {
     let search_spec = params.search_spec();
-    let external_backend = backend
-        .permission_backend()
-        .filter(|permission_backend| !permission_backend.supports_storage_visibility_filtering());
+    let external_backend = match backend.authorization_mode() {
+        AuthorizationMode::Delegated(permission_backend)
+            if !permission_backend.supports_storage_visibility_filtering() =>
+        {
+            Some(permission_backend)
+        }
+        AuthorizationMode::LocalStorage | AuthorizationMode::Delegated(_) => None,
+    };
     let principal = if external_backend.is_some() {
         Some(PrincipalRef::load(backend, user).await?)
     } else {

@@ -210,7 +210,7 @@ pub async fn list_retained_tokens(
                 .load::<TokenRow>(connection)
                 .await?;
             let metadata = metadata_for_rows(connection, rows, observation).await?;
-            StoragePage::try_new(metadata, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(metadata, total)
         })
         .await
 }
@@ -586,7 +586,10 @@ pub async fn revoke_all_principal_tokens(
             }
             Ok::<_, PostgresStorageError>(MutationOutcome::committed_with_audits(
                 after.len(),
-                AuditReceipts::try_from_vec(audits)?,
+                crate::validate_persisted(
+                    "token revocation audit receipts",
+                    AuditReceipts::try_from_vec(audits),
+                )?,
             ))
         })
         .await

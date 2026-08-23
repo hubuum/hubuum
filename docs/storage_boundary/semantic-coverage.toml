@@ -273,7 +273,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.ExportTemplateStorage]
 source = "crates/hubuum-storage-core/src/export_template_lifecycle.rs"
-methods = ["get_export_template", "list_export_templates", "list_export_templates_in_collection", "get_export_template_class_collection_id", "create_export_template", "replace_export_template", "delete_export_template"]
+methods = ["get_export_template", "list_export_templates", "list_export_templates_in_collection", "create_export_template", "replace_export_template", "delete_export_template"]
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_export_template_lifecycle"]
 
 [traits.ExecutionStorage]

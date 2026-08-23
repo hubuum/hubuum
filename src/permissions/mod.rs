@@ -18,7 +18,7 @@ pub mod visibility;
 pub mod test_support;
 
 pub use backend::PermissionBackend;
-pub use context::{AppContext, AuthorizationContext};
+pub use context::{AppContext, AuthorizationContext, AuthorizationMode};
 pub use local::LocalPermissionBackend;
 pub(crate) use storage::{
     collection_from_storage as authorization_collection_from_storage,
@@ -98,12 +98,12 @@ where
         ));
     }
     let pool = context;
-    let is_admin = match context.permission_backend() {
-        Some(backend) => {
+    let is_admin = match context.authorization_mode() {
+        AuthorizationMode::Delegated(backend) => {
             let principal = PrincipalRef::load(pool, subject).await?;
             backend.is_admin(&principal).await?
         }
-        None => subject.is_admin(pool).await?,
+        AuthorizationMode::LocalStorage => subject.is_admin(pool).await?,
     };
 
     if is_admin {

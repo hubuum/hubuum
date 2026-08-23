@@ -230,8 +230,8 @@ Storage capability labels follow the singular capability trait vocabulary: the
 trait's `Storage` suffix is removed and its remaining stem becomes snake case.
 The bounded values are `audit_event`, `authentication`, `authorization_data`,
 `backup_snapshot`, `catalog`, `class`, `class_relation`,
-`collection_authorization`, `collection`, `computed_field`, `computed_object`,
-`event_configuration`,
+`collection_authorization_query`, `collection`, `computed_field`,
+`computed_object`, `event_configuration`,
 `event_delivery_administration`, `event_delivery_worker`, `event_fanout`,
 `event_health`, `event_retention`, `export_template`, `external_identity`,
 `group`, `history`, `group_membership`, `identity_scope`, `import`, `inventory`,

@@ -55,8 +55,7 @@ pub async fn list_class_relations(
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -99,7 +98,7 @@ pub async fn list_class_relations(
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }
@@ -113,8 +112,7 @@ pub async fn list_object_relations(
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -147,7 +145,7 @@ pub async fn list_object_relations(
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }
@@ -162,8 +160,7 @@ pub async fn list_class_relations_touching(
     validate_positive_id(class_id.id(), "class id")?;
     let permissions = required_permissions(&options, [CLASS_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -204,7 +201,7 @@ pub async fn list_class_relations_touching(
                 .into_iter()
                 .map(ClassRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }
@@ -219,8 +216,7 @@ pub async fn list_object_relations_touching(
     validate_positive_id(object_id.id(), "object id")?;
     let permissions = required_permissions(&options, [OBJECT_RELATION_PERMISSION])?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -259,7 +255,7 @@ pub async fn list_object_relations_touching(
                 .into_iter()
                 .map(ObjectRelationRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }
@@ -376,8 +372,7 @@ pub async fn list_related_classes(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -385,8 +380,7 @@ pub async fn list_related_classes(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
-                return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-                    .map_err(PostgresStorageError::from);
+                return crate::persisted_page(Vec::new(), include_total.then_some(0));
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Class,
@@ -420,7 +414,7 @@ pub async fn list_related_classes(
                 .into_iter()
                 .map(ClassGraphQueryRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }
@@ -441,8 +435,7 @@ pub async fn list_related_objects(
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
-        return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
 
     runtime
@@ -450,8 +443,7 @@ pub async fn list_related_objects(
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
-                return StoragePage::try_new(Vec::new(), include_total.then_some(0))
-                    .map_err(PostgresStorageError::from);
+                return crate::persisted_page(Vec::new(), include_total.then_some(0));
             }
             let base = build_related_graph_query_spec(
                 GraphKind::Object,
@@ -485,7 +477,7 @@ pub async fn list_related_objects(
                 .into_iter()
                 .map(ObjectGraphQueryRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }

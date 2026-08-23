@@ -354,7 +354,7 @@ pub async fn list_remote_targets(
                     .await?;
                 let targets =
                     load_remote_target_rows(connection, &allowed_collection_ids, &options).await?;
-                StoragePage::try_new(targets, Some(total)).map_err(PostgresStorageError::from)
+                crate::persisted_page(targets, Some(total))
             })
             .await
     } else {
@@ -362,7 +362,7 @@ pub async fn list_remote_targets(
             .with_connection(async |connection| {
                 let targets =
                     load_remote_target_rows(connection, &allowed_collection_ids, &options).await?;
-                StoragePage::try_new(targets, None).map_err(PostgresStorageError::from)
+                crate::persisted_page(targets, None)
             })
             .await
     }

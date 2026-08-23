@@ -558,7 +558,7 @@ pub async fn list_event_deliveries(
                     .into_iter()
                     .map(StorageEventDelivery::try_from)
                     .collect::<Result<Vec<_>, _>>()?;
-                StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+                crate::persisted_page(rows, total)
             },
         )
         .await

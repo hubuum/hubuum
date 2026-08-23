@@ -18,8 +18,8 @@ macro_rules! can {
             return Err($crate::errors::ApiError::Forbidden("Permission denied".to_string()));
         }
 
-        match $crate::permissions::AuthorizationContext::permission_backend(context) {
-            Some(permission_backend) if !permission_backend.uses_local_permission_store() => {
+        match $crate::permissions::AuthorizationContext::authorization_mode(context) {
+            $crate::permissions::AuthorizationMode::Delegated(permission_backend) => {
                 $crate::permissions::authorize_resources(
                     permission_backend,
                     context,
@@ -30,7 +30,7 @@ macro_rules! can {
                 )
                 .await?
             }
-            _ => {
+            $crate::permissions::AuthorizationMode::LocalStorage => {
                 $subject
                     .can(
                         context,

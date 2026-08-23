@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
-use diesel::{AsChangeset, Insertable, OptionalExtension, Queryable, Selectable};
+use diesel::{AsChangeset, Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
@@ -264,8 +264,7 @@ pub async fn list_export_templates(
     let collection_ids = collection_ids.map(|ids| ids.into_iter().map(CollectionId::id).collect());
     let options = normalize_query_options(options)?;
     if collection_ids.as_ref().is_some_and(Vec::is_empty) {
-        return StoragePage::try_new(Vec::new(), options.include_total().then_some(0))
-            .map_err(PostgresStorageError::from);
+        return crate::persisted_page(Vec::new(), options.include_total().then_some(0));
     }
 
     if options.include_total() {
@@ -278,7 +277,7 @@ pub async fn list_export_templates(
                 let templates =
                     load_export_template_rows(connection, collection_ids.as_deref(), &options)
                         .await?;
-                StoragePage::try_new(templates, Some(total)).map_err(PostgresStorageError::from)
+                crate::persisted_page(templates, Some(total))
             })
             .await
     } else {
@@ -287,7 +286,7 @@ pub async fn list_export_templates(
                 let templates =
                     load_export_template_rows(connection, collection_ids.as_deref(), &options)
                         .await?;
-                StoragePage::try_new(templates, None).map_err(PostgresStorageError::from)
+                crate::persisted_page(templates, None)
             })
             .await
     }
@@ -321,26 +320,6 @@ pub async fn list_export_templates_in_collection(
             rows.into_iter()
                 .map(ExportTemplateRow::into_storage)
                 .collect()
-        })
-        .await
-}
-
-pub async fn get_export_template_class_collection_id(
-    runtime: &PostgresRuntime,
-    class_id: i32,
-) -> Result<Option<i32>, PostgresStorageError> {
-    ensure_positive_id(class_id, "Class")?;
-    runtime
-        .with_connection(async |connection| {
-            use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id};
-
-            hubuumclass
-                .filter(id.eq(class_id))
-                .select(collection_id)
-                .first::<i32>(connection)
-                .await
-                .optional()
-                .map_err(PostgresStorageError::from)
         })
         .await
 }

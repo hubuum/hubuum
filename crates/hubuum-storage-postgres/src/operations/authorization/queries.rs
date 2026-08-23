@@ -459,14 +459,14 @@ pub async fn list_principal_collection_permissions(
                     .get_result::<i64>(connection)
                     .await?;
                 let items = load_principal_grants(connection, &query).await?;
-                StoragePage::try_new(items, Some(total)).map_err(PostgresStorageError::from)
+                crate::persisted_page(items, Some(total))
             })
             .await
     } else {
         runtime
             .with_connection(async move |connection| {
                 let items = load_principal_grants(connection, &query).await?;
-                StoragePage::try_new(items, None).map_err(PostgresStorageError::from)
+                crate::persisted_page(items, None)
             })
             .await
     }
@@ -666,14 +666,14 @@ pub async fn list_groups_with_collection_permission(
                     .get_result::<i64>(connection)
                     .await?;
                 let groups = load_groups_page(connection, &query).await?;
-                StoragePage::try_new(groups, Some(total)).map_err(PostgresStorageError::from)
+                crate::persisted_page(groups, Some(total))
             })
             .await
     } else {
         runtime
             .with_connection(async move |connection| {
                 let groups = load_groups_page(connection, &query).await?;
-                StoragePage::try_new(groups, None).map_err(PostgresStorageError::from)
+                crate::persisted_page(groups, None)
             })
             .await
     }
@@ -941,14 +941,14 @@ pub async fn list_local_collection_grants(
                     .get_result::<i64>(connection)
                     .await?;
                 let items = load_group_grants(connection, &query, &permissions).await?;
-                StoragePage::try_new(items, Some(total)).map_err(PostgresStorageError::from)
+                crate::persisted_page(items, Some(total))
             })
             .await
     } else {
         runtime
             .with_connection(async |connection| {
                 let items = load_group_grants(connection, &query, &permissions).await?;
-                StoragePage::try_new(items, None).map_err(PostgresStorageError::from)
+                crate::persisted_page(items, None)
             })
             .await
     }

@@ -91,12 +91,34 @@ impl IdentityScopeStorage for PostgresStorage {
         crate::operations::identity_scope::resolve_identity_scope_names(self.runtime(), scope_ids)
             .await?
             .into_iter()
-            .map(|(id, name)| {
-                IdentityScopeId::new(id)
-                    .map(|id| (id, name))
-                    .map_err(|error| StorageError::internal(error.to_string()))
-            })
+            .map(identity_scope_from_persisted)
             .collect()
+    }
+}
+
+fn identity_scope_from_persisted(
+    (id, name): (i32, String),
+) -> Result<(IdentityScopeId, String), StorageError> {
+    IdentityScopeId::new(id)
+        .map(|id| (id, name))
+        .map_err(|error| {
+            StorageError::from(PostgresStorageError::invalid_persisted_value(
+                "identity scope identifier",
+                error,
+            ))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_persisted_identity_scope_ids_are_backend_failures() {
+        let error = identity_scope_from_persisted((0, "invalid".to_string()))
+            .expect_err("non-positive persisted scope identifiers must fail validation");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
     }
 }
 

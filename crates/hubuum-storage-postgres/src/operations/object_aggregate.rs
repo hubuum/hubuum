@@ -463,11 +463,14 @@ fn object_aggregate_authorization_chunk_options(query_options: &QueryOptions) ->
 fn empty_aggregate_page(
     query_options: &QueryOptions,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
-    Ok(StorageObjectAggregatePage::try_new(
-        Vec::new(),
-        query_options.include_total().then_some(0),
-        None,
-    )?)
+    crate::validate_persisted(
+        "object aggregate page",
+        StorageObjectAggregatePage::try_new(
+            Vec::new(),
+            query_options.include_total().then_some(0),
+            None,
+        ),
+    )
 }
 
 fn validate_candidate_target(

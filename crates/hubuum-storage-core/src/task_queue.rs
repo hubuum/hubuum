@@ -332,9 +332,22 @@ impl StorageTaskCreateRequestBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self, maximum_active_tasks: usize) -> StorageTaskCreateRequest {
-        StorageTaskCreateRequest {
+    pub fn build(
+        self,
+        maximum_active_tasks: usize,
+    ) -> Result<StorageTaskCreateRequest, StorageError> {
+        if self.total_items < 0 {
+            return Err(StorageError::invalid_input(
+                "Task total_items must not be negative",
+            ));
+        }
+        if maximum_active_tasks == 0 {
+            return Err(StorageError::invalid_input(
+                "Task maximum_active_tasks must be greater than zero",
+            ));
+        }
+
+        Ok(StorageTaskCreateRequest {
             kind: self.kind,
             submitted_by: self.submitted_by,
             request_payload: self.request_payload,
@@ -343,7 +356,7 @@ impl StorageTaskCreateRequestBuilder {
             request_hash: self.request_hash,
             scope_snapshot: self.scope_snapshot,
             maximum_active_tasks,
-        }
+        })
     }
 }
 
@@ -1364,6 +1377,34 @@ pub trait TaskQueueStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_create_rejects_negative_total_items() {
+        let error = StorageTaskCreateRequest::builder(
+            StorageTaskKind::Import,
+            PrincipalId::new(91_001).unwrap(),
+            serde_json::json!({}),
+            -1,
+        )
+        .build(1)
+        .expect_err("negative task totals must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn task_create_rejects_zero_capacity() {
+        let error = StorageTaskCreateRequest::builder(
+            StorageTaskKind::Import,
+            PrincipalId::new(91_001).unwrap(),
+            serde_json::json!({}),
+            0,
+        )
+        .build(0)
+        .expect_err("zero task capacity must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
 
     #[test]
     fn task_debug_redacts_identity_payload_scope_and_claim() {

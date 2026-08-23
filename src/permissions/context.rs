@@ -13,6 +13,26 @@ use crate::storage::StorageHandle;
 
 use super::backend::PermissionBackend;
 
+/// Authorization policy selected for one permission-aware application call.
+#[derive(Clone, Copy)]
+pub enum AuthorizationMode<'a> {
+    /// Evaluate permissions from the storage backend's local authorization data.
+    LocalStorage,
+    /// Delegate policy decisions to the configured external permission backend.
+    Delegated(&'a dyn PermissionBackend),
+}
+
+impl<'a> AuthorizationMode<'a> {
+    #[must_use]
+    pub fn from_backend(backend: &'a dyn PermissionBackend) -> Self {
+        if backend.uses_local_permission_store() {
+            Self::LocalStorage
+        } else {
+            Self::Delegated(backend)
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppContext {
     backend: StorageHandle,
@@ -88,14 +108,12 @@ impl StorageContext for AppContext {}
 /// contract only when a use case must choose between local storage-backed
 /// authorization and an external policy backend.
 pub trait AuthorizationContext: StorageContext {
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        None
-    }
+    fn authorization_mode(&self) -> AuthorizationMode<'_>;
 }
 
 impl AuthorizationContext for AppContext {
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        Some(self.permissions.as_ref())
+    fn authorization_mode(&self) -> AuthorizationMode<'_> {
+        AuthorizationMode::from_backend(self.permissions.as_ref())
     }
 }
 
@@ -103,14 +121,18 @@ impl AuthorizationContext for AppContext {
 // implementation. Production permission-aware workflows must receive an
 // AppContext so configured external-policy selection cannot be bypassed.
 #[cfg(any(test, feature = "integration-test-support"))]
-impl AuthorizationContext for StorageHandle {}
+impl AuthorizationContext for StorageHandle {
+    fn authorization_mode(&self) -> AuthorizationMode<'_> {
+        AuthorizationMode::LocalStorage
+    }
+}
 
 impl<T> AuthorizationContext for &T
 where
     T: AuthorizationContext + ?Sized,
 {
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        (*self).permission_backend()
+    fn authorization_mode(&self) -> AuthorizationMode<'_> {
+        (*self).authorization_mode()
     }
 }
 
@@ -118,8 +140,8 @@ impl<T> AuthorizationContext for Data<T>
 where
     T: AuthorizationContext + ?Sized + 'static,
 {
-    fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
-        self.as_ref().permission_backend()
+    fn authorization_mode(&self) -> AuthorizationMode<'_> {
+        self.as_ref().authorization_mode()
     }
 }
 

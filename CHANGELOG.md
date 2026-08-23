@@ -91,7 +91,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   only the families they support and cannot be selected as complete backends.
   PostgreSQL helpers accept concrete pools only inside the adapter tree.
   Storage-only contexts no longer carry authorization-provider selection;
-  policy-aware workflows explicitly require the stronger application context.
+  policy-aware workflows explicitly require the stronger application context,
+  whose `AuthorizationContext::authorization_mode` implementation must choose
+  `LocalStorage` or `Delegated` explicitly.
   PostgreSQL is the only selectable production backend, and compatibility tests
   exercise every required family for every selectable backend. Validated domain
   identifiers now live in the backend-neutral domain crate, and their OpenAPI
@@ -167,7 +169,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `event_delivery` to either `event_delivery_administration` or
   `event_delivery_worker`; the membership label is `group_membership`.
   Capability labels now uniformly use the singular trait stem, for example
-  `collection`, `computed_field`, `task_queue`, and `transaction`. Complete
+  `collection`, `collection_authorization_query`, `computed_field`,
+  `task_queue`, and `transaction`. Complete
   batch reads now use `load_token_metadata_by_ids` and
   `load_export_template_health` rather than `get_*` names. Authorization
   candidate enumeration is now named `load_authorization_*_candidates`, group
@@ -176,6 +179,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `AuthorizationDataStorage::{list_local_collection_grants,
   get_local_collection_grant}`. Operational adapters must also rename
   `list_export_templates_for_audit` to `load_export_templates_for_audit`.
+  `ExportTemplateStorage` no longer duplicates class ownership lookup; callers
+  must use `ClassStorage::resolve_class`.
 - **Breaking (workspace storage API):** object aggregation accepts one
   `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
   when required. The query no longer stores a separate authorization mode, so
@@ -200,7 +205,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   content, and malformed persisted conflict metadata becomes an internal
   storage error instead of panicking. The complete storage contract no longer
   exposes a generic unsupported-operation result; all mandatory behavior must
-  be implemented.
+  be implemented. `StorageTaskCreateRequestBuilder::build` now returns a
+  result and rejects negative totals and zero active-task capacity; callers
+  must handle that validation error.
 - **Breaking (backup/restore):** full backups are version 5 and restore rejects
   version 4. Version 5 uses stable logical resource and history section names,
   semantic class/object/principal fields, permission-name arrays,

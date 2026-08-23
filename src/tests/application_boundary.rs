@@ -595,9 +595,11 @@ fn authorization_context_is_stronger_than_storage_context() {
         "AppContext must provide configured authorization selection"
     );
     assert!(
-        source.contains(
-            "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl AuthorizationContext for StorageHandle"
-        ),
+        source.contains("fn authorization_mode(&self) -> AuthorizationMode<'_>;"),
+        "authorization selection must be explicit rather than defaulting to local policy"
+    );
+    assert!(
+        source.contains("impl AuthorizationContext for StorageHandle {"),
         "a bare storage handle must not bypass production authorization selection"
     );
 }
@@ -1635,7 +1637,6 @@ fn export_template_lifecycle_is_owned_by_the_postgres_adapter() {
         "get_export_template",
         "list_export_templates",
         "list_export_templates_in_collection",
-        "get_export_template_class_collection_id",
         "create_export_template",
         "replace_export_template",
         "delete_export_template",

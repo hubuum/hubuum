@@ -75,7 +75,8 @@ async fn create_worker_test_task(
                     .expect("test idempotency key must be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(100),
+            .build(100)
+            .expect("worker test task request should be valid"),
         )
         .await
         .expect("worker test task should be created");

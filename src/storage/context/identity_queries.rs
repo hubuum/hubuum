@@ -164,7 +164,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "load_principal_collection_permissions",
             async {
                 dispatch_backend!(self, |backend| {
@@ -181,7 +181,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "list_all_principal_collection_permissions",
             async {
                 dispatch_backend!(self, |backend| {
@@ -200,7 +200,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "list_principal_collection_permissions",
             async {
                 dispatch_backend!(self, |backend| {
@@ -217,7 +217,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "list_effective_principal_collection_permissions",
             async {
                 dispatch_backend!(self, |backend| {
@@ -236,7 +236,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "list_visible_collections",
             async {
                 dispatch_backend!(self, |backend| {
@@ -253,7 +253,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "has_group_collection_permission",
             async {
                 dispatch_backend!(self, |backend| {
@@ -271,7 +271,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "list_effective_group_collection_permissions",
             async {
                 dispatch_backend!(self, |backend| {
@@ -290,7 +290,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<Vec<AuthorizationGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "load_groups_with_collection_permission",
             async {
                 dispatch_backend!(self, |backend| {
@@ -307,7 +307,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
-            StorageCapability::CollectionAuthorization,
+            StorageCapability::CollectionAuthorizationQuery,
             "list_groups_with_collection_permission",
             async {
                 dispatch_backend!(self, |backend| {

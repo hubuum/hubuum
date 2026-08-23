@@ -56,25 +56,6 @@ impl ExportTemplateStorage for StorageHandle {
         .await
     }
 
-    async fn get_export_template_class_collection_id(
-        &self,
-        class_id: ClassId,
-    ) -> Result<Option<CollectionId>, StorageError> {
-        self.observe_storage_call(
-            self.backend_name(),
-            StorageCapability::ExportTemplate,
-            "get_export_template_class_collection_id",
-            async {
-                dispatch_backend!(self, |backend| {
-                    backend
-                        .get_export_template_class_collection_id(class_id)
-                        .await
-                })
-            },
-        )
-        .await
-    }
-
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,

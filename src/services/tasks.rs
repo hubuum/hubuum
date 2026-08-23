@@ -12,8 +12,8 @@ use crate::models::{
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
-    AuthorizationContext, PermissionDecision, PrincipalRef, ResourceAttrs, ResourceKind,
-    ResourceRef,
+    AuthorizationContext, AuthorizationMode, PermissionDecision, PrincipalRef, ResourceAttrs,
+    ResourceKind, ResourceRef,
 };
 use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
@@ -346,7 +346,7 @@ pub(crate) async fn submit_task(
     .idempotency_key(submission.idempotency_key)
     .request_hash(submission.request_hash)
     .scope_snapshot(submission.scope_snapshot)
-    .build(submission.maximum_active_tasks);
+    .build(submission.maximum_active_tasks)?;
     storage_handle(backend)
         .create_task(request)
         .await
@@ -457,24 +457,26 @@ where
     }
 
     let principal = PrincipalRef::load(backend, requestor).await?;
-    let permissions = backend.permission_backend();
-    let local = permissions.is_none_or(|backend| backend.uses_local_permission_store());
-    let allowed = if local {
-        let (identity, _) = storage_handle(backend)
-            .get_authentication_identity(principal_id_to_storage(requestor.principal_id()))
-            .await?
-            .into_parts();
-        requestor.is_admin(backend).await?
-            || task.submitted_by == Some(principal.user_id)
-            || (identity.is_human()
-                && submitter_owner_group_id
-                    .is_some_and(|group_id| principal.group_ids.contains(&group_id.id())))
-    } else {
-        permissions
-            .expect("external authorization path requires a permission backend")
-            .authorize_task(&principal, &task_resource(&task))
-            .await?
-            == PermissionDecision::Allow
+    let authorization_mode = backend.authorization_mode();
+    let local = matches!(authorization_mode, AuthorizationMode::LocalStorage);
+    let allowed = match authorization_mode {
+        AuthorizationMode::LocalStorage => {
+            let (identity, _) = storage_handle(backend)
+                .get_authentication_identity(principal_id_to_storage(requestor.principal_id()))
+                .await?
+                .into_parts();
+            requestor.is_admin(backend).await?
+                || task.submitted_by == Some(principal.user_id)
+                || (identity.is_human()
+                    && submitter_owner_group_id
+                        .is_some_and(|group_id| principal.group_ids.contains(&group_id.id())))
+        }
+        AuthorizationMode::Delegated(permission_backend) => {
+            permission_backend
+                .authorize_task(&principal, &task_resource(&task))
+                .await?
+                == PermissionDecision::Allow
+        }
     };
     if allowed {
         Ok(task)

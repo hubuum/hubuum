@@ -380,7 +380,7 @@ async fn list_personal_computed_fields_on(
         .into_iter()
         .map(ComputedDefinitionRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
-    StoragePage::try_new(definitions, total).map_err(PostgresStorageError::from)
+    crate::persisted_page(definitions, total)
 }
 
 pub async fn get_computed_field(

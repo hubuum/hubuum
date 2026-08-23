@@ -469,7 +469,7 @@ macro_rules! history_operations {
                         .into_iter()
                         .map(<$record>::try_from)
                         .collect::<Result<Vec<_>, _>>()?;
-                    StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+                    crate::persisted_page(rows, total)
                 })
                 .await
         }
@@ -594,7 +594,7 @@ pub async fn list_object_history(
                 .into_iter()
                 .map(ObjectHistoryRecord::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
-            StoragePage::try_new(rows, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(rows, total)
         })
         .await
 }

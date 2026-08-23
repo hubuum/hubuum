@@ -32,8 +32,8 @@ use crate::pagination::{
     CursorPaginated, count_query_options, page_limits_or_defaults, paginate_in_memory,
 };
 use crate::permissions::{
-    AuthorizationContext, AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest,
-    PrincipalRef, ResourceRef,
+    AuthorizationContext, AuthorizationMode, AuthzTarget, PermissionBackend, PermissionDecision,
+    PermissionRequest, PrincipalRef, ResourceRef,
 };
 use crate::services::authorization_resources::{
     class_relation_authorization_resources, object_authorization_resources,
@@ -480,17 +480,19 @@ where
         subject: &'a S,
         scopes: Option<&'a TokenScope>,
     ) -> Result<Self, ApiError> {
-        let authorization = if let Some(permission_backend) = backend
-            .permission_backend()
-            .filter(|backend| !backend.supports_storage_visibility_filtering())
-        {
-            ExportAuthorization::External {
-                backend: permission_backend,
-                principal: PrincipalRef::load(backend, subject).await?,
+        let authorization = match backend.authorization_mode() {
+            AuthorizationMode::Delegated(permission_backend)
+                if !permission_backend.supports_storage_visibility_filtering() =>
+            {
+                ExportAuthorization::External {
+                    backend: permission_backend,
+                    principal: PrincipalRef::load(backend, subject).await?,
+                }
             }
-        } else {
-            ExportAuthorization::LocalSql {
-                is_admin: subject.is_admin(backend).await?,
+            AuthorizationMode::LocalStorage | AuthorizationMode::Delegated(_) => {
+                ExportAuthorization::LocalSql {
+                    is_admin: subject.is_admin(backend).await?,
+                }
             }
         };
         Ok(Self {

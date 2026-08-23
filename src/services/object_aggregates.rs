@@ -10,8 +10,9 @@ use crate::models::object_aggregate::{
 use crate::models::{ObjectAggregatePage, Permissions};
 use crate::pagination::{SKIPPED_TOTAL_COUNT, effective_page_limit};
 use crate::permissions::{
-    AuthorizationContext, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
-    ResourceAttrs, ResourceKind, ResourceRef, permission_from_storage, permission_to_storage,
+    AuthorizationContext, AuthorizationMode, PermissionBackend, PermissionDecision,
+    PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
+    permission_from_storage, permission_to_storage,
 };
 use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, principal_id_to_storage, visibility,
@@ -63,9 +64,14 @@ pub(crate) async fn aggregate_objects(
         sort_to_storage(spec.sort()),
     )?;
     let page_limit = effective_page_limit(&query_options)?;
-    let permission_backend = backend.permission_backend();
-    let delegated =
-        permission_backend.is_some_and(|backend| !backend.supports_storage_visibility_filtering());
+    let permission_backend = match backend.authorization_mode() {
+        AuthorizationMode::Delegated(permission_backend)
+            if !permission_backend.supports_storage_visibility_filtering() =>
+        {
+            Some(permission_backend)
+        }
+        AuthorizationMode::LocalStorage | AuthorizationMode::Delegated(_) => None,
+    };
     let is_admin = AuthzSubject::is_admin(principal, backend).await?;
     let visibility = visibility(principal.principal_id(), is_admin, token_scopes.as_ref())?;
     let query = ObjectAggregateStorageQuery::builder(
@@ -89,12 +95,7 @@ pub(crate) async fn aggregate_objects(
     .cursor_max_encoded_bytes(cursor_budget.max_encoded_bytes())
     .build()?;
 
-    let page = if delegated {
-        let permission_backend = permission_backend.ok_or_else(|| {
-            ApiError::InternalServerError(
-                "Delegated object aggregation requires a permission backend".to_string(),
-            )
-        })?;
+    let page = if let Some(permission_backend) = permission_backend {
         let principal = PrincipalRef::load(backend, principal).await?;
         let authorizer = DelegatedObjectAggregateAuthorizer {
             backend: permission_backend,

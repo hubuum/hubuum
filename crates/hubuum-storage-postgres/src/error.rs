@@ -4,7 +4,7 @@ use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
 use hubuum_events_core::EventIdentifierError;
-use hubuum_storage_core::{StorageError, StorageErrorKind};
+use hubuum_storage_core::{StorageError, StorageErrorKind, StoragePage};
 use tracing::{debug, error};
 
 const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
@@ -137,6 +137,23 @@ impl PostgresStorageError {
             Some(current_revision),
         )
     }
+}
+
+pub(crate) fn persisted_page<T>(
+    rows: Vec<T>,
+    total: Option<i64>,
+) -> Result<StoragePage<T>, PostgresStorageError> {
+    validate_persisted("storage page", StoragePage::try_new(rows, total))
+}
+
+pub(crate) fn validate_persisted<T, E>(
+    projection: &'static str,
+    result: Result<T, E>,
+) -> Result<T, PostgresStorageError>
+where
+    E: fmt::Debug,
+{
+    result.map_err(|error| PostgresStorageError::invalid_persisted_value(projection, error))
 }
 
 impl From<JsonSchemaError> for PostgresStorageError {
@@ -412,6 +429,17 @@ mod tests {
             "PostgreSQL persisted remote target failed contract validation"
         );
         assert!(!portable.message().contains("secret persisted value"));
+    }
+
+    #[test]
+    fn contradictory_persisted_pages_are_backend_failures() {
+        let error = persisted_page(vec![(), ()], Some(1)).unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+        assert_eq!(
+            error.to_string(),
+            "PostgreSQL persisted storage page failed contract validation"
+        );
     }
 
     #[derive(Debug)]

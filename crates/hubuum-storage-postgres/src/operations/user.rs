@@ -288,7 +288,7 @@ pub async fn list_users(
                     },
                 )
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
-            StoragePage::try_new(items, total).map_err(PostgresStorageError::from)
+            crate::persisted_page(items, total)
         })
         .await
 }

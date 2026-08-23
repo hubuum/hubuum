@@ -16,9 +16,10 @@ use crate::pagination::{CursorPaginated, CursorValue};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
 use crate::storage::{
-    ExportTemplateStorage, StorageContext, StorageExportTemplate, StorageExportTemplateCreate,
-    StorageExportTemplateDefinition, StorageExportTemplateDelete, StorageExportTemplateListQuery,
-    StorageExportTemplateReplace, storage_handle,
+    ExportTemplateStorage, StorageClassSelector, StorageContext, StorageErrorKind,
+    StorageExportTemplate, StorageExportTemplateCreate, StorageExportTemplateDefinition,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    storage_handle,
 };
 use crate::traits::accessors::{
     CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter, SelfAccessors,
@@ -934,10 +935,20 @@ async fn ensure_template_class_in_collection(
     target_collection_id: i32,
     target_class_id: i32,
 ) -> Result<(), ApiError> {
-    let class_collection_id = storage_handle(pool)
-        .get_export_template_class_collection_id(class_id_to_storage(target_class_id))
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
+    let class = storage_handle(pool)
+        .class_store()
+        .resolve_class(StorageClassSelector::Id(class_id_to_storage(
+            target_class_id,
+        )))
+        .await
+        .map_err(|error| {
+            if error.kind() == StorageErrorKind::NotFound {
+                ApiError::NotFound(format!("Class {target_class_id} not found"))
+            } else {
+                error.into()
+            }
+        })?;
+    let class_collection_id = class.class().collection_id();
 
     if class_collection_id.id() != target_collection_id {
         return Err(ApiError::BadRequest(format!(

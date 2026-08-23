@@ -88,8 +88,10 @@ guard the dependency direction. Among other checks, they verify that:
 - the aggregate contains every required trait;
 - only adapters that explicitly implement the complete aggregate are selectable;
 - the focused memory resource model is not selectable; and
-- every logical contract method crosses exactly one common observer with a
-  unique, bounded label pair; and
+- every observable logical contract method crosses exactly one common observer
+  with a unique, bounded label pair; execution-scope methods on
+  `ExecutionStorage` are deliberately unobserved because they establish the
+  scope inherited by observed constituent calls; and
 - every selectable backend implements the mandatory transaction capability.
 
 These are valuable compile-time-adjacent regression guards. Some inspect
