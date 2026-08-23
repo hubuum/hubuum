@@ -34,6 +34,19 @@ This is complete when an adapter author does not need to inspect PostgreSQL
 queries or application handlers to determine a method's observable query
 semantics.
 
+## Bound Delegated Search Candidate Processing
+
+- [ ] Replace full candidate materialization in delegated unified search with a
+  backend-neutral, bounded candidate-page and authorization protocol.
+- [ ] Preserve filtering, deterministic ordering, authorize-before-page
+  behavior, cursor semantics, and exact authorized totals across batches.
+- [ ] Add conformance and performance scenarios whose candidate set is much
+  larger than the requested page.
+
+This is complete when external authorization cannot force an adapter or the
+application to retain an unbounded candidate set while producing one search
+page.
+
 ## Make Semantic Evidence Method-Aware
 
 - [ ] Give every contract method an explicit effect classification and
@@ -61,6 +74,19 @@ and failure-schedule coverage remain separate diagnostic concerns.
 This audit must finish before publishing an external SDK. The current
 documentation intentionally does not claim that every infallible projection
 encodes every semantic invariant.
+
+## Define the External DTO Naming Policy
+
+- [ ] Decide which values use the `Storage` prefix and which rely on their
+  capability module for namespacing.
+- [ ] Use one order for capability, operation, and role terms in requests,
+  queries, records, snapshots, outcomes, and builders.
+- [ ] Give flat and expanded resource projections names that state their shape,
+  then apply the policy in one focused compatibility change.
+
+This is complete when adapter authors can predict a boundary type's name from
+its capability, operation, and projection shape. Style-only renames remain
+deferred until the supported publication surface is selected.
 
 ## Standardize Audit-Document Construction
 

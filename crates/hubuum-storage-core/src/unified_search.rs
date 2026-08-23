@@ -262,7 +262,7 @@ impl fmt::Debug for UnifiedSearchQuery {
     }
 }
 
-/// Collection projection returned by unified search.
+/// Canonical flat collection projection shared by storage capabilities.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageCollection {
     id: CollectionId,
@@ -367,7 +367,7 @@ impl StorageCollection {
     }
 }
 
-/// Class projection returned by unified search, including its collection.
+/// Expanded class projection used by catalog and unified-search reads.
 #[derive(Clone, PartialEq)]
 pub struct StorageClass {
     id: ClassId,
@@ -498,7 +498,7 @@ impl StorageClassBuilder {
     }
 }
 
-/// Object projection returned by unified search.
+/// Canonical flat object projection shared by storage capabilities.
 #[derive(Clone, PartialEq)]
 pub struct StorageObject {
     id: ObjectId,

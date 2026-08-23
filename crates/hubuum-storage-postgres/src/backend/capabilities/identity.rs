@@ -109,19 +109,6 @@ fn identity_scope_from_persisted(
         })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_persisted_identity_scope_ids_are_backend_failures() {
-        let error = identity_scope_from_persisted((0, "invalid".to_string()))
-            .expect_err("non-positive persisted scope identifiers must fail validation");
-
-        assert_eq!(error.kind(), StorageErrorKind::Backend);
-    }
-}
-
 #[async_trait]
 impl GroupMembershipStorage for PostgresStorage {
     async fn get_principal_group(
@@ -647,5 +634,18 @@ impl AuthorizationDataStorage for PostgresStorage {
         )
         .await
         .map_err(StorageError::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_persisted_identity_scope_ids_are_backend_failures() {
+        let error = identity_scope_from_persisted((0, "invalid".to_string()))
+            .expect_err("non-positive persisted scope identifiers must fail validation");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
     }
 }

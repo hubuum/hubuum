@@ -7,7 +7,7 @@ use hubuum_domain::{
     PrincipalId, PrincipalKind, ResourceId, ResourceRevision, RestoreJobId, ServiceAccountId,
     TaskId, UserId,
 };
-use hubuum_events_core::{Action, ActorKind, EntityType, EventEnvelope, EventSequence};
+use hubuum_events_core::{Action, ActorKind, EntityType, EventEnvelope, EventId, EventSequence};
 use hubuum_storage_core::*;
 
 #[test]
@@ -113,6 +113,23 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = InventoryGaugeSnapshot::new;
     let _ = MaintenanceState::Normal;
     let _ = MutationOutcome::<()>::unchanged;
+    let audit = AuditReceipt::new(
+        EventSequence::new(1).unwrap(),
+        EventId::from(uuid::Uuid::nil()),
+        EntityType::Collection,
+        Action::Created,
+        None,
+        Some(ResourceRevision::INITIAL),
+    );
+    let committed = MutationOutcome::committed((), audit.clone());
+    assert!(committed.is_committed());
+    assert_eq!(committed.audits().map(AuditReceipts::len), Some(1));
+    let audits = AuditReceipts::new(audit.clone(), vec![audit]);
+    let committed_with_audits = MutationOutcome::committed_with_audits((), audits);
+    assert_eq!(
+        committed_with_audits.audits().map(AuditReceipts::len),
+        Some(2)
+    );
     let _ = OperationalExportTemplateAuditEntry::new(
         ExportTemplateId::new(1).unwrap(),
         collection_id,
