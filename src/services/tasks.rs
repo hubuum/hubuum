@@ -19,12 +19,12 @@ use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
     AuthenticationStorage, ComputedFieldStorage, StorageBackupOutput, StorageBackupOutputSummary,
     StorageContext, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult,
-    StorageTask, StorageTaskClaim, StorageTaskCompletion, StorageTaskCompletionArtifact,
-    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskResultCounts,
-    StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus, TaskExecutionStorage,
-    TaskQueueStorage, storage_handle,
+    StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEvent,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
 };
 use crate::traits::AuthzSubject;
 
@@ -108,13 +108,27 @@ fn storage_lease_duration(duration: Duration) -> Result<StorageTaskLeaseDuration
 fn storage_task_state_update(
     task: &ClaimedTask,
     change: TaskStateChange,
-) -> Result<StorageTaskStateUpdate, ApiError> {
+) -> Result<StorageTaskActiveUpdate, ApiError> {
     let (processed, succeeded, failed) = change.counts.into();
-    Ok(StorageTaskStateUpdate::new(
+    Ok(StorageTaskActiveUpdate::try_new(
         task.lease.clone(),
         task_status_to_storage(change.status),
         StorageTaskResultCounts::try_new(processed, succeeded, failed)?,
-    )
+    )?
+    .summary(change.summary)
+    .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
+}
+
+fn storage_task_terminal_update(
+    task: &ClaimedTask,
+    change: TaskStateChange,
+) -> Result<StorageTaskTerminalUpdate, ApiError> {
+    let (processed, succeeded, failed) = change.counts.into();
+    Ok(StorageTaskTerminalUpdate::try_new(
+        task.lease.clone(),
+        task_status_to_storage(change.status),
+        StorageTaskResultCounts::try_new(processed, succeeded, failed)?,
+    )?
     .summary(change.summary)
     .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
 }
@@ -203,11 +217,12 @@ pub(crate) async fn complete_task(
             event.task_id, task.id
         )));
     }
-    let completion = StorageTaskCompletion::new(
-        storage_task_state_update(task, change)?,
+    let completion = StorageTaskCompletion::try_new(
+        task_kind_to_storage(TaskKind::from_db(&task.kind)?),
+        storage_task_terminal_update(task, change)?,
         storage_task_event(event),
-    )
-    .artifact(artifact);
+        artifact,
+    )?;
     storage_handle(backend)
         .complete_task(completion)
         .await

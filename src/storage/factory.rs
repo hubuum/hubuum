@@ -208,10 +208,12 @@ impl PostgresStorageSettingsBuilder {
 
 /// Application-local composition for the PostgreSQL adapter.
 ///
-/// Backend crates expose implementation primitives. This factory is the only
-/// place that translates Hubuum process settings into those primitives, so a
-/// newly registered adapter adds one sibling factory and one exhaustive match
-/// arm instead of spreading backend decisions through process entry points.
+/// Backend crates expose implementation primitives. This module centralizes
+/// the translation from Hubuum process settings into those primitives. Adding
+/// a selectable backend still requires explicit updates to the backend kind,
+/// context dispatch, settings, initialization and migration dispatch,
+/// administrator projections, certification, and test environment described
+/// in the storage backend author guide.
 struct PostgresAdapterFactory;
 
 impl PostgresAdapterFactory {

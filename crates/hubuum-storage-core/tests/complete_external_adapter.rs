@@ -1561,7 +1561,7 @@ impl TaskExecutionStorage for CompleteExternalAdapter {
 
     async fn update_task_state(
         &self,
-        update: StorageTaskStateUpdate,
+        update: StorageTaskActiveUpdate,
     ) -> Result<StorageTask, StorageError> {
         fixture_result()
     }

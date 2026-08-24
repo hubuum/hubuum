@@ -116,17 +116,17 @@ use crate::storage::{
     StorageRestoreStageCreate, StorageRevisionPrecondition, StorageRevisionTarget,
     StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
     StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus,
-    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
-    StorageTokenListState, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
-    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchQuery,
-    UnifiedSearchStorage, UserStorage,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserAnonymize,
+    StorageUserCreate, StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate,
+    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
+    TokenRetentionStorage, TokenStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 use hubuum_query::QueryFilters;
@@ -1208,15 +1208,21 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
 
     let error = PostgresFaultController::failing(PostgresFaultPoint::TaskFinalizeAfterEvent)
         .run(
-            backend.complete_task(StorageTaskCompletion::new(
-                StorageTaskStateUpdate::new(
-                    lease,
-                    StorageTaskStatus::Succeeded,
-                    StorageTaskResultCounts::try_new(1, 1, 0)
-                        .expect("non-negative task counts should be valid"),
-                ),
-                StorageTaskEventInput::new("succeeded", "Must be rolled back"),
-            )),
+            backend.complete_task(
+                StorageTaskCompletion::try_new(
+                    StorageTaskKind::Import,
+                    StorageTaskTerminalUpdate::try_new(
+                        lease,
+                        StorageTaskStatus::Succeeded,
+                        StorageTaskResultCounts::try_new(1, 1, 0)
+                            .expect("non-negative task counts should be valid"),
+                    )
+                    .expect("succeeded is a terminal task status"),
+                    StorageTaskEventInput::new("succeeded", "Must be rolled back"),
+                    StorageTaskCompletionArtifact::None,
+                )
+                .expect("an import task accepts no completion artifact"),
+            ),
         )
         .await
         .expect_err("injected failure should abort task finalization");
@@ -2809,27 +2815,33 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                     .expect("certified backend should append a claim-owned event");
             }
             backend
-                .update_task_state(StorageTaskStateUpdate::new(
-                    claimed.lease().clone(),
-                    StorageTaskStatus::Running,
-                    StorageTaskResultCounts::try_new(0, 0, 0)
-                        .expect("non-negative task counts should be valid"),
-                ))
+                .update_task_state(
+                    StorageTaskActiveUpdate::try_new(
+                        claimed.lease().clone(),
+                        StorageTaskStatus::Running,
+                        StorageTaskResultCounts::try_new(0, 0, 0)
+                            .expect("non-negative task counts should be valid"),
+                    )
+                    .expect("running is an active task status"),
+                )
                 .await
                 .expect("certified backend should update claimed task state");
             let artifact = compatibility_completion_artifact(claimed.task().kind());
             backend
                 .complete_task(
-                    StorageTaskCompletion::new(
-                        StorageTaskStateUpdate::new(
+                    StorageTaskCompletion::try_new(
+                        claimed.task().kind(),
+                        StorageTaskTerminalUpdate::try_new(
                             claimed.lease().clone(),
                             StorageTaskStatus::Succeeded,
                             StorageTaskResultCounts::try_new(1, 1, 0)
                                 .expect("non-negative task counts should be valid"),
-                        ),
+                        )
+                        .expect("succeeded is a terminal task status"),
                         StorageTaskEventInput::new("succeeded", "Compatibility completed"),
+                        artifact,
                     )
-                    .artifact(artifact),
+                    .expect("task kind and completion artifact should match"),
                 )
                 .await
                 .expect("certified backend should complete a claimed task");
@@ -2848,6 +2860,66 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             }
         }
         assert_eq!(completed_kinds.len(), StorageTaskKind::ALL.len());
+
+        let mismatched_kind_task = backend
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Export,
+                    principal_id(user.id),
+                    serde_json::json!({"compatibility_kind_mismatch": true}),
+                    1,
+                )
+                .idempotency_key(Some(
+                    IdempotencyKey::new(prefix("task_execution_kind_mismatch"))
+                        .expect("compatibility idempotency key should be valid"),
+                ))
+                .request_hash(Some(prefix("task_execution_kind_mismatch_hash")))
+                .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+                .build(10)
+                .expect("task kind mismatch request should be valid"),
+            )
+            .await
+            .expect("certified backend should create a kind mismatch fixture");
+        fixture_ids.push(mismatched_kind_task.id());
+        hubuum_storage_postgres::test_support::prioritize_task(
+            pool.get_ref(),
+            mismatched_kind_task.id(),
+        )
+        .await
+        .expect("kind mismatch fixture should be made claim-first");
+        let mismatched_kind_claim = backend
+            .claim_next_task(lease_duration)
+            .await
+            .expect("certified backend should claim the kind mismatch fixture")
+            .expect("the kind mismatch fixture should be claimable");
+        assert_eq!(mismatched_kind_claim.task().id(), mismatched_kind_task.id());
+        let mismatched_kind_error = backend
+            .complete_task(
+                StorageTaskCompletion::try_new(
+                    StorageTaskKind::Import,
+                    StorageTaskTerminalUpdate::try_new(
+                        mismatched_kind_claim.lease().clone(),
+                        StorageTaskStatus::Succeeded,
+                        StorageTaskResultCounts::try_new(1, 1, 0)
+                            .expect("non-negative task counts should be valid"),
+                    )
+                    .expect("succeeded is a terminal task status"),
+                    StorageTaskEventInput::new("succeeded", "Mismatched kind must fail"),
+                    StorageTaskCompletionArtifact::None,
+                )
+                .expect("an import task accepts no completion artifact"),
+            )
+            .await
+            .expect_err("a completion kind that differs from storage must be rejected");
+        assert_eq!(mismatched_kind_error.kind(), StorageErrorKind::InvalidInput);
+        backend
+            .fail_task(StorageTaskFailure::new(
+                mismatched_kind_claim.lease().clone(),
+                "Compatibility cleanup",
+                StorageTaskEventInput::new("failed", "Compatibility cleanup"),
+            ))
+            .await
+            .expect("the rejected completion claim should remain valid");
 
         let mut failure_fixture_ids = Vec::new();
         for task_kind in StorageTaskKind::ALL {

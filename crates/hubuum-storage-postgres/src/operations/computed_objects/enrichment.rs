@@ -8,8 +8,8 @@ use hubuum_computed_fields::{
 };
 use hubuum_query::ComputedQueryValueType;
 use hubuum_storage_core::{
-    ComputedObjectEnrichmentQuery, StorageComputationRevision, StorageComputedFieldError,
-    StorageComputedObject, StorageComputedScope, StorageObject, StorageSharedComputedScope,
+    ComputedObjectEnrichmentQuery, StorageComputedFieldError, StorageComputedObject,
+    StorageComputedScope, StorageObject, StorageSharedComputedScope,
 };
 
 use super::query::ComputedQuerySnapshot;
@@ -236,7 +236,9 @@ fn enrich_from_rows(
         enriched.push(StorageComputedObject::new(
             object,
             StorageSharedComputedScope::new(
-                StorageComputationRevision::new(evaluation_revision)?,
+                crate::operations::computed_fields::persisted_computation_revision(
+                    evaluation_revision,
+                )?,
                 !fresh,
                 shared,
             ),

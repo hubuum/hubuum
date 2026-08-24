@@ -233,7 +233,7 @@ impl TaskExecutionStorage for StorageHandle {
 
     async fn update_task_state(
         &self,
-        update: StorageTaskStateUpdate,
+        update: StorageTaskActiveUpdate,
     ) -> Result<StorageTask, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

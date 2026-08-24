@@ -4,7 +4,8 @@ This guide explains where storage-boundary code lives, how a request moves
 through it, and how to decide which layer owns a change.
 
 For normative guarantees, see the [storage contract](contract.md). For trait
-responsibilities, see the [capability family map](capability-families.md). For
+responsibilities, see the
+[semantic capability group map](capability-families.md). For
 adapter acceptance, see [testing and compatibility](testing.md).
 
 ## Request Flow
@@ -76,7 +77,8 @@ The root crate has no PostgreSQL module tree. New adapter-specific tests belong
 beside `hubuum-storage-postgres` or use its typed `integration-test-support`
 surface. Do not recreate Diesel rows or SQL helpers in application tests.
 
-The composition modules are grouped by capability family. In
+The composition modules are grouped by responsibility, roughly following the
+six family bounds. In
 `src/storage/context`, `mod.rs` owns the opaque handle, backend enum, resource
 ports, and one exhaustive dispatch macro. Sibling modules own forwarding
 implementations for identity, identity queries, general queries, relations,
@@ -140,9 +142,10 @@ settings in the PostgreSQL adapter. Preserve the existing contract request,
 result, errors, and semantics unless the application requirement itself
 changed.
 
-### New capability family
+### New operation trait or family bound
 
-Adding a family changes the compile-time backend contract. Update:
+Adding an operation trait or family bound changes the compile-time backend
+contract. Update:
 
 - the `StorageBackend` aggregate;
 - exhaustive dispatch and observation;
@@ -212,7 +215,7 @@ Inside PostgreSQL:
 Revision checks, audit events, task claims, and destructive restore ownership
 must be verified inside the same native transaction as the protected write.
 The transaction compatibility test must prove rollback of both state and audit
-events for every composable lifecycle family.
+events for every composable lifecycle operation.
 
 Ordinary mutation APIs require `EventContext` and return `MutationOutcome`.
 Do not add an optional context, a boolean event switch, or an eventless helper.
@@ -312,9 +315,9 @@ testing, not production PostgreSQL behavior:
 
 1. Continue replacing direct SQL in application integration tests with public
    contracts or typed adapter test support.
-2. Add backend-neutral fixture hooks for more capability families where the
+2. Add backend-neutral fixture hooks for more semantic capability groups where the
    assertions are reusable.
-3. Move those family expectations into `hubuum-storage-conformance` without
+3. Move those group expectations into `hubuum-storage-conformance` without
    making the workspace crates publishable in this change.
 
 When workspace membership or manifests change, update the Docker manifest-copy
@@ -349,7 +352,7 @@ when it does not match a forbidden source pattern.
 
 Before considering a boundary change complete:
 
-- [ ] The operation has one clear owning family and trait.
+- [ ] The operation has one clear owning semantic capability group and trait.
 - [ ] No application consumer imports adapter details.
 - [ ] DTOs express intent without mirroring a native schema.
 - [ ] Existing safe semantics are composed through the opaque unit of work.
@@ -365,5 +368,6 @@ Before considering a boundary change complete:
 - [ ] Shared and PostgreSQL-native tests cover the changed semantics.
 - [ ] The six-part conformance fixture and sealed certification remain aligned.
 - [ ] API, worker, administration, and configuration callers remain neutral.
-- [ ] Trait-family docs, OpenAPI, and changelog are updated where applicable.
+- [ ] Semantic-group and family-bound docs, OpenAPI, and changelog are updated
+  where applicable.
 - [ ] All verification required by `AGENTS.md` passes.

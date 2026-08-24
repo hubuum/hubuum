@@ -320,9 +320,14 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     );
     let _ = StorageSyncedHuman::new;
     let _ = StorageTask::builder;
+    let _ = StorageTaskBuilder::try_build;
+    let _ = StorageTaskProgress::try_new;
     let _ = StorageTaskAccess::new;
+    let _ = StorageTaskActiveUpdate::try_new;
     let _ = StorageTaskClaim::try_new;
+    let _ = StorageTaskCompletion::try_new;
     let _ = StorageTaskResultCounts::try_new;
+    let _ = StorageTaskTerminalUpdate::try_new;
     let _ = StorageTaskEvent::builder(
         EventSequence::new(1).unwrap(),
         TaskId::new(1).unwrap(),
@@ -365,7 +370,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageIdentityGroupBuilder::build;
     let _ = StorageImportTaskResultBuilder::build;
     let _ = StoragePrincipalBuilder::build;
-    let _ = StorageTaskBuilder::build;
+    let _ = StorageTaskBuilder::try_build;
     let _ = StorageTaskEventBuilder::build;
     let _ = StorageTokenMetadataBuilder::build;
 }

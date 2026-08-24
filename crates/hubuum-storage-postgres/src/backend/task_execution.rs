@@ -2,8 +2,8 @@ use crate::operations::task_execution as postgres_task_execution;
 use async_trait::async_trait;
 
 use hubuum_storage_core::{
-    StorageError, StorageTask, StorageTaskClaim, StorageTaskCompletion, StorageTaskEventAppend,
-    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskStateUpdate,
+    StorageError, StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskEventAppend, StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration,
     TaskExecutionStorage,
 };
 
@@ -47,7 +47,7 @@ impl TaskExecutionStorage for PostgresStorage {
 
     async fn update_task_state(
         &self,
-        update: StorageTaskStateUpdate,
+        update: StorageTaskActiveUpdate,
     ) -> Result<StorageTask, StorageError> {
         postgres_task_execution::update_task_state(self.runtime(), update)
             .await

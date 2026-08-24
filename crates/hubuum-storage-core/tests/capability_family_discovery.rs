@@ -1,5 +1,5 @@
-//! Compile-time checks that each canonical capability family is independently
-//! discoverable with only the shared `common` values imported beside it.
+//! Compile-time checks that each family-bound discovery module is independently
+//! usable with only the shared `common` values imported beside it.
 
 mod resources {
     use hubuum_storage_core::capabilities::{common::*, resources::*};

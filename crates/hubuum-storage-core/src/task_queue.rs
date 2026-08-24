@@ -131,14 +131,39 @@ pub struct StorageTaskProgress {
 }
 
 impl StorageTaskProgress {
-    #[must_use]
-    pub const fn new(total: i32, processed: i32, succeeded: i32, failed: i32) -> Self {
-        Self {
+    /// Construct a task progress projection whose persisted counters are valid.
+    pub fn try_new(
+        total: i32,
+        processed: i32,
+        succeeded: i32,
+        failed: i32,
+    ) -> Result<Self, StorageError> {
+        if total < 0 {
+            return Err(StorageError::internal(
+                "Task total count must not be negative",
+            ));
+        }
+        if processed < 0 {
+            return Err(StorageError::internal(
+                "Task processed count must not be negative",
+            ));
+        }
+        if succeeded < 0 {
+            return Err(StorageError::internal(
+                "Task succeeded count must not be negative",
+            ));
+        }
+        if failed < 0 {
+            return Err(StorageError::internal(
+                "Task failed count must not be negative",
+            ));
+        }
+        Ok(Self {
             total,
             processed,
             succeeded,
             failed,
-        }
+        })
     }
 
     #[must_use]
@@ -637,9 +662,78 @@ impl StorageTaskBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageTask {
-        self.task
+    /// Validate and build a task projection returned by a storage adapter.
+    pub fn try_build(self) -> Result<StorageTask, StorageError> {
+        if self.task.attempt_count < 0 {
+            return Err(StorageError::internal(
+                "Task attempt count must not be negative",
+            ));
+        }
+        if self.task.updated_at < self.task.created_at {
+            return Err(StorageError::internal(
+                "Task update timestamp must not precede its creation timestamp",
+            ));
+        }
+        if self
+            .task
+            .started_at
+            .is_some_and(|started_at| started_at < self.task.created_at)
+        {
+            return Err(StorageError::internal(
+                "Task start timestamp must not precede its creation timestamp",
+            ));
+        }
+        if self
+            .task
+            .started_at
+            .is_some_and(|started_at| started_at > self.task.updated_at)
+        {
+            return Err(StorageError::internal(
+                "Task start timestamp must not follow its update timestamp",
+            ));
+        }
+        if self
+            .task
+            .finished_at
+            .is_some_and(|finished_at| finished_at < self.task.created_at)
+        {
+            return Err(StorageError::internal(
+                "Task finish timestamp must not precede its creation timestamp",
+            ));
+        }
+        if self
+            .task
+            .finished_at
+            .is_some_and(|finished_at| finished_at > self.task.updated_at)
+        {
+            return Err(StorageError::internal(
+                "Task finish timestamp must not follow its update timestamp",
+            ));
+        }
+        if matches!(
+            (self.task.started_at, self.task.finished_at),
+            (Some(started_at), Some(finished_at)) if finished_at < started_at
+        ) {
+            return Err(StorageError::internal(
+                "Task finish timestamp must not precede its start timestamp",
+            ));
+        }
+        for (label, timestamp) in [
+            ("redaction", self.task.request_redacted_at),
+            ("deletion", self.task.deleted_at),
+        ] {
+            if timestamp.is_some_and(|timestamp| timestamp < self.task.created_at) {
+                return Err(StorageError::internal(format!(
+                    "Task {label} timestamp must not precede its creation timestamp"
+                )));
+            }
+            if timestamp.is_some_and(|timestamp| timestamp > self.task.updated_at) {
+                return Err(StorageError::internal(format!(
+                    "Task {label} timestamp must not follow its update timestamp"
+                )));
+            }
+        }
+        Ok(self.task)
     }
 }
 
@@ -1399,6 +1493,50 @@ mod tests {
     }
 
     #[test]
+    fn task_progress_rejects_negative_persisted_counts() {
+        for counts in [(-1, 0, 0, 0), (0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1)] {
+            let error = StorageTaskProgress::try_new(counts.0, counts.1, counts.2, counts.3)
+                .expect_err("negative persisted progress must be rejected");
+
+            assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        }
+    }
+
+    #[test]
+    fn task_projection_rejects_negative_attempt_count() {
+        let now = chrono::Utc::now();
+        let error = StorageTask::builder(
+            TaskId::new(91_010).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Queued,
+            now,
+            now,
+        )
+        .attempt_count(-1)
+        .try_build()
+        .expect_err("a negative persisted attempt count must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+    }
+
+    #[test]
+    fn task_projection_rejects_reversed_timestamps() {
+        let created_at = chrono::Utc::now();
+        let earlier = created_at - chrono::Duration::seconds(1);
+        let error = StorageTask::builder(
+            TaskId::new(91_011).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Queued,
+            created_at,
+            earlier,
+        )
+        .try_build()
+        .expect_err("a reversed persisted task interval must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+    }
+
+    #[test]
     fn task_debug_redacts_identity_payload_and_scope() {
         let now = chrono::Utc::now();
         let task = StorageTask::builder(
@@ -1413,7 +1551,7 @@ mod tests {
         .request_hash(Some("secret hash".to_string()))
         .request_payload(Some(serde_json::json!({"secret": "payload"})))
         .summary(Some("summary".to_string()))
-        .progress(StorageTaskProgress::new(2, 1, 1, 0))
+        .progress(StorageTaskProgress::try_new(2, 1, 1, 0).unwrap())
         .scope_snapshot(StorageTaskScopeSnapshot::new(
             Some(TokenId::new(91_003).unwrap()),
             true,
@@ -1423,7 +1561,8 @@ mod tests {
         .lease_expires_at(Some(now))
         .attempt_count(1)
         .initiator_principal_id(Some(PrincipalId::new(91_004).unwrap()))
-        .build();
+        .try_build()
+        .unwrap();
 
         let debug = format!("{task:?}");
 

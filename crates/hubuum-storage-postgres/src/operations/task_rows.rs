@@ -51,7 +51,16 @@ impl TaskRow {
             PostgresStorageError::database(format!("Unknown stored task status '{}'", self.status))
         })?;
         let lease_expires_at = projected_lease_expiry(self.lease_token, self.lease_expires_at)?;
-        Ok(StorageTask::builder(
+        let progress = crate::validate_persisted(
+            "task progress",
+            StorageTaskProgress::try_new(
+                self.total_items,
+                self.processed_items,
+                self.success_items,
+                self.failed_items,
+            ),
+        )?;
+        let task = StorageTask::builder(
             TaskId::new(self.id)?,
             kind,
             status,
@@ -63,12 +72,7 @@ impl TaskRow {
         .request_hash(self.request_hash)
         .request_payload(self.request_payload)
         .summary(self.summary)
-        .progress(StorageTaskProgress::new(
-            self.total_items,
-            self.processed_items,
-            self.success_items,
-            self.failed_items,
-        ))
+        .progress(progress)
         .scope_snapshot(StorageTaskScopeSnapshot::new(
             self.submitted_token_id.map(TokenId::new).transpose()?,
             self.submitted_token_scoped,
@@ -86,8 +90,8 @@ impl TaskRow {
         )
         .lease_expires_at(lease_expires_at)
         .attempt_count(self.attempt_count)
-        .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
-        .build())
+        .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?);
+        crate::validate_persisted("task projection", task.try_build())
     }
 }
 
@@ -110,6 +114,38 @@ mod tests {
 
     use super::*;
 
+    fn valid_task_row() -> TaskRow {
+        let now = chrono::Utc::now().naive_utc();
+        TaskRow {
+            id: 1,
+            kind: StorageTaskKind::Import.as_str().to_string(),
+            status: StorageTaskStatus::Queued.as_str().to_string(),
+            submitted_by: None,
+            idempotency_key: None,
+            request_hash: None,
+            request_payload: Some(serde_json::json!({})),
+            summary: None,
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+            deleted_at: None,
+            deleted_by: None,
+            created_at: now,
+            updated_at: now,
+            lease_token: None,
+            lease_expires_at: None,
+            attempt_count: 0,
+            initiator_user_id: None,
+        }
+    }
+
     #[test]
     fn task_projection_hides_the_native_lease_token() {
         let expires_at = chrono::Utc::now().naive_utc();
@@ -124,6 +160,42 @@ mod tests {
     fn task_projection_rejects_a_lease_token_without_an_expiry() {
         let error = projected_lease_expiry(Some(Uuid::new_v4()), None)
             .expect_err("a partial persisted lease must be rejected");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn task_projection_classifies_negative_progress_as_backend_corruption() {
+        let mut row = valid_task_row();
+        row.processed_items = -1;
+
+        let error = row
+            .into_storage()
+            .expect_err("negative persisted progress must be rejected");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn task_projection_classifies_negative_attempts_as_backend_corruption() {
+        let mut row = valid_task_row();
+        row.attempt_count = -1;
+
+        let error = row
+            .into_storage()
+            .expect_err("negative persisted attempts must be rejected");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn task_projection_classifies_reversed_timestamps_as_backend_corruption() {
+        let mut row = valid_task_row();
+        row.updated_at = row.created_at - chrono::Duration::seconds(1);
+
+        let error = row
+            .into_storage()
+            .expect_err("reversed persisted task timestamps must be rejected");
 
         assert_eq!(error.kind(), StorageErrorKind::Backend);
     }

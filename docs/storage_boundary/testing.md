@@ -15,9 +15,9 @@ The obligations being tested are defined by the normative
 | Area | Confidence | Reason |
 | --- | --- | --- |
 | PostgreSQL behavior on a real database | Strong | The full suite creates and migrates an isolated PostgreSQL database and exercises queries, transactions, triggers, workers, services, and APIs. |
-| Resource lifecycle semantics | Strong | Focused family contracts run against PostgreSQL and a deterministic memory model, including whole-graph transaction commit and state-plus-event rollback. |
+| Resource lifecycle semantics | Strong | Focused resource-operation contracts run against PostgreSQL and a deterministic memory model, including whole-graph transaction commit and state-plus-event rollback. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
-| Mandatory family availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and a sealed certification gate covers every selectable kind. |
+| Mandatory family-bound availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and a sealed certification gate covers every selectable kind. |
 | Audit/event contract | Strong | The reusable conformance harness verifies a durable receipt, no-op behavior, rollback, outbox-to-sink delivery, and logical/backend/failure telemetry for every registered backend. |
 | Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The guard verifies names and test existence, not that a test invokes each listed method or asserts all of its effects. |
 | Application and HTTP behavior | Strong | Every registered backend runs a service point read, readiness, and representative authenticated point/list HTTP requests. Larger integration suites exercise the remaining real application path. |
@@ -34,7 +34,7 @@ contract DTO unit tests
 architecture and workspace guards
           |
           v
-shared resource-family + selectable-backend contracts
+shared resource-operation + selectable-backend contracts
           |
           v
 PostgreSQL native integration and query budgets
@@ -106,10 +106,10 @@ method or variant therefore fails locally until its intended semantic evidence
 is recorded. The guard does not inspect test bodies or construct a call graph,
 so invocation and assertion depth remain review responsibilities. The
 observation guard derives its expected method count from this same inventory,
-including resource-family methods observed by `ObservedStorage`, rather than
+including resource-operation methods observed by `ObservedStorage`, rather than
 maintaining a second hand-written operation list.
 
-## Shared Resource-Family Contracts
+## Shared Resource Operation Contracts
 
 Collection, class, object, class-relation, and object-relation service behavior
 runs against both:
@@ -123,9 +123,10 @@ there; it does not stand in for a complete alternative backend.
 
 `src/tests/storage_transactions.rs` applies one generic transaction scenario
 to both implementations. The scenario commits a complete resource graph, then
-repeats every lifecycle family and deliberately returns an application error.
-It verifies that committed state has family-specific audit evidence, then that
-the failed callback's state and all five family-specific audit events roll back.
+repeats every lifecycle operation and deliberately returns an application
+error. It verifies that committed state has operation-specific audit evidence,
+then that the failed callback's state and all five operation-specific audit
+events roll back.
 
 The memory model implements a serializable copy-on-write unit of work for this
 purpose. That proves the application-facing semantics are independently
@@ -147,11 +148,11 @@ readiness handler, and authenticated collection point and list routes. The
 Actix application receives only `AppContext`; adapter-native clients remain
 inside the exhaustive fixture-construction match.
 
-The suite covers these family-level behaviors:
+The suite covers these semantic-group behaviors:
 
-| Family | Shared compatibility behavior |
+| Semantic capability group | Shared compatibility behavior |
 | --- | --- |
-| `domain_lifecycle` | Lifecycle service contracts, record compatibility operations, and cross-family transaction commit/rollback |
+| `domain_lifecycle` | Lifecycle service contracts, record compatibility operations, and cross-operation transaction commit/rollback |
 | `catalog_queries` | Collection, class, and object listing with real matching rows |
 | `computed_object_queries` | Computed filtering and enrichment |
 | `computed_fields` | Shared and personal definitions, class state, scheduling, and claimed rebuild execution |
@@ -175,7 +176,7 @@ The suite covers these family-level behaviors:
 The aggregate trait guarantees that every method exists. The semantic coverage
 inventory guarantees that the method and tracked input-variant lists cannot
 drift unnoticed. The compatibility suite supplies representative semantics by
-family and directly invokes most methods. A listed scenario is not mechanical
+semantic capability group and directly invokes most methods. A listed scenario is not mechanical
 method-level evidence: broad scenarios may cover several methods, and the guard
 does not verify which ones they call. Some native worker operations—most
 notably delivery claims—still receive their deepest coverage in
@@ -356,7 +357,7 @@ The actionable follow-up work and its completion criteria are tracked in the
 
 The next improvements should be:
 
-1. Move additional backend-neutral family scenarios into
+1. Move additional backend-neutral semantic-group scenarios into
    `hubuum-storage-conformance` once their root application DTOs and fixture
    interfaces are neutral.
 2. Add portable fault fixtures for further backend-neutral state machines as

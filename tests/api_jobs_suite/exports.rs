@@ -1179,7 +1179,10 @@ mod tests {
             .expect("foreign task request must be valid")
             .idempotency_key(Some(export_key.clone()))
             .request_hash(Some(context.scoped_name("foreign-task-hash")))
-            .progress(hubuum_storage_core::StorageTaskProgress::new(1, 0, 0, 0)),
+            .progress(
+                hubuum_storage_core::StorageTaskProgress::try_new(1, 0, 0, 0)
+                    .expect("non-negative progress should be valid"),
+            ),
         )
         .await
         .expect("foreign task should be persisted");

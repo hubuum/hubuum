@@ -2,7 +2,7 @@
 
 This guide describes how to implement a selectable backend. Read the normative
 [storage contract](contract.md) and the
-[capability family map](capability-families.md) first; they define the
+[semantic capability group map](capability-families.md) first; they define the
 guarantees, responsibilities, and relationships summarized here.
 
 ## Definition of a Backend
@@ -37,7 +37,7 @@ Partiality is therefore structural:
 - a collection-only model implements `CollectionStorage`;
 - a service accepts `Arc<dyn CollectionStorage>`, not a complete backend; and
 - application composition accepts only `StorageBackend`, whose supertraits
-  require every family.
+  require every operation trait and family bound.
 
 An operation may have a real optional or best-effort semantic only when the
 contract explicitly defines it. For example, a wake-up hint may be optional if
@@ -65,8 +65,8 @@ The following order minimizes rework:
 4. Implement `TransactionStorage` over the lifecycle operations and prove
    state-plus-event commit and rollback.
 5. Implement permission-aware read models.
-6. Implement task execution and workflow families.
-7. Implement event and operational families.
+6. Implement task execution and the remaining workflow groups.
+7. Implement the event and operational groups.
 8. Add exhaustive dispatch, common observation, administrator projection, and
    the explicit `StorageBackend` implementation.
 9. Implement a `BackendAuditFixture` and pass the reusable six-part audit
@@ -74,7 +74,7 @@ The following order minimizes rework:
 10. Add the adapter to the sealed application certification registry, then run
     shared compatibility and backend-native verification tests.
 
-Later families depend conceptually on the earlier facts, but this order does
+Later groups depend conceptually on the earlier facts, but this order does
 not authorize direct trait-to-trait backend recovery. Prefer private adapter
 helpers that share native transactions and queries.
 
@@ -389,7 +389,7 @@ See [testing and compatibility](testing.md) for the current suite and commands.
 A backend is selectable only when all of the following are true:
 
 - [ ] Every `StorageBackend` supertrait has a real implementation.
-- [ ] All 20 capability families preserve their documented semantics.
+- [ ] All 20 semantic capability groups preserve their documented semantics.
 - [ ] DTOs and errors contain no native implementation types.
 - [ ] Safe lifecycle compositions use one native unit of work.
 - [ ] Hidden state-machine invariants remain native atomic operations.

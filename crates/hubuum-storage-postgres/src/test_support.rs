@@ -5,7 +5,7 @@
 //! `integration-test-support` feature is enabled.
 
 use chrono::NaiveDateTime;
-use diesel::sql_types::{Bool, Integer};
+use diesel::sql_types::{Bool, Integer, Timestamp};
 use diesel::{
     ExpressionMethods, Insertable, OptionalExtension, QueryDsl, Queryable, QueryableByName,
     Selectable, SelectableHelper,
@@ -208,7 +208,8 @@ impl TestTaskCreate {
             idempotency_key: None,
             request_hash: None,
             summary: None,
-            progress: StorageTaskProgress::new(0, 0, 0, 0),
+            progress: StorageTaskProgress::try_new(0, 0, 0, 0)
+                .expect("zero task progress should be valid"),
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
             terminal_at: None,
             initiator_principal_id: None,
@@ -225,7 +226,8 @@ impl TestTaskCreate {
             idempotency_key: None,
             request_hash: None,
             summary: None,
-            progress: StorageTaskProgress::new(0, 0, 0, 0),
+            progress: StorageTaskProgress::try_new(0, 0, 0, 0)
+                .expect("zero task progress should be valid"),
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
             terminal_at: None,
             initiator_principal_id: None,
@@ -319,6 +321,8 @@ struct TestTaskRow {
     request_redacted_at: Option<NaiveDateTime>,
     started_at: Option<NaiveDateTime>,
     finished_at: Option<NaiveDateTime>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
     lease_token: Option<uuid::Uuid>,
     lease_expires_at: Option<NaiveDateTime>,
     initiator_user_id: Option<i32>,
@@ -481,9 +485,28 @@ pub async fn create_task(
             "unattributed non-reindex test tasks must be terminal",
         ));
     }
-    let now = chrono::Utc::now().naive_utc();
-    let started_at = (request.status != StorageTaskStatus::Queued).then_some(now);
+    let mut connection = pool.get().await?;
+    let now = diesel::select(diesel::dsl::sql::<Timestamp>(
+        "clock_timestamp() AT TIME ZONE 'UTC'",
+    ))
+    .get_result::<NaiveDateTime>(&mut connection)
+    .await?;
     let terminal_at = request.terminal_at.unwrap_or(now);
+    let created_at = if request.status.is_terminal() {
+        terminal_at.min(now)
+    } else {
+        now
+    };
+    let updated_at = if request.status.is_terminal() {
+        terminal_at.max(now)
+    } else {
+        now
+    };
+    let started_at = match request.status {
+        StorageTaskStatus::Queued => None,
+        status if status.is_terminal() => Some(created_at),
+        _ => Some(now),
+    };
     let finished_at = request.status.is_terminal().then_some(terminal_at);
     let request_redacted_at = request.status.is_terminal().then_some(terminal_at);
     let lease_token = (request.status == StorageTaskStatus::Running).then(uuid::Uuid::new_v4);
@@ -508,13 +531,14 @@ pub async fn create_task(
         request_redacted_at,
         started_at,
         finished_at,
+        created_at,
+        updated_at,
         lease_token,
         lease_expires_at,
         initiator_user_id: request
             .initiator_principal_id
             .map(hubuum_domain::PrincipalId::id),
     };
-    let mut connection = pool.get().await?;
     diesel::insert_into(crate::schema::tasks::table)
         .values(row)
         .returning(crate::operations::task_rows::TaskRow::as_returning())

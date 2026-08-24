@@ -75,6 +75,10 @@ and failure-schedule coverage remain separate diagnostic concerns.
 - [ ] Add fallible constructors or builders where meaningful invalid states can
   cross the boundary, and map corrupt persisted representations to
   `StorageErrorKind::Backend` consistently.
+- [ ] Replace DTO validators that return a preclassified `StorageError` with an
+  unclassified contract-validation error. Application callers should map
+  malformed request values to `InvalidInput`, while adapters should map corrupt
+  persisted projections to `Backend` explicitly.
 
 This audit must finish before publishing an external SDK. The current
 documentation intentionally does not claim that every infallible projection

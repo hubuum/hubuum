@@ -22,9 +22,9 @@ use hubuum_storage_core::{
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskCompletion, StorageTaskEventInput,
-    StorageTaskKind, StorageTaskLease, StorageTaskResultCounts, StorageTaskStateUpdate,
-    StorageTaskStatus,
+    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskActiveUpdate, StorageTaskCompletion,
+    StorageTaskCompletionArtifact, StorageTaskEventInput, StorageTaskKind, StorageTaskLease,
+    StorageTaskResultCounts, StorageTaskStatus, StorageTaskTerminalUpdate,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -86,7 +86,7 @@ impl ComputationStateRow {
             })?;
         StorageClassComputationState::builder(
             ClassId::new(self.class_id)?,
-            StorageComputationRevision::new(self.evaluation_revision)?,
+            persisted_computation_revision(self.evaluation_revision)?,
             rebuild_status,
             self.created_at.and_utc(),
             self.updated_at.and_utc(),
@@ -96,6 +96,15 @@ impl ComputationStateRow {
         .try_build()
         .map_err(|error| PostgresStorageError::invalid_persisted_value("computation state", error))
     }
+}
+
+pub(super) fn persisted_computation_revision(
+    value: i64,
+) -> Result<StorageComputationRevision, PostgresStorageError> {
+    crate::validate_persisted(
+        "computation revision",
+        StorageComputationRevision::new(value),
+    )
 }
 
 #[derive(Insertable)]
@@ -814,19 +823,21 @@ pub async fn execute_computed_field_rebuild(
             ReindexBatch::Superseded => {
                 let completed = task_execution::complete_task(
                     runtime,
-                    StorageTaskCompletion::new(
-                        StorageTaskStateUpdate::new(
+                    StorageTaskCompletion::try_new(
+                        StorageTaskKind::Reindex,
+                        StorageTaskTerminalUpdate::try_new(
                             lease,
                             StorageTaskStatus::Cancelled,
                             successful_counts(processed)?,
-                        )
+                        )?
                         .summary(Some("Computed-field rebuild superseded".to_string()))
                         .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                         StorageTaskEventInput::new(
                             StorageTaskStatus::Cancelled.as_str(),
                             "Computed-field rebuild superseded",
                         ),
-                    ),
+                        StorageTaskCompletionArtifact::None,
+                    )?,
                 )
                 .await?;
                 runtime.record_computed_rebuild_finished("cancelled", started.elapsed());
@@ -845,11 +856,11 @@ pub async fn execute_computed_field_rebuild(
                 processed = processed.saturating_add(count);
                 task_execution::update_task_state(
                     runtime,
-                    StorageTaskStateUpdate::new(
+                    StorageTaskActiveUpdate::try_new(
                         lease.clone(),
                         StorageTaskStatus::Running,
                         successful_counts(processed)?,
-                    )
+                    )?
                     .summary(Some(format!(
                         "Rebuilt {processed} of {} objects",
                         task.total_items
@@ -897,7 +908,7 @@ pub async fn execute_computed_field_rebuild(
             };
             let finalized = task_execution::complete_task_on_connection(
                 connection,
-                StorageTaskStateUpdate::new(lease, status, successful_counts(processed)?)
+                StorageTaskTerminalUpdate::try_new(lease, status, successful_counts(processed)?)?
                     .summary(Some(summary.clone()))
                     .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                 StorageTaskEventInput::new(status.as_str(), summary),
@@ -1574,6 +1585,18 @@ mod tests {
     use hubuum_query::{ParsedQueryParam, SearchOperator};
 
     use super::*;
+
+    #[test]
+    fn negative_computation_revisions_are_classified_as_backend_corruption() {
+        let mut row = ComputationStateRow::ready_without_definitions(1);
+        row.evaluation_revision = -1;
+
+        let error = row
+            .into_storage()
+            .expect_err("a negative persisted computation revision must be rejected");
+
+        assert_eq!(error.kind(), hubuum_storage_core::StorageErrorKind::Backend);
+    }
 
     #[test]
     fn computed_cursor_mapping_covers_the_public_sort_contract() {

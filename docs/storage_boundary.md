@@ -9,7 +9,8 @@ PostgreSQL is currently the only selectable backend. The in-memory resource mode
 - Start here for the invariants and the overall shape.
 - Read the normative [storage contract](storage_boundary/contract.md) for the
   guarantees every selectable backend and application caller must preserve.
-- Use the [capability family map](storage_boundary/capability-families.md) to find the trait that owns an operation and the families it collaborates with.
+- Use the [semantic capability group map](storage_boundary/capability-families.md)
+  to find the trait that owns an operation and the groups it collaborates with.
 - Use [storage query semantics](storage_boundary/query-semantics.md) for the
   common paging contract and the current method-specific support matrix.
 - Use the [backend author guide](storage_boundary/backend-author-guide.md) to implement or evaluate a backend.
@@ -64,12 +65,13 @@ The boundary has five responsibilities:
 
 `StorageBackend` is the aggregate trait in `crates/hubuum-storage-core/src/backend.rs`. Its supertraits are the complete compile-time contract, including the mandatory `TransactionStorage` unit-of-work capability.
 
-An adapter opts in structurally only after it implements every required family.
-Rust rejects the implementation if any method or family is missing. The
+An adapter opts in structurally only after it implements every required
+operation trait and all six family bounds. Rust rejects the implementation if
+any method or bound is missing. The
 application then admits it through the sealed `CertifiedStorageBackend`
 registry only after its shared and native behavioral evidence passes.
 
-The documentation groups those traits into 20 capability families:
+The documentation organizes those traits into 20 semantic capability groups:
 
 - lifecycle and identity foundations;
 - permission-aware reads and computed data;
@@ -78,7 +80,10 @@ The documentation groups those traits into 20 capability families:
 - event administration and event workers; and
 - operational state, retention, and execution context.
 
-These families are a documentation map over one indivisible contract. They are neither a second runtime contract nor feature flags. The [capability family map](storage_boundary/capability-families.md) names every family, maps it to its required traits, and explains its relationships.
+These groups are a documentation map over one indivisible contract. They are
+neither a second runtime contract nor feature flags. The
+[semantic capability group map](storage_boundary/capability-families.md) names
+every group, maps it to its required traits, and explains its relationships.
 
 Adapters are statically linked Rust crates. Trait checking and crate versions are therefore the compatibility mechanism; Hubuum has no duplicate runtime contract version or dynamic capability negotiation.
 
@@ -89,7 +94,7 @@ value fails configuration parsing. Startup logs, metrics, and the administrator
 configuration endpoint report the selected backend and the same non-sensitive
 effective settings.
 
-## Services Depend on Exact Operation Families
+## Services Depend on Exact Operation Traits
 
 Collection, class, object, class-relation, and object-relation services use the specific traits that own their operations:
 
@@ -104,7 +109,7 @@ ObjectRelationService ---> ObjectRelationStorage
                      PostgreSQL or focused model
 ```
 
-`ResourceStorage` is the method-free bound for the complete resource family,
+`ResourceStorage` is the method-free resource family bound,
 but focused services depend on the exact operation traits above rather than on
 that aggregate. There is no default "unsupported" behavior. A focused model
 implements only the operation traits it can perform. Tests may inject it

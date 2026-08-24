@@ -284,7 +284,10 @@ async fn export_template_health_reports_persisted_output_statistics() {
         )
         .expect("terminal export fixture must be valid")
         .request_payload(None)
-        .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 1, 0)),
+        .progress(
+            hubuum_storage_core::StorageTaskProgress::try_new(1, 1, 1, 0)
+                .expect("non-negative progress should be valid"),
+        ),
     )
     .await
     .expect("stored export task");

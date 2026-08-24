@@ -87,7 +87,10 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             .idempotency_key(Some("pre-backup-history".to_string()))
             .request_payload(None)
             .summary(Some("completed before backup".to_string()))
-            .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 1, 0))
+            .progress(
+                hubuum_storage_core::StorageTaskProgress::try_new(1, 1, 1, 0)
+                    .expect("non-negative progress should be valid"),
+            )
             .initiator_principal_id(Some(
                 PrincipalId::new(provenance_initiator_id).expect("test initiator id must be valid"),
             )),

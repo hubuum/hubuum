@@ -87,16 +87,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   observed traits; PostgreSQL owns Diesel rows, SQL construction, transactions,
   native notifications, migrations, and adapter-specific failures. Opaque
   storage contexts preserve the configured backend instance. Resource services
-  depend on their exact operation-family traits; focused adapters implement
-  only the families they support and cannot be selected as complete backends.
+  depend on their exact operation traits; focused adapters implement only the
+  traits they support and cannot be selected as complete backends.
   PostgreSQL helpers accept concrete pools only inside the adapter tree.
   Storage-only contexts no longer carry authorization-provider selection;
   policy-aware workflows explicitly require the stronger application context,
   whose `AuthorizationContext::authorization_mode` implementation must choose
   `LocalStorage` or `Delegated` explicitly.
   PostgreSQL is the only selectable production backend, and compatibility tests
-  exercise every required family for every selectable backend. Validated domain
-  identifiers now live in the backend-neutral domain crate, and their OpenAPI
+  exercise every semantic capability group for every selectable backend.
+  Validated domain identifiers now live in the backend-neutral domain crate, and their OpenAPI
   schemas explicitly declare the existing positive-integer invariant. The
   deprecated administrator configuration field
   `exports.database_statement_timeout_ms` remains as an alias for
@@ -122,6 +122,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   decompositions introduced or changed by this boundary work. Static
   application selection remains unchanged; there is no dynamic plugin
   interface.
+- **Breaking (workspace storage API):** task execution now uses separate
+  `StorageTaskActiveUpdate` and `StorageTaskTerminalUpdate` values. Both are
+  fallible, claims require an active task with a projected lease expiry, and
+  `StorageTaskCompletion::try_new` requires the task kind plus its matching
+  export, backup, remote-call, or absent artifact. Task progress and task
+  projections also use fallible construction. Adapter authors must replace
+  `StorageTaskStateUpdate::new`, `StorageTaskCompletion::new`,
+  `StorageTaskProgress::new`, and `StorageTaskBuilder::build`, map invalid
+  persisted projections to `StorageErrorKind::Backend`, and verify that a
+  completion's declared kind matches the claimed stored task. PostgreSQL now
+  rejects negative task progress counters with database constraints. Operators
+  upgrading a database containing negative values in `tasks.total_items`,
+  `processed_items`, `success_items`, or `failed_items` must repair those rows
+  before running migrations.
+- Persisted reversed history intervals and negative computed-field revisions
+  are now consistently reported as `StorageErrorKind::Backend` instead of
+  `Internal`.
 - **Breaking (workspace storage API):** ordinary storage mutations now require
   `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
   non-empty set of durable `AuditReceipt` values for commits and no receipt for

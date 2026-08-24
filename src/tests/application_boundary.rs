@@ -266,13 +266,13 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
         );
     }
 
-    let family_path = root.join("docs/storage_boundary/capability-families.md");
-    let families = read_source(&family_path)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", family_path.display()));
+    let group_path = root.join("docs/storage_boundary/capability-families.md");
+    let groups = read_source(&group_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", group_path.display()));
     for required_trait in REQUIRED_STORAGE_BACKEND_TRAITS {
         assert!(
-            families.contains(required_trait),
-            "required storage trait {required_trait} is not mapped to a capability family"
+            groups.contains(required_trait),
+            "required storage trait {required_trait} is not mapped to a semantic capability group"
         );
     }
 }

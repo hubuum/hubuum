@@ -1,4 +1,4 @@
-# Storage Capability Families
+# Storage Semantic Capability Groups
 
 This document maps the complete storage contract. It is the quickest way to
 answer three questions:
@@ -11,7 +11,7 @@ For normative guarantees, see the [storage contract](contract.md). For
 implementation steps, see the [backend author guide](backend-author-guide.md).
 For source locations, see the [maintainer guide](maintainer-guide.md).
 
-## How Families and Traits Relate
+## How Groups, Family Bounds, and Traits Relate
 
 An **operation trait** is the Rust interface that makes an observed logical
 storage operation available. Its canonical capability key removes the
@@ -22,14 +22,13 @@ These same keys are used by `StorageCapability` and logical storage metrics.
 scope inherited by observed operations and therefore do not emit their own
 logical storage observation or capability label.
 
-A **capability family** is a documentation grouping for related traits and
-semantics. Family keys such as `domain_lifecycle` and `catalog_queries` are not
-operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
+A **semantic capability group** is a documentation grouping for related traits
+and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
+not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the more detailed families below are semantic subgroups, not a one-to-one
-module map. Neither form represents separately versioned or negotiable runtime
-features.
+the 20 detailed groups below are not a one-to-one module map. Neither form
+represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
 singular name: `ResourceStorage`, `IdentityStorage`, `QueryStorage`,
@@ -117,7 +116,7 @@ These relationships do not permit one capability to reach through another and
 recover its backend. The application composes use cases; the backend implements
 the atomic operations each use case requires.
 
-## Foundation Families
+## Foundation Groups
 
 ### `domain_lifecycle`
 
@@ -127,7 +126,7 @@ Required traits:
 - `CollectionStorage`, `ClassStorage`, and `ObjectStorage`; and
 - `ClassRelationStorage` and `ObjectRelationStorage`.
 
-This family owns collection, class, object, and relation resolution and
+This group owns collection, class, object, and relation resolution and
 mutation. Implementations own locking, hierarchy maintenance, JSON validation
 coordination, relation cardinality, cascades, initial grants, revisions, and
 atomic lifecycle events.
@@ -159,7 +158,7 @@ Required traits:
 - `AuthorizationDataStorage` and `CollectionAuthorizationQueryStorage`; and
 - `GroupStorage` and `PrincipalStorage`.
 
-This family owns authentication projections, identity scopes, humans, service
+This group owns authentication projections, identity scopes, humans, service
 accounts, tokens, groups, memberships, local grants, authorization facts, and
 the candidate or snapshot data required by external policy engines.
 
@@ -172,11 +171,11 @@ The application still owns token-policy interpretation, administrator policy,
 external policy evaluation, public authorization resources, and conversion to
 `ApiError`. Storage owns consistent facts and atomic local-grant mutations.
 
-Authorization results feed almost every permission-scoped read family. Those
+Authorization results feed almost every permission-scoped read group. Those
 read contracts accept backend-neutral visibility descriptors or already
 authorized identifiers; they do not import a concrete permission backend.
 
-## Read-Model Families
+## Read-Model Groups
 
 ### `catalog_queries`
 
@@ -192,7 +191,7 @@ Required trait: `ComputedObjectStorage`.
 
 Owns computed filtering, sorting, exact counts, cursor snapshots, and computed
 value enrichment. It consumes definitions and materialized values managed by
-the computed-fields family.
+the computed-fields group.
 
 ### `object_aggregates`
 
@@ -235,7 +234,7 @@ Required trait: `UnifiedSearchStorage`.
 Owns ranked collection, class, and object search with stable per-kind cursors
 and token visibility pushdown. The three projections form one capability.
 
-## Workflow Families
+## Workflow Groups
 
 ### `computed_fields`
 
@@ -262,6 +261,10 @@ Required trait: `TaskQueueStorage`.
 Owns idempotent submission under active-task limits, access facts, task pages,
 events, import results, and retained export and backup outputs. It is the
 application-facing history of work, not the worker lease state machine.
+Projected total, processed, succeeded, failed, and attempt counters are
+nonnegative. Projected creation, update, start, finish, redaction, and deletion
+timestamps must form a non-reversed chronology. An adapter reports violations
+in persisted rows as `Backend` corruption.
 
 ### `task_execution`
 
@@ -271,6 +274,25 @@ Owns claims, lease renewal and recovery, claim-checked events and state
 changes, atomic completion artifacts, failure accounting, and output
 retention. Claims are opaque tokens that callers can only return to the
 backend.
+
+A claim is valid only when its task projection is active (`validating` or
+`running`), carries a lease expiry, and has the same task ID as its opaque
+lease. `update_task_state` accepts only active updates. `complete_task` accepts
+only terminal updates (`succeeded`, `failed`, `partially_succeeded`, or
+`cancelled`) and exactly this task-kind/artifact matrix:
+
+| Task kind | Required completion artifact |
+| --- | --- |
+| `import` | None |
+| `reindex` | None |
+| `export` | Export artifact |
+| `backup` | Backup artifact |
+| `remote_call` | Remote-call artifact |
+
+The completion DTO validates the matrix before adapter dispatch. The adapter
+must additionally verify that the DTO's declared task kind matches the claimed
+persisted task; it must reject a mismatch as `InvalidInput` without consuming
+the claim.
 
 ### `backup_snapshots`
 
@@ -316,7 +338,7 @@ Owns point and scoped list reads, collection-source discovery, class binding
 lookup, and atomic audited lifecycle writes. The application owns template
 syntax, query, source-composition, permission, and API PATCH validation.
 
-## Event and Operational Families
+## Event and Operational Groups
 
 ### `event_administration`
 
@@ -326,7 +348,7 @@ Required traits:
 - `EventConfigurationStorage`; and
 - `EventDeliveryAdministrationStorage`.
 
-This family owns visibility-scoped audit reads, sink and subscription
+This group owns visibility-scoped audit reads, sink and subscription
 lifecycle, and claim-free delivery inspection, retry, and dead-letter actions.
 Sink and subscription mutations include their lifecycle events atomically.
 
@@ -340,7 +362,7 @@ Required traits:
 - `TokenRetentionStorage`; and
 - `ExecutionStorage`.
 
-This family owns probes and administrative snapshots, logical metrics inputs,
+This group owns probes and administrative snapshots, logical metrics inputs,
 retention, worker claims and acknowledgements, and the execution context
 applied across requests and workers. `WorkerNotificationProvider` is an
 optional application-composition provider: adapters may implement it for
@@ -381,14 +403,14 @@ idempotent by batch ID. Failed archives preserve the exact claim and source
 events for retry; completion deletes exactly that claim and is itself
 idempotent.
 
-## Changing a Family
+## Changing a Semantic Capability Group
 
 Traits and crate versions are the compatibility mechanism for statically linked
 adapters. Do not add a parallel contract version, runtime capability
 negotiation, or a dynamic plugin ABI. A backend may live in another repository,
 but the application selects and links it at compile time.
 
-When a family changes, update all of the following together:
+When a semantic capability group changes, update all of the following together:
 
 1. The owning trait and `StorageBackend` when the aggregate changes.
 2. Common dispatch and observation in `StorageHandle`.

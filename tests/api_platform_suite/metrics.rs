@@ -405,7 +405,10 @@ async fn terminal_task_record(
             context.scoped_name(&format!("terminal-metric-{label}")),
         ))
         .summary(Some("terminal metric fixture".to_string()))
-        .progress(hubuum_storage_core::StorageTaskProgress::new(1, 1, 0, 1))
+        .progress(
+            hubuum_storage_core::StorageTaskProgress::try_new(1, 1, 0, 1)
+                .expect("non-negative progress should be valid"),
+        )
         .request_payload(None)
         .terminal_at(finished_at),
     )

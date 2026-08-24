@@ -1,7 +1,9 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{ClassId, CollectionId, HistoryRecordId, PrincipalId, TaskId};
+use hubuum_domain::{
+    ClassId, CollectionId, HistoryRecordId, PrincipalId, ResourceRevision, TaskId,
+};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
@@ -145,7 +147,7 @@ macro_rules! metadata {
     ($row:expr) => {{
         let row = &$row;
         Ok::<_, PostgresStorageError>(
-            HistoryMetadata::try_new(
+            project_history_metadata(
                 history_operation(&row.op)?,
                 row.valid_from,
                 row.valid_to,
@@ -160,6 +162,19 @@ macro_rules! metadata {
             .task_id(row.task_id.map(TaskId::new).transpose()?),
         )
     }};
+}
+
+fn project_history_metadata(
+    operation: StorageHistoryOperation,
+    valid_from: DateTime<Utc>,
+    valid_to: Option<DateTime<Utc>>,
+    history_entry_id: HistoryRecordId,
+    revision: ResourceRevision,
+) -> Result<HistoryMetadata, PostgresStorageError> {
+    crate::validate_persisted(
+        "history metadata",
+        HistoryMetadata::try_new(operation, valid_from, valid_to, history_entry_id, revision),
+    )
 }
 
 fn history_operation(value: &str) -> Result<StorageHistoryOperation, PostgresStorageError> {
@@ -622,4 +637,30 @@ pub async fn get_object_history_as_of(
                 .transpose()
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use hubuum_domain::ResourceRevision;
+    use hubuum_storage_core::StorageErrorKind;
+
+    use super::*;
+
+    #[test]
+    fn reversed_history_intervals_are_classified_as_backend_corruption() {
+        let valid_from = Utc::now();
+        let result = project_history_metadata(
+            StorageHistoryOperation::Update,
+            valid_from,
+            Some(valid_from - chrono::Duration::seconds(1)),
+            HistoryRecordId::new(1).unwrap(),
+            ResourceRevision::INITIAL,
+        );
+        let error = match result {
+            Ok(_) => panic!("a reversed persisted history interval must be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
 }

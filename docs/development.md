@@ -133,7 +133,8 @@ When adding a feature:
 5. Add shared logical contract tests and retain PostgreSQL-specific query,
    transaction, migration, recovery, and concurrency tests.
 6. Do not register the implementation as selectable until it satisfies every
-   storage capability family and the available-backend compatibility suite.
+   storage operation trait, all six family bounds, and the available-backend
+   compatibility suite.
 
 ### Module layout notes
 

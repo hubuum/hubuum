@@ -6,7 +6,8 @@ assume, and which obligations are verified structurally or behaviorally.
 
 The exact Rust surface is `StorageBackend` in
 `crates/hubuum-storage-core/src/backend.rs`. The
-[capability family map](capability-families.md) maps every required trait, and
+[semantic capability group map](capability-families.md) maps every required
+trait, and
 `semantic-coverage.toml` inventories every method and tracked input variant.
 Those machine-checked sources and this semantic contract must change together.
 
@@ -66,7 +67,7 @@ adapter error -> StorageError -> application or API error
 ## Complete Backend Contract
 
 `StorageBackend` is indivisible for application selection. Its traits are
-grouped into 20 documented capability families covering:
+organized into 20 documented semantic capability groups covering:
 
 - resource lifecycle and atomic transaction composition;
 - identity, authentication, groups, principals, and authorization facts;
@@ -198,8 +199,8 @@ entry, it verifies:
 6. a stale precondition returns the exact current revision without persisting
    the attempted mutation.
 
-The root compatibility registry additionally exercises every capability
-family plus service, readiness, and authenticated HTTP behavior. Backend-native
+The root compatibility registry additionally exercises every semantic
+capability group plus service, readiness, and authenticated HTTP behavior. Backend-native
 tests remain mandatory for isolation, lock behavior, cancellation, connection
 loss, claims, leases, recovery, migrations, and database-specific failure
 mechanics.

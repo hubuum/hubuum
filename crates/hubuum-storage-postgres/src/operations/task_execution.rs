@@ -13,10 +13,11 @@ use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::{Action, EntityType, MutationProvenance, NewEvent};
 use hubuum_storage_core::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
-    StorageTask, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskResultCounts, StorageTaskStateUpdate, StorageTaskStatus,
+    StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskStatus,
+    StorageTaskTerminalUpdate,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -150,10 +151,11 @@ pub async fn claim_next_task(
             };
             use crate::schema::tasks::dsl as tasks;
             let claim_token = Uuid::new_v4();
+            let claimed_at = database_now(connection).await?;
             let row = diesel::update(tasks::tasks.filter(tasks::id.eq(task_id)))
                 .set((
                     tasks::status.eq(StorageTaskStatus::Validating.as_str()),
-                    tasks::started_at.eq(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
+                    tasks::started_at.eq(Some(claimed_at)),
                     tasks::lease_token.eq(Some(claim_token)),
                     tasks::lease_expires_at.eq(sql::<Nullable<Timestamp>>(
                         DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX,
@@ -161,7 +163,7 @@ pub async fn claim_next_task(
                     .bind::<BigInt, _>(lease_milliseconds)
                     .sql(DATABASE_LEASE_EXPIRY_SQL_SUFFIX)),
                     tasks::attempt_count.eq(tasks::attempt_count + 1),
-                    tasks::updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
+                    tasks::updated_at.eq(claimed_at),
                 ))
                 .returning(TaskRow::as_returning())
                 .get_result::<TaskRow>(connection)
@@ -345,15 +347,9 @@ pub async fn append_task_event(
 
 pub async fn update_task_state(
     runtime: &PostgresRuntime,
-    request: StorageTaskStateUpdate,
+    request: StorageTaskActiveUpdate,
 ) -> Result<StorageTask, PostgresStorageError> {
     let (claimed, update) = state_update(request)?;
-    if !update.status.is_active() {
-        return Err(PostgresStorageError::invalid_input(format!(
-            "Task state updates require an active status, received '{}'",
-            update.status.as_str()
-        )));
-    }
     let row = update_task_state_row(runtime, claimed, update).await?;
     row.into_storage()
 }
@@ -362,36 +358,15 @@ pub async fn complete_task(
     runtime: &PostgresRuntime,
     completion: StorageTaskCompletion,
 ) -> Result<StorageTask, PostgresStorageError> {
-    let (update, event, artifact) = completion.into_parts();
-    let (claimed, update) = state_update(update)?;
-    if !update.status.is_terminal() {
-        return Err(PostgresStorageError::invalid_input(format!(
-            "Task completion requires a terminal status, received '{}'",
-            update.status.as_str()
-        )));
-    }
+    let (expected_kind, update, event, artifact) = completion.into_parts();
+    let (claimed, update) = terminal_state_update(update)?;
     let stored = find_task(runtime, claimed.id).await?;
-    let kind = stored_task_kind(&stored)?;
-    let artifact_matches = matches!(
-        (&artifact, kind),
-        (
-            StorageTaskCompletionArtifact::None,
-            StorageTaskKind::Import | StorageTaskKind::Reindex
-        ) | (
-            StorageTaskCompletionArtifact::Export(_),
-            StorageTaskKind::Export
-        ) | (
-            StorageTaskCompletionArtifact::Backup(_),
-            StorageTaskKind::Backup
-        ) | (
-            StorageTaskCompletionArtifact::RemoteCall(_),
-            StorageTaskKind::RemoteCall
-        )
-    );
-    if !artifact_matches {
+    let stored_kind = stored_task_kind(&stored)?;
+    if stored_kind != expected_kind {
         return Err(PostgresStorageError::invalid_input(format!(
-            "Task completion artifact does not match task kind '{}'",
-            kind.as_str()
+            "Task completion kind '{}' does not match stored task kind '{}'",
+            expected_kind.as_str(),
+            stored_kind.as_str()
         )));
     }
     let row = match artifact {
@@ -438,16 +413,10 @@ pub async fn complete_task(
 
 pub(super) async fn complete_task_on_connection(
     connection: &mut PostgresConnection,
-    update: StorageTaskStateUpdate,
+    update: StorageTaskTerminalUpdate,
     event: StorageTaskEventInput,
 ) -> Result<TaskRow, PostgresStorageError> {
-    let (claimed, update) = state_update(update)?;
-    if !update.status.is_terminal() {
-        return Err(PostgresStorageError::invalid_input(format!(
-            "Task completion requires a terminal status, received '{}'",
-            update.status.as_str()
-        )));
-    }
+    let (claimed, update) = terminal_state_update(update)?;
     finalize_task_connection(connection, claimed, update, event).await
 }
 
@@ -717,7 +686,22 @@ pub(super) async fn find_task(
 }
 
 fn state_update(
-    request: StorageTaskStateUpdate,
+    request: StorageTaskActiveUpdate,
+) -> Result<(ClaimedTask, TaskStateUpdate), PostgresStorageError> {
+    let (lease, status, summary, counts, started_at) = request.into_parts();
+    Ok((
+        claimed_task(&lease)?,
+        TaskStateUpdate {
+            status,
+            summary,
+            counts,
+            started_at: started_at.map(|timestamp| timestamp.naive_utc()),
+        },
+    ))
+}
+
+fn terminal_state_update(
+    request: StorageTaskTerminalUpdate,
 ) -> Result<(ClaimedTask, TaskStateUpdate), PostgresStorageError> {
     let (lease, status, summary, counts, started_at) = request.into_parts();
     Ok((

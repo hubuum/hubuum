@@ -53,6 +53,12 @@ classifications rather than HTTP status or database-driver names. Native table,
 row, connection, query, and ETag representations are adapter or application
 concerns.
 
+Task execution uses distinct active and terminal update types. Claims validate
+active status, lease presence, and task identity; completion construction
+validates the documented task-kind/artifact matrix before an adapter receives
+the request. Adapters must still compare the declared completion kind with the
+claimed persisted task.
+
 ## Errors, Runtime, and Cancellation
 
 Backend-specific errors must be classified into `StorageError` before returning
@@ -75,7 +81,7 @@ Implementations must enforce visibility and permission inputs rather than treat
 them as hints. Debug implementations must remain bounded and redact identifiers,
 credentials, payloads, filters, and tokens where documented. Storage entrypoint
 logging and metrics belong to application composition. Adapters report through
-the application-supplied observer and must use bounded family and operation
+the application-supplied observer and must use bounded capability and operation
 labels.
 
 ## Ownership and Verification

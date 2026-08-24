@@ -285,9 +285,9 @@ memory model. It:
 - commits a collection, two classes, a class relation, two objects, and an
   object relation through one callback;
 - verifies committed state through ordinary capability reads and confirms one
-  durable audit trail for every resource family;
-- repeats all five mutation families and returns an application error; and
-- verifies that neither state nor any family-specific audit event survives.
+  durable audit trail for every resource operation;
+- repeats all five mutation operations and returns an application error; and
+- verifies that neither state nor any operation-specific audit event survives.
 
 Backend-native tests remain responsible for isolation, connection loss,
 driver cancellation, commit failure, notification visibility, and native
