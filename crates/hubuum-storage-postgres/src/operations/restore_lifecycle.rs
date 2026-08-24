@@ -537,10 +537,10 @@ pub async fn apply_restore(
 
                 let finished_at = Utc::now().naive_utc();
                 finish_restore(connection, finished_at).await?;
-                Ok(StorageRestoreCompletion::new(
+                Ok(StorageRestoreCompletion::try_new(
                     started_at.and_utc(),
                     finished_at.and_utc(),
-                ))
+                )?)
             },
         )
         .await

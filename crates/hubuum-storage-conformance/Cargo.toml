@@ -15,3 +15,6 @@ rust-api = "workspace-internal"
 async-trait = "0.1"
 hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
 hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+
+[dev-dependencies]
+hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }

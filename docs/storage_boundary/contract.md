@@ -85,8 +85,9 @@ durable polling remains the correctness path.
 
 ## Six-Part Audited Storage Contract
 
-The following six parts are mandatory and are tested together for every
-registered backend.
+The following six semantic guarantees are mandatory and are tested together
+for every registered backend. The behavioral certification gate that follows
+controls whether an implementation may be selected by the application.
 
 ### 1. Attribution Is Mandatory
 
@@ -182,7 +183,7 @@ guess, or stringify this value while translating native errors. The
 application projects the same value to its API error so a caller can refresh
 or retry against an authoritative revision.
 
-### 7. Selection Requires Behavioral Certification
+## Selection Requires Behavioral Certification
 
 `hubuum-storage-conformance` supplies the reusable `BackendAuditFixture` and
 `verify_backend_audit_contract` runner. For each `StorageBackendKind::ALL`

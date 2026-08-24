@@ -104,7 +104,12 @@ ObjectRelationService ---> ObjectRelationStorage
                      PostgreSQL or focused model
 ```
 
-There is no aggregate lifecycle trait and no default "unsupported" behavior. A focused model implements only the family traits it can perform. Tests may inject it through those traits, but it cannot satisfy `StorageBackend` and cannot be selected for the application.
+`ResourceStorage` is the method-free bound for the complete resource family,
+but focused services depend on the exact operation traits above rather than on
+that aggregate. There is no default "unsupported" behavior. A focused model
+implements only the operation traits it can perform. Tests may inject it
+through those traits, but it cannot satisfy `StorageBackend` and cannot be
+selected for the application.
 
 Production composition projects exact observed trait objects from a complete `StorageHandle`.
 

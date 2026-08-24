@@ -8,6 +8,7 @@ use hubuum_storage_core::{StorageError, StorageErrorKind, StoragePage};
 use tracing::{debug, error};
 
 const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
+const PRINCIPAL_SETTINGS_OBJECT_CONSTRAINT: &str = "principals_settings_object";
 
 /// Failure classified by the PostgreSQL adapter before crossing the storage
 /// contract.
@@ -248,7 +249,15 @@ impl From<DieselError> for PostgresStorageError {
                         "Object relation cardinality exceeded: relation limit reached",
                     );
                 }
-                Self::invalid_input("Check constraint not met")
+                if info.constraint_name() == Some(PRINCIPAL_SETTINGS_OBJECT_CONSTRAINT) {
+                    return Self::invalid_input("Principal settings must be a JSON object");
+                }
+                error!(
+                    message = "PostgreSQL check constraint failed",
+                    backend = "postgresql",
+                    error = ?error,
+                );
+                Self::database("PostgreSQL query failed")
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
@@ -414,6 +423,43 @@ mod tests {
             portable.message(),
             "Object relation cardinality exceeded: relation limit reached"
         );
+    }
+
+    #[test]
+    fn unknown_check_constraints_are_backend_failures() {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::CheckViolation,
+            Box::new(TestDatabaseErrorInformation::with_constraint(
+                "secret native check detail",
+                "unexpected_storage_constraint",
+            )),
+        );
+
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::Backend);
+        assert_eq!(portable.message(), "PostgreSQL query failed");
+        assert!(!portable.message().contains("secret native check detail"));
+    }
+
+    #[test]
+    fn principal_settings_constraint_is_an_explicit_input_error() {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::CheckViolation,
+            Box::new(TestDatabaseErrorInformation::with_constraint(
+                "secret native check detail",
+                PRINCIPAL_SETTINGS_OBJECT_CONSTRAINT,
+            )),
+        );
+
+        let portable = StorageError::from(PostgresStorageError::from(error));
+
+        assert_eq!(portable.kind(), StorageErrorKind::InvalidInput);
+        assert_eq!(
+            portable.message(),
+            "Principal settings must be a JSON object"
+        );
+        assert!(!portable.message().contains("secret native check detail"));
     }
 
     #[test]

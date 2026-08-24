@@ -299,7 +299,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageResolvedClassRelation::new;
     let _ = StorageResolvedObject::new;
     let _ = StorageResolvedObjectRelation::new;
-    let _ = StorageRestoreCompletion::new;
+    let _ = StorageRestoreCompletion::try_new;
     let _ = StorageRestoreCoordinatorSnapshot::new;
     let _ = StorageRestoreDrainState::new;
     let _ = StorageRestoreJob::new(restore_summary.clone(), Vec::new(), "capability-hash");

@@ -5,6 +5,7 @@
 //! express: durable audit receipts, transaction rollback, outbox delivery,
 //! and bounded logical/native observations.
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::sync::Mutex;
@@ -798,23 +799,31 @@ fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), Contra
     if receipts.len() != probe.persisted_events.len() {
         return Err(ContractViolation::AuditReceiptCountMismatch);
     }
-    let persisted_events = probe
+    let mut persisted_events = probe
         .persisted_events
         .into_iter()
         .map(StorageRecordedEvent::into_parts)
         .collect::<Vec<_>>();
+    let mut receipt_sequences = HashSet::with_capacity(receipts.len());
+    let mut receipt_event_ids = HashSet::with_capacity(receipts.len());
     for receipt in receipts.iter() {
-        let Some((event, before_revision, after_revision)) = persisted_events
+        if !receipt_sequences.insert(receipt.sequence())
+            || !receipt_event_ids.insert(receipt.event_id())
+        {
+            return Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent);
+        }
+        let Some(event_index) = persisted_events
             .iter()
-            .find(|(event, _, _)| event.id() == receipt.sequence())
+            .position(|(event, _, _)| event.id() == receipt.sequence())
         else {
             return Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent);
         };
+        let (event, before_revision, after_revision) = persisted_events.swap_remove(event_index);
         if event.event_id() != receipt.event_id().as_uuid()
             || event.entity_type() != receipt.entity_type()
             || event.action() != receipt.action()
-            || *before_revision != receipt.before_revision()
-            || *after_revision != receipt.after_revision()
+            || before_revision != receipt.before_revision()
+            || after_revision != receipt.after_revision()
         {
             return Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent);
         }
@@ -901,7 +910,10 @@ const fn verify_observations(probe: ObservationProbe) -> Result<(), ContractViol
 
 #[cfg(test)]
 mod tests {
-    use hubuum_storage_core::AuditReceipt;
+    use hubuum_events_core::{
+        Action, ActorKind, EntityType, EventEnvelope, EventId, EventSequence,
+    };
+    use hubuum_storage_core::{AuditReceipt, AuditReceipts};
 
     use super::*;
 
@@ -923,6 +935,26 @@ mod tests {
     }
 
     #[test]
+    fn committed_probe_rejects_duplicate_receipts_that_hide_a_persisted_event() {
+        let first_event = recorded_event(1);
+        let duplicated_receipt = first_event
+            .clone()
+            .into_audit_receipt()
+            .expect("valid audit receipt");
+        let outcome = MutationOutcome::committed_with_audits(
+            (),
+            AuditReceipts::new(duplicated_receipt.clone(), vec![duplicated_receipt]),
+        );
+        let probe =
+            CommittedMutationProbe::with_events(outcome, vec![first_event, recorded_event(2)]);
+
+        assert!(matches!(
+            verify_committed_mutation(probe),
+            Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent)
+        ));
+    }
+
+    #[test]
     fn observation_probe_requires_non_resource_capability_evidence() {
         let probe = ObservationProbe::new(1, 0, 1, 1);
 
@@ -930,5 +962,27 @@ mod tests {
             verify_observations(probe),
             Err(ContractViolation::MissingLogicalCapabilityObservation)
         ));
+    }
+
+    fn recorded_event(sequence: i64) -> StorageRecordedEvent {
+        let event = EventEnvelope::builder()
+            .id(EventSequence::new(sequence).expect("positive event sequence"))
+            .event_id(EventId::new().as_uuid())
+            .occurred_at(
+                "2026-08-24T12:00:00Z"
+                    .parse()
+                    .expect("valid event timestamp"),
+            )
+            .entity_type(EntityType::Collection)
+            .action(Action::Created)
+            .actor_kind(ActorKind::System)
+            .summary("storage conformance test event".to_string())
+            .try_build()
+            .expect("valid event envelope");
+        StorageRecordedEvent::new(
+            event,
+            None,
+            Some(ResourceRevision::new(sequence).expect("positive revision")),
+        )
     }
 }

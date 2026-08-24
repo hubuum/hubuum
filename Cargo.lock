@@ -2303,6 +2303,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
+ "hubuum-events-core",
  "hubuum-storage-core",
 ]
 

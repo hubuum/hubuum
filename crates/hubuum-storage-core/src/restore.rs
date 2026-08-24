@@ -620,12 +620,19 @@ pub struct StorageRestoreCompletion {
 }
 
 impl StorageRestoreCompletion {
-    #[must_use]
-    pub const fn new(started_at: DateTime<Utc>, finished_at: DateTime<Utc>) -> Self {
-        Self {
+    pub fn try_new(
+        started_at: DateTime<Utc>,
+        finished_at: DateTime<Utc>,
+    ) -> Result<Self, StorageError> {
+        if finished_at < started_at {
+            return Err(StorageError::internal(
+                "Restore completion finished_at must not be earlier than started_at",
+            ));
+        }
+        Ok(Self {
             started_at,
             finished_at,
-        }
+        })
     }
 
     #[must_use]
@@ -961,5 +968,16 @@ mod tests {
         );
 
         assert!(timestamps.is_ok());
+    }
+
+    #[test]
+    fn restore_completion_rejects_finish_before_start() {
+        let error = StorageRestoreCompletion::try_new(
+            timestamp(),
+            timestamp() - chrono::Duration::seconds(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
     }
 }

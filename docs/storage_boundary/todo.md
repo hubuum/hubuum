@@ -34,18 +34,23 @@ This is complete when an adapter author does not need to inspect PostgreSQL
 queries or application handlers to determine a method's observable query
 semantics.
 
-## Bound Delegated Search Candidate Processing
+## Bound Delegated Candidate Processing
 
-- [ ] Replace full candidate materialization in delegated unified search with a
-  backend-neutral, bounded candidate-page and authorization protocol.
+- [ ] Replace full candidate materialization in delegated unified search,
+  collection enumeration, and group enumeration with backend-neutral, bounded
+  candidate-page and authorization protocols.
+- [ ] Change application result contracts where necessary so a bounded
+  candidate protocol is not immediately expanded back into an unbounded
+  in-memory collection.
 - [ ] Preserve filtering, deterministic ordering, authorize-before-page
-  behavior, cursor semantics, and exact authorized totals across batches.
+  behavior, cursor semantics, complete-list semantics where explicitly
+  required, and exact authorized totals across batches.
 - [ ] Add conformance and performance scenarios whose candidate set is much
-  larger than the requested page.
+  larger than the requested collection, group, or search page.
 
 This is complete when external authorization cannot force an adapter or the
-application to retain an unbounded candidate set while producing one search
-page.
+application to retain an unbounded candidate set while producing one page or a
+complete result without an explicit validated bound.
 
 ## Make Semantic Evidence Method-Aware
 
