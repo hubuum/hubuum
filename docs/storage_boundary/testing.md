@@ -64,7 +64,7 @@ Three `hubuum-storage-core` integration tests compile as external crates.
 representative typed principal and query APIs, plus complete validated event
 administration request construction and access. `complete_external_adapter.rs`
 implements all 44 complete-backend traits and proves that every one of their
-253 method signatures is publicly implementable. `external_adapter_values.rs`
+249 method signatures is publicly implementable. `external_adapter_values.rs`
 exercises public constructors or terminal builders for every value currently
 returned by an adapter, including nested page and protocol values. None of the
 fixtures can reach crate-private fields.

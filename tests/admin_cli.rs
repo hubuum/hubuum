@@ -296,17 +296,21 @@ async fn export_template_health_reports_persisted_output_statistics() {
         hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive"),
         hubuum_storage_core::StorageExportTaskArtifact::builder(
             "application/json",
+            hubuum_storage_core::StorageExportTaskArtifactContent::Json(
+                serde_json::json!({ "ok": true }),
+            ),
             serde_json::json!({}),
             serde_json::json!(["first", "second"]),
             now + Duration::hours(1),
         )
         .template_name(Some(template_name.clone()))
-        .output(Some(serde_json::json!({ "ok": true })), None)
         .warning_state(2, false)
-        .durations(hubuum_storage_core::StorageTaskDurations::new(
-            125, 20, 30, 75,
-        ))
-        .build(),
+        .durations(
+            hubuum_storage_core::StorageTaskDurations::try_new(125, 20, 30, 75)
+                .expect("non-negative durations should be valid"),
+        )
+        .try_build()
+        .expect("export artifact should be valid"),
     )
     .await
     .expect("stored export output");

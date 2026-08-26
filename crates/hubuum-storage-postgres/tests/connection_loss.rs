@@ -15,7 +15,7 @@ use uuid::Uuid;
 fn all_groups_query() -> StorageGroupListQuery {
     let options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)
         .expect("unfiltered group query must be valid");
-    StorageGroupListQuery::new(options, None)
+    StorageGroupListQuery::try_new(options, None).expect("group page query must be coherent")
 }
 
 #[tokio::test]

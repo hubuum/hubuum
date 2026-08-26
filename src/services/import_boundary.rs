@@ -77,18 +77,24 @@ fn condition_to_storage(
 
 pub(crate) fn import_mode_to_storage(mode: ImportMode) -> StorageImportMode {
     StorageImportMode::new(
-        mode.atomicity.map(|value| match value {
+        match mode.atomicity.unwrap_or(ImportAtomicity::Strict) {
             ImportAtomicity::Strict => StorageImportAtomicity::Strict,
             ImportAtomicity::BestEffort => StorageImportAtomicity::BestEffort,
-        }),
-        mode.collision_policy.map(|value| match value {
+        },
+        match mode
+            .collision_policy
+            .unwrap_or(ImportCollisionPolicy::Abort)
+        {
             ImportCollisionPolicy::Abort => StorageImportCollisionPolicy::Abort,
             ImportCollisionPolicy::Overwrite => StorageImportCollisionPolicy::Overwrite,
-        }),
-        mode.permission_policy.map(|value| match value {
+        },
+        match mode
+            .permission_policy
+            .unwrap_or(ImportPermissionPolicy::Abort)
+        {
             ImportPermissionPolicy::Abort => StorageImportPermissionPolicy::Abort,
             ImportPermissionPolicy::Continue => StorageImportPermissionPolicy::Continue,
-        }),
+        },
     )
 }
 
@@ -104,15 +110,17 @@ fn identity_scope_key_to_storage(key: IdentityScopeKey) -> StorageImportIdentity
 }
 
 fn group_key_to_storage(key: GroupKey) -> StorageImportGroupKey {
+    let identity_scope = key.resolve_identity_scope_name().to_string();
     StorageImportGroupKey::from_parts(StorageImportGroupKeyParts {
-        identity_scope: key.identity_scope,
+        identity_scope,
         name: key.groupname,
     })
 }
 
 fn principal_key_to_storage(key: PrincipalKey) -> StorageImportPrincipalKey {
+    let identity_scope = key.resolve_identity_scope_name().to_string();
     StorageImportPrincipalKey::from_parts(StorageImportPrincipalKeyParts {
-        identity_scope: key.identity_scope,
+        identity_scope,
         name: key.name,
     })
 }
@@ -381,7 +389,7 @@ fn class_to_storage(input: ImportClassInput) -> Result<StorageImportClass, ApiEr
         name: input.name,
         description: input.description,
         json_schema: input.json_schema,
-        validate_schema: input.validate_schema,
+        validate_schema: input.validate_schema.unwrap_or(false),
         collection_ref: input.collection_ref,
         collection_key: input.collection_key.map(collection_key_to_storage),
         condition: condition_to_storage(input.condition)?,
@@ -482,7 +490,7 @@ fn collection_permission_to_storage(
                 .into_iter()
                 .map(permission_to_storage)
                 .collect(),
-            replace_existing: input.replace_existing,
+            replace_existing: input.replace_existing.unwrap_or(false),
             condition: condition_to_storage(input.condition)?,
         },
     ))
@@ -613,4 +621,120 @@ fn event_subscription_to_storage(
             timestamps: timestamps_to_storage(input.timestamps)?,
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[test]
+    fn import_mode_materializes_application_defaults() {
+        let mode = import_mode_to_storage(ImportMode {
+            atomicity: None,
+            collision_policy: None,
+            permission_policy: None,
+        });
+
+        assert_eq!(
+            mode.into_parts(),
+            (
+                StorageImportAtomicity::Strict,
+                StorageImportCollisionPolicy::Abort,
+                StorageImportPermissionPolicy::Abort,
+            )
+        );
+    }
+
+    #[test]
+    fn import_mode_preserves_explicit_application_policy() {
+        let mode = import_mode_to_storage(ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            permission_policy: Some(ImportPermissionPolicy::Continue),
+        });
+
+        assert_eq!(
+            mode.into_parts(),
+            (
+                StorageImportAtomicity::BestEffort,
+                StorageImportCollisionPolicy::Overwrite,
+                StorageImportPermissionPolicy::Continue,
+            )
+        );
+    }
+
+    #[rstest]
+    #[case(None, "local")]
+    #[case(Some("ldap".to_string()), "ldap")]
+    fn group_key_materializes_identity_scope(
+        #[case] identity_scope: Option<String>,
+        #[case] expected: &str,
+    ) {
+        let key = group_key_to_storage(GroupKey {
+            identity_scope,
+            groupname: "operators".to_string(),
+        });
+
+        assert_eq!(key.into_parts().identity_scope, expected);
+    }
+
+    #[rstest]
+    #[case(None, "local")]
+    #[case(Some("ldap".to_string()), "ldap")]
+    fn principal_key_materializes_identity_scope(
+        #[case] identity_scope: Option<String>,
+        #[case] expected: &str,
+    ) {
+        let key = principal_key_to_storage(PrincipalKey {
+            identity_scope,
+            name: "operator".to_string(),
+        });
+
+        assert_eq!(key.into_parts().identity_scope, expected);
+    }
+
+    #[rstest]
+    #[case(None, false)]
+    #[case(Some(false), false)]
+    #[case(Some(true), true)]
+    fn collection_permission_materializes_replace_existing(
+        #[case] replace_existing: Option<bool>,
+        #[case] expected: bool,
+    ) {
+        let permission = collection_permission_to_storage(ImportCollectionPermissionInput {
+            ref_: None,
+            collection_ref: Some("collection:target".to_string()),
+            collection_key: None,
+            group_key: GroupKey {
+                identity_scope: None,
+                groupname: "operators".to_string(),
+            },
+            permissions: vec![crate::models::Permissions::ReadCollection],
+            replace_existing,
+            condition: None,
+        })
+        .unwrap();
+
+        assert_eq!(permission.into_parts().replace_existing, expected);
+    }
+
+    #[test]
+    fn class_import_materializes_disabled_schema_validation_by_default() {
+        let class = class_to_storage(ImportClassInput {
+            ref_: None,
+            name: "server".to_string(),
+            description: "Server".to_string(),
+            json_schema: None,
+            validate_schema: None,
+            collection_ref: Some("collection:target".to_string()),
+            collection_key: None,
+            condition: None,
+            timestamps: None,
+        })
+        .unwrap();
+
+        assert!(!class.into_parts().validate_schema);
+    }
 }

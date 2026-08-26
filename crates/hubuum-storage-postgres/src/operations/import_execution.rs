@@ -631,8 +631,7 @@ async fn create_class(
                     crate::schema::hubuumclass::name.eq(parts.name),
                     crate::schema::hubuumclass::collection_id.eq(collection_id),
                     crate::schema::hubuumclass::json_schema.eq(parts.json_schema),
-                    crate::schema::hubuumclass::validate_schema
-                        .eq(parts.validate_schema.unwrap_or(false)),
+                    crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema),
                     crate::schema::hubuumclass::description.eq(parts.description),
                     crate::schema::hubuumclass::created_at.eq(created_at),
                     crate::schema::hubuumclass::updated_at.eq(updated_at),
@@ -646,8 +645,7 @@ async fn create_class(
                     crate::schema::hubuumclass::name.eq(parts.name),
                     crate::schema::hubuumclass::collection_id.eq(collection_id),
                     crate::schema::hubuumclass::json_schema.eq(parts.json_schema),
-                    crate::schema::hubuumclass::validate_schema
-                        .eq(parts.validate_schema.unwrap_or(false)),
+                    crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema),
                     crate::schema::hubuumclass::description.eq(parts.description),
                 ))
                 .get_result::<ClassRow>(connection)
@@ -674,7 +672,7 @@ async fn update_class(
     let values = (
         crate::schema::hubuumclass::name.eq(parts.name),
         crate::schema::hubuumclass::json_schema.eq(parts.json_schema),
-        crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema.unwrap_or(false)),
+        crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema),
         crate::schema::hubuumclass::description.eq(parts.description),
     );
     let row = if let Some(timestamps) = parts.timestamps {
@@ -890,8 +888,7 @@ async fn updated_or_current<T, E>(
 }
 
 fn should_abort_preflight(error: &PostgresStorageError, mode: &StorageImportMode) -> bool {
-    if mode.atomicity().unwrap_or(StorageImportAtomicity::Strict) == StorageImportAtomicity::Strict
-    {
+    if mode.atomicity() == StorageImportAtomicity::Strict {
         return true;
     }
     should_abort_for_policy(error, mode, true)
@@ -908,19 +905,13 @@ fn should_abort_for_policy(
 ) -> bool {
     match error.kind() {
         StorageErrorKind::PermissionDenied | StorageErrorKind::AuthenticationRequired => {
-            mode.permission_policy()
-                .unwrap_or(StorageImportPermissionPolicy::Abort)
-                == StorageImportPermissionPolicy::Abort
+            mode.permission_policy() == StorageImportPermissionPolicy::Abort
         }
         StorageErrorKind::Conflict => {
-            mode.collision_policy()
-                .unwrap_or(StorageImportCollisionPolicy::Abort)
-                == StorageImportCollisionPolicy::Abort
+            mode.collision_policy() == StorageImportCollisionPolicy::Abort
         }
         StorageErrorKind::RevisionConflict if include_precondition => {
-            mode.collision_policy()
-                .unwrap_or(StorageImportCollisionPolicy::Abort)
-                == StorageImportCollisionPolicy::Abort
+            mode.collision_policy() == StorageImportCollisionPolicy::Abort
         }
         _ => false,
     }
@@ -1267,7 +1258,7 @@ async fn resolve_group(
                 "Group reference was not resolved and no group_key was supplied",
             )
         })?;
-    let scope_name = parts.identity_scope.unwrap_or_else(|| "local".to_string());
+    let scope_name = parts.identity_scope;
     crate::schema::groups::table
         .inner_join(crate::schema::identity_scopes::table)
         .filter(crate::schema::identity_scopes::name.eq(scope_name))
@@ -1298,7 +1289,7 @@ async fn resolve_principal(
                 "Principal reference was not resolved and no principal_key was supplied",
             )
         })?;
-    let scope_name = parts.identity_scope.unwrap_or_else(|| "local".to_string());
+    let scope_name = parts.identity_scope;
     crate::schema::principals::table
         .inner_join(crate::schema::identity_scopes::table)
         .filter(crate::schema::identity_scopes::name.eq(scope_name))
@@ -2241,7 +2232,7 @@ async fn apply_collection_permissions(
         )
         .set(UpdatePermission::grant(
             &parts.permissions,
-            parts.replace_existing.unwrap_or(false),
+            parts.replace_existing,
         ))
         .execute(connection)
         .await?;

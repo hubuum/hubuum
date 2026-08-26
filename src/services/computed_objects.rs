@@ -80,11 +80,12 @@ pub(crate) async fn list_computed_objects(
     } else {
         prepare_db_pagination::<HubuumObject>(&options)?
     };
+    let prepared_options = ComputedObjectQueryOptions::try_new(options, execution_options)?;
     let (objects, total, computed, resolved_options) = storage_handle(backend)
         .list_computed_objects(ComputedObjectListQuery::new(
             class_id_to_storage(class_id),
             personal_owner_id.map(principal_id_to_storage),
-            ComputedObjectQueryOptions::new(options, execution_options),
+            prepared_options,
             access.into_storage()?,
             projection,
         ))

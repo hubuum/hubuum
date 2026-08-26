@@ -114,17 +114,17 @@ pub enum StorageImportPermissionPolicy {
 /// Complete import execution policy supplied by the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageImportMode {
-    atomicity: Option<StorageImportAtomicity>,
-    collision_policy: Option<StorageImportCollisionPolicy>,
-    permission_policy: Option<StorageImportPermissionPolicy>,
+    atomicity: StorageImportAtomicity,
+    collision_policy: StorageImportCollisionPolicy,
+    permission_policy: StorageImportPermissionPolicy,
 }
 
 impl StorageImportMode {
     #[must_use]
     pub const fn new(
-        atomicity: Option<StorageImportAtomicity>,
-        collision_policy: Option<StorageImportCollisionPolicy>,
-        permission_policy: Option<StorageImportPermissionPolicy>,
+        atomicity: StorageImportAtomicity,
+        collision_policy: StorageImportCollisionPolicy,
+        permission_policy: StorageImportPermissionPolicy,
     ) -> Self {
         Self {
             atomicity,
@@ -137,9 +137,9 @@ impl StorageImportMode {
     pub const fn into_parts(
         self,
     ) -> (
-        Option<StorageImportAtomicity>,
-        Option<StorageImportCollisionPolicy>,
-        Option<StorageImportPermissionPolicy>,
+        StorageImportAtomicity,
+        StorageImportCollisionPolicy,
+        StorageImportPermissionPolicy,
     ) {
         (
             self.atomicity,
@@ -149,17 +149,17 @@ impl StorageImportMode {
     }
 
     #[must_use]
-    pub const fn atomicity(&self) -> Option<StorageImportAtomicity> {
+    pub const fn atomicity(&self) -> StorageImportAtomicity {
         self.atomicity
     }
 
     #[must_use]
-    pub const fn collision_policy(&self) -> Option<StorageImportCollisionPolicy> {
+    pub const fn collision_policy(&self) -> StorageImportCollisionPolicy {
         self.collision_policy
     }
 
     #[must_use]
-    pub const fn permission_policy(&self) -> Option<StorageImportPermissionPolicy> {
+    pub const fn permission_policy(&self) -> StorageImportPermissionPolicy {
         self.permission_policy
     }
 }
@@ -211,7 +211,7 @@ import_dto!(
 import_dto!(
     StorageImportGroupKey,
     StorageImportGroupKeyParts {
-        identity_scope: Option<String>,
+        identity_scope: String,
         name: String,
     }
 );
@@ -219,7 +219,7 @@ import_dto!(
 import_dto!(
     StorageImportPrincipalKey,
     StorageImportPrincipalKeyParts {
-        identity_scope: Option<String>,
+        identity_scope: String,
         name: String,
     }
 );
@@ -367,7 +367,7 @@ import_dto!(
         name: String,
         description: String,
         json_schema: Option<Value>,
-        validate_schema: Option<bool>,
+        validate_schema: bool,
         collection_ref: Option<String>,
         collection_key: Option<StorageImportCollectionKey>,
         condition: Option<StorageImportWriteCondition>,
@@ -454,7 +454,7 @@ import_dto!(
         collection_key: Option<StorageImportCollectionKey>,
         group_key: StorageImportGroupKey,
         permissions: Vec<AuthorizationPermission>,
-        replace_existing: Option<bool>,
+        replace_existing: bool,
         condition: Option<StorageImportWriteCondition>,
     }
 );
@@ -1062,17 +1062,13 @@ fn validate_identity_scope_key(key: &StorageImportIdentityScopeKey) -> Result<()
 
 fn validate_group_key(key: &StorageImportGroupKey) -> Result<(), StorageError> {
     let parts = key.clone().into_parts();
-    if let Some(scope) = &parts.identity_scope {
-        validate_text(scope, "group key identity scope")?;
-    }
+    validate_text(&parts.identity_scope, "group key identity scope")?;
     validate_text(&parts.name, "group key name")
 }
 
 fn validate_principal_key(key: &StorageImportPrincipalKey) -> Result<(), StorageError> {
     let parts = key.clone().into_parts();
-    if let Some(scope) = &parts.identity_scope {
-        validate_text(scope, "principal key identity scope")?;
-    }
+    validate_text(&parts.identity_scope, "principal key identity scope")?;
     validate_text(&parts.name, "principal key name")
 }
 
@@ -1554,6 +1550,24 @@ mod tests {
         assert!(
             StorageImportWriteCondition::IfRevision(StorageImportRevision::new(1).unwrap())
                 .requires_existing()
+        );
+    }
+
+    #[test]
+    fn import_mode_exposes_one_complete_policy() {
+        let mode = StorageImportMode::new(
+            StorageImportAtomicity::BestEffort,
+            StorageImportCollisionPolicy::Overwrite,
+            StorageImportPermissionPolicy::Continue,
+        );
+
+        assert_eq!(
+            mode.into_parts(),
+            (
+                StorageImportAtomicity::BestEffort,
+                StorageImportCollisionPolicy::Overwrite,
+                StorageImportPermissionPolicy::Continue,
+            )
         );
     }
 

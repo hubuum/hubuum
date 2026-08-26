@@ -95,7 +95,7 @@ revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
 External-crate integration tests implement all 44 complete-backend traits,
-compile every one of their 253 methods, exercise every transaction port, and
+compile every one of their 249 methods, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. This
 prevents accidental reliance on crate-private adapter hooks before a later
 promotion review.

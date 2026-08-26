@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{RemoteTargetId, ResourceId, TaskId};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{
     StorageError, StorageRemoteHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
@@ -387,8 +388,7 @@ impl StorageTaskTerminalUpdate {
 pub struct StorageExportTaskArtifact {
     template_name: Option<String>,
     content_type: String,
-    json_output: Option<Value>,
-    text_output: Option<String>,
+    content: StorageExportTaskArtifactContent,
     metadata: Value,
     warnings: Value,
     warning_count: i32,
@@ -410,16 +410,20 @@ impl StorageExportTaskArtifactIdentity {
     }
 }
 
-/// Mutually exclusive structured or rendered content for an export artifact.
-pub struct StorageExportTaskArtifactContent {
-    json_output: Option<Value>,
-    text_output: Option<String>,
+/// Structured or rendered content for an export artifact.
+#[derive(Clone, PartialEq)]
+pub enum StorageExportTaskArtifactContent {
+    Json(Value),
+    Text(String),
 }
 
 impl StorageExportTaskArtifactContent {
     #[must_use]
     pub fn into_parts(self) -> (Option<Value>, Option<String>) {
-        (self.json_output, self.text_output)
+        match self {
+            Self::Json(output) => (Some(output), None),
+            Self::Text(output) => (None, Some(output)),
+        }
     }
 }
 
@@ -447,6 +451,7 @@ impl StorageExportTaskArtifact {
     #[must_use]
     pub fn builder(
         content_type: impl Into<String>,
+        content: StorageExportTaskArtifactContent,
         metadata: Value,
         warnings: Value,
         output_expires_at: DateTime<Utc>,
@@ -455,8 +460,7 @@ impl StorageExportTaskArtifact {
             artifact: Self {
                 template_name: None,
                 content_type: content_type.into(),
-                json_output: None,
-                text_output: None,
+                content,
                 metadata,
                 warnings,
                 warning_count: 0,
@@ -482,10 +486,7 @@ impl StorageExportTaskArtifact {
                 template_name: self.template_name,
                 content_type: self.content_type,
             },
-            StorageExportTaskArtifactContent {
-                json_output: self.json_output,
-                text_output: self.text_output,
-            },
+            self.content,
             StorageExportTaskArtifactReport {
                 metadata: self.metadata,
                 warnings: self.warnings,
@@ -522,13 +523,6 @@ impl StorageExportTaskArtifactBuilder {
     }
 
     #[must_use]
-    pub fn output(mut self, json_output: Option<Value>, text_output: Option<String>) -> Self {
-        self.artifact.json_output = json_output;
-        self.artifact.text_output = text_output;
-        self
-    }
-
-    #[must_use]
     pub const fn warning_state(mut self, warning_count: i32, truncated: bool) -> Self {
         self.artifact.warning_count = warning_count;
         self.artifact.truncated = truncated;
@@ -541,9 +535,13 @@ impl StorageExportTaskArtifactBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageExportTaskArtifact {
-        self.artifact
+    pub fn try_build(self) -> Result<StorageExportTaskArtifact, StorageError> {
+        if self.artifact.warning_count < 0 {
+            return Err(StorageError::invalid_input(
+                "Export artifact warning count must not be negative",
+            ));
+        }
+        Ok(self.artifact)
     }
 }
 
@@ -557,19 +555,23 @@ pub struct StorageBackupTaskArtifact {
 }
 
 impl StorageBackupTaskArtifact {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         document: Vec<u8>,
-        byte_size: i64,
-        sha256: impl Into<String>,
         output_expires_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageError> {
+        let byte_size = i64::try_from(document.len()).map_err(|_| {
+            StorageError::input_too_large("Backup artifact exceeds the supported byte-size range")
+        })?;
+        let sha256 = Sha256::digest(&document)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Ok(Self {
             document,
             byte_size,
-            sha256: sha256.into(),
+            sha256,
             output_expires_at,
-        }
+        })
     }
 
     #[must_use]
@@ -929,6 +931,35 @@ mod tests {
     use crate::{StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot};
 
     #[test]
+    fn export_artifact_rejects_a_negative_warning_count() {
+        let error = StorageExportTaskArtifact::builder(
+            "text/plain",
+            StorageExportTaskArtifactContent::Text("output".to_string()),
+            serde_json::json!({}),
+            serde_json::json!([]),
+            chrono::Utc::now(),
+        )
+        .warning_state(-1, false)
+        .try_build()
+        .expect_err("negative warning counts must be rejected");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn backup_artifact_derives_size_and_digest_from_its_document() {
+        let artifact = StorageBackupTaskArtifact::try_new(b"{}".to_vec(), chrono::Utc::now())
+            .expect("small backup artifact should be valid");
+        let (_, byte_size, sha256, _) = artifact.into_parts();
+
+        assert_eq!(byte_size, 2);
+        assert_eq!(
+            sha256,
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        );
+    }
+
+    #[test]
     fn worker_dtos_redact_claims_and_artifacts() {
         let now = chrono::Utc::now();
         let task_id = TaskId::new(88_001).unwrap();
@@ -952,12 +983,15 @@ mod tests {
         .expect("matching task and lease ids should form a claim");
         let artifact = StorageExportTaskArtifact::builder(
             "application/json",
+            StorageExportTaskArtifactContent::Json(serde_json::json!({
+                "secret": "output"
+            })),
             serde_json::json!({"secret": "metadata"}),
             serde_json::json!([]),
             now,
         )
-        .output(Some(serde_json::json!({"secret": "output"})), None)
-        .build();
+        .try_build()
+        .unwrap();
         let remote_artifact = StorageRemoteCallTaskArtifact::new(
             StorageRemoteCallArtifactTarget::new(
                 Some(RemoteTargetId::new(7).unwrap()),
@@ -1153,12 +1187,9 @@ mod tests {
                 kind,
                 update,
                 StorageTaskEventInput::new("succeeded", "done"),
-                StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::new(
-                    Vec::new(),
-                    0,
-                    "empty",
-                    chrono::Utc::now(),
-                )),
+                StorageTaskCompletionArtifact::Backup(
+                    StorageBackupTaskArtifact::try_new(Vec::new(), chrono::Utc::now()).unwrap(),
+                ),
             )
             .expect_err("non-artifact task kinds must reject completion artifacts");
 

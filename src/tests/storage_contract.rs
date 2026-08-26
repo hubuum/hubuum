@@ -1468,10 +1468,10 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         let list_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
             .expect("contract query must be valid");
         let (listed, total_count) = backend
-            .list_groups(StorageGroupListQuery::new(
-                list_options.clone(),
-                Some(list_options),
-            ))
+            .list_groups(
+                StorageGroupListQuery::try_new(list_options.clone(), Some(list_options))
+                    .expect("group page and count queries should be coherent"),
+            )
             .await
             .expect("certified backend should list and count groups")
             .into_parts();
@@ -2998,15 +2998,19 @@ fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskComple
         StorageTaskKind::Export => StorageTaskCompletionArtifact::Export(
             StorageExportTaskArtifact::builder(
                 "application/json",
+                crate::storage::StorageExportTaskArtifactContent::Json(serde_json::json!({
+                    "compatible": true
+                })),
                 serde_json::json!({"compatibility": true}),
                 serde_json::json!([]),
                 output_expires_at,
             )
-            .output(Some(serde_json::json!({"compatible": true})), None)
-            .build(),
+            .try_build()
+            .expect("compatibility export artifact should be valid"),
         ),
         StorageTaskKind::Backup => StorageTaskCompletionArtifact::Backup(
-            StorageBackupTaskArtifact::new(b"{}".to_vec(), 2, "0".repeat(64), output_expires_at),
+            StorageBackupTaskArtifact::try_new(b"{}".to_vec(), output_expires_at)
+                .expect("compatibility backup artifact should be valid"),
         ),
         StorageTaskKind::RemoteCall => {
             StorageTaskCompletionArtifact::RemoteCall(StorageRemoteCallTaskArtifact::new(
@@ -4295,7 +4299,8 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
             .list_computed_objects(ComputedObjectListQuery::new(
                 ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
                 None,
-                ComputedObjectQueryOptions::new(options.clone(), options),
+                ComputedObjectQueryOptions::try_new(options.clone(), options)
+                    .expect("computed-object queries should be coherent"),
                 ComputedObjectVisibility::storage(visibility),
                 ComputedObjectProjection::All,
             ))

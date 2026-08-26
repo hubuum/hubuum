@@ -1288,6 +1288,11 @@ where
             ),
             message: error.to_string(),
         })?;
+        let execution_input = ImportClassInput {
+            json_schema: updated.json_schema.clone(),
+            validate_schema: Some(updated.validate_schema),
+            ..input.clone()
+        };
         remember_class(state, input.ref_.clone(), updated.clone());
 
         Ok(PlannedItem {
@@ -1299,7 +1304,7 @@ where
             ),
             execution: Some(PlannedExecution::UpdateClass {
                 class_id: class.id,
-                input: input.clone(),
+                input: execution_input,
             }),
         })
     } else {
@@ -1348,11 +1353,16 @@ where
             ),
             message: error.to_string(),
         })?;
+        let execution_input = ImportClassInput {
+            json_schema: created.json_schema.clone(),
+            validate_schema: Some(created.validate_schema),
+            ..input.clone()
+        };
         remember_class(state, input.ref_.clone(), created.clone());
 
         Ok(PlannedItem {
             result: planned_result("class", "create", input.ref_.clone(), Some(identifier)),
-            execution: Some(PlannedExecution::CreateClass(input.clone())),
+            execution: Some(PlannedExecution::CreateClass(execution_input)),
         })
     }
 }

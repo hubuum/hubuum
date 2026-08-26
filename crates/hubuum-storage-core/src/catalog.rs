@@ -57,7 +57,6 @@ impl fmt::Debug for CatalogListQuery {
     }
 }
 
-/// Catalog page retained as a domain-specific API name.
 /// Mandatory backend contract for ordinary collection, class, and object
 /// listing, filtering, cursor paging, and optional exact counts.
 #[async_trait]

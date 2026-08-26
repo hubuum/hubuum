@@ -46,8 +46,9 @@ use crate::services::tasks::{
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{
-    ExecutionStorage, StorageExecutionScope, StorageExportTaskArtifact, StorageQueryBudget,
-    StorageTaskCompletionArtifact, StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
+    ExecutionStorage, StorageExecutionScope, StorageExportTaskArtifact,
+    StorageExportTaskArtifactContent, StorageQueryBudget, StorageTaskCompletionArtifact,
+    StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
 use crate::traits::{
@@ -1382,28 +1383,37 @@ fn artifact_to_storage(artifact: ExportArtifact) -> Result<StorageExportTaskArti
         FutureRetention::from_hours(retention_hours, "export_output_retention_hours")
             .and_then(|retention| retention.expires_at(chrono::Utc::now().naive_utc()))
             .map_err(ApiError::BadRequest)?;
-    Ok(StorageExportTaskArtifact::builder(
+    let content = match (artifact.json_output, artifact.text_output) {
+        (Some(output), None) => {
+            StorageExportTaskArtifactContent::Json(serde_json::to_value(output)?)
+        }
+        (None, Some(output)) => StorageExportTaskArtifactContent::Text(output),
+        _ => {
+            return Err(ApiError::InternalServerError(
+                "Export renderer produced an invalid output combination".to_string(),
+            ));
+        }
+    };
+    StorageExportTaskArtifact::builder(
         artifact.content_type.as_mime(),
+        content,
         serde_json::to_value(&artifact.meta)?,
         serde_json::to_value(&artifact.warnings)?,
         output_expires_at.and_utc(),
     )
     .template_name(artifact.template_name)
-    .output(
-        artifact.json_output.map(serde_json::to_value).transpose()?,
-        artifact.text_output,
-    )
     .warning_state(
         i32::try_from(artifact.warnings.len()).unwrap_or(i32::MAX),
         artifact.meta.truncated,
     )
-    .durations(StorageTaskDurations::new(
+    .durations(StorageTaskDurations::try_new(
         artifact.timings.total_millis(),
         artifact.timings.query_millis(),
         artifact.timings.hydration_millis(),
         artifact.timings.render_millis(),
-    ))
-    .build())
+    )?)
+    .try_build()
+    .map_err(Into::into)
 }
 
 fn validate_export_include(

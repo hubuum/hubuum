@@ -21,4 +21,5 @@ hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
 hubuum-task-core = { version = "0.0.1", path = "../hubuum-task-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11"
 uuid = "1"

@@ -312,9 +312,39 @@ pub struct StorageGroupListQuery {
 }
 
 impl StorageGroupListQuery {
-    #[must_use]
-    pub const fn new(records: QueryOptions, count: Option<QueryOptions>) -> Self {
-        Self { records, count }
+    /// Construct one prepared page query and its optional exact-count query.
+    ///
+    /// Pagination preparation may change the record sort, cursor window, and
+    /// limit, while an exact-count query omits all three. Both forms must keep
+    /// the same filters and count intent so a backend cannot return a total for
+    /// a different predicate.
+    pub fn try_new(
+        records: QueryOptions,
+        count: Option<QueryOptions>,
+    ) -> Result<Self, StorageError> {
+        if records.include_total() != count.is_some() {
+            return Err(StorageError::invalid_input(
+                "Group page query and exact-count intent must agree",
+            ));
+        }
+        if let Some(count) = &count {
+            if records.filters() != count.filters() {
+                return Err(StorageError::invalid_input(
+                    "Group page rows and exact total must use the same filters",
+                ));
+            }
+            if !count.sort().is_empty() || count.limit().is_some() || count.cursor().is_some() {
+                return Err(StorageError::invalid_input(
+                    "Group exact-count query must not contain sort, limit, or cursor options",
+                ));
+            }
+            if !count.include_total() {
+                return Err(StorageError::invalid_input(
+                    "Group exact-count query must retain exact-count intent",
+                ));
+            }
+        }
+        Ok(Self { records, count })
     }
 
     #[must_use]
@@ -1765,6 +1795,56 @@ pub trait ExternalIdentityStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hubuum_query::{FilterField, ParsedQueryParam, SearchOperator};
+
+    fn group_query_with_name(name: &str, include_total: bool) -> QueryOptions {
+        QueryOptions::new(
+            vec![ParsedQueryParam::from_parts(
+                FilterField::Name,
+                SearchOperator::Equals { is_negated: false },
+                name,
+            )],
+            Vec::new(),
+            None,
+            None,
+            include_total,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn group_page_rejects_a_count_for_different_filters() {
+        let records = group_query_with_name("operators", true);
+        let count = group_query_with_name("auditors", true);
+
+        let error = StorageGroupListQuery::try_new(records, Some(count))
+            .expect_err("page rows and totals must share one predicate");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn group_page_rejects_divergent_count_intent() {
+        let records = group_query_with_name("operators", false);
+        let count = group_query_with_name("operators", true);
+
+        let error = StorageGroupListQuery::try_new(records, Some(count))
+            .expect_err("page and total intent must agree");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn group_page_rejects_pagination_on_the_count_query() {
+        let records = group_query_with_name("operators", true);
+        let mut count = group_query_with_name("operators", true);
+        count.set_limit(Some(10)).unwrap();
+
+        let error = StorageGroupListQuery::try_new(records, Some(count))
+            .expect_err("exact-count queries must not carry pagination");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
 
     #[test]
     fn identity_group_builder_keeps_record_metadata_and_optional_sync_state() {

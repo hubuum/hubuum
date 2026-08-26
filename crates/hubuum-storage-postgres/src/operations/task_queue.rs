@@ -184,6 +184,15 @@ struct ExportOutputRow {
 
 impl ExportOutputRow {
     fn into_storage(self) -> Result<StorageExportOutput, PostgresStorageError> {
+        let durations = crate::validate_persisted(
+            "export output durations",
+            StorageTaskDurations::try_new(
+                self.total_duration_ms,
+                self.query_duration_ms,
+                self.hydration_duration_ms,
+                self.render_duration_ms,
+            ),
+        )?;
         Ok(StorageExportOutput::builder(
             TaskId::new(self.task_id)?,
             self.content_type,
@@ -195,12 +204,7 @@ impl ExportOutputRow {
         .template_name(self.template_name)
         .output(self.json_output, self.text_output)
         .warning_state(self.warning_count, self.truncated)
-        .durations(StorageTaskDurations::new(
-            self.total_duration_ms,
-            self.query_duration_ms,
-            self.hydration_duration_ms,
-            self.render_duration_ms,
-        ))
+        .durations(durations)
         .build())
     }
 }
@@ -222,6 +226,15 @@ struct ExportOutputSummaryRow {
 
 impl ExportOutputSummaryRow {
     fn into_storage(self) -> Result<StorageExportOutputSummary, PostgresStorageError> {
+        let durations = crate::validate_persisted(
+            "export output summary durations",
+            StorageTaskDurations::try_new(
+                self.total_duration_ms,
+                self.query_duration_ms,
+                self.hydration_duration_ms,
+                self.render_duration_ms,
+            ),
+        )?;
         Ok(StorageExportOutputSummary::new(
             TaskId::new(self.task_id)?,
             self.template_name,
@@ -229,12 +242,7 @@ impl ExportOutputSummaryRow {
             self.warning_count,
             self.truncated,
             self.output_expires_at.and_utc(),
-            StorageTaskDurations::new(
-                self.total_duration_ms,
-                self.query_duration_ms,
-                self.hydration_duration_ms,
-                self.render_duration_ms,
-            ),
+            durations,
         ))
     }
 }

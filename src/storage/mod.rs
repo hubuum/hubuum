@@ -138,7 +138,7 @@ pub(crate) use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupHistorySection, StorageBackupOutput,
     StorageBackupOutputSummary, StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection,
     StorageBackupTaskArtifact, StorageExportOutput, StorageExportOutputSummary,
-    StorageExportTaskArtifact, StorageImportTaskResult,
+    StorageExportTaskArtifact, StorageExportTaskArtifactContent, StorageImportTaskResult,
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{

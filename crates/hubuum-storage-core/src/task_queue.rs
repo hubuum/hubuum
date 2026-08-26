@@ -1089,14 +1089,27 @@ pub struct StorageTaskDurations {
 }
 
 impl StorageTaskDurations {
-    #[must_use]
-    pub const fn new(total_ms: i32, query_ms: i32, hydration_ms: i32, render_ms: i32) -> Self {
-        Self {
+    /// Construct non-negative phase durations for a task output.
+    pub fn try_new(
+        total_ms: i32,
+        query_ms: i32,
+        hydration_ms: i32,
+        render_ms: i32,
+    ) -> Result<Self, StorageError> {
+        if [total_ms, query_ms, hydration_ms, render_ms]
+            .into_iter()
+            .any(|duration| duration < 0)
+        {
+            return Err(StorageError::invalid_input(
+                "Task output durations must not be negative",
+            ));
+        }
+        Ok(Self {
             total_ms,
             query_ms,
             hydration_ms,
             render_ms,
-        }
+        })
     }
 
     #[must_use]
@@ -1463,6 +1476,17 @@ pub trait TaskQueueStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_durations_reject_negative_phases() {
+        for durations in [(-1, 0, 0, 0), (0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1)] {
+            let error =
+                StorageTaskDurations::try_new(durations.0, durations.1, durations.2, durations.3)
+                    .expect_err("negative task durations must be rejected");
+
+            assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+        }
+    }
 
     #[test]
     fn task_create_rejects_negative_total_items() {

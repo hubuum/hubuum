@@ -79,12 +79,26 @@ impl ComputedObjectQueryOptions {
     /// next page exists. The adapter resolves computed field types in both
     /// copies, but the result must retain the requested limit for response
     /// pagination.
-    #[must_use]
-    pub const fn new(requested: QueryOptions, execution: QueryOptions) -> Self {
-        Self {
+    pub fn try_new(requested: QueryOptions, execution: QueryOptions) -> Result<Self, StorageError> {
+        if requested.filters() != execution.filters() {
+            return Err(StorageError::invalid_input(
+                "Computed-object requested and execution queries must use the same filters",
+            ));
+        }
+        if requested.cursor() != execution.cursor() {
+            return Err(StorageError::invalid_input(
+                "Computed-object requested and execution queries must use the same cursor",
+            ));
+        }
+        if requested.include_total() != execution.include_total() {
+            return Err(StorageError::invalid_input(
+                "Computed-object requested and execution queries must use the same count intent",
+            ));
+        }
+        Ok(Self {
             requested,
             execution,
-        }
+        })
     }
 
     #[must_use]
@@ -367,12 +381,63 @@ mod tests {
     use super::*;
     use hubuum_query::{FilterField, ParsedQueryParam, SearchOperator};
 
+    fn computed_query(filter: &str, cursor: Option<&str>, include_total: bool) -> QueryOptions {
+        QueryOptions::new(
+            vec![ParsedQueryParam::from_parts(
+                FilterField::Name,
+                SearchOperator::Equals { is_negated: false },
+                filter,
+            )],
+            Vec::new(),
+            Some(20),
+            cursor.map(str::to_string),
+            include_total,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn computed_query_rejects_different_execution_filters() {
+        let requested = computed_query("requested", None, true);
+        let execution = computed_query("execution", None, true);
+
+        let error = ComputedObjectQueryOptions::try_new(requested, execution)
+            .err()
+            .expect("requested and execution filters must disagree");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn computed_query_rejects_a_different_execution_cursor() {
+        let requested = computed_query("object", Some("requested"), true);
+        let execution = computed_query("object", Some("execution"), true);
+
+        let error = ComputedObjectQueryOptions::try_new(requested, execution)
+            .err()
+            .expect("requested and execution cursors must disagree");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn computed_query_rejects_different_count_intent() {
+        let requested = computed_query("object", None, true);
+        let execution = computed_query("object", None, false);
+
+        let error = ComputedObjectQueryOptions::try_new(requested, execution)
+            .err()
+            .expect("requested and execution count intent must disagree");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
     #[test]
     fn query_debug_redacts_filter_values_ids_and_cursors() {
         let query = ComputedObjectListQuery::new(
             ClassId::new(7).unwrap(),
             PrincipalId::new(9).ok(),
-            ComputedObjectQueryOptions::new(
+            ComputedObjectQueryOptions::try_new(
                 QueryOptions::new(
                     vec![ParsedQueryParam::from_parts(
                         FilterField::Name,
@@ -397,7 +462,8 @@ mod tests {
                     true,
                 )
                 .unwrap(),
-            ),
+            )
+            .unwrap(),
             ComputedObjectVisibility::authorized_object_ids(
                 PrincipalId::new(42).unwrap(),
                 [ObjectId::new(11).unwrap(), ObjectId::new(12).unwrap()],

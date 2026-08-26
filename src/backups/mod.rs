@@ -135,7 +135,6 @@ pub(crate) async fn execute_backup_task(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    let byte_size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
     let total_items = document.manifest.item_counts.values().copied().sum::<i64>();
     let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
@@ -164,12 +163,10 @@ pub(crate) async fn execute_backup_task(
                 "include_history": request.include_history,
             })),
         },
-        StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::new(
+        StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::try_new(
             bytes,
-            byte_size,
-            sha256,
             expires_at.and_utc(),
-        )),
+        )?),
     )
     .await?;
     Ok(())

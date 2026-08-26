@@ -2737,6 +2737,89 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
 }
 
 #[tokio::test]
+async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_settings() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("persist_class_schema_on_overwrite")).await;
+    let schema = serde_json::json!({
+        "type": "object",
+        "required": ["hostname"],
+        "properties": {
+            "hostname": {"type": "string"}
+        }
+    });
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("persisted_class_schema"),
+        description: "existing class".to_string(),
+        json_schema: Some(schema.clone()),
+        validate_schema: Some(true),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let mut state = PlanningState::new();
+    remember_collection(
+        &mut state,
+        Some("collection:existing".to_string()),
+        CollectionResolution {
+            id: fixture.collection.id,
+            name: fixture.collection.name.clone(),
+            description: fixture.collection.description.clone(),
+            parent_collection_id: fixture.collection.parent_collection_id,
+            exists_in_db: true,
+        },
+    );
+    let mode = ImportMode {
+        atomicity: Some(ImportAtomicity::Strict),
+        collision_policy: Some(ImportCollisionPolicy::Overwrite),
+        permission_policy: Some(ImportPermissionPolicy::Abort),
+    };
+    let planned = plan_class(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &ImportClassInput {
+            ref_: Some("class:existing".to_string()),
+            name: class.name.clone(),
+            description: "updated class".to_string(),
+            json_schema: None,
+            validate_schema: None,
+            collection_ref: Some("collection:existing".to_string()),
+            collection_key: None,
+            condition: None,
+            timestamps: None,
+        },
+    )
+    .await
+    .unwrap();
+    let operation = crate::services::import_boundary::import_operation_to_storage(
+        planned
+            .execution
+            .expect("class overwrite must be executable"),
+    )
+    .map(|operation| StorageImportPlanItem::new(0, operation))
+    .unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+
+    backend
+        .apply_import_strict(StorageImportPlan::new(vec![operation]).unwrap())
+        .await
+        .unwrap();
+
+    let updated = backend
+        .get_import_class_by_name(
+            hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+            &class.name,
+        )
+        .await
+        .unwrap()
+        .expect("updated class must remain available");
+    assert_eq!(updated.json_schema(), Some(&schema));
+    assert!(updated.validates_schema());
+}
+
+#[tokio::test]
 async fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("update_object_ref")).await;

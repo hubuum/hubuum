@@ -20,11 +20,14 @@ application composition path and passes the same portable acceptance criteria
 as PostgreSQL. It does not need to be production-ready to provide useful design
 evidence.
 
-## Finish Method-Specific Query Matrices
+## Finish Method-Specific Query and Collection Contracts
 
 - [ ] Document the exact supported filters, sort keys, cursor behavior,
   visibility rules, and count semantics for every pageable or searchable
   storage method.
+- [ ] Document ordering, duplicate-input handling, missing-input behavior,
+  output multiplicity, completeness, bounds, visibility, and snapshot
+  consistency for every batched or complete collection method.
 - [ ] Distinguish unsupported combinations from invalid requests and define the
   required portable error for each case.
 - [ ] Keep the matrices synchronized with query DTOs, adapter implementations,

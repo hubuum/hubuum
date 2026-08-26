@@ -216,7 +216,7 @@ hubuum application
 The backend-neutral contracts needed by an out-of-tree adapter remain
 workspace-internal in this pull request; they are not being published yet.
 External-crate integration tests nevertheless implement all 44
-complete-backend traits and their 253 methods, compile every transaction port,
+complete-backend traits and their 249 methods, compile every transaction port,
 exercise representative typed query APIs, and name public construction paths
 for all current adapter-returned values without crate-private access. Backend
 registration remains explicit, exhaustive, and application-owned. Hubuum does

@@ -217,7 +217,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   remote-call artifact targets expose named parts where positional
   decomposition would be especially error-prone. Contract DTO timestamps use
   explicit UTC values; adapters must convert native timestamp representations
-  at their private boundary.
+  at their private boundary. Import execution policy, identity-key scopes,
+  class schema-validation state, and permission replacement behavior are now
+  concrete before crossing into an adapter; adapter authors must remove native
+  fallback defaults for those values.
   `StorageErrorKind::ValidationFailed` distinguishes semantically invalid
   content, and malformed persisted conflict metadata becomes an internal
   storage error instead of panicking. The complete storage contract no longer
@@ -228,7 +231,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   lease presence and expiry without exposing or prescribing a UUID claim-token
   representation. `StorageTaskClaim::try_new` rejects mismatched task and lease
   identifiers, and `StorageTaskResultCounts::try_new` centrally rejects negative
-  task progress counts; adapter authors must handle both validating constructors.
+  task progress counts. Group page/count queries and computed-object
+  requested/execution queries now use validating constructors that reject
+  predicate or count-intent divergence. Export task artifacts require exactly
+  one typed content variant and a non-negative warning count, backup task
+  artifacts derive their byte size and SHA-256 digest from their document, and
+  task-output durations reject negative phases; adapter authors must handle the
+  validating constructors.
 - **Breaking (backup/restore):** full backups are version 5 and restore rejects
   version 4. Version 5 uses stable logical resource and history section names,
   semantic class/object/principal fields, permission-name arrays,

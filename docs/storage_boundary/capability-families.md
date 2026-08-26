@@ -171,6 +171,18 @@ The application still owns token-policy interpretation, administrator policy,
 external policy evaluation, public authorization resources, and conversion to
 `ApiError`. Storage owns consistent facts and atomic local-grant mutations.
 
+| Surface | Responsibility | Representative operations |
+| --- | --- | --- |
+| `AuthorizationDataStorage` facts | Principal membership, resource facts, and bounded or complete policy-engine inputs | `get_authorization_principal`, `list_authorization_objects`, `load_authorization_collection_candidates` |
+| `AuthorizationDataStorage` decisions | Built-in local-policy checks over one or more collections | `authorize_local_collection`, `list_local_authorized_collections` |
+| `AuthorizationDataStorage` grants | Revisioned local-grant reads, mutations, and policy snapshots | `get_local_collection_permission_set`, `apply_local_collection_grant`, `get_authorization_policy_snapshot` |
+| `CollectionAuthorizationQueryStorage` | Legacy and administration projections for direct, inherited, effective, visible, and paged permissions | `list_visible_collections`, `list_effective_principal_collection_permissions`, `list_groups_with_collection_permission` |
+
+The two authorization traits therefore differ by consumer and responsibility,
+not by whether both mention collections. Policy evaluation and local-grant
+persistence use `AuthorizationDataStorage`; collection-oriented legacy and
+administration reads use `CollectionAuthorizationQueryStorage`.
+
 Authorization results feed almost every permission-scoped read group. Those
 read contracts accept backend-neutral visibility descriptors or already
 authorized identifiers; they do not import a concrete permission backend.
@@ -317,8 +329,10 @@ Required trait: `ImportStorage`.
 
 Owns planning lookups, rollback-only preflight, strict atomic application,
 best-effort per-item application, reference resolution, and durable result
-recording. The application supplies an exhaustive typed plan and owns public
-validation, authorization, and collision policy.
+recording. The application supplies an exhaustive typed plan, resolves public
+defaults and final overwrite values, and owns validation, authorization, and
+collision policy. Adapters receive concrete execution policy, identity scopes,
+schema-validation state, and permission replacement behavior.
 
 ### `export_queries`
 

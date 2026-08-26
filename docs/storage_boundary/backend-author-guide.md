@@ -208,7 +208,25 @@ dependency reversal.
 
 ## Import Plans and References
 
-`StorageImportPlan` is validated before an adapter begins execution. Backends may rely on its strictly increasing item indexes, valid positive update identifiers, non-empty names, and unambiguous selectors.
+`StorageImportPlan` is validated before an adapter begins execution. Backends
+may rely on its strictly increasing item indexes, valid positive update
+identifiers, non-empty names, and unambiguous selectors.
+
+The application also resolves import defaults before constructing the plan.
+`StorageImportMode` always contains concrete atomicity, collision, and
+permission policies; group and principal keys always name an identity scope;
+class inputs contain the final schema and schema-validation state; and
+collection-permission inputs contain a concrete replacement choice. An adapter
+must apply these values rather than choosing its own defaults. Remaining
+optional values represent nullable persisted state, selector alternatives,
+write conditions, or timestamp behavior documented by the import contract.
+
+Task completion commands also arrive with their storage invariants resolved.
+An export artifact contains one typed JSON or text content variant and
+non-negative report values. A backup artifact derives its byte size and SHA-256
+digest from the document it carries. Shared task-output durations are
+non-negative. Adapters should persist these values directly and must map any
+corrupt native projections encountered on reads to `Backend`.
 
 An import `ref` is local to one plan. It allows a later item in that plan to address a value created or updated by an earlier item without knowing the backend-assigned identifier. A backend must maintain this plan-local reference map during preflight and application.
 

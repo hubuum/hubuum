@@ -19,8 +19,9 @@ pub(crate) async fn list(
     let count = options
         .include_total()
         .then(|| count_query_options(options));
+    let query = StorageGroupListQuery::try_new(records, count)?;
     let (groups, total_count) = storage_handle(backend)
-        .list_groups(StorageGroupListQuery::new(records, count))
+        .list_groups(query)
         .await?
         .into_parts();
     let groups = groups

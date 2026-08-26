@@ -54,6 +54,14 @@ For every pageable operation:
 `QueryOptions` is a validated carrier, not a promise that every `FilterField`
 is valid for every operation. Each capability owns its accepted subset.
 
+Two operation-shaped carriers preserve application-prepared pagination forms
+without allowing their predicates to drift. `StorageGroupListQuery::try_new`
+requires the record query and optional exact-count query to have identical
+filters and count intent, and requires the count form to omit sorting, limits,
+and cursors. `ComputedObjectQueryOptions::try_new` permits the execution form
+to normalize sorting and expand the page limit, but requires filters, cursor,
+and count intent to match the requested form.
+
 ## Identity and Collection-Authorization Matrix
 
 This matrix is normative for the membership and collection-authorization page
@@ -75,12 +83,14 @@ is a filter only and is not a cursor sort field.
 
 The common rules above are part of the workspace contract. The table is the
 first method-specific support inventory. Exact filter, sort, cursor, and
-consistency matrices for the remaining pageable capabilities still live across
-trait documentation and compatibility tests and are not yet a supported
-external-crate promise.
+consistency matrices for the remaining pageable capabilities, together with
+ordering, duplicate-input, missing-input, multiplicity, completeness, bounds,
+visibility, and snapshot semantics for batched or complete collection methods,
+still live across trait documentation and compatibility tests and are not yet a
+supported external-crate promise.
 
 Before `hubuum-storage-core` is published as an independently certifiable
-adapter SDK, maintainers must complete those method-specific matrices and make
-their drift machine-checkable. Until then, an out-of-tree adapter can compile
-against the boundary, but certification still requires the Hubuum workspace
-compatibility suite.
+adapter SDK, maintainers must complete those method-specific query and
+collection contracts and make their drift machine-checkable. Until then, an
+out-of-tree adapter can compile against the boundary, but certification still
+requires the Hubuum workspace compatibility suite.
