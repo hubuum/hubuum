@@ -120,8 +120,17 @@ crate.
   their publication dependency graph.
 - [ ] Set SemVer, minimum supported Rust version (MSRV), deprecation, feature,
   and compatibility policies.
+- [ ] Decide how the mandatory aggregate evolves when methods are added without
+  introducing unsupported defaults: exact core/adapter version lock, a SemVer
+  major release, or a versioned aggregate.
+- [ ] Audit public enums and decide which are closed semantic vocabularies and
+  which require an explicit extensibility or non-exhaustive policy.
 - [ ] Document the release and upgrade process for adapter authors, including
   how breaking contract changes are announced and tested.
+
+This is complete when the supported crate graph and its evolution contract let
+adapter authors determine compatibility before upgrading, without relying on
+repository-internal knowledge.
 
 Dynamic plugin discovery, runtime loading, and a stable plugin ABI are separate
 design concerns. Publishing Rust crates for statically linked adapters does not

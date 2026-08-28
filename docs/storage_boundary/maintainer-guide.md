@@ -45,7 +45,8 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 
 | Concern | Primary location |
 | --- | --- |
-| Extracted traits, DTOs, errors, descriptors | `crates/hubuum-storage-core/src/*` |
+| Extracted traits, DTOs, and errors | `crates/hubuum-storage-core/src/*` |
+| Backend kind and descriptor | `src/storage/registry.rs` |
 | PostgreSQL adapter operations, private rows, pool, TLS, schema, migrations, JSONB, query capture | `crates/hubuum-storage-postgres/*` |
 | Complete aggregate | `crates/hubuum-storage-core/src/backend.rs` |
 | Complete PostgreSQL backend type and aggregate opt-in | `crates/hubuum-storage-postgres/src/backend/mod.rs` |
@@ -104,9 +105,11 @@ boundary.
 
 If yes:
 
-1. Add a typed request and result to `hubuum-storage-core` when they can be
-   independent of root application types. Otherwise keep the temporary
-   contract in `src/storage`.
+1. Add a backend-neutral typed request and result to `hubuum-storage-core` when
+   the backend must own the operation. If it necessarily depends on root
+   application types, keep it as application-service orchestration and compose
+   existing storage capabilities instead of adding a root-local storage
+   contract.
 2. Add the operation to the narrow owning trait.
 3. Add observed exhaustive dispatch to `StorageHandle`.
 4. Implement it in every selectable backend.

@@ -177,7 +177,8 @@ combined-permission rule: a single permission row on the target collection or an
 ancestor must satisfy all requested flags.
 
 See [Collection Hierarchy](collection_hierarchy.md) for user-facing behavior,
-move constraints, indexes, and the rationale for keeping this logic app-local.
+move constraints, indexes, and the rationale for keeping its PostgreSQL
+mechanics adapter-local.
 
 ## Pull request CI tiers
 

@@ -79,9 +79,10 @@ and audit side effects together.
 Private fields and validating constructors preserve boundary invariants.
 Implementations must enforce visibility and permission inputs rather than treat
 them as hints. Debug implementations must remain bounded and redact identifiers,
-credentials, payloads, filters, and tokens where documented. Storage entrypoint
-logging and metrics belong to application composition. Adapters report through
-the application-supplied observer and must use bounded capability and operation
+credentials, payloads, filters, and tokens where documented. Application
+composition wraps logical entrypoints with `StorageObserver`. Adapters may
+accept separate application-supplied native observers for implementation-level
+telemetry; both observer layers must use bounded capability and operation
 labels.
 
 ## Ownership and Verification
