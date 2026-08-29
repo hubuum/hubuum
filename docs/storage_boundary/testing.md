@@ -329,7 +329,7 @@ checks required by `AGENTS.md` for the paths changed.
 The current suite is solid, but these limitations should remain visible.
 
 The actionable follow-up work and its completion criteria are tracked in the
-[storage boundary TODO](todo.md).
+[storage-boundary follow-up issues](https://github.com/hubuum/hubuum/issues?q=is%3Aissue%20is%3Aopen%20%22Deferred%20from%20%23336%22).
 
 1. **Only one complete adapter exists.** Neutral APIs have been designed and
    enforced, but a second production implementation is the best portability
